@@ -354,7 +354,7 @@ function rubricPrompt(branch, handoffId, repoRoot, worktreePath) {
     `Title: ${title}`,
     `Message preview: ${messagePreview}`,
     ``,
-    `The worker reported CHECK_RESULT: PASS for this command:`,
+    `The CHECK command below passed (worker report or independent verifier):`,
     check,
     ``,
     `Candidate branch: ${branch}`,
@@ -525,22 +525,23 @@ for (let i = 0; i < maxRounds; i++) {
   }
 
   const verdict = parseCheck(r, responseMode)
+  const verifyMissingMarker = verdict.unknown === true && Boolean(r.branch)
   prevBranch = r.branch
   prevOutput = verdict.output
   if (r.extra_hops > 0 || r.hops_incomplete === true) {
     log(`WARNING: fix-until-green round ${i + 1}: ignored ${r.extra_hops || 0} extra hop(s) for branch selection; retry_prompt_count=${r.retry_prompt_count || 0} hops_incomplete=${r.hops_incomplete === true}; using root_handoff_id=${r.root_handoff_id} branch=${r.branch}`)
   }
-  log(`fix-until-green round ${i + 1}: ${verdict.passed ? 'PASS' : 'FAIL'} on ${r.branch}`)
+  log(`fix-until-green round ${i + 1}: ${verdict.passed ? 'PASS' : verdict.unknown ? 'UNKNOWN (no CHECK_RESULT marker)' : 'FAIL'} on ${r.branch}`)
   const repoRoot = input.repo ?? input.caller_cwd ?? defaults.caller_cwd
   const hasRepoRoot = typeof repoRoot === 'string' && repoRoot.startsWith('/')
   const worktreePath = hasRepoRoot ? `${repoRoot}-worktrees/${r.handoff_id}` : null
   let checkVerified = false
   let checkVerifyStatus = 'skipped'
-  if (verdict.passed && verifyCheck) {
+  if ((verdict.passed || verifyMissingMarker) && verifyCheck) {
     const verifyPrompt = [
       'You are an independent CHECK verifier. Do not edit, commit, push, or land anything.',
       '',
-      'The worker claimed PASS. Do not trust that claim — measure it.',
+      verdict.passed ? 'The worker claimed PASS. Do not trust that claim — measure it.' : 'The worker final message carried no CHECK_RESULT line, so its result is unknown. Measure the CHECK yourself.',
       '',
       worktreePath
         ? `The worktree is likely at ${worktreePath}; try that directory first. If it does not exist, locate the worktree yourself: run \`git worktree list\` and filter for the branch named ${r.branch} (or the handoff id ${r.handoff_id}). cd to that worktree. Only if you still cannot locate it after that, set ran:false, check_exit:-1, and note this in notes.`
@@ -574,7 +575,7 @@ for (let i = 0; i < maxRounds; i++) {
     }
     if (v == null || typeof v !== 'object') {
       checkVerifyStatus = 'unavailable'
-      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), check_verify_status: 'unavailable', check_passed: true, verified: false, ci_parity: false, passed: false })
+      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), check_verify_status: 'unavailable', check_passed: verdict.passed, verified: false, ci_parity: false, passed: false })
       prevOutput = 'Independent CHECK verifier was unavailable; the worker\'s PASS was not attested.'
       log(`fix-until-green round ${i + 1}: independent CHECK verifier unavailable; worker PASS not attested on ${r.branch}`)
       break
@@ -585,7 +586,7 @@ for (let i = 0; i < maxRounds; i++) {
       consecutiveVerifyNotRun = verifierRan ? 0 : consecutiveVerifyNotRun + 1
       checkVerifyStatus = 'failed'
       const failOutput = [v.failing_segment, v.output_tail, v.notes].filter(Boolean).join('\n')
-      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), check_verify_status: 'failed', check_passed: true, verified: false, check_exit: v.check_exit, ci_parity: false, passed: false })
+      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), check_verify_status: 'failed', check_passed: verdict.passed, verified: false, check_exit: v.check_exit, ci_parity: false, passed: false })
       prevOutput = failOutput
       if (verifierRan) {
         log(`fix-until-green round ${i + 1}: worker claimed PASS but the independent CHECK verifier measured check_exit=${v.check_exit}${parityCheck !== null ? ` parity_exit=${v.parity_exit}` : ''}; treating as FAIL`)
@@ -602,7 +603,7 @@ for (let i = 0; i < maxRounds; i++) {
     checkVerified = true
     checkVerifyStatus = 'passed'
   }
-  if (verdict.passed) {
+  if (verdict.passed || checkVerified) {
     if (rubric.length > 0) {
       let grade
       try {
@@ -625,7 +626,7 @@ for (let i = 0; i < maxRounds; i++) {
           branch: r.branch,
           handoff_id: r.handoff_id,
           ...hopFields(r),
-          check_passed: true,
+          check_passed: verdict.passed,
           check_verify_status: checkVerifyStatus,
           rubric_status: 'GRADER_UNAVAILABLE',
           rubric_grade: grade ?? null,
@@ -648,7 +649,7 @@ for (let i = 0; i < maxRounds; i++) {
         handoff_id: r.handoff_id,
         ...hopFields(r),
         passed: rubricPassed,
-        check_passed: true,
+        check_passed: verdict.passed,
         check_verify_status: checkVerifyStatus,
         rubric_grade: grade,
         verified: checkVerified,
@@ -660,7 +661,7 @@ for (let i = 0; i < maxRounds; i++) {
       }
       prevOutput = failedOutput
     } else {
-      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), passed: true, check_verify_status: checkVerifyStatus, verified: checkVerified, ci_parity: parityCheck !== null && checkVerified })
+      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), passed: true, check_passed: verdict.passed, check_verify_status: checkVerifyStatus, verified: checkVerified, ci_parity: parityCheck !== null && checkVerified })
       return { ok: true, green: true, rounds_used: i + 1, final_branch: r.branch, rounds, check, ci_parity: parityCheck !== null && checkVerified }
     }
   } else {

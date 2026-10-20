@@ -1426,3 +1426,129 @@ describe("penumbra-fix-until-green rubric grader scope", () => {
     expect(fanoutCalls).toHaveLength(1);
   });
 });
+
+describe("penumbra-fix-until-green reply without a CHECK_RESULT marker", () => {
+  const noMarkerFanout = async () => ({
+    results: [
+      {
+        ok: true,
+        status: "completed",
+        branch: "feat/x",
+        conversation_id: "c",
+        handoff_id: "h-123",
+        reliability_trustworthy: true,
+        check_line: "I committed the change and the tests pass.",
+      },
+    ],
+  });
+
+  test("an unknown verdict turns green only through an independent verifier pass", async () => {
+    const { result, workflowCalls, agentCalls } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 3,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: noMarkerFanout,
+        agent: async () => ({ ran: true, check_exit: 0 }),
+      },
+    );
+
+    expect(result?.green).toBe(true);
+    expect(result?.rounds_used).toBe(1);
+    expect(workflowCalls.filter((call) => call.name === "penumbra-fanout")).toHaveLength(1);
+    const verifyCall = agentCalls.find((call) =>
+      String(call.options?.label ?? "").startsWith("verify-check"),
+    );
+    expect(verifyCall).toBeDefined();
+    expect(verifyCall!.prompt).toContain("no CHECK_RESULT line");
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.verified).toBe(true);
+    expect(rounds?.[0]?.check_passed).toBe(false);
+    expect(rounds?.[0]?.check_verify_status).toBe("passed");
+  });
+
+  test("an unknown verdict the verifier fails stays red", async () => {
+    const { result } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: noMarkerFanout,
+        agent: async () => ({
+          ran: true,
+          check_exit: 1,
+          failing_segment: "true",
+          output_tail: "boom",
+        }),
+      },
+    );
+
+    expect(result?.green).toBe(false);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.check_exit).toBe(1);
+    expect(rounds?.[0]?.verified).toBe(false);
+    expect(rounds?.[0]?.check_passed).toBe(false);
+  });
+
+  test("verifyCheck:false never green-lights an unknown verdict", async () => {
+    const { result, agentCalls } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        verifyCheck: false,
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: noMarkerFanout,
+        agent: async () => {
+          throw new Error("agent should not be called");
+        },
+      },
+    );
+
+    expect(result?.green).toBe(false);
+    expect(agentCalls).toHaveLength(0);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.passed).toBe(false);
+  });
+
+  test("an unknown verdict still gates on the rubric after a verifier pass", async () => {
+    const { result, agentCalls } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 1,
+        rubric: ["criterion one"],
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: noMarkerFanout,
+        agent: async (_prompt, options) => {
+          if (String(options?.label ?? "").startsWith("verify-check"))
+            return { ran: true, check_exit: 0 };
+          if (String(options?.label ?? "").startsWith("rubric"))
+            return {
+              inspected: true,
+              overall_pass: false,
+              criteria: [
+                { index: 1, criterion: "criterion one", pass: false, evidence: "missing" },
+              ],
+            };
+          return {};
+        },
+      },
+    );
+
+    expect(result?.green).toBe(false);
+    expect(agentCalls.some((call) => String(call.options?.label ?? "").startsWith("rubric"))).toBe(
+      true,
+    );
+  });
+});
