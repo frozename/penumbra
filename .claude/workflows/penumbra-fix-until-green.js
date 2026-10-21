@@ -1,7 +1,7 @@
 export const meta = {
   name: 'penumbra-fix-until-green',
   description: 'Dispatch an implementation task to the penumbra fleet, then loop: each round the worker runs a check command and reports PASS/FAIL; on FAIL, re-dispatch building on the previous branch with the failure log, until green or the round cap. Optionally run an independent rubric grader after a PASS; rubric failures count as FAIL and feed the next round. Optionally escalate to a stronger agent on the final round. Maestro lands the final green branch.',
-  whenToUse: 'When a change must satisfy a concrete check (typecheck, a test slice, a lint gate) and may need more than one attempt. Pass args.task.message + args.check (the shell command), optionally args.rubric / args.graderModel / args.agent / args.escalateTo / args.maxRounds. Nothing is landed.',
+  whenToUse: 'When a change must satisfy a concrete check (typecheck, a test slice, a lint gate) and may need more than one attempt. Pass args.task.message + args.check (the shell command), optionally args.rubric / args.graderModel / args.agent / args.escalateTo / args.maxRounds. Nothing is landed. Every rubric criterion must be checkable from the candidate diff alone: the grader never sees the worker reply, so a criterion such as the worker reported a proof can never pass and only burns rounds. Run it as the top-level Workflow: it nests penumbra-fanout through workflow(), and workflow() cannot be called from within a child workflow.',
   phases: [
     { title: 'Iterate', detail: 'dispatch → worker runs the check → optional independent rubric grade after PASS → on FAIL re-dispatch on the prior branch with the failure log; until green or capped' },
   ],
@@ -9,10 +9,15 @@ export const meta = {
 
 // args: { task: { message, task_class?, task_type? }, check: 'bun run typecheck',
 //         rubric?: string[], agent?, escalateTo?, maxRounds?, base?, defaults?,
-//         dispatcherModel?, graderModel?, parityCheck?: 'bun run check:ci' }
+//         dispatcherModel?, agentType?, graderModel?, parityCheck?: 'bun run check:ci' }
+// agentType: the fanout proxy agent type; omit it to use penumbra:penumbra-fanout-proxy, or pass 'inherit' for the generic proxy.
 // parityCheck requires the independent verifier (verifyCheck on by default); combining
 // it with verifyCheck:false is rejected because the parity gate would never run.
 // graderModel defaults to 'sonnet'; pass graderModel:'inherit' to use the session-default model.
+// Composition: run this as the top-level Workflow. Every round calls workflow('penumbra-fanout'), and workflow() cannot be called from within a child workflow; penumbra-loop-discover-to-green inlines this loop for that reason.
+// Rubric: the grader reads only the candidate diff (worktree_inspect, else git -C <repo> diff <base>...<branch>, with the repo from args.repo or caller_cwd). Write every criterion so the diff alone can prove it. A grader that cannot read the diff reports GRADER_UNAVAILABLE.
+// A reply without a CHECK_RESULT marker is UNKNOWN: with verifyCheck on, the independent verifier's check_exit decides the round; otherwise it is a FAIL.
+// A missing penumbra:penumbra-fanout-proxy agent stops round 1 with reason proxy_not_installed.
 // task-spec-validation:begin
 function validateSpec(spec) {
   const workflowName = spec.workflowName || 'workflow'
@@ -148,16 +153,22 @@ if (parityCheck !== null && !verifyCheck) {
 }
 const maxRounds = Math.max(0, input.maxRounds ?? 3)
 const base = input.base || 'main'
+const rubricBase = input.base || (typeof defaults.branch_base === 'string' && defaults.branch_base) || 'main'
 const rubric = Array.isArray(input.rubric) ? input.rubric.filter((c) => typeof c === 'string' && c.trim().length > 0) : []
+const PROXY_NOT_INSTALLED_HINT = "The fanout proxy agent penumbra:penumbra-fanout-proxy is not available in this session (the Penumbra Claude Code plugin ships it as plugin/agents/penumbra-fanout-proxy.md). Install or enable that plugin and start a new Claude Code session, or pass agentType: 'inherit' to opt in to the generic proxy, which can run Bash."
 
 const RUBRIC_RESULT = {
   type: 'object',
   additionalProperties: false,
-  required: ['criteria'],
+  required: ['criteria', 'inspected'],
   properties: {
     overall_pass: {
       type: 'boolean',
       description: 'explicit verdict for the whole rubric; decide from this field',
+    },
+    inspected: {
+      type: 'boolean',
+      description: 'true only when you located and read the candidate diff; false means the rubric was not graded',
     },
     criteria: {
       type: 'array',
@@ -258,25 +269,28 @@ function parseCheck(result, responseMode = 'first_line') {
     if (marker[1].toUpperCase() === 'PASS') sawPass = true
   }
   if (!sawFail && sawPass) return { passed: true, output: '' }
-  if (useFirstLine && !sawFail && !sawPass && hasResponse) {
-    const fullScan = stripFencedBlocks(String(result.response || ''))
-    let fullSawPass = false
-    let fullSawFail = false
+  let fullSawPass = false
+  let fullSawFail = false
+  const fallbackText = hasResponse ? String(result.response || '') : String(result.failure_tail || '')
+  if (useFirstLine && !sawFail && !sawPass && fallbackText) {
+    const fullScan = stripFencedBlocks(fallbackText)
     for (const line of fullScan.split('\n')) {
       const marker = /^ {0,3}CHECK_RESULT:\s*(PASS|FAIL)\b/i.exec(line)
       if (!marker) continue
       if (marker[1].toUpperCase() === 'FAIL') fullSawFail = true
-      if (marker[1].toUpperCase() === 'PASS') fullSawPass = true
+      if (marker[1].toUpperCase() === 'PASS' && hasResponse) fullSawPass = true
     }
-    if (!fullSawFail && fullSawPass) {
+    if (hasResponse && !fullSawFail && fullSawPass) {
       log('fix-until-green: check_line held no CHECK_RESULT marker (worker narrated first); recovered the verdict from the full response.')
       return { passed: true, output: '' }
     }
   }
+  // No line-initial, unfenced marker anywhere: UNKNOWN, not FAIL.
+  const unknown = !sawPass && !sawFail && !fullSawPass && !fullSawFail
   if (useFirstLine) {
-    return { passed: false, output: String(result.failure_tail || result.response || result.check_line || '').slice(-4000) }
+    return { passed: false, ...(unknown ? { unknown: true } : {}), output: String(result.failure_tail || result.response || result.check_line || '').slice(-4000) }
   }
-  return { passed: false, output: text.slice(-4000) }
+  return { passed: false, ...(unknown ? { unknown: true } : {}), output: text.slice(-4000) }
 }
 
 function stripFencedBlocks(text) {
@@ -337,7 +351,7 @@ function hopFields(result) {
   }
 }
 
-function rubricPrompt(branch, handoffId) {
+function rubricPrompt(branch, handoffId, repoRoot, worktreePath) {
   const title = task.title || task.task_name || task.label || task.name || 'Untitled task'
   const messagePreview = `${String(task.message || '').slice(0, 400)}…`
   return [
@@ -347,13 +361,17 @@ function rubricPrompt(branch, handoffId) {
     `Title: ${title}`,
     `Message preview: ${messagePreview}`,
     ``,
-    `The worker reported CHECK_RESULT: PASS for this command:`,
+    `The CHECK command below passed (worker report or independent verifier):`,
     check,
     ``,
     `Candidate branch: ${branch}`,
     `Handoff id: ${handoffId}`,
     ``,
-    `Inspect the worktree diff with mcp__penumbra__worktree_inspect({ handoff_id: "${handoffId}" }) and run git diff --stat first. Read only the hunks needed to grade the rubric-relevant changes. Grade every rubric criterion below against the actual diff and task intent.`,
+    ...(repoRoot ? [`Repository root: ${repoRoot}`, `Candidate worktree (derived; it may not exist): ${worktreePath}`] : ['Repository root: unknown (args.repo, args.caller_cwd and defaults.caller_cwd are unset or relative).']),
+    `Inspect the worktree diff with mcp__penumbra__worktree_inspect({ handoff_id: "${handoffId}" }).`,
+    repoRoot ? `If worktree_inspect fails or returns not_found, read the diff with git -C ${repoRoot} diff --stat ${rubricBase}...${branch} and then git -C ${repoRoot} diff ${rubricBase}...${branch} -- <path>. Run every diff as git -C ${repoRoot}, never from your own working directory, which can be a different repository.` : 'If worktree_inspect fails, return inspected:false: without a repository root the candidate cannot be located safely.',
+    'If you cannot read the candidate diff, return inspected:false with an empty criteria array and say why in notes. Set inspected:true only after you have read the candidate diff.',
+    'Read only the hunks needed to grade the rubric-relevant changes. Grade every rubric criterion below against the actual diff and task intent.',
     rubric.map((c, i) => `${i + 1}. ${c}`).join('\n'),
     ``,
     `For each criterion, pass=true only when the diff clearly satisfies it. Evidence must cite concrete files, hunks, command output, or observed diff facts. Return RUBRIC_RESULT with an explicit boolean "overall_pass" verdict, plus exactly one item per criterion: index is the criterion's number in the list above, and criterion is its text verbatim.`,
@@ -488,6 +506,8 @@ for (let i = 0; i < maxRounds; i++) {
   let dispatchFailure = null
   if (!r) {
     dispatchFailure = 'agent_dropped'
+  } else if (r.status === 'proxy_error' && r.error_code === 'not_found' && input.agentType === undefined) {
+    dispatchFailure = 'proxy_not_installed'
   } else if (![r.conversation_id, r.root_handoff_id || r.handoff_id].some((id) => typeof id === 'string' && id.trim())) {
     dispatchFailure = 'no_dispatch'
   } else if (r.status === 'completed' && r.reliability_trustworthy !== true) {
@@ -504,28 +524,31 @@ for (let i = 0; i < maxRounds; i++) {
     const detail = dispatchFailure === 'untrustworthy_dispatch' ? (r.reliability_trustworthy === false ? 'audited and distrusted' : 'never audited') : ''
     const status = dispatchFailure === 'chain_failed' && r && typeof r.status === 'string' && r.status ? ` status=${r.status}` : ''
     const summary = r && typeof r.error_summary === 'string' && r.error_summary ? ` error_summary=${r.error_summary}` : ''
-    rounds.push({ round: i + 1, agent: agentForRound, dispatch_ok: false, reason: dispatchFailure, result: r || null, ...hopFields(r), ci_parity: false })
-    log(`fix-until-green round ${i + 1}: ${dispatchFailure}${detail ? ` (${detail})` : ''}${status}${summary}; stopping.`)
+    const hint = dispatchFailure === 'proxy_not_installed' ? PROXY_NOT_INSTALLED_HINT : ''
+    rounds.push({ round: i + 1, agent: agentForRound, dispatch_ok: false, reason: dispatchFailure, ...(hint ? { hint } : {}), result: r || null, ...hopFields(r), ci_parity: false })
+    if (hint) prevOutput = hint
+    log(`fix-until-green round ${i + 1}: ${dispatchFailure}${detail ? ` (${detail})` : ''}${status}${summary}${hint ? ` ${hint}` : ''}; stopping.`)
     break
   }
 
   const verdict = parseCheck(r, responseMode)
+  const verifyMissingMarker = verdict.unknown === true && Boolean(r.branch)
   prevBranch = r.branch
   prevOutput = verdict.output
   if (r.extra_hops > 0 || r.hops_incomplete === true) {
     log(`WARNING: fix-until-green round ${i + 1}: ignored ${r.extra_hops || 0} extra hop(s) for branch selection; retry_prompt_count=${r.retry_prompt_count || 0} hops_incomplete=${r.hops_incomplete === true}; using root_handoff_id=${r.root_handoff_id} branch=${r.branch}`)
   }
-  log(`fix-until-green round ${i + 1}: ${verdict.passed ? 'PASS' : 'FAIL'} on ${r.branch}`)
+  log(`fix-until-green round ${i + 1}: ${verdict.passed ? 'PASS' : verdict.unknown ? 'UNKNOWN (no CHECK_RESULT marker)' : 'FAIL'} on ${r.branch}`)
+  const repoRoot = input.repo ?? input.caller_cwd ?? defaults.caller_cwd
+  const hasRepoRoot = typeof repoRoot === 'string' && repoRoot.startsWith('/')
+  const worktreePath = hasRepoRoot ? `${repoRoot}-worktrees/${r.handoff_id}` : null
   let checkVerified = false
   let checkVerifyStatus = 'skipped'
-  if (verdict.passed && verifyCheck) {
-    const repoRoot = input.repo ?? input.caller_cwd ?? defaults.caller_cwd
-    const hasRepoRoot = typeof repoRoot === 'string' && repoRoot.startsWith('/')
-    const worktreePath = hasRepoRoot ? `${repoRoot}-worktrees/${r.handoff_id}` : null
+  if ((verdict.passed || verifyMissingMarker) && verifyCheck) {
     const verifyPrompt = [
       'You are an independent CHECK verifier. Do not edit, commit, push, or land anything.',
       '',
-      'The worker claimed PASS. Do not trust that claim — measure it.',
+      verdict.passed ? 'The worker claimed PASS. Do not trust that claim — measure it.' : 'The worker final message carried no CHECK_RESULT line, so its result is unknown. Measure the CHECK yourself.',
       '',
       worktreePath
         ? `The worktree is likely at ${worktreePath}; try that directory first. If it does not exist, locate the worktree yourself: run \`git worktree list\` and filter for the branch named ${r.branch} (or the handoff id ${r.handoff_id}). cd to that worktree. Only if you still cannot locate it after that, set ran:false, check_exit:-1, and note this in notes.`
@@ -559,9 +582,9 @@ for (let i = 0; i < maxRounds; i++) {
     }
     if (v == null || typeof v !== 'object') {
       checkVerifyStatus = 'unavailable'
-      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), check_verify_status: 'unavailable', check_passed: true, verified: false, ci_parity: false, passed: false })
-      prevOutput = 'Independent CHECK verifier was unavailable; the worker\'s PASS was not attested.'
-      log(`fix-until-green round ${i + 1}: independent CHECK verifier unavailable; worker PASS not attested on ${r.branch}`)
+      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), check_verify_status: 'unavailable', check_passed: verdict.passed, verified: false, ci_parity: false, passed: false })
+      prevOutput = verdict.passed ? 'Independent CHECK verifier was unavailable; the worker\'s PASS was not attested.' : 'Independent CHECK verifier was unavailable; the round had no CHECK_RESULT marker and was not attested.'
+      log(`fix-until-green round ${i + 1}: independent CHECK verifier unavailable; ${verdict.passed ? 'worker PASS not attested' : 'unmarked round not attested'} on ${r.branch}`)
       break
     }
     const parityFailed = parityCheck !== null && v.parity_exit !== 0
@@ -570,10 +593,10 @@ for (let i = 0; i < maxRounds; i++) {
       consecutiveVerifyNotRun = verifierRan ? 0 : consecutiveVerifyNotRun + 1
       checkVerifyStatus = 'failed'
       const failOutput = [v.failing_segment, v.output_tail, v.notes].filter(Boolean).join('\n')
-      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), check_verify_status: 'failed', check_passed: true, verified: false, check_exit: v.check_exit, ci_parity: false, passed: false })
+      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), check_verify_status: 'failed', check_passed: verdict.passed, verified: false, check_exit: v.check_exit, ci_parity: false, passed: false })
       prevOutput = failOutput
       if (verifierRan) {
-        log(`fix-until-green round ${i + 1}: worker claimed PASS but the independent CHECK verifier measured check_exit=${v.check_exit}${parityCheck !== null ? ` parity_exit=${v.parity_exit}` : ''}; treating as FAIL`)
+        log(`fix-until-green round ${i + 1}: ${verdict.passed ? 'worker claimed PASS but' : 'round had no CHECK_RESULT marker and'} the independent CHECK verifier measured check_exit=${v.check_exit}${parityCheck !== null ? ` parity_exit=${v.parity_exit}` : ''}; treating as FAIL`)
       } else {
         log(`fix-until-green round ${i + 1}: the independent CHECK verifier could not run the CHECK (ran=false, check_exit=${v.check_exit}); treating as FAIL`)
       }
@@ -587,11 +610,11 @@ for (let i = 0; i < maxRounds; i++) {
     checkVerified = true
     checkVerifyStatus = 'passed'
   }
-  if (verdict.passed) {
+  if (verdict.passed || checkVerified) {
     if (rubric.length > 0) {
       let grade
       try {
-        grade = await agent(rubricPrompt(r.branch, r.handoff_id), {
+        grade = await agent(rubricPrompt(r.branch, r.handoff_id, hasRepoRoot ? repoRoot : null, worktreePath), {
           label: `rubric#${i + 1}`,
           phase: 'Iterate',
           schema: RUBRIC_RESULT,
@@ -601,23 +624,24 @@ for (let i = 0; i < maxRounds; i++) {
       } catch {
         grade = null
       }
-      if (grade === null) {
-        const graderUnavailableOutput = 'Independent rubric grader was unavailable; rubric not attested.'
+      const notInspected = grade != null && grade.inspected !== true
+      if (grade == null || notInspected) {
+        const graderUnavailableOutput = notInspected ? 'Independent rubric grader could not locate the candidate diff; rubric not attested.' : 'Independent rubric grader was unavailable; rubric not attested.'
         rounds.push({
           round: i + 1,
           agent: agentForRound,
           branch: r.branch,
           handoff_id: r.handoff_id,
           ...hopFields(r),
-          check_passed: true,
+          check_passed: verdict.passed,
           check_verify_status: checkVerifyStatus,
           rubric_status: 'GRADER_UNAVAILABLE',
-          rubric_grade: null,
+          rubric_grade: grade ?? null,
           verified: checkVerified,
           ci_parity: parityCheck !== null && checkVerified,
           passed: false,
         })
-        log(`fix-until-green round ${i + 1}: grader unavailable; rubric not attested on ${r.branch}`)
+        log(`fix-until-green round ${i + 1}: ${notInspected ? 'grader could not locate the candidate diff' : 'grader was unavailable'}; rubric not attested on ${r.branch}`)
         prevOutput = graderUnavailableOutput
         break
       }
@@ -632,7 +656,7 @@ for (let i = 0; i < maxRounds; i++) {
         handoff_id: r.handoff_id,
         ...hopFields(r),
         passed: rubricPassed,
-        check_passed: true,
+        check_passed: verdict.passed,
         check_verify_status: checkVerifyStatus,
         rubric_grade: grade,
         verified: checkVerified,
@@ -644,7 +668,7 @@ for (let i = 0; i < maxRounds; i++) {
       }
       prevOutput = failedOutput
     } else {
-      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), passed: true, check_verify_status: checkVerifyStatus, verified: checkVerified, ci_parity: parityCheck !== null && checkVerified })
+      rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), passed: true, check_passed: verdict.passed, check_verify_status: checkVerifyStatus, verified: checkVerified, ci_parity: parityCheck !== null && checkVerified })
       return { ok: true, green: true, rounds_used: i + 1, final_branch: r.branch, rounds, check, ci_parity: parityCheck !== null && checkVerified }
     }
   } else {

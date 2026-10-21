@@ -105,3 +105,8 @@ Native TS workflow that dispatches an implementation task to the penumbra fleet,
 - **Rubric coverage**: if a rubric is supplied, `overall_pass` is required and every normalized criterion must appear exactly once and pass; missing, duplicate, and unknown criteria fail even with `overall_pass: true`.
 - **Fail-closed**: unavailable verifiers and graders fail the round, never silently pass.
 - **No autoland**: the workflow never lands; it returns the green branch for the caller to land.
+
+## Claude Code script
+
+- The Claude Code Workflow `.claude/workflows/penumbra-fix-until-green.js` runs the same loop from a Claude Code session. It must be the top-level Workflow run: each round calls `workflow('penumbra-fanout')`, and `workflow()` cannot be called from within a child workflow, so another workflow cannot nest it. This native workflow calls `runFanout` directly and has no such limit.
+- Rubric criteria must be checkable from the candidate diff alone, in both variants. The grader does not see the worker reply, so a criterion such as "the worker reported a regression proof" can never pass and only drives retries. Put such requirements in the check command instead (for example, a test that fails without the change).

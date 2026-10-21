@@ -34,7 +34,11 @@ test("passes when PASS marker appears after a narrative opener", () => {
 test("fails when an unfenced PASS marker is indented as a CommonMark code block", () => {
   const text = "Check failed, output follows:\n    CHECK_RESULT: PASS";
 
-  expect(parseCheck(text)).toEqual({ passed: false, output: text });
+  expect(parseCheck(text)).toEqual({
+    passed: false,
+    unknown: true,
+    output: text,
+  });
 });
 
 test("passes when PASS marker has exactly three leading spaces", () => {
@@ -73,7 +77,11 @@ test("fails when fenced PASS is followed by a real FAIL marker", () => {
 test("fails when tilde fence contains PASS marker", () => {
   const text = ["Check failed; output follows:", "~~~", "CHECK_RESULT: PASS", "~~~"].join("\n");
 
-  expect(parseCheck(text)).toEqual({ passed: false, output: text });
+  expect(parseCheck(text)).toEqual({
+    passed: false,
+    unknown: true,
+    output: text,
+  });
 });
 
 test("fails when four-backtick fence embeds triple-backtick output with PASS marker", () => {
@@ -81,7 +89,11 @@ test("fails when four-backtick fence embeds triple-backtick output with PASS mar
     "\n",
   );
 
-  expect(parseCheck(text)).toEqual({ passed: false, output: text });
+  expect(parseCheck(text)).toEqual({
+    passed: false,
+    unknown: true,
+    output: text,
+  });
 });
 
 test("fails when tilde-fenced PASS is followed by real FAIL marker", () => {
@@ -99,13 +111,21 @@ test("passes when PASS marker precedes an unterminated fence", () => {
 test("fails when longer backtick fence contains shorter backtick fence and PASS marker", () => {
   const text = ["````", "```", "CHECK_RESULT: PASS", "```", "````"].join("\n");
 
-  expect(parseCheck(text)).toEqual({ passed: false, output: text });
+  expect(parseCheck(text)).toEqual({
+    passed: false,
+    unknown: true,
+    output: text,
+  });
 });
 
 test("fails when fence closes with a longer matching run after PASS marker", () => {
   const text = ["```", "CHECK_RESULT: PASS", "````"].join("\n");
 
-  expect(parseCheck(text)).toEqual({ passed: false, output: text });
+  expect(parseCheck(text)).toEqual({
+    passed: false,
+    unknown: true,
+    output: text,
+  });
 });
 
 test("passes when PASS marker follows a fence closed by a longer matching run", () => {
@@ -117,7 +137,11 @@ test("passes when PASS marker follows a fence closed by a longer matching run", 
 test("fails when marker text is only embedded mid-sentence", () => {
   const text = "the worker said CHECK_RESULT: PASS after the run";
 
-  expect(parseCheck(text)).toEqual({ passed: false, output: text });
+  expect(parseCheck(text)).toEqual({
+    passed: false,
+    unknown: true,
+    output: text,
+  });
 });
 
 test("fails when both FAIL and PASS marker lines are present", () => {
@@ -127,8 +151,67 @@ test("fails when both FAIL and PASS marker lines are present", () => {
   });
 });
 
-test("fails when no marker exists", () => {
+test("is unknown, not passed, when no marker exists", () => {
   const text = "The check completed without a structured marker.";
 
-  expect(parseCheck(text)).toEqual({ passed: false, output: text });
+  expect(parseCheck(text)).toEqual({
+    passed: false,
+    unknown: true,
+    output: text,
+  });
+});
+
+test("unknown when check_line has no marker and failure_tail is provided", () => {
+  expect(parseCheck({ check_line: "I committed the change.", failure_tail: "tail" })).toEqual({
+    passed: false,
+    unknown: true,
+    output: "tail",
+  });
+});
+
+test("explicit FAIL is never unknown", () => {
+  expect(parseCheck({ check_line: "CHECK_RESULT: FAIL", failure_tail: "boom" })).toEqual({
+    passed: false,
+    output: "boom",
+  });
+});
+
+test("explicit FAIL in response is never unknown", () => {
+  expect(parseCheck({ check_line: "Working", response: "Working\nCHECK_RESULT: FAIL\nx" })).toEqual(
+    { passed: false, output: "Working\nCHECK_RESULT: FAIL\nx" },
+  );
+});
+
+test("glued marker (no newline separator) is unknown, not PASS", () => {
+  expect(
+    parseCheck({
+      check_line: "Now let me run the full check:CHECK_RESULT: PASS",
+    }),
+  ).toEqual({
+    passed: false,
+    unknown: true,
+    output: "Now let me run the full check:CHECK_RESULT: PASS",
+  });
+});
+
+test("an explicit FAIL seen only in failure_tail is trusted and never unknown", () => {
+  expect(
+    parseCheck({
+      check_line: "Summary of the work.",
+      failure_tail: "Summary of the work.\nCHECK_RESULT: FAIL\nboom",
+    }),
+  ).toEqual({
+    passed: false,
+    output: "Summary of the work.\nCHECK_RESULT: FAIL\nboom",
+  });
+});
+
+test("a PASS seen only in failure_tail is not trusted (stays unknown)", () => {
+  expect(
+    parseCheck({ check_line: "Summary.", failure_tail: "Summary.\nCHECK_RESULT: PASS" }),
+  ).toEqual({
+    passed: false,
+    unknown: true,
+    output: "Summary.\nCHECK_RESULT: PASS",
+  });
 });

@@ -22,6 +22,7 @@ interface Round {
   check_verify_status?: string;
   check_passed?: boolean;
   ci_parity?: boolean;
+  hint?: string;
 }
 
 interface FixUntilGreenResult {
@@ -1218,5 +1219,544 @@ describe("penumbra-fix-until-green CI parity verification", () => {
     );
     expect(verifyCall).toBeDefined();
     expect(verifyCall!.prompt).toContain("PARITY run");
+  });
+});
+
+describe("penumbra-fix-until-green missing fanout proxy", () => {
+  const missingProxyStub = async () => ({
+    results: [
+      {
+        ok: false,
+        status: "proxy_error",
+        error_code: "not_found",
+        label: "t0",
+        index: 0,
+        error_summary: "proxy_error: agent type penumbra:penumbra-fanout-proxy not found",
+      },
+    ],
+  });
+
+  test("stops round 1 with proxy_not_installed and an actionable hint", async () => {
+    const { result, workflowCalls, logs, error } = await runFixUntilGreen(
+      { task: { message: "m" }, check: "true", maxRounds: 3, repo: "/repo" },
+      { workflow: missingProxyStub },
+    );
+    expect(error).toBeUndefined();
+    const rounds = (result?.rounds as Round[]) ?? [];
+    expect(result?.green).toBe(false);
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.reason).toBe("proxy_not_installed");
+    expect(rounds[0]?.hint).toContain("penumbra:penumbra-fanout-proxy");
+    expect(rounds[0]?.hint).toContain("agentType: 'inherit'");
+    expect(result?.last_output).toBe(rounds[0]?.hint);
+    expect(workflowCalls.filter((call) => call.name === "penumbra-fanout")).toHaveLength(1);
+    expect(
+      logs.some(
+        (entry) => entry.includes("proxy_not_installed") && entry.includes("agentType: 'inherit'"),
+      ),
+    ).toBe(true);
+  });
+
+  test("explicit agentType keeps a missing proxy as no_dispatch without a hint", async () => {
+    const { result, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 3,
+        repo: "/repo",
+        agentType: "custom:proxy",
+      },
+      { workflow: missingProxyStub },
+    );
+    expect(error).toBeUndefined();
+    const rounds = (result?.rounds as Round[]) ?? [];
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.reason).toBe("no_dispatch");
+    expect(rounds[0]?.hint).toBeUndefined();
+  });
+
+  test("a denied proxy keeps no_dispatch without a hint", async () => {
+    const { result, error } = await runFixUntilGreen(
+      { task: { message: "m" }, check: "true", maxRounds: 3, repo: "/repo" },
+      {
+        workflow: async () => ({
+          results: [
+            {
+              ok: false,
+              status: "proxy_error",
+              error_code: "denied",
+              label: "t0",
+              index: 0,
+              error_summary: "proxy_error: denied",
+            },
+          ],
+        }),
+      },
+    );
+    expect(error).toBeUndefined();
+    const rounds = (result?.rounds as Round[]) ?? [];
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0]?.reason).toBe("no_dispatch");
+    expect(rounds[0]?.hint).toBeUndefined();
+  });
+});
+
+describe("penumbra-fix-until-green rubric grader scope", () => {
+  const graderScopeFanout = async () => ({
+    results: [
+      {
+        ok: true,
+        status: "completed",
+        branch: "test/x_h-777",
+        conversation_id: "c",
+        handoff_id: "h-777",
+        reliability_trustworthy: true,
+        check_line: "CHECK_RESULT: PASS",
+      },
+    ],
+  });
+
+  function graderStub(value: unknown) {
+    return async (_prompt: string, options?: Record<string, unknown>) => {
+      const label = String(options?.label ?? "");
+      if (label.startsWith("verify-check")) return { ran: true, check_exit: 0 };
+      if (label.startsWith("rubric")) return value;
+      return {};
+    };
+  }
+
+  test("grader prompt is scoped to the dispatch repo, not its own cwd", async () => {
+    const { result, agentCalls } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 1,
+        rubric: ["criterion one"],
+        repo: "/srv/other-repo",
+        base: "feat/base",
+      },
+      {
+        workflow: graderScopeFanout,
+        agent: graderStub({
+          inspected: true,
+          overall_pass: true,
+          criteria: [{ index: 1, criterion: "criterion one", pass: true, evidence: "diff" }],
+        }),
+      },
+    );
+
+    expect(result?.green).toBe(true);
+    const prompt = agentCalls.find((c) =>
+      String(c.options?.label ?? "").startsWith("rubric"),
+    )!.prompt;
+    expect(prompt).toContain("Repository root: /srv/other-repo");
+    expect(prompt).toContain("/srv/other-repo-worktrees/h-777");
+    expect(prompt).toContain("git -C /srv/other-repo diff --stat feat/base...test/x_h-777");
+    expect(prompt).toContain('mcp__penumbra__worktree_inspect({ handoff_id: "h-777" })');
+    expect(prompt).not.toMatch(/\bgit (?!-C )/);
+  });
+
+  test("grader prompt uses caller_cwd as repo root when repo is absent", async () => {
+    const { agentCalls } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 1,
+        rubric: ["criterion one"],
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: graderScopeFanout,
+        agent: graderStub({
+          inspected: true,
+          overall_pass: true,
+          criteria: [{ index: 1, criterion: "criterion one", pass: true, evidence: "diff" }],
+        }),
+      },
+    );
+
+    const prompt = agentCalls.find((c) =>
+      String(c.options?.label ?? "").startsWith("rubric"),
+    )!.prompt;
+    expect(prompt).toContain("git -C /abs diff --stat main...test/x_h-777");
+  });
+
+  test("grader returning inspected:false yields GRADER_UNAVAILABLE without a second round", async () => {
+    const { result, workflowCalls } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 2,
+        rubric: ["criterion one"],
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: graderScopeFanout,
+        agent: graderStub({ inspected: false, criteria: [], notes: "branch not found" }),
+      },
+    );
+
+    expect(result?.green).toBe(false);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds).toHaveLength(1);
+    expect(rounds?.[0]?.rubric_status).toBe("GRADER_UNAVAILABLE");
+    expect(rounds?.[0]?.passed).toBe(false);
+    const fanoutCalls = workflowCalls.filter((c) => c.name === "penumbra-fanout");
+    expect(fanoutCalls).toHaveLength(1);
+  });
+
+  test("grader returning undefined yields GRADER_UNAVAILABLE", async () => {
+    const { result, workflowCalls } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 2,
+        rubric: ["criterion one"],
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: graderScopeFanout,
+        agent: graderStub(undefined),
+      },
+    );
+
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.rubric_status).toBe("GRADER_UNAVAILABLE");
+    const fanoutCalls = workflowCalls.filter((c) => c.name === "penumbra-fanout");
+    expect(fanoutCalls).toHaveLength(1);
+  });
+});
+
+describe("penumbra-fix-until-green reply without a CHECK_RESULT marker", () => {
+  const noMarkerFanout = async () => ({
+    results: [
+      {
+        ok: true,
+        status: "completed",
+        branch: "feat/x",
+        conversation_id: "c",
+        handoff_id: "h-123",
+        reliability_trustworthy: true,
+        check_line: "I committed the change and the tests pass.",
+      },
+    ],
+  });
+
+  test("an unknown verdict turns green only through an independent verifier pass", async () => {
+    const { result, workflowCalls, agentCalls } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 3,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: noMarkerFanout,
+        agent: async () => ({ ran: true, check_exit: 0 }),
+      },
+    );
+
+    expect(result?.green).toBe(true);
+    expect(result?.rounds_used).toBe(1);
+    expect(workflowCalls.filter((call) => call.name === "penumbra-fanout")).toHaveLength(1);
+    const verifyCall = agentCalls.find((call) =>
+      String(call.options?.label ?? "").startsWith("verify-check"),
+    );
+    expect(verifyCall).toBeDefined();
+    expect(verifyCall!.prompt).toContain("no CHECK_RESULT line");
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.verified).toBe(true);
+    expect(rounds?.[0]?.check_passed).toBe(false);
+    expect(rounds?.[0]?.check_verify_status).toBe("passed");
+  });
+
+  test("an unknown verdict the verifier fails stays red", async () => {
+    const { result } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: noMarkerFanout,
+        agent: async () => ({
+          ran: true,
+          check_exit: 1,
+          failing_segment: "true",
+          output_tail: "boom",
+        }),
+      },
+    );
+
+    expect(result?.green).toBe(false);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.check_exit).toBe(1);
+    expect(rounds?.[0]?.verified).toBe(false);
+    expect(rounds?.[0]?.check_passed).toBe(false);
+  });
+
+  test("verifyCheck:false never green-lights an unknown verdict", async () => {
+    const { result, agentCalls } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        verifyCheck: false,
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: noMarkerFanout,
+        agent: async () => {
+          throw new Error("agent should not be called");
+        },
+      },
+    );
+
+    expect(result?.green).toBe(false);
+    expect(agentCalls).toHaveLength(0);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.passed).toBe(false);
+  });
+
+  test("an unknown verdict still gates on the rubric after a verifier pass", async () => {
+    const { result, agentCalls } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 1,
+        rubric: ["criterion one"],
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: noMarkerFanout,
+        agent: async (_prompt, options) => {
+          if (String(options?.label ?? "").startsWith("verify-check"))
+            return { ran: true, check_exit: 0 };
+          if (String(options?.label ?? "").startsWith("rubric"))
+            return {
+              inspected: true,
+              overall_pass: false,
+              criteria: [
+                { index: 1, criterion: "criterion one", pass: false, evidence: "missing" },
+              ],
+            };
+          return {};
+        },
+      },
+    );
+
+    expect(result?.green).toBe(false);
+    expect(agentCalls.some((call) => String(call.options?.label ?? "").startsWith("rubric"))).toBe(
+      true,
+    );
+  });
+});
+
+describe("penumbra-fix-until-green rubric grader schema and range", () => {
+  const graderScopeFanout = async () => ({
+    results: [
+      {
+        ok: true,
+        status: "completed",
+        branch: "test/x_h-777",
+        conversation_id: "c",
+        handoff_id: "h-777",
+        reliability_trustworthy: true,
+        check_line: "CHECK_RESULT: PASS",
+      },
+    ],
+  });
+
+  function graderStub(value: unknown) {
+    return async (_prompt: string, options?: Record<string, unknown>) => {
+      const label = String(options?.label ?? "");
+      if (label.startsWith("verify-check")) return { ran: true, check_exit: 0 };
+      if (label.startsWith("rubric")) return value;
+      return {};
+    };
+  }
+
+  test("the rubric grader schema requires the inspected flag", async () => {
+    const { agentCalls } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 1,
+        rubric: ["criterion one"],
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: graderScopeFanout,
+        agent: graderStub({
+          inspected: true,
+          overall_pass: true,
+          criteria: [{ index: 1, criterion: "criterion one", pass: true, evidence: "d" }],
+        }),
+      },
+    );
+
+    const rubricCall = agentCalls.find((c) => String(c.options?.label ?? "").startsWith("rubric"));
+    expect(rubricCall).toBeDefined();
+    const schema = rubricCall!.options?.schema as Record<string, unknown>;
+    expect(schema.required as string[]).toContain("inspected");
+    expect((schema.properties as Record<string, Record<string, unknown>>).inspected!.type).toBe(
+      "boolean",
+    );
+  });
+
+  test("the grader range uses defaults.branch_base when args.base is absent", async () => {
+    const { agentCalls } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 1,
+        rubric: ["criterion one"],
+        defaults: { caller_cwd: "/abs", branch_base: "feat/d" },
+      },
+      {
+        workflow: graderScopeFanout,
+        agent: graderStub({
+          inspected: true,
+          overall_pass: true,
+          criteria: [{ index: 1, criterion: "criterion one", pass: true, evidence: "d" }],
+        }),
+      },
+    );
+
+    const prompt = agentCalls.find((c) =>
+      String(c.options?.label ?? "").startsWith("rubric"),
+    )!.prompt;
+    expect(prompt).toContain("git -C /abs diff --stat feat/d...test/x_h-777");
+  });
+});
+
+describe("penumbra-fix-until-green proxy hint session guidance", () => {
+  test("the proxy hint tells the operator to start a new session", async () => {
+    const missingProxyStub = async () => ({
+      results: [
+        {
+          ok: false,
+          status: "proxy_error",
+          error_code: "not_found",
+          label: "t0",
+          index: 0,
+          error_summary: "proxy_error: agent type penumbra:penumbra-fanout-proxy not found",
+        },
+      ],
+    });
+
+    const { result } = await runFixUntilGreen(
+      { task: { message: "m" }, check: "true", maxRounds: 3, repo: "/repo" },
+      { workflow: missingProxyStub },
+    );
+
+    const rounds = (result?.rounds as Round[]) ?? [];
+    expect(rounds[0]?.hint).toContain("start a new Claude Code session");
+  });
+});
+
+describe("penumbra-fix-until-green fails closed on an unattested grade or unmarked round", () => {
+  const graderScopeFanout = async () => ({
+    results: [
+      {
+        ok: true,
+        status: "completed",
+        branch: "test/x_h-777",
+        conversation_id: "c",
+        handoff_id: "h-777",
+        reliability_trustworthy: true,
+        check_line: "CHECK_RESULT: PASS",
+      },
+    ],
+  });
+
+  function graderStub(value: unknown) {
+    return async (_prompt: string, options?: Record<string, unknown>) => {
+      const label = String(options?.label ?? "");
+      if (label.startsWith("verify-check")) return { ran: true, check_exit: 0 };
+      if (label.startsWith("rubric")) return value;
+      return {};
+    };
+  }
+
+  test("a passing grade with no inspected key yields GRADER_UNAVAILABLE", async () => {
+    const { result } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 2,
+        rubric: ["criterion one"],
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: graderScopeFanout,
+        agent: graderStub({
+          overall_pass: true,
+          criteria: [{ index: 1, criterion: "criterion one", pass: true, evidence: "d" }],
+        }),
+      },
+    );
+
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.rubric_status).toBe("GRADER_UNAVAILABLE");
+    expect(result?.green).toBe(false);
+  });
+
+  test("a passing grade with inspected:null yields GRADER_UNAVAILABLE", async () => {
+    const { result } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 2,
+        rubric: ["criterion one"],
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: graderScopeFanout,
+        agent: graderStub({
+          inspected: null,
+          overall_pass: true,
+          criteria: [{ index: 1, criterion: "criterion one", pass: true, evidence: "d" }],
+        }),
+      },
+    );
+
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.rubric_status).toBe("GRADER_UNAVAILABLE");
+    expect(result?.green).toBe(false);
+  });
+
+  test("an unmarked round whose verifier is unavailable says no CHECK_RESULT marker, not worker PASS", async () => {
+    const noMarkerFanout = async () => ({
+      results: [
+        {
+          ok: true,
+          status: "completed",
+          branch: "feat/x",
+          conversation_id: "c",
+          handoff_id: "h-123",
+          reliability_trustworthy: true,
+          check_line: "I committed the change.",
+        },
+      ],
+    });
+
+    const { result } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: noMarkerFanout,
+        agent: async () => null,
+      },
+    );
+
+    const lastOutput = String(result?.last_output ?? "");
+    expect(lastOutput).toContain("no CHECK_RESULT marker");
+    expect(lastOutput).not.toContain("worker's PASS");
   });
 });
