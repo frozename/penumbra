@@ -4,6 +4,7 @@ import {
   loadSqliteVec,
   migrate,
   type Services,
+  WorkerTokenStore,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { registerWorkerForTest } from "@penumbra/daemon/test-utils";
@@ -262,9 +263,67 @@ test("orphan exhausted re-offers", async () => {
   assertReoffered(services, emitted, "failed");
 });
 
-test("stale sweeper force-resolve re-offers", async () => {
+test("stale sweeper force-resolve holds the slot until the worker reports dispatch.end, then the sweep re-offers", async () => {
   const { services, emitted } = setup(() => new Date("2026-05-04T12:00:00.000Z"));
   seedRunningAndWaiting(services, emitted);
+  new WorkerTokenStore(services.db).issue({ worker_id: "W-A" }, Date.now());
+  services.db
+    .query<never, [string, string]>("UPDATE handoffs SET ts=? WHERE handoff_id=?")
+    .run("2026-05-04T11:50:00.000Z", "running");
+  expect(services.handoffWriter.claimDispatch("running", "W-A")).toBe(true);
+  services.dispatchEventLog.record({
+    handoff_id: "running",
+    worker_id: "W-A",
+    source: "worker",
+    kind: "dispatch.start",
+    ts: "2026-05-04T11:50:01.000Z",
+  });
+  emitted.length = 0;
+
+  const result = runStaleHandoffSweep(
+    { services },
+    { lastSwept: new Map() },
+    () => new Date("2026-05-04T12:00:00.000Z"),
+  );
+  await Promise.resolve();
+  await Promise.resolve();
+
+  expect(result.resolved).toEqual(["running"]);
+  expect(emitted.some((r) => r.handoff_id === "waiting")).toBe(false);
+
+  services.dispatchEventLog.record({
+    handoff_id: "unrelated",
+    worker_id: "W-B",
+    source: "worker",
+    kind: "dispatch.end",
+    ts: "2026-05-04T12:00:00.500Z",
+  });
+  createProviderCapacityReoffer({ services }).sweep();
+  expect(emitted.some((r) => r.handoff_id === "waiting")).toBe(false);
+
+  services.dispatchEventLog.record({
+    handoff_id: "running",
+    worker_id: "W-A",
+    source: "worker",
+    kind: "dispatch.end",
+    ts: "2026-05-04T12:00:01.000Z",
+  });
+  createProviderCapacityReoffer({ services }).sweep();
+
+  expect(emitted.some((r) => r.handoff_id === "waiting" && r.status === "approved")).toBe(true);
+  const reofferRow = services.db
+    .query<
+      { meta_json: string | null },
+      [string]
+    >("SELECT meta_json FROM dispatch_events WHERE handoff_id=? AND kind='claim.reoffer'")
+    .get("waiting");
+  expect(JSON.parse(reofferRow?.meta_json ?? "{}")).toMatchObject({ cause: "sweep" });
+});
+
+test("stale sweeper force-resolve re-offers at once when the swept worker is not live", async () => {
+  const { services, emitted } = setup(() => new Date("2026-05-04T12:00:00.000Z"));
+  seedRunningAndWaiting(services, emitted);
+  new WorkerTokenStore(services.db).issue({ worker_id: "W-A" }, Date.now() - 10 * 60_000);
   services.db
     .query<never, [string, string]>("UPDATE handoffs SET ts=? WHERE handoff_id=?")
     .run("2026-05-04T11:50:00.000Z", "running");

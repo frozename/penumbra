@@ -1,5 +1,7 @@
 import { resolveProvider, type Services } from "@penumbra/core";
 
+import { workerHeartbeatStaleMs } from "../routes/worker-profile-gate.js";
+
 export interface ProviderConcurrencyDecision {
   provider: string;
   providerSeatNames: string[];
@@ -7,7 +9,51 @@ export interface ProviderConcurrencyDecision {
   in_flight_count: number;
 }
 
-type ConcurrencyServices = Pick<Services, "db" | "agentchatConfig" | "providerQuotas">;
+type ConcurrencyServices = Pick<Services, "db" | "agentchatConfig" | "providerQuotas"> &
+  Partial<Pick<Services, "clock">>;
+
+// Fallback bound only. A stale-swept session releases its slot when its worker posts
+// dispatch.end or when that worker stops heartbeating. stdio-acp's prompt timeout is an
+// idle timer (20 min default, re-armed by every session/update), so no wall bound matches
+// a busy session; this caps the slot leak when a live worker never reports dispatch.end
+// (e.g. it restarted under the same persisted worker_id).
+export const STALE_SWEEP_DRAIN_MAX_HOLD_MS = 60 * 60_000;
+
+// Driven by the sweeper's own dispatch.end rows (written in the same transaction as the
+// force-fail, ts = resolved_at) through idx_dispatch_events_end_ts; CROSS JOIN pins that
+// order so SQLite never scans every failed handoff. The worker is live while the heartbeat
+// route has touched one of its tokens within workerHeartbeatStaleMs() (the same freshness
+// test as countFreshEligibleWorkers); the row is durable, so the hold survives a daemon
+// restart, unlike the watchdog's in-memory map. A NULL worker_id never matches a token.
+// Params: max-hold cutoff ISO, the seat names, then the worker-liveness cutoff in ms.
+export function sweeperDrainingCountSql(placeholders: string): string {
+  return `SELECT COUNT(*) AS n
+            FROM dispatch_events s
+           CROSS JOIN handoffs h
+           WHERE s.kind = 'dispatch.end'
+             AND s.ts >= ?
+             AND s.source = 'sweeper'
+             AND h.handoff_id = s.handoff_id
+             AND h.to_agent IN (${placeholders})
+             AND h.status = 'failed'
+             AND h.resolved_by = 'stale-handoff-sweeper'
+             AND NOT EXISTS (
+               SELECT 1 FROM dispatch_events w
+                WHERE w.handoff_id = h.handoff_id
+                  AND w.kind = 'dispatch.end'
+                  AND w.source = 'worker'
+             )
+             AND EXISTS (
+               SELECT 1 FROM worker_tokens t
+                WHERE t.worker_id = h.worker_id
+                  AND t.revoked_at IS NULL
+                  AND t.last_seen_at >= ?
+             )`;
+}
+
+export function sweeperDrainCutoffIso(now: Date): string {
+  return new Date(now.getTime() - STALE_SWEEP_DRAIN_MAX_HOLD_MS).toISOString();
+}
 
 export function countProviderInFlight(
   services: ConcurrencyServices,
@@ -15,7 +61,7 @@ export function countProviderInFlight(
 ): number {
   if (providerSeatNames.length === 0) return 0;
   const placeholders = providerSeatNames.map(() => "?").join(",");
-  const row = services.db
+  const dispatched = services.db
     .query<{ n: number }, string[]>(
       `SELECT COUNT(*) AS n
          FROM handoffs
@@ -23,7 +69,12 @@ export function countProviderInFlight(
           AND to_agent IN (${placeholders})`,
     )
     .get(...providerSeatNames);
-  return row?.n ?? 0;
+  const cutoffIso = sweeperDrainCutoffIso(services.clock?.() ?? new Date());
+  const workerLiveSinceMs = Date.now() - workerHeartbeatStaleMs();
+  const draining = services.db
+    .query<{ n: number }, (string | number)[]>(sweeperDrainingCountSql(placeholders))
+    .get(cutoffIso, ...providerSeatNames, workerLiveSinceMs);
+  return (dispatched?.n ?? 0) + (draining?.n ?? 0);
 }
 
 export function resolveProviderConcurrencyDecision(

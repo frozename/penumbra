@@ -1,6 +1,6 @@
-import type { DispatchEventInput } from "@penumbra/core";
+import type { DispatchEventInput, Logger } from "@penumbra/core";
 
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 
 import {
   type ControlListenerClient,
@@ -10,6 +10,11 @@ import {
   runWorkerControlListener,
   type WorkerControlEvent,
 } from "@src/worker/control-listener.js";
+import {
+  createWorkerDispatcher,
+  type DispatcherHandoff,
+  type WorkerDispatcherDeps,
+} from "@src/worker/dispatcher.js";
 
 // Async generator factory satisfies the ControlListenerClient contract:
 // when called with an empty events array it yields nothing but still
@@ -308,4 +313,157 @@ test("handleControlEvent triggers onConfigReload on agentchat_reload", () => {
 
   expect(reloads).toBe(1);
   expect(sink.warns).toHaveLength(0);
+});
+
+const baseHandoff = (id: string, conv: string): DispatcherHandoff => ({
+  handoff_id: id,
+  conversation_id: conv,
+  project_id: null,
+  to_agent: "executor",
+  message: "m",
+});
+
+function makeDeps(over: Partial<WorkerDispatcherDeps> = {}): WorkerDispatcherDeps {
+  return {
+    claim: mock().mockResolvedValue({ status: "dispatched" }),
+    dispatch: mock().mockResolvedValue({
+      next: null,
+      terminatedReason: "no_mention" as const,
+      text: "",
+      agent: "executor",
+    }),
+    postProgress: mock().mockResolvedValue(undefined),
+    complete: mock().mockResolvedValue(undefined),
+    markFailed: mock().mockResolvedValue(undefined),
+    log: { info: mock(), warn: mock(), debug: mock(), error: mock() } as unknown as Logger,
+    concurrency: 1,
+    ...over,
+  };
+}
+
+test("a daemon cancel control event aborts the matching in-flight dispatch (#218)", async () => {
+  let resolveStarted!: () => void;
+  const started = new Promise<void>((r) => {
+    resolveStarted = r;
+  });
+  let outcome = "";
+
+  const dispatchFn = mock().mockImplementation(
+    async (_handoff: DispatcherHandoff, _onChunk: (d: string) => void, signal: AbortSignal) => {
+      resolveStarted();
+      outcome = await Promise.race([
+        new Promise<string>((r) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              r("aborted");
+            },
+            { once: true },
+          );
+        }),
+        new Promise<string>((r) => {
+          setTimeout(() => {
+            r("timeout");
+          }, 1000);
+        }),
+      ]);
+      return {
+        next: null,
+        terminatedReason: "no_mention" as const,
+        text: "",
+        agent: "executor",
+      };
+    },
+  );
+
+  const markFailed = mock().mockResolvedValue(undefined);
+  const complete = mock().mockResolvedValue(undefined);
+  const dispatcher = createWorkerDispatcher(
+    makeDeps({ dispatch: dispatchFn, markFailed, complete }),
+  );
+
+  void dispatcher.handle(baseHandoff("h-swept", "c-swept"));
+  await started;
+
+  const client: ControlListenerClient = {
+    sendProbeAck: () => Promise.resolve(),
+    subscribeWorkerControl: emptyControlStream,
+  };
+
+  handleControlEvent(
+    { type: "cancel", conversation_id: "c-swept", handoff_id: "h-swept" },
+    { client, dispatcher, workerId: "w1" },
+  );
+
+  await dispatcher.idle();
+
+  expect(outcome).toBe("aborted");
+  expect(markFailed).toHaveBeenCalledTimes(1);
+  expect(markFailed.mock.calls[0]).toEqual(["h-swept", "cancelled"]);
+  expect(complete).not.toHaveBeenCalled();
+});
+
+test("a cancel for another handoff in the same conversation does not abort", async () => {
+  let resolveStarted!: () => void;
+  const started = new Promise<void>((r) => {
+    resolveStarted = r;
+  });
+  const signalRef: { signal: AbortSignal | null } = { signal: null };
+
+  const dispatchFn = mock().mockImplementation(
+    async (_handoff: DispatcherHandoff, _onChunk: (d: string) => void, signal: AbortSignal) => {
+      signalRef.signal = signal;
+      resolveStarted();
+      await Promise.race([
+        new Promise<string>((r) => {
+          signal.addEventListener(
+            "abort",
+            () => {
+              r("aborted");
+            },
+            { once: true },
+          );
+        }),
+        new Promise<string>((r) => {
+          setTimeout(() => {
+            r("timeout");
+          }, 1000);
+        }),
+      ]);
+      return {
+        next: null,
+        terminatedReason: "no_mention" as const,
+        text: "",
+        agent: "executor",
+      };
+    },
+  );
+
+  const markFailed = mock().mockResolvedValue(undefined);
+  const dispatcher = createWorkerDispatcher(makeDeps({ dispatch: dispatchFn, markFailed }));
+
+  void dispatcher.handle(baseHandoff("h-swept", "c-swept"));
+  await started;
+
+  const client: ControlListenerClient = {
+    sendProbeAck: () => Promise.resolve(),
+    subscribeWorkerControl: emptyControlStream,
+  };
+
+  handleControlEvent(
+    { type: "cancel", conversation_id: "c-swept", handoff_id: "h-older" },
+    { client, dispatcher, workerId: "w1" },
+  );
+
+  await new Promise((r) => setTimeout(r, 0));
+  expect(signalRef.signal?.aborted).toBe(false);
+
+  handleControlEvent(
+    { type: "cancel", conversation_id: "c-swept", handoff_id: "h-swept" },
+    { client, dispatcher, workerId: "w1" },
+  );
+
+  await dispatcher.idle();
+
+  expect(signalRef.signal?.aborted).toBe(true);
 });
