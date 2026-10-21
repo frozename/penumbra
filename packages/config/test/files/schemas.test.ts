@@ -340,9 +340,10 @@ describe("RoutingConfigSchema", () => {
       parseYaml(`${loadFixture("routing")}\nreconcilerAutoRebase: sometimes\n`),
     );
     if (result.success) throw new Error("expected a non-boolean reconcilerAutoRebase to fail");
-    expect(result.error.issues).toContainEqual(
-      expect.objectContaining({ code: "invalid_type", path: ["reconcilerAutoRebase"] }),
+    const typeIssue = result.error.issues.find(
+      (i) => i.code === "invalid_type" && String(i.path[0]) === "reconcilerAutoRebase",
     );
+    expect(typeIssue).toMatchObject({ code: "invalid_type", path: ["reconcilerAutoRebase"] });
   });
 
   test("missing required field throws", () => {

@@ -172,7 +172,7 @@ function splitLegacyConfig(legacy: ParsedAgentChatConfig): SplitLegacyConfigResu
     ...(Object.keys(personas).length > 0 ? { personas } : {}),
     ...(Object.keys(workloads).length > 0 ? { workloads } : {}),
     // The worker defaults to true, so only an explicit opt-out needs to survive the split.
-    ...(legacy.reconcilerAutoRebase === false ? { reconcilerAutoRebase: false } : {}),
+    ...(!legacy.reconcilerAutoRebase ? { reconcilerAutoRebase: false } : {}),
   });
 
   const quotas = QuotasConfigSchema.parse({ providers: legacy.providers });
