@@ -1,0 +1,37 @@
+export {
+  type AcquireOptions,
+  createHeavyJobGate,
+  defaultHeavyJobLockPath,
+  type HeavyJobGate,
+  type HeavyJobGateEntry,
+  type HeavyJobGateOptions,
+  type HeavyJobLease,
+  HeavyJobLock,
+  type HeavyJobLockOptions,
+} from "./heavy-job-lock.js";
+export {
+  type MemoryAdmission,
+  type MemoryAdmissionDeps,
+  parseMemAvailableGiB,
+  readMemAvailableGiB,
+  waitForMemory,
+  type WaitForMemoryOptions,
+} from "./memory-admission.js";
+export {
+  buildResourceScopeArgv,
+  detectResourceScopeHost,
+  isResourceKill,
+  isResourceScopeLaunchFailure,
+  type JobExitInfo,
+  parseOwnUserUnit,
+  primeResourceScope,
+  resetResourceScopeForTest,
+  resolveResourceScopeConfig,
+  type ResourceScopeConfig,
+  type ResourceScopeDetectDeps,
+  type ResourceScopeDetection,
+  type ResourceScopeHost,
+  type ResourceScopeMode,
+  wrapResourceScopeArgv,
+  type WrapResourceScopeOptions,
+} from "./resource-scope.js";

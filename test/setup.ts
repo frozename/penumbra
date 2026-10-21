@@ -15,3 +15,10 @@ try {
 } catch {
   /* already loaded in this process */
 }
+
+// Job resource scopes (core/process/resource-scope.ts) wrap real spawns in
+// `systemd-run --user --scope` when the host supports it. Default them off
+// under test — unconditionally, since dispatched agents inherit the worker's
+// env — so argv assertions and spawn timing are host-independent. Tests that
+// exercise scoping inject their own config.
+process.env.PENUMBRA_JOB_SCOPE = "off";

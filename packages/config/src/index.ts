@@ -3,10 +3,12 @@ export {
   ENV_REGISTRY,
   type EnvConfig,
   EnvSchema,
+  getJobResourceEnv,
   getMcpResponseBudgetTokens,
   getSessionExtractMaxCharsPerChunk,
   getSessionExtractMaxChunks,
   isMcpInvocationLogEnabled,
+  type JobResourceEnv,
   parseEnv,
 } from "./env.js";
 export {
