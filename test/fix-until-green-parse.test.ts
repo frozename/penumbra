@@ -193,3 +193,25 @@ test("glued marker (no newline separator) is unknown, not PASS", () => {
     output: "Now let me run the full check:CHECK_RESULT: PASS",
   });
 });
+
+test("an explicit FAIL seen only in failure_tail is trusted and never unknown", () => {
+  expect(
+    parseCheck({
+      check_line: "Summary of the work.",
+      failure_tail: "Summary of the work.\nCHECK_RESULT: FAIL\nboom",
+    }),
+  ).toEqual({
+    passed: false,
+    output: "Summary of the work.\nCHECK_RESULT: FAIL\nboom",
+  });
+});
+
+test("a PASS seen only in failure_tail is not trusted (stays unknown)", () => {
+  expect(
+    parseCheck({ check_line: "Summary.", failure_tail: "Summary.\nCHECK_RESULT: PASS" }),
+  ).toEqual({
+    passed: false,
+    unknown: true,
+    output: "Summary.\nCHECK_RESULT: PASS",
+  });
+});

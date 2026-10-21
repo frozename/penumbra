@@ -1655,3 +1655,108 @@ describe("penumbra-fix-until-green proxy hint session guidance", () => {
     expect(rounds[0]?.hint).toContain("start a new Claude Code session");
   });
 });
+
+describe("penumbra-fix-until-green fails closed on an unattested grade or unmarked round", () => {
+  const graderScopeFanout = async () => ({
+    results: [
+      {
+        ok: true,
+        status: "completed",
+        branch: "test/x_h-777",
+        conversation_id: "c",
+        handoff_id: "h-777",
+        reliability_trustworthy: true,
+        check_line: "CHECK_RESULT: PASS",
+      },
+    ],
+  });
+
+  function graderStub(value: unknown) {
+    return async (_prompt: string, options?: Record<string, unknown>) => {
+      const label = String(options?.label ?? "");
+      if (label.startsWith("verify-check")) return { ran: true, check_exit: 0 };
+      if (label.startsWith("rubric")) return value;
+      return {};
+    };
+  }
+
+  test("a passing grade with no inspected key yields GRADER_UNAVAILABLE", async () => {
+    const { result } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 2,
+        rubric: ["criterion one"],
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: graderScopeFanout,
+        agent: graderStub({
+          overall_pass: true,
+          criteria: [{ index: 1, criterion: "criterion one", pass: true, evidence: "d" }],
+        }),
+      },
+    );
+
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.rubric_status).toBe("GRADER_UNAVAILABLE");
+    expect(result?.green).toBe(false);
+  });
+
+  test("a passing grade with inspected:null yields GRADER_UNAVAILABLE", async () => {
+    const { result } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 2,
+        rubric: ["criterion one"],
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: graderScopeFanout,
+        agent: graderStub({
+          inspected: null,
+          overall_pass: true,
+          criteria: [{ index: 1, criterion: "criterion one", pass: true, evidence: "d" }],
+        }),
+      },
+    );
+
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.rubric_status).toBe("GRADER_UNAVAILABLE");
+    expect(result?.green).toBe(false);
+  });
+
+  test("an unmarked round whose verifier is unavailable says no CHECK_RESULT marker, not worker PASS", async () => {
+    const noMarkerFanout = async () => ({
+      results: [
+        {
+          ok: true,
+          status: "completed",
+          branch: "feat/x",
+          conversation_id: "c",
+          handoff_id: "h-123",
+          reliability_trustworthy: true,
+          check_line: "I committed the change.",
+        },
+      ],
+    });
+
+    const { result } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 1,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: noMarkerFanout,
+        agent: async () => null,
+      },
+    );
+
+    const lastOutput = String(result?.last_output ?? "");
+    expect(lastOutput).toContain("no CHECK_RESULT marker");
+    expect(lastOutput).not.toContain("worker's PASS");
+  });
+});

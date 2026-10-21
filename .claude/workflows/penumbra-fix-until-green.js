@@ -271,15 +271,16 @@ function parseCheck(result, responseMode = 'first_line') {
   if (!sawFail && sawPass) return { passed: true, output: '' }
   let fullSawPass = false
   let fullSawFail = false
-  if (useFirstLine && !sawFail && !sawPass && hasResponse) {
-    const fullScan = stripFencedBlocks(String(result.response || ''))
+  const fallbackText = hasResponse ? String(result.response || '') : String(result.failure_tail || '')
+  if (useFirstLine && !sawFail && !sawPass && fallbackText) {
+    const fullScan = stripFencedBlocks(fallbackText)
     for (const line of fullScan.split('\n')) {
       const marker = /^ {0,3}CHECK_RESULT:\s*(PASS|FAIL)\b/i.exec(line)
       if (!marker) continue
       if (marker[1].toUpperCase() === 'FAIL') fullSawFail = true
-      if (marker[1].toUpperCase() === 'PASS') fullSawPass = true
+      if (marker[1].toUpperCase() === 'PASS' && hasResponse) fullSawPass = true
     }
-    if (!fullSawFail && fullSawPass) {
+    if (hasResponse && !fullSawFail && fullSawPass) {
       log('fix-until-green: check_line held no CHECK_RESULT marker (worker narrated first); recovered the verdict from the full response.')
       return { passed: true, output: '' }
     }
@@ -582,8 +583,8 @@ for (let i = 0; i < maxRounds; i++) {
     if (v == null || typeof v !== 'object') {
       checkVerifyStatus = 'unavailable'
       rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), check_verify_status: 'unavailable', check_passed: verdict.passed, verified: false, ci_parity: false, passed: false })
-      prevOutput = 'Independent CHECK verifier was unavailable; the worker\'s PASS was not attested.'
-      log(`fix-until-green round ${i + 1}: independent CHECK verifier unavailable; worker PASS not attested on ${r.branch}`)
+      prevOutput = verdict.passed ? 'Independent CHECK verifier was unavailable; the worker\'s PASS was not attested.' : 'Independent CHECK verifier was unavailable; the round had no CHECK_RESULT marker and was not attested.'
+      log(`fix-until-green round ${i + 1}: independent CHECK verifier unavailable; ${verdict.passed ? 'worker PASS not attested' : 'unmarked round not attested'} on ${r.branch}`)
       break
     }
     const parityFailed = parityCheck !== null && v.parity_exit !== 0
@@ -595,7 +596,7 @@ for (let i = 0; i < maxRounds; i++) {
       rounds.push({ round: i + 1, agent: agentForRound, branch: r.branch, handoff_id: r.handoff_id, ...hopFields(r), check_verify_status: 'failed', check_passed: verdict.passed, verified: false, check_exit: v.check_exit, ci_parity: false, passed: false })
       prevOutput = failOutput
       if (verifierRan) {
-        log(`fix-until-green round ${i + 1}: worker claimed PASS but the independent CHECK verifier measured check_exit=${v.check_exit}${parityCheck !== null ? ` parity_exit=${v.parity_exit}` : ''}; treating as FAIL`)
+        log(`fix-until-green round ${i + 1}: ${verdict.passed ? 'worker claimed PASS but' : 'round had no CHECK_RESULT marker and'} the independent CHECK verifier measured check_exit=${v.check_exit}${parityCheck !== null ? ` parity_exit=${v.parity_exit}` : ''}; treating as FAIL`)
       } else {
         log(`fix-until-green round ${i + 1}: the independent CHECK verifier could not run the CHECK (ran=false, check_exit=${v.check_exit}); treating as FAIL`)
       }
@@ -623,7 +624,7 @@ for (let i = 0; i < maxRounds; i++) {
       } catch {
         grade = null
       }
-      const notInspected = grade != null && grade.inspected === false
+      const notInspected = grade != null && grade.inspected !== true
       if (grade == null || notInspected) {
         const graderUnavailableOutput = notInspected ? 'Independent rubric grader could not locate the candidate diff; rubric not attested.' : 'Independent rubric grader was unavailable; rubric not attested.'
         rounds.push({
