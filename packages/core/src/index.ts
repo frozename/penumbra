@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- public barrel: the re-export surface intentionally exceeds the per-file line budget */
 export {
   type IssueArgs,
   type IssueResult,
