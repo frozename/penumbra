@@ -4,7 +4,11 @@ import { expect, mock, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 
-import { createDispatchPR } from "@src/worker/github-pr-helper.js";
+import {
+  createDispatchPR,
+  normalizePRBase,
+  PRBaseUnavailableError,
+} from "@src/worker/github-pr-helper.js";
 
 const noopLogger = (): void => {
   // intentionally empty: silent logger for github-pr-helper tests
@@ -94,13 +98,18 @@ test("createDispatchPR pushes the branch and creates a PR with a body file", asy
     url: "https://github.com/frozename/penumbra/pull/321",
     number: 321,
   });
-  expect(calls).toHaveLength(2);
+  expect(calls).toHaveLength(3);
   expect(calls[0]).toEqual({
+    file: "git",
+    args: ["ls-remote", "--exit-code", "--heads", "origin", "refs/heads/main"],
+    cwd: "/worktree/h-123",
+  });
+  expect(calls[1]).toEqual({
     file: "git",
     args: ["push", "-u", "origin", "agent/h-123"],
     cwd: "/worktree/h-123",
   });
-  expect(calls[1]).toEqual({
+  expect(calls[2]).toEqual({
     file: "gh",
     args: [
       "pr",
@@ -163,4 +172,178 @@ test("createDispatchPR removes the temp body file when gh fails", async () => {
 
   expect(bodyFilePath).not.toBe("");
   expect(existsSync(bodyFilePath)).toBe(false);
+});
+
+interface RunnerReply {
+  stdout: string;
+  stderr: string;
+  code: number;
+}
+
+interface ScriptedRunner {
+  calls: RunnerCall[];
+  runner: {
+    run: (file: string, args: string[], options: { cwd: string }) => Promise<RunnerReply>;
+  };
+}
+
+function scriptedRunner(reply: (file: string, args: string[]) => RunnerReply): ScriptedRunner {
+  const calls: RunnerCall[] = [];
+  const runner = {
+    run: mock((file: string, args: string[], options: { cwd: string }) => {
+      calls.push({ file, args, cwd: options.cwd });
+      return Promise.resolve(reply(file, args));
+    }),
+  };
+  return { calls, runner };
+}
+
+const OK: RunnerReply = { stdout: "", stderr: "", code: 0 };
+const PR_URL: RunnerReply = {
+  stdout: "https://github.com/frozename/penumbra/pull/77\n",
+  stderr: "",
+  code: 0,
+};
+
+async function captureError(run: () => Promise<unknown>): Promise<unknown> {
+  try {
+    await run();
+  } catch (err) {
+    return err;
+  }
+  return null;
+}
+
+test("createDispatchPR throws on a failed push and never calls gh", async () => {
+  const { calls, runner } = scriptedRunner((file, args) => {
+    if (file === "git" && args[0] === "push") {
+      return { stdout: "", stderr: "! [rejected] agent/h-push (non-fast-forward)", code: 1 };
+    }
+    return file === "gh" ? PR_URL : OK;
+  });
+
+  const err = await captureError(() =>
+    createDispatchPR(
+      {
+        branch: "agent/h-push",
+        baseBranch: "main",
+        title: "t",
+        body: "b",
+        draft: false,
+        cwd: "/worktree/h-push",
+      },
+      silentLogger(),
+      runner,
+    ),
+  );
+
+  expect(err).toBeInstanceOf(Error);
+  expect((err as Error).message).toBe(
+    "git push failed (1): ! [rejected] agent/h-push (non-fast-forward)",
+  );
+  expect(calls.map((c) => c.file)).toEqual(["git", "git"]);
+  expect(calls.some((c) => c.file === "gh")).toBe(false);
+});
+
+test("createDispatchPR passes origin/main to gh as --base main", async () => {
+  const { calls, runner } = scriptedRunner((file) => (file === "gh" ? PR_URL : OK));
+
+  const result = await createDispatchPR(
+    {
+      branch: "agent/h-base",
+      baseBranch: "origin/main",
+      title: "t",
+      body: "b",
+      draft: false,
+      cwd: "/worktree/h-base",
+    },
+    silentLogger(),
+    runner,
+  );
+
+  expect(result).toEqual({ url: "https://github.com/frozename/penumbra/pull/77", number: 77 });
+  expect(calls[0]?.args).toEqual([
+    "ls-remote",
+    "--exit-code",
+    "--heads",
+    "origin",
+    "refs/heads/main",
+  ]);
+  const ghCall = calls.find((c) => c.file === "gh");
+  expect(ghCall).toBeDefined();
+  const baseIndex = ghCall!.args.indexOf("--base");
+  expect(ghCall!.args[baseIndex + 1]).toBe("main");
+});
+
+test("createDispatchPR returns pr_base_unavailable without pushing when origin lacks the base", async () => {
+  const { calls, runner } = scriptedRunner((file, args) => {
+    if (file === "git" && args[0] === "ls-remote") return { stdout: "", stderr: "", code: 2 };
+    return file === "gh" ? PR_URL : OK;
+  });
+
+  const err = await captureError(() =>
+    createDispatchPR(
+      {
+        branch: "agent/h-stage",
+        baseBranch: "stage/s-1",
+        title: "t",
+        body: "b",
+        draft: false,
+        cwd: "/worktree/h-stage",
+      },
+      silentLogger(),
+      runner,
+    ),
+  );
+
+  expect(err).toBeInstanceOf(PRBaseUnavailableError);
+  expect((err as PRBaseUnavailableError).code).toBe("pr_base_unavailable");
+  expect((err as PRBaseUnavailableError).baseBranch).toBe("stage/s-1");
+  expect(calls).toEqual([
+    {
+      file: "git",
+      args: ["ls-remote", "--exit-code", "--heads", "origin", "refs/heads/stage/s-1"],
+      cwd: "/worktree/h-stage",
+    },
+  ]);
+});
+
+test("createDispatchPR does not push when origin cannot be queried for the base", async () => {
+  const { calls, runner } = scriptedRunner((file, args) => {
+    if (file === "git" && args[0] === "ls-remote") {
+      return { stdout: "", stderr: "fatal: Could not read from remote repository.", code: 128 };
+    }
+    return file === "gh" ? PR_URL : OK;
+  });
+
+  const err = await captureError(() =>
+    createDispatchPR(
+      {
+        branch: "agent/h-offline",
+        baseBranch: "main",
+        title: "t",
+        body: "b",
+        draft: false,
+        cwd: "/worktree/h-offline",
+      },
+      silentLogger(),
+      runner,
+    ),
+  );
+
+  expect(err).toBeInstanceOf(Error);
+  expect(err).not.toBeInstanceOf(PRBaseUnavailableError);
+  expect((err as Error).message).toBe(
+    "git ls-remote failed (128): fatal: Could not read from remote repository.",
+  );
+  expect(calls).toHaveLength(1);
+});
+
+test("normalizePRBase strips local ref prefixes and leaves other bases unchanged", () => {
+  expect(normalizePRBase("refs/remotes/origin/main")).toBe("main");
+  expect(normalizePRBase("refs/heads/release/1.x")).toBe("release/1.x");
+  expect(normalizePRBase("origin/main")).toBe("main");
+  expect(normalizePRBase("main")).toBe("main");
+  expect(normalizePRBase("stage/s-1")).toBe("stage/s-1");
+  expect(normalizePRBase("upstream/main")).toBe("upstream/main");
 });
