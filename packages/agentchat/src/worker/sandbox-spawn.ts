@@ -1,3 +1,4 @@
+import { isResourceKill, wrapResourceScopeArgv } from "@penumbra/core";
 import { existsSync } from "node:fs";
 
 export interface SpawnSandboxedOpts {
@@ -69,7 +70,8 @@ export interface SpawnSandboxedResult {
   durationMs: number;
   argv: string[];
   envKeys: string[];
-  killReason?: "timeout" | "output_overflow" | "cancelled";
+  /** "resource": SIGKILLed by something other than Penumbra — a scope MemoryMax or host OOM kill. */
+  killReason?: "timeout" | "output_overflow" | "cancelled" | "resource";
 }
 
 type Subprocess = ReturnType<typeof Bun.spawn>;
@@ -180,11 +182,15 @@ export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSan
   if (!opts.argv && !opts.cmd) throw new Error("spawnSandboxed: argv or cmd required");
 
   const innerArgv = opts.argv ?? ["bash", "-c", opts.cmd ?? ""];
-  const argv =
+  const env = buildSandboxEnv(opts);
+  // sandbox-exec (macOS) runs inside the memory scope (Linux); the two never
+  // coexist on one host today, but the order keeps the cap outermost.
+  const argv = wrapResourceScopeArgv(
     opts.sandboxProfile !== undefined
       ? wrapSandboxExecArgv(innerArgv, opts.sandboxProfile)
-      : innerArgv;
-  const env = buildSandboxEnv(opts);
+      : innerArgv,
+    { label: "terminal", childEnv: env },
+  );
   const envKeys = Object.keys(env);
 
   const start = performance.now();
@@ -274,6 +280,13 @@ export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSan
     durationMs,
     argv,
     envKeys,
-    killReason,
+    killReason: killReason ?? resourceKillReason(proc.exitCode, sig),
   };
+}
+
+function resourceKillReason(
+  exitCode: number | null,
+  signal: NodeJS.Signals | null,
+): "resource" | undefined {
+  return isResourceKill({ exitCode, signal }) ? "resource" : undefined;
 }

@@ -218,6 +218,17 @@ describe("spawnSandboxed", () => {
     expect(r.signal === null || r.signal === "SIGTERM" || r.signal === "SIGKILL").toBe(true);
   });
 
+  test("a SIGKILL penumbra did not send is reported as a resource kill", async () => {
+    const r = await spawnSandboxed({
+      argv: ["sh", "-c", "kill -9 $$"],
+      cwd,
+      timeoutMs: 5000,
+      outputMaxBytes: 1024,
+    });
+    expect(r.signal).toBe("SIGKILL");
+    expect(r.killReason).toBe("resource");
+  });
+
   test("output cap truncates and terminates a noisy process", async () => {
     const r = await spawnSandboxed({ cmd: "yes", cwd, timeoutMs: 5000, outputMaxBytes: 4096 });
     expect(r.truncated).toBe(true);

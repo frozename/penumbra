@@ -1,6 +1,10 @@
 import type { DispatchEventInput, PermissionProfile } from "@penumbra/core";
 
-import { renderSandboxExecProfile, resolveSandboxDenyRoots } from "@penumbra/core";
+import {
+  renderSandboxExecProfile,
+  resolveSandboxDenyRoots,
+  wrapResourceScopeArgv,
+} from "@penumbra/core";
 import { type ChildProcess, spawn } from "node:child_process";
 
 import type { DispatchEvent } from "../sdk/adapter.js";
@@ -147,10 +151,13 @@ function spawnProcess(opts: {
   stdinMode: "ignore" | "pipe";
   sandboxProfile?: string;
 }): ChildProcess {
-  const argv =
+  // The scope caps the agent CLI together with every tool process it spawns.
+  const argv = wrapResourceScopeArgv(
     opts.sandboxProfile !== undefined
       ? wrapSandboxExecArgv([opts.command, ...opts.args], opts.sandboxProfile)
-      : [opts.command, ...opts.args];
+      : [opts.command, ...opts.args],
+    { label: "agent-cli" },
+  );
   return spawn(argv[0] ?? opts.command, argv.slice(1), {
     cwd: opts.cwd,
     env: opts.env,
