@@ -203,13 +203,17 @@ describe("WorktreeManager.createWorktree — git identity inheritance", () => {
 
     const handle = await manager.createWorktree("77777777-7777-4777-8777-777777777777");
 
-    await expect(
-      git(
+    let baseRecorded = true;
+    try {
+      await git(
         handle.path,
         ["config", "--worktree", "--get", DISPATCH_BASE_CONFIG_KEY],
         repo.isolatedEnv,
-      ),
-    ).rejects.toThrow();
+      );
+    } catch {
+      baseRecorded = false;
+    }
+    expect(baseRecorded).toBe(false);
 
     await manager.teardownWorktree("77777777-7777-4777-8777-777777777777", true);
   });
@@ -243,13 +247,17 @@ describe("WorktreeManager.createWorktree — git identity inheritance", () => {
 
     const handle = await manager.createWorktree("88888888-8888-4888-8888-888888888888");
 
-    await expect(
-      git(
+    let baseRecorded = true;
+    try {
+      await git(
         handle.path,
         ["config", "--worktree", "--get", DISPATCH_BASE_CONFIG_KEY],
         repo.isolatedEnv,
-      ),
-    ).rejects.toThrow();
+      );
+    } catch {
+      baseRecorded = false;
+    }
+    expect(baseRecorded).toBe(false);
 
     await manager.teardownWorktree("88888888-8888-4888-8888-888888888888", true);
   });
