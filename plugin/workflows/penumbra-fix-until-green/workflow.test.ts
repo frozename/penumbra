@@ -47,7 +47,7 @@ function seedHandoff(
     branchBase?: string | null;
     message?: string;
     status?: "completed" | "failed";
-    reliability?: "good" | "bad";
+    reliability?: "good" | "bad" | "rewritten_history";
     ts?: string;
     chainTaskType?: string;
   },
@@ -93,6 +93,20 @@ function seedHandoff(
   }
 
   const goodReliability = input.reliability !== "bad";
+  const dispatchEndMeta =
+    input.reliability === "rewritten_history"
+      ? {
+          committed: true,
+          worktree_changed: true,
+          commit_integrity: {
+            base_sha: "a".repeat(40),
+            head_sha: "b".repeat(40),
+            base_is_ancestor: false,
+            identity: { name: "Penumbra Worker", email: "worker@example.com" },
+            mismatched_commits: [],
+          },
+        }
+      : { committed: true, worktree_changed: goodReliability };
   events.recordBatch([
     {
       handoff_id: input.handoffId,
@@ -111,7 +125,7 @@ function seedHandoff(
       source: "worker",
       kind: "dispatch.end",
       ts: "2026-09-12T10:00:09.000Z",
-      meta: { committed: true, worktree_changed: goodReliability },
+      meta: dispatchEndMeta,
     },
   ]);
 }
@@ -156,12 +170,12 @@ function jsonBlock(obj: unknown): string {
 type FanoutResponseSpec = {
   response: string;
   branchName?: string;
-  reliability?: "good" | "bad";
+  reliability?: "good" | "bad" | "rewritten_history";
   latestHop?: {
     handoffId: string;
     branchName: string | null;
     status?: "completed" | "failed";
-    reliability?: "good" | "bad";
+    reliability?: "good" | "bad" | "rewritten_history";
   };
 };
 
@@ -735,6 +749,15 @@ test("an actual multi-hop DB result rejects untrustworthy latest reliability des
         },
       },
     ],
+  });
+  expect(result.ok).toBe(false);
+  expect(result.rounds[0]?.reason).toBe("candidate_latest_reliability_untrustworthy");
+  expect(ctx.capturedChainStarts).toHaveLength(1);
+});
+
+test("a round whose dispatch left its base stops via candidate_latest_reliability_untrustworthy", async () => {
+  const { result, ctx } = await runWorkflow({
+    fanoutResponses: [{ response: "CHECK_RESULT: PASS", reliability: "rewritten_history" }],
   });
   expect(result.ok).toBe(false);
   expect(result.rounds[0]?.reason).toBe("candidate_latest_reliability_untrustworthy");
