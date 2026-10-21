@@ -29,6 +29,10 @@ export const CommitIntegrityEvidenceSchema = z
     base_is_ancestor: z.boolean(),
     identity: z.object({ name: z.string(), email: z.string() }),
     mismatched_commits: z.array(GitShaSchema),
+    // mismatched_commits lists only the first few; this counts every mismatch
+    // the probe scanned. null: the identity check could not run. Absent:
+    // evidence written before the count existed.
+    mismatched_total: z.number().int().nonnegative().nullable().optional(),
   })
   .loose();
 export type CommitIntegrityEvidence = z.infer<typeof CommitIntegrityEvidenceSchema>;

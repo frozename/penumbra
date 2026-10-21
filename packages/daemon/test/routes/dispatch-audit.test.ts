@@ -475,7 +475,38 @@ describe("buildDispatchAuditReport", () => {
     const report = buildDispatchAuditReport(svc, "h-idmis");
 
     expect(report?.status).toBe("commit_identity_mismatch");
+    expect(report?.trustworthy).toBe(false);
+    expect(report?.recommended_action).toBe("review_manually");
     expect(report?.summary).toContain("c".repeat(12));
+    expect(DispatchAuditResponseSchema.safeParse({ report }).success).toBe(true);
+  });
+
+  test("reports the full mismatch count from dispatch.end meta", () => {
+    const svc = services();
+    createCompletedHandoff(svc, "h-idtotal", "c-idtotal");
+    recordCompleteTimeline(svc, "h-idtotal", {
+      status: "ok",
+      worktree_changed: true,
+      dirty: false,
+      committed: true,
+      commit_integrity: {
+        base_sha: "a".repeat(40),
+        head_sha: "b".repeat(40),
+        base_is_ancestor: true,
+        identity: { name: "Penumbra Worker", email: "worker@example.com" },
+        mismatched_commits: ["c".repeat(40)],
+        mismatched_total: 14,
+      },
+    });
+    writeAgentResponse(svc, "c-idtotal", "DONE");
+
+    const report = buildDispatchAuditReport(svc, "h-idtotal");
+
+    expect(report?.status).toBe("commit_identity_mismatch");
+    expect(report?.trustworthy).toBe(false);
+    expect(report?.recommended_action).toBe("review_manually");
+    expect(report?.summary).toContain("14 commit(s)");
+    expect(report?.evidence.commit_integrity?.mismatched_total).toBe(14);
   });
 
   test("ignores malformed commit-integrity meta", () => {

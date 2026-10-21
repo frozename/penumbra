@@ -74,6 +74,53 @@ describe("classifyDispatchReliability commit integrity", () => {
     expect(report.evidence.commit_integrity).toEqual(commitIntegrity);
   });
 
+  test("counts mismatches beyond the listed commits from mismatched_total", () => {
+    const commitIntegrity = {
+      ...CLEAN,
+      mismatched_commits: ["c".repeat(40), "d".repeat(40)],
+      mismatched_total: 5,
+    };
+    const report = classifyDispatchReliability(baseInput({ commitIntegrity }));
+
+    expect(report.status).toBe("commit_identity_mismatch");
+    expect(report.trustworthy).toBe(false);
+    expect(report.recommended_action).toBe("review_manually");
+    expect(report.summary).toContain("5 commit(s)");
+    expect(report.summary).toContain("d".repeat(12));
+    expect(report.summary).toContain("(+3 more)");
+  });
+
+  test("flags a positive mismatched_total even when no commit is listed", () => {
+    const report = classifyDispatchReliability(
+      baseInput({ commitIntegrity: { ...CLEAN, mismatched_total: 1 } }),
+    );
+
+    expect(report.status).toBe("commit_identity_mismatch");
+    expect(report.trustworthy).toBe(false);
+    expect(report.recommended_action).toBe("review_manually");
+  });
+
+  test("flags listed commits when mismatched_total understates them", () => {
+    const report = classifyDispatchReliability(
+      baseInput({
+        commitIntegrity: { ...CLEAN, mismatched_commits: ["c".repeat(40)], mismatched_total: 0 },
+      }),
+    );
+
+    expect(report.status).toBe("commit_identity_mismatch");
+    expect(report.summary).toContain("1 commit(s)");
+    expect(report.summary).not.toContain("more)");
+  });
+
+  test("accepts a dispatch whose identity check could not run", () => {
+    const report = classifyDispatchReliability(
+      baseInput({ commitIntegrity: { ...CLEAN, mismatched_total: null } }),
+    );
+
+    expect(report.status).toBe("complete");
+    expect(report.recommended_action).toBe("accept");
+  });
+
   test("reports base_not_ancestor when both the branch and identity are wrong", () => {
     const report = classifyDispatchReliability(
       baseInput({

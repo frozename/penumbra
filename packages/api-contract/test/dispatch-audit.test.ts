@@ -169,6 +169,24 @@ test("CommitIntegrityEvidenceSchema accepts complete evidence", () => {
   expect(CommitIntegrityEvidenceSchema.safeParse(EVIDENCE).success).toBe(true);
 });
 
+test("CommitIntegrityEvidenceSchema accepts a mismatched_total count or null", () => {
+  expect(
+    CommitIntegrityEvidenceSchema.safeParse({ ...EVIDENCE, mismatched_total: 12 }).success,
+  ).toBe(true);
+  expect(
+    CommitIntegrityEvidenceSchema.safeParse({ ...EVIDENCE, mismatched_total: null }).success,
+  ).toBe(true);
+});
+
+test("CommitIntegrityEvidenceSchema rejects a negative or fractional mismatched_total", () => {
+  expect(
+    CommitIntegrityEvidenceSchema.safeParse({ ...EVIDENCE, mismatched_total: -1 }).success,
+  ).toBe(false);
+  expect(
+    CommitIntegrityEvidenceSchema.safeParse({ ...EVIDENCE, mismatched_total: 1.5 }).success,
+  ).toBe(false);
+});
+
 test("CommitIntegrityEvidenceSchema rejects non-boolean base_is_ancestor", () => {
   expect(
     CommitIntegrityEvidenceSchema.safeParse({ ...EVIDENCE, base_is_ancestor: "no" }).success,

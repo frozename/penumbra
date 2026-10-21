@@ -215,6 +215,19 @@ function classifyMissingLifecycle(ctx: ClassificationContext): DispatchReliabili
   return null;
 }
 
+// The probe lists only the first few mismatched commits; trust the larger of
+// the listed count and the reported total so a short list never hides one.
+function mismatchCountOf(ci: CommitIntegrityEvidence): number {
+  return Math.max(ci.mismatched_total ?? 0, ci.mismatched_commits.length);
+}
+
+function describeIdentityMismatch(ci: CommitIntegrityEvidence, total: number): string {
+  const listed = ci.mismatched_commits.map((sha) => sha.slice(0, 12)).join(", ");
+  const unlisted = total - ci.mismatched_commits.length;
+  const more = unlisted > 0 ? ` (+${String(unlisted)} more)` : "";
+  return `${String(total)} commit(s) not authored and committed as ${ci.identity.name} <${ci.identity.email}>: ${listed}${more}`;
+}
+
 function classifyCommitIntegrity(ctx: ClassificationContext): DispatchReliabilityReport | null {
   const ci = ctx.input.commitIntegrity;
   if (!ctx.terminal || !ci) return null;
@@ -228,12 +241,13 @@ function classifyCommitIntegrity(ctx: ClassificationContext): DispatchReliabilit
       [],
     );
   }
-  if (ci.mismatched_commits.length > 0) {
+  const mismatchCount = mismatchCountOf(ci);
+  if (mismatchCount > 0) {
     return makeReport(
       ctx,
       "commit_identity_mismatch",
       false,
-      `commits not authored and committed as ${ci.identity.name} <${ci.identity.email}>: ${ci.mismatched_commits.map((sha) => sha.slice(0, 12)).join(", ")}`,
+      describeIdentityMismatch(ci, mismatchCount),
       "review_manually",
       [],
     );
