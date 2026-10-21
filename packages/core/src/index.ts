@@ -629,6 +629,7 @@ export {
   type WorktreeGcCandidateReason,
 } from "./worktree/gc-candidates.js";
 export {
+  DISPATCH_BASE_CONFIG_KEY,
   ISOLATED_INSTALL_ARGS,
   ISOLATED_INSTALL_CACHE_KEY,
   isPathInsideOrEqual,

@@ -5,7 +5,11 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 
-import { type WorktreeCommandRunner, WorktreeManager } from "@src/worktree/manager.js";
+import {
+  DISPATCH_BASE_CONFIG_KEY,
+  type WorktreeCommandRunner,
+  WorktreeManager,
+} from "@src/worktree/manager.js";
 
 const execFile = promisify(execFileCb);
 
@@ -133,6 +137,41 @@ describe("WorktreeManager.createWorktree — git identity inheritance", () => {
     expect(logAuthor.trim()).toBe("Parent Author <parent@example.com>");
 
     await manager.teardownWorktree("11111111-1111-4111-8111-111111111111", true);
+  });
+
+  it("records the dispatch base commit in the worktree config and keeps it after new commits", async () => {
+    repo = await setupTempRepo("penumbra-wt-dispatch-base-", {
+      user: { name: "Parent Author", email: "parent@example.com" },
+    });
+
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: repo.repoDir,
+      runner: isolatedRunner(repo.isolatedEnv),
+    });
+
+    const handoffId = "66666666-6666-4666-8666-666666666666";
+    const { stdout: baseShaOut } = await git(repo.repoDir, ["rev-parse", "HEAD"], repo.isolatedEnv);
+    const baseSha = baseShaOut.trim();
+
+    const handle = await manager.createWorktree(handoffId);
+
+    await commitInWorktree(handle.path, repo.isolatedEnv);
+
+    const { stdout: recordedOut } = await git(
+      handle.path,
+      ["config", "--worktree", "--get", DISPATCH_BASE_CONFIG_KEY],
+      repo.isolatedEnv,
+    );
+    const recorded = recordedOut.trim();
+    const { stdout: headOut } = await git(handle.path, ["rev-parse", "HEAD"], repo.isolatedEnv);
+    const head = headOut.trim();
+
+    expect(recorded).toBe(baseSha);
+    expect(head).not.toBe(recorded);
+    expect(DISPATCH_BASE_CONFIG_KEY).toBe("penumbra.dispatchBase");
+
+    await manager.teardownWorktree(handoffId, true);
   });
 
   it("falls back to the base ref commit author when the parent git config is absent", async () => {

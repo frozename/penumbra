@@ -233,6 +233,10 @@ export async function runIsolatedInstall(
   }
 }
 
+// The worker's commit-integrity probe reads this back to prove the branch
+// still descends from the commit the dispatch started on.
+export const DISPATCH_BASE_CONFIG_KEY = "penumbra.dispatchBase";
+
 export class WorktreeManager {
   private worktrees = new Map<string, WorktreeHandle>();
   private rootDir: string;
@@ -533,6 +537,7 @@ export class WorktreeManager {
     let createdBranchName: string | null = null;
     try {
       await this.configureWorktreeIdentity(wtPath, repoRoot, baseRef);
+      await this.recordDispatchBase(wtPath);
 
       const branchName = await this.checkoutNewBranchWithCollisionRetry(
         repoRoot,
@@ -718,6 +723,22 @@ export class WorktreeManager {
 
     await this.git(["-C", wtPath, "config", "--worktree", "user.name", name]);
     await this.git(["-C", wtPath, "config", "--worktree", "user.email", email]);
+  }
+
+  private async recordDispatchBase(wtPath: string): Promise<void> {
+    try {
+      const { stdout } = await this.git(["-C", wtPath, "rev-parse", "HEAD"]);
+      const sha = stdout.trim();
+      if (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(sha)) {
+        await this.git(["-C", wtPath, "config", "--worktree", DISPATCH_BASE_CONFIG_KEY, sha]);
+      }
+    } catch (err) {
+      this.log.warn(
+        { wtPath, err: err instanceof Error ? err.message : String(err) },
+        "dispatch base record failed",
+      );
+      return;
+    }
   }
 
   private async resolveParentGitIdentity(
