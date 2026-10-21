@@ -235,7 +235,7 @@ If those return without error, you're done. See [`AGENTS.md`](./AGENTS.md) for t
 
 ## What's in the box
 
-- **CLI** — operator commands including `start | stop | status | repair | init | worktree gc | notes rotate | plan | task | workflow | maestro | chain | cost | agent | console | config` (run `penumbra` with no args for the full list)
+- **CLI** — operator commands including `start | stop | status | update | repair | init | worktree gc | notes rotate | plan | task | workflow | maestro | chain | cost | agent | console | config` (run `penumbra` with no args for the full list)
 - **MCP server** — memory, handoff, chain, agent-routing, dispatch_land, lane, long-lived, workflow, worktree, task, ops (~120 tools)
 - **Local web UI** — mission view (in-flight chains, pending handoffs, recent verdicts), served by the daemon
 - **Workflow runtime** — markdown playbooks + TS workflows; lifecycle hooks (PreCompact, Stop, SessionStart); auto-quarantine on three consecutive failures

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { ENV_REGISTRY, isMcpInvocationLogEnabled, parseEnv } from "../src/env.js";
+import { ENV_REGISTRY, getUpdateEnv, isMcpInvocationLogEnabled, parseEnv } from "../src/env.js";
 
 describe("parseEnv", () => {
   test("applies default when var is unset", () => {
@@ -222,4 +222,34 @@ describe("orphan lane grace registry", () => {
       }
     });
   }
+});
+
+describe("getUpdateEnv", () => {
+  test("defaults to systemd/launchd names documented in AGENTS.md", () => {
+    expect(getUpdateEnv({})).toEqual({
+      serviceManager: "auto",
+      daemonUnit: "penumbra-daemon.service",
+      workerUnit: "penumbra-worker.service",
+      daemonLabel: "dev.penumbra.daemon",
+      workerLabel: "dev.penumbra.worker",
+    });
+  });
+
+  test("honours overrides and ignores unrelated malformed keys", () => {
+    const env = getUpdateEnv({
+      PENUMBRA_UPDATE_SERVICE_MANAGER: "launchd",
+      PENUMBRA_UPDATE_WORKER_UNIT: "pw@2.service",
+      PENUMBRA_UPDATE_WORKER_LABEL: "com.example.worker",
+      PENUMBRA_JOB_MEMORY_MAX: "not-a-size",
+    });
+    expect(env.serviceManager).toBe("launchd");
+    expect(env.workerUnit).toBe("pw@2.service");
+    expect(env.workerLabel).toBe("com.example.worker");
+  });
+
+  test("rejects unit names that are not services and labels with spaces", () => {
+    expect(() => getUpdateEnv({ PENUMBRA_UPDATE_DAEMON_UNIT: "penumbra-daemon" })).toThrow();
+    expect(() => getUpdateEnv({ PENUMBRA_UPDATE_DAEMON_LABEL: "dev penumbra" })).toThrow();
+    expect(() => getUpdateEnv({ PENUMBRA_UPDATE_SERVICE_MANAGER: "upstart" })).toThrow();
+  });
 });

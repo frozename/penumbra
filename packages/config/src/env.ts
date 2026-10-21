@@ -62,6 +62,10 @@ const JobMemorySize = z
   .string()
   .regex(/^(?:\d+(?:\.\d+)?[KMGT]?|\d{1,3}%|infinity)$/i, "must be a systemd size (e.g. 12G)");
 const JobOomScoreAdj = z.preprocess(emptyToNaN, z.coerce.number().int().min(0).max(1000));
+const SystemdServiceUnit = z
+  .string()
+  .regex(/^[\w:.@-]+\.service$/, "must be a systemd service unit name (e.g. foo.service)");
+const LaunchdLabel = z.string().regex(/^[\w.-]+$/, "must be a launchd label (e.g. dev.foo.daemon)");
 const OptStr = z.string().optional();
 const ReqStr = z.string().min(1);
 const OptNonNegInt = NonNegInt.optional();
@@ -1247,6 +1251,35 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
       "flock(1)-compatible lock file serializing heavy reconciler stages host-wide. Default ~/.penumbra/locks/heavy-job.lock.",
   },
 
+  // ── penumbra update (cli/src/commands/update) ───────────────────────
+  PENUMBRA_UPDATE_SERVICE_MANAGER: {
+    schema: z.enum(["auto", "systemd", "launchd"]),
+    default: "auto",
+    description:
+      "Service manager `penumbra update` restarts: auto = systemd --user on Linux, launchd on macOS; systemd / launchd force one. --apply refuses when the configured units/labels are not loaded.",
+  },
+  PENUMBRA_UPDATE_DAEMON_UNIT: {
+    schema: SystemdServiceUnit,
+    default: "penumbra-daemon.service",
+    description: "systemd --user unit that runs the daemon (`penumbra update`).",
+  },
+  PENUMBRA_UPDATE_WORKER_UNIT: {
+    schema: SystemdServiceUnit,
+    default: "penumbra-worker.service",
+    description: "systemd --user unit that runs the primary agentchat worker (`penumbra update`).",
+  },
+  PENUMBRA_UPDATE_DAEMON_LABEL: {
+    schema: LaunchdLabel,
+    default: "dev.penumbra.daemon",
+    description: "launchd label (gui/<uid>/<label>) that runs the daemon (`penumbra update`).",
+  },
+  PENUMBRA_UPDATE_WORKER_LABEL: {
+    schema: LaunchdLabel,
+    default: "dev.penumbra.worker",
+    description:
+      "launchd label (gui/<uid>/<label>) that runs the primary agentchat worker (`penumbra update`).",
+  },
+
   // ── auto-recall ─────────────────────────────────────────────────────
   PENUMBRA_AUTO_RECALL_PROJECT_BRIEF: {
     schema: Bool,
@@ -1530,5 +1563,42 @@ export function getJobResourceEnv(env: NodeJS.ProcessEnv = process.env): JobReso
     admitMinGiB: parsed.PENUMBRA_JOB_ADMIT_MIN_GIB as number | undefined,
     admitWaitS: parsed.PENUMBRA_JOB_ADMIT_WAIT_S as number,
     heavyLockPath: heavyLock !== undefined && heavyLock.trim() !== "" ? heavyLock : undefined,
+  };
+}
+
+const UPDATE_ENV_KEYS = [
+  "PENUMBRA_UPDATE_SERVICE_MANAGER",
+  "PENUMBRA_UPDATE_DAEMON_UNIT",
+  "PENUMBRA_UPDATE_WORKER_UNIT",
+  "PENUMBRA_UPDATE_DAEMON_LABEL",
+  "PENUMBRA_UPDATE_WORKER_LABEL",
+] as const;
+
+export interface UpdateEnv {
+  serviceManager: "auto" | "launchd" | "systemd";
+  daemonUnit: string;
+  workerUnit: string;
+  daemonLabel: string;
+  workerLabel: string;
+}
+
+/** `penumbra update` service settings, parsed from only their own keys (see getJobResourceEnv). */
+export function getUpdateEnv(env: NodeJS.ProcessEnv = process.env): UpdateEnv {
+  const subset: Record<string, string | undefined> = {};
+  for (const key of UPDATE_ENV_KEYS) {
+    if (key in env) subset[key] = env[key];
+  }
+  const parsed: Record<string, unknown> = EnvSchema.pick(
+    Object.fromEntries(UPDATE_ENV_KEYS.map((key) => [key, true])) as Record<
+      (typeof UPDATE_ENV_KEYS)[number],
+      true
+    >,
+  ).parse(subset);
+  return {
+    serviceManager: parsed.PENUMBRA_UPDATE_SERVICE_MANAGER as UpdateEnv["serviceManager"],
+    daemonUnit: parsed.PENUMBRA_UPDATE_DAEMON_UNIT as string,
+    workerUnit: parsed.PENUMBRA_UPDATE_WORKER_UNIT as string,
+    daemonLabel: parsed.PENUMBRA_UPDATE_DAEMON_LABEL as string,
+    workerLabel: parsed.PENUMBRA_UPDATE_WORKER_LABEL as string,
   };
 }

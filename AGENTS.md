@@ -11,7 +11,7 @@ Bun + TypeScript monorepo (`bun` package manager, workspaces). Top-level package
 - `packages/core` — shared primitives: schemas (zod), writers (HandoffWriter, T0Writer, T1Rollup), readers, in-memory event bus (HandoffEventBus), context-file generator (ContextFileWriter), `WorktreeManager`, dispatch-reliability classifier, supervisor for periodic workers, long-lived state writer (with notes tail-truncation).
 - `packages/daemon` — long-running HTTP server. Hosts the t0 ingest endpoint, recall over t1+t2 vectors, handoffs CRUD + claim/complete/SSE routes, `chains/start`, `dispatch/land`, the workflow runtime, long-lived reactor, and the sweeper layer (`stale-handoff`, `handoff-sweeper`, `worktree-gc`, `reconciler-sweep`).
 - `packages/agentchat` — the ACP adapter layer + the headless `agentchat-worker` that dispatches approved handoffs out-of-bin via ACP adapters (`stdio-acp`, `claude-cli`, `gemini-cli`, `codex-cli`, `opencode-cli`, `opencode-acp`, `agy-cli`, `openai-compat-http`). Dispatch is started via MCP `chain_start`; the `agentchat` bin only inspects and resolves the queue (`queue`, `approve`, `reject`, `discord`).
-- `packages/cli` — `penumbra` operator CLI. `start --detach`, `stop`, `status`, `repair`, `init`, `worktree gc`, `notes rotate`, `plan {list,start,status,…}`, `task`, export/import.
+- `packages/cli` — `penumbra` operator CLI. `start --detach`, `stop`, `status`, `update`, `repair`, `init`, `worktree gc`, `notes rotate`, `plan {list,start,status,…}`, `task`, export/import.
 - `packages/console` — local web UI (Vite-built, with a Storybook component workbench, served from the daemon). Mission view (in-flight chains, pending handoffs, recent verdicts) consumes `@penumbra/api-contract`.
 - `packages/api-contract` — type-only shared shapes (handoffs, sessions, dispatch events, tasks, errors). Frontend / future MCP / e2e all import from here.
 - `packages/mcp` — Model Context Protocol server exposing memory, handoff, chain, agent, dispatch_land, lane, long_lived, workflow, worktree, task, and ops tools to agentic harnesses.
@@ -46,6 +46,10 @@ bun test packages/core/test/
 # Run the daemon
 bun packages/cli/bin/penumbra.ts start --detach
 bun packages/cli/bin/penumbra.ts stop
+
+# Update a service-run source install (see "Updating a source install")
+bun packages/cli/bin/penumbra.ts update              # --check: what would change
+bun packages/cli/bin/penumbra.ts update --apply      # fast-forward, install, restart, verify
 
 # Inspect / resolve the handoff queue:
 bun packages/agentchat/bin/agentchat.ts queue
@@ -248,11 +252,42 @@ After a daemon kickstart, in-flight ticks die mid-session and trip the agent's c
 
 Landing a change does not activate it. Three independent surfaces reload three different ways:
 
-- **Daemon + worker runtime** (`packages/core`, `packages/daemon`, the `packages/agentchat` runtime) — `launchctl kickstart -k gui/501/dev.penumbra.daemon` and the same for `dev.penumbra.worker`. Both processes run from source via bun (`packages/cli/bin/penumbra.ts`, `packages/agentchat/bin/agentchat-worker.ts`), so there is no dist rebuild step. Bounce them together; the daemon respawns its child workers and the mcp-allowlist-proxy.
+- **Daemon + worker runtime** (`packages/core`, `packages/daemon`, the `packages/agentchat` runtime) — `penumbra update --apply` (see "Updating a source install"), or by hand `launchctl kickstart -k gui/501/dev.penumbra.daemon` and the same for `dev.penumbra.worker` (systemd: `systemctl --user restart penumbra-daemon.service`; the worker unit is `PartOf=` it). Both processes run from source via bun (`packages/cli/bin/penumbra.ts`, `packages/agentchat/bin/agentchat-worker.ts`), so there is no dist rebuild step. Bounce them together; the daemon respawns its child workers and the mcp-allowlist-proxy.
 - **MCP tool surface** (`packages/mcp` schemas, `packages/api-contract` validators, tool descriptions) — `/mcp reconnect penumbra` from the Claude Code session. A daemon bounce does nothing here: the penumbra MCP server is a stdio child of the Claude Code process, not of the daemon, has no launchd job, and runs penumbra source frozen at its own start time. Reconnecting replaces the child under the same parent — restarting Claude Code itself is not required.
 - **CC workflow scripts** (`.claude/workflows/*.js`) — resolve from a session snapshot and require a new session. Neither action above affects them.
 
 After activating anything, prove it with an observation that would fail if the change were not live — e.g. a call the old schema rejected and the new one accepts. Do not infer activation from the fact that you restarted something.
+
+## Updating a source install (`penumbra update`)
+
+`penumbra update` moves a service-run checkout (daemon + primary worker run by systemd `--user` or launchd from a git checkout via bun) to a newer commit, or back, and refuses rather than guesses. Run `penumbra update --help` for every flag.
+
+- `penumbra update` (`--check`, the default) changes nothing apart from `git fetch`. It reports current → target (`--ref`, default `origin/main`), the new commits, whether `bun.lock` or a `package.json` changed, the target's `check` workflow conclusion (`gh run list --commit <sha> --workflow check`; `unknown` without `gh`), the service units, whether they run from this checkout, daemon health, in-flight dispatches, and every reason `--apply` would refuse. `--json` prints the report on stdout.
+- `--apply` refuses on a detached HEAD, tracked local changes, a non-fast-forward target, a target CI that is not `success` (`--allow-red-ci` overrides), an unhealthy daemon, no matching service units, units that run from another checkout (`--repo`), or a self-kill (below). It then runs, in order:
+  1. Wait until idle: no `dispatched` handoffs (daemon `GET /handoffs`), no live `penumbra-*.scope` job scopes and no worker child processes, for up to `--wait-idle` seconds (default 900). When `bun install` will run, then take the heavy-job gate (`PENUMBRA_JOB_HEAVY_LOCK` plus the `PENUMBRA_JOB_ADMIT_*` memory floor) and re-check idleness while holding it. Neither wait happens with the worker stopped.
+  2. systemd: stop the worker unit, so it claims nothing while the checkout and `node_modules` change. There is no claim-pause on the worker control bus yet. launchd has no equivalent.
+  3. Guard: HEAD must still be the starting commit and the tracked tree clean. `dispatch_land` commits into the project root, which for penumbra is the running checkout. A land during the wait aborts here, before git is touched.
+  4. Append `apply from=<sha> to=<sha>` to `<storage root>/update-history.log`, then `git merge --ff-only`. Every git call runs with `--no-optional-locks` and hooks off.
+  5. When dependency files changed, run `bun install --frozen-lockfile` with the services' own bun (from `ExecStart=`) in a memory-capped job scope (`PENUMBRA_JOB_MEMORY_*`, `choom`). When the shell has no `PENUMBRA_JOB_HEAVY_LOCK`, the lock comes from the worker unit's `Environment=`.
+  6. Re-check idleness. The daemon's own `fs_exec`/`shell_run` scopes and extra workers would die with it, and so would launchd's still-running worker.
+  7. Restart: `systemctl --user restart <daemon>` then `start <worker>`; launchd `launchctl kickstart -k` the daemon, then the worker.
+  8. Verify within `--verify-timeout` (default 120 s): both units active, `GET /health` ok on the port in `<storage root>/port`, the new incarnation's `daemon started` and `agentchat worker started` log lines, and HEAD at the target. It also reports `job resource scopes enabled`/`unavailable`, the `job memory admission floor` and any error-level worker lines. Logs are read from the unit's `StandardOutput=` file (journal otherwise) or the launchd `stdout path`.
+- On failure the update puts back only what it changed. A `reset --hard` back to the previous sha happens only when HEAD is still the commit this run moved to and the tracked tree is clean. Any other HEAD (a land on top) is left untouched and the command exits `4`. It reinstalls only if `bun install` ran. It restarts only if it already restarted or reinstalled, and then only once idle. Otherwise the stopped worker is simply started again. It exits `3` after a full rollback, `1` when nothing changed, and `4` when it could not put things back.
+- The command never exits with the worker it stopped still stopped. The first SIGINT/SIGTERM/SIGHUP stops after the current step and recovers as above. A second one starts the worker, writes `interrupted head=<sha>` to the history and exits `130`.
+- `--rollback [sha]` runs the same procedure with `git reset --hard` (same guard). The default target is the `from=` of the last move that completed with `ok`; moves that were refused, aborted or rolled back do not count, and the bash `penumbra-update` format is read too. The sha and HEAD must both be on `--ref`. Rollback tolerates an unreachable daemon. A rollback that changed the runtime and then failed does not move the checkout again; it exits `4`.
+- Exit codes: `0` ok or up to date, `1` refused (nothing changed), `2` usage, `3` failed and rolled back, `4` the runtime needs attention.
+
+**Self-safety.** `--apply` and `--rollback` refuse when the restart would kill the caller. That covers running inside the daemon or worker unit, inside a `penumbra-*.scope` bound to one of them (`BindsTo=`, i.e. a dispatched job), or below their main pids. Run it from a terminal, or detached: `systemd-run --user --unit penumbra-update --collect -- bun <checkout>/packages/cli/bin/penumbra.ts update --apply`. Every module the command needs is imported before the fast-forward; verification uses HTTP, `systemctl`/`launchctl` and the logs, never code from the new checkout.
+
+| Variable                          | Default                   | Meaning                                                                            |
+| --------------------------------- | ------------------------- | ---------------------------------------------------------------------------------- |
+| `PENUMBRA_UPDATE_SERVICE_MANAGER` | `auto`                    | `auto` (systemd `--user` on Linux, launchd on macOS), `systemd` or `launchd`       |
+| `PENUMBRA_UPDATE_DAEMON_UNIT`     | `penumbra-daemon.service` | systemd unit running `penumbra start` (`--daemon-unit`)                            |
+| `PENUMBRA_UPDATE_WORKER_UNIT`     | `penumbra-worker.service` | systemd unit running `agentchat-worker` (`--worker-unit`)                          |
+| `PENUMBRA_UPDATE_DAEMON_LABEL`    | `dev.penumbra.daemon`     | launchd label, as in `launchctl kickstart -k gui/<uid>/<label>` (`--daemon-label`) |
+| `PENUMBRA_UPDATE_WORKER_LABEL`    | `dev.penumbra.worker`     | launchd label of the worker (`--worker-label`)                                     |
+
+`penumbra update` activates only the daemon + worker runtime. MCP shims and CC workflow scripts still reload as described in "Activating a landed change". With warm-pooled ACP servers (`options.warm_pool`), the worker keeps child processes and scopes while idle, so the idle wait does not finish. Lower `--wait-idle` and retry when the pool is drained, or update by hand.
 
 ## Daemon-supervised extra workers
 

@@ -54,6 +54,7 @@ import {
   runTaskShow,
   runTaskWatch,
 } from "../src/commands/task.js";
+import { runUpdateCommand } from "../src/commands/update/index.js";
 import { runWatchdog } from "../src/commands/watchdog.js";
 import { dispatchWorkflowSubcommand } from "../src/commands/workflow.js";
 import { resolveCliStorageRoot } from "../src/storage-root.js";
@@ -193,6 +194,10 @@ switch (cmd) {
       emit(JSON.stringify(s, null, 2));
       process.exit(s.status === "running" ? 0 : 2);
     }
+    break;
+  case "update":
+    // Statically imported: after the fast-forward this process must not load code from the new checkout.
+    process.exit(await runUpdateCommand(process.argv.slice(3), resolveLiveRoot()));
     break;
   case "watchdog":
     {
@@ -1345,7 +1350,7 @@ switch (cmd) {
   case "-h":
   case undefined:
     emit(
-      "usage: penumbra <init|codex-setup|start|stop|status|export|import|repair|tail|recent|memory|cost|agent|dispatch|recall|workflow|plan|registrar|hook|hooks|task|maestro|long-lived|chain|statusline|console|worktree|notes|config>",
+      "usage: penumbra <init|codex-setup|start|stop|status|update|export|import|repair|tail|recent|memory|cost|agent|dispatch|recall|workflow|plan|registrar|hook|hooks|task|maestro|long-lived|chain|statusline|console|worktree|notes|config>",
     );
     process.exit(0);
     break;
