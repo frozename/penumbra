@@ -1,12 +1,11 @@
-import { execFile as execFileCb } from "node:child_process";
-import { promisify } from "node:util";
-
 import {
   type CommitIntegrityEvidence,
   DISPATCH_BASE_CONFIG_KEY,
   isAncestorOf,
   type WorktreeCommandRunner,
 } from "@penumbra/core";
+import { execFile as execFileCb } from "node:child_process";
+import { promisify } from "node:util";
 
 const execFile = promisify(execFileCb);
 
@@ -48,13 +47,8 @@ export async function probeCommitIntegrity(
 
     const mismatchedCommits: string[] = [];
     for (const line of log.split("\n")) {
-      const [
-        sha = "",
-        authorName = "",
-        authorEmail = "",
-        committerName = "",
-        committerEmail = "",
-      ] = line.split("\0");
+      const [sha = "", authorName = "", authorEmail = "", committerName = "", committerEmail = ""] =
+        line.split("\0");
       if (!SHA_RE.test(sha)) continue;
       if (
         authorName !== name ||

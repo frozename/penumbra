@@ -1,11 +1,10 @@
+import { DISPATCH_BASE_CONFIG_KEY } from "@penumbra/core";
 import { afterEach, describe, expect, it } from "bun:test";
 import { execFile as execFileCb } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
-
-import { DISPATCH_BASE_CONFIG_KEY } from "@penumbra/core";
 
 import { probeCommitIntegrity } from "@src/worker/commit-integrity.js";
 
@@ -54,10 +53,15 @@ async function setupFixture(): Promise<{
   return { wtPath, baseSha, firstSha };
 }
 
-async function commitInWt(wtPath: string, extraArgs: string[], env?: NodeJS.ProcessEnv): Promise<void> {
+async function commitInWt(
+  wtPath: string,
+  extraArgs: string[],
+  env?: NodeJS.ProcessEnv,
+): Promise<void> {
   commitSeq += 1;
-  const fileName = `change-${commitSeq}.txt`;
-  fs.writeFileSync(path.join(wtPath, fileName), `change ${commitSeq}\n`);
+  const seq = String(commitSeq);
+  const fileName = `change-${seq}.txt`;
+  fs.writeFileSync(path.join(wtPath, fileName), `change ${seq}\n`);
   await git(wtPath, ["add", fileName], env);
   await git(wtPath, ["commit", ...extraArgs, "-m", "worker change"], env);
 }
