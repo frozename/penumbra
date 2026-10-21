@@ -216,6 +216,25 @@ describe("probeCommitIntegrity", () => {
     expect(evidence?.mismatched_total).toBe(0);
   });
 
+  it("does not flag upstream commits after a rebase onto a newer origin/main while local main is stale", async () => {
+    const { repoDir, wtPath, baseSha } = await setupFixture();
+    await commitIn(wtPath);
+    // Only the remote-tracking ref moves, as after a fetch; local main stays at the base.
+    await git(repoDir, ["checkout", "-q", "--detach", "main"]);
+    const upstreamSha = await commitIn(repoDir, {
+      env: { GIT_COMMITTER_NAME: "GitHub", GIT_COMMITTER_EMAIL: "noreply@github.com" },
+    });
+    await git(repoDir, ["update-ref", "refs/remotes/origin/main", upstreamSha]);
+    await git(repoDir, ["checkout", "-q", "main"]);
+    await git(wtPath, ["rebase", "-q", "origin/main"]);
+
+    const evidence = await probe(wtPath);
+    expect(evidence?.base_sha).toBe(baseSha);
+    expect(evidence?.base_is_ancestor).toBe(true);
+    expect(evidence?.mismatched_commits).toEqual([]);
+    expect(evidence?.mismatched_total).toBe(0);
+  });
+
   it("does not flag commits of a stacked dispatch's parent branch", async () => {
     const { repoDir, wtPath } = await setupFixture();
     await git(repoDir, ["branch", "agent/parent", "main"]);
