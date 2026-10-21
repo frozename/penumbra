@@ -490,6 +490,7 @@ interface ReconcileCtx {
   handoff: HandoffRow | null;
   wt: WorktreeHandle;
   baseRef: string;
+  repoDir: string;
   snapshot: ReconcileSnapshot | null;
   startedAtMs: number;
   packageJsonCache: Map<string, WorkspacePackageJson | null>;
@@ -558,17 +559,31 @@ function requireSnapshot(ctx: ReconcileCtx): ReconcileSnapshot {
   return ctx.snapshot;
 }
 
+function resolveReconcileRepoDir(
+  deps: ReconcilerDeps,
+  handoff: HandoffRow | null,
+  handoffId: string,
+  wt: WorktreeHandle,
+): string {
+  const projectId = handoff?.project_id ?? wt.projectId ?? undefined;
+  const root = deps.worktreeManager.projectRootFor(projectId);
+  if (root !== undefined) return root;
+  if (projectId) {
+    deps.log.warn(
+      { handoffId, projectId, mainRepoDir: deps.mainRepoDir },
+      "reconcile project root unresolved; using the worker checkout",
+    );
+  }
+  return deps.mainRepoDir;
+}
+
 async function resolveReconcileSnapshot(ctx: ReconcileCtx): Promise<void> {
-  const { deps, baseRef, wt } = ctx;
+  const { baseRef, wt } = ctx;
   const branchHeadRes = await execGit(ctx, ["rev-parse", "HEAD"], wt.path);
   const branchHeadSha = branchHeadRes.stdout.trim();
-  const baseTipRes = await execGit(ctx, ["rev-parse", baseRef], deps.mainRepoDir);
+  const baseTipRes = await execGit(ctx, ["rev-parse", baseRef], ctx.repoDir);
   const baseTipSha = baseTipRes.stdout.trim();
-  const mergeBaseRes = await execGit(
-    ctx,
-    ["merge-base", baseTipSha, branchHeadSha],
-    deps.mainRepoDir,
-  );
+  const mergeBaseRes = await execGit(ctx, ["merge-base", baseTipSha, branchHeadSha], ctx.repoDir);
   const mergeBaseSha = mergeBaseRes.stdout.trim();
 
   if (!branchHeadSha || !baseTipSha || !mergeBaseSha) {
@@ -584,15 +599,15 @@ async function resolveReconcileSnapshot(ctx: ReconcileCtx): Promise<void> {
 }
 
 async function refreshSnapshotFromDurableBranch(ctx: ReconcileCtx): Promise<void> {
-  const { deps, baseRef, wt } = ctx;
+  const { baseRef, wt } = ctx;
   const current = requireSnapshot(ctx);
-  const branchHeadRes = await execGitSafe(ctx, ["rev-parse", wt.branchName], deps.mainRepoDir);
+  const branchHeadRes = await execGitSafe(ctx, ["rev-parse", wt.branchName], ctx.repoDir);
   const branchHeadSha = branchHeadRes?.stdout.trim();
   if (!branchHeadSha) return;
   const mergeBaseRes = await execGitSafe(
     ctx,
     ["merge-base", current.baseTipSha, branchHeadSha],
-    deps.mainRepoDir,
+    ctx.repoDir,
   );
   const mergeBaseSha = mergeBaseRes?.stdout.trim();
   if (!mergeBaseSha) return;
@@ -892,7 +907,7 @@ async function rebaseInScratch(ctx: ReconcileCtx, scratchPath: string): Promise<
   await execGit(
     ctx,
     ["worktree", "add", "--detach", scratchPath, snapshot.baseTipSha],
-    deps.mainRepoDir,
+    ctx.repoDir,
   );
   await execGit(ctx, ["checkout", wt.branchName], scratchPath);
   try {
@@ -952,7 +967,7 @@ async function attemptAutoRebase(ctx: ReconcileCtx): Promise<void> {
   const ffProbe = await execGitProbe(
     ctx,
     ["merge-base", "--is-ancestor", snapshot.baseTipSha, snapshot.branchHeadSha],
-    deps.mainRepoDir,
+    ctx.repoDir,
   );
   if (ffProbe.exitCode === 0) {
     state.rebaseOutcome = { attempted: false, result: "skipped" };
@@ -980,7 +995,7 @@ async function attemptAutoRebase(ctx: ReconcileCtx): Promise<void> {
   const scratchPath = join(scratchRoot, handoffId);
   await mkdir(scratchRoot, { recursive: true });
 
-  await execGitSafe(ctx, ["worktree", "remove", "--force", scratchPath], deps.mainRepoDir);
+  await execGitSafe(ctx, ["worktree", "remove", "--force", scratchPath], ctx.repoDir);
   await rm(scratchPath, { recursive: true, force: true }).catch(noop);
 
   try {
@@ -988,7 +1003,7 @@ async function attemptAutoRebase(ctx: ReconcileCtx): Promise<void> {
   } catch (err) {
     deps.log.warn({ handoffId, err: String(err) }, "auto-rebase failed unexpectedly");
   } finally {
-    await execGitSafe(ctx, ["worktree", "remove", "--force", scratchPath], deps.mainRepoDir);
+    await execGitSafe(ctx, ["worktree", "remove", "--force", scratchPath], ctx.repoDir);
     await rm(scratchPath, { recursive: true, force: true }).catch(noop);
   }
 }
@@ -1029,7 +1044,7 @@ async function recomputeVerdictDiffStats(ctx: ReconcileCtx): Promise<void> {
   const diffStatsRes = await execGitSafe(
     ctx,
     ["diff", snapshot.diffSpec, "--shortstat"],
-    ctx.deps.mainRepoDir,
+    ctx.repoDir,
   );
   if (!diffStatsRes) return;
   ctx.state.diffStats = parseShortStat(diffStatsRes.stdout);
@@ -1069,7 +1084,7 @@ async function buildVerdict(ctx: ReconcileCtx, result: MergeResult): Promise<Rec
   const ffProbe = await execGitProbe(
     ctx,
     ["merge-base", "--is-ancestor", snapshot.baseTipSha, snapshot.branchHeadSha],
-    deps.mainRepoDir,
+    ctx.repoDir,
   );
 
   const head_sha = snapshot.branchHeadSha;
@@ -1248,7 +1263,7 @@ async function gatherChangedFiles(ctx: ReconcileCtx): Promise<void> {
     const diffRes = await execGit(
       ctx,
       ["diff", "--name-only", snapshot.diffSpec],
-      deps.mainRepoDir,
+      ctx.repoDir,
       timeout,
     );
     const diffFiles = diffRes.stdout
@@ -1536,11 +1551,11 @@ async function mergeBaseLockfileHash(ctx: ReconcileCtx): Promise<string> {
   const lockfile = await execGitSafe(
     ctx,
     ["show", `${snapshot.mergeBaseSha}:bun.lock`],
-    ctx.deps.mainRepoDir,
+    ctx.repoDir,
   );
   if (lockfile) return sha256Hex(lockfile.stdout);
   try {
-    return sha256Hex(await readFile(join(ctx.deps.mainRepoDir, "bun.lock"), "utf8"));
+    return sha256Hex(await readFile(join(ctx.repoDir, "bun.lock"), "utf8"));
   } catch {
     return "missing";
   }
@@ -1551,7 +1566,7 @@ async function testBaselineCacheKey(ctx: ReconcileCtx, testArgs: string[]): Prom
   const installKey =
     isolatedProvisioning().ISOLATED_INSTALL_CACHE_KEY ?? ISOLATED_INSTALL_CACHE_KEY;
   return [
-    ctx.deps.mainRepoDir,
+    ctx.repoDir,
     snapshot.mergeBaseSha,
     await mergeBaseLockfileHash(ctx),
     installKey,
@@ -1633,7 +1648,7 @@ async function assertOwnedTestNodeModules(envRoot: string, label: string): Promi
 }
 
 function provisionTestLocalCache(ctx: ReconcileCtx, envRoot: string): void {
-  isolatedProvisioning().provisionLocalCache(ctx.deps.mainRepoDir, envRoot);
+  isolatedProvisioning().provisionLocalCache(ctx.repoDir, envRoot);
 }
 
 interface TestStageDeadline {
@@ -1658,17 +1673,17 @@ async function runBunTestBaseline(
   const scratchRoot = deps.rebaseScratchRoot ?? join(homedir(), ".penumbra", "rebase-scratch");
   const scratchPath = join(scratchRoot, "test-baseline", safePathToken(handoffId));
   await mkdir(dirname(scratchPath), { recursive: true });
-  await execGitSafe(ctx, ["worktree", "remove", "--force", scratchPath], deps.mainRepoDir);
+  await execGitSafe(ctx, ["worktree", "remove", "--force", scratchPath], ctx.repoDir);
   await rm(scratchPath, { recursive: true, force: true }).catch(noop);
   try {
     await execGit(
       ctx,
       ["worktree", "add", "--detach", scratchPath, snapshot.mergeBaseSha],
-      deps.mainRepoDir,
+      ctx.repoDir,
     );
     const provisioning = isolatedProvisioning();
-    provisioning.prepareEscapingFileDependencyLinks(deps.mainRepoDir, scratchPath);
-    provisioning.provisionLocalCache(deps.mainRepoDir, scratchPath);
+    provisioning.prepareEscapingFileDependencyLinks(ctx.repoDir, scratchPath);
+    provisioning.provisionLocalCache(ctx.repoDir, scratchPath);
     await provisioning.runIsolatedInstall(scratchPath, {
       runner: coreInstallRunner(ctx),
       timeoutMs: remainingStageMs(deadline),
@@ -1679,7 +1694,7 @@ async function runBunTestBaseline(
   } catch (err) {
     return environmentFailureOutcome(err);
   } finally {
-    await execGitSafe(ctx, ["worktree", "remove", "--force", scratchPath], deps.mainRepoDir);
+    await execGitSafe(ctx, ["worktree", "remove", "--force", scratchPath], ctx.repoDir);
     await rm(scratchPath, { recursive: true, force: true }).catch(noop);
   }
 }
@@ -1967,11 +1982,7 @@ async function runPrCreationStage(ctx: ReconcileCtx): Promise<MergeResult> {
     const dispatchPrompt = handoff?.message ?? "<unknown>";
     const agentName = handoff?.to_agent ?? "<unknown>";
     const conversationId = handoff?.conversation_id ?? null;
-    const diffNames = await execGit(
-      ctx,
-      ["diff", "--name-only", snapshot.diffSpec],
-      deps.mainRepoDir,
-    );
+    const diffNames = await execGit(ctx, ["diff", "--name-only", snapshot.diffSpec], ctx.repoDir);
     if (!diffNames.stdout.trim()) {
       const result: MergeResult = { status: "no_changes" };
       deps.log.info(
@@ -2063,6 +2074,7 @@ export function createMergeReconciler(
       handoff,
       wt,
       baseRef,
+      repoDir: resolveReconcileRepoDir(deps, handoff, handoffId, wt),
       startedAtMs,
       snapshot: null,
       packageJsonCache: new Map<string, WorkspacePackageJson | null>(),
