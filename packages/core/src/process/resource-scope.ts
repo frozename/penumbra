@@ -59,6 +59,7 @@ const log = createLogger({ component: "resource-scope" });
 
 let detection: ResourceScopeDetection | undefined;
 let warnedUnavailable = false;
+let warnedNoChoom = false;
 
 export function resolveResourceScopeConfig(
   env: NodeJS.ProcessEnv = process.env,
@@ -199,6 +200,17 @@ function warnUnavailableOnce(config: ResourceScopeConfig, reason: string): void 
   );
 }
 
+// Scopes reject OOMScoreAdjust= (systemd 255), so the score is raised by choom
+// inside the scope; without it jobs still get the memory cap, at the default score.
+function warnNoChoomOnce(host: ResourceScopeHost, config: ResourceScopeConfig): void {
+  if (warnedNoChoom || host.choom !== null || config.oomScoreAdj <= 0) return;
+  warnedNoChoom = true;
+  log.warn(
+    { oom_score_adj: config.oomScoreAdj },
+    "choom not found; scoped jobs keep the default oom_score_adj",
+  );
+}
+
 function currentDetection(): ResourceScopeDetection {
   detection ??= detectResourceScopeHost();
   return detection;
@@ -224,6 +236,7 @@ export function wrapResourceScopeArgv(
     host = found.available ? found.host : null;
   }
   if (!host) return [...argv];
+  warnNoChoomOnce(host, config);
   // A spawn without an explicit env inherits ours.
   return buildResourceScopeArgv(argv, host, config, {
     label: opts.label,
@@ -280,6 +293,7 @@ export async function primeResourceScope(
   const res = await (opts.spawn ?? defaultProbeSpawn)(argv);
   if (res.exitCode === 0) {
     detection = found;
+    warnNoChoomOnce(found.host, config);
     log.info(
       { bind_unit: found.host.bindUnit, choom: found.host.choom !== null, ...config },
       "job resource scopes enabled",
@@ -298,6 +312,7 @@ export async function primeResourceScope(
 export function resetResourceScopeForTest(): void {
   detection = undefined;
   warnedUnavailable = false;
+  warnedNoChoom = false;
 }
 
 export interface JobExitInfo {
