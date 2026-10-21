@@ -1539,7 +1539,7 @@ const dispatcher = createWorkerDispatcher({
       // >1 means commits / amends happened.
       const reflogEntries = parseInt(reflogRes.stdout.trim(), 10) || 0;
       const committed = reflogEntries > 1;
-      const commitIntegrity = await probeCommitIntegrity(wt.path);
+      const commitIntegrity = await probeCommitIntegrity(wt.path, wt.branchName);
       return { worktreeChanged: dirty || committed, dirty, committed, commitIntegrity };
     } catch {
       return { worktreeChanged: null, dirty: null, committed: null };
