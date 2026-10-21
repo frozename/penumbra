@@ -1,4 +1,8 @@
-import type { DispatchEventInput, Logger } from "@penumbra/core";
+import type {
+  CommitIntegrityEvidence,
+  DispatchEventInput,
+  Logger,
+} from "@penumbra/core";
 
 import type { DispatchHandoffResult } from "../cli/dispatch-handoff.js";
 import type { DiscordNotificationEvent } from "./discord-events.js";
@@ -139,6 +143,7 @@ interface SnapshotResult {
   worktreeChanged: boolean | null;
   dirty: boolean | null;
   committed: boolean | null;
+  commitIntegrity?: CommitIntegrityEvidence | null;
 }
 
 interface ClaimRetryEntry {
@@ -1014,6 +1019,7 @@ function buildDispatchEndMeta(ctx: DispatchLifecycleContext): Record<string, unk
     ...(snap.worktreeChanged !== null ? { worktree_changed: snap.worktreeChanged } : {}),
     ...(snap.dirty !== null ? { dirty: snap.dirty } : {}),
     ...(snap.committed !== null ? { committed: snap.committed } : {}),
+    ...(snap.commitIntegrity ? { commit_integrity: snap.commitIntegrity } : {}),
     ...(decline ?? {}),
     ...(terminalError !== null ? { terminal_error: terminalError } : {}),
   };

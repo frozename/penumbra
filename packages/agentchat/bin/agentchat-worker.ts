@@ -63,6 +63,7 @@ import {
   shouldCheckWorkerCodeStaleness,
   WORKER_CODE_STALENESS_CHECK_INTERVAL_MS,
 } from "../src/worker/code-staleness.js";
+import { probeCommitIntegrity } from "../src/worker/commit-integrity.js";
 import { handleAgentchatReload } from "../src/worker/config-reload.js";
 import { runWorkerControlListener } from "../src/worker/control-listener.js";
 import { type DiscordNotificationEvent, renderDiscordEvent } from "../src/worker/discord-events.js";
@@ -1538,7 +1539,8 @@ const dispatcher = createWorkerDispatcher({
       // >1 means commits / amends happened.
       const reflogEntries = parseInt(reflogRes.stdout.trim(), 10) || 0;
       const committed = reflogEntries > 1;
-      return { worktreeChanged: dirty || committed, dirty, committed };
+      const commitIntegrity = await probeCommitIntegrity(wt.path);
+      return { worktreeChanged: dirty || committed, dirty, committed, commitIntegrity };
     } catch {
       return { worktreeChanged: null, dirty: null, committed: null };
     }

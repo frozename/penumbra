@@ -259,6 +259,58 @@ test("dispatch.end meta reflects post-recovery snapshot after autocommit", async
   });
 });
 
+const EVIDENCE = {
+  base_sha: "a".repeat(40),
+  head_sha: "b".repeat(40),
+  base_is_ancestor: false,
+  identity: { name: "Penumbra Worker", email: "worker@example.com" },
+  mismatched_commits: [],
+};
+
+test("dispatch.end meta carries the snapshot commit-integrity evidence", async () => {
+  const onEvent = mock();
+  const d = deps({
+    onEvent,
+    getWorktreeSnapshot: mock().mockResolvedValue({
+      worktreeChanged: true,
+      dirty: false,
+      committed: true,
+      commitIntegrity: EVIDENCE,
+    }),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(handoff);
+  await dispatcher.idle();
+
+  const dispatchEnd = mockCalls<[DispatchEventLike]>(onEvent).find(
+    (call) => call[0].kind === "dispatch.end",
+  )?.[0];
+  expect(dispatchEnd?.meta?.commit_integrity).toEqual(EVIDENCE);
+});
+
+test("dispatch.end meta omits commit_integrity when the snapshot has none", async () => {
+  const onEvent = mock();
+  const d = deps({
+    onEvent,
+    getWorktreeSnapshot: mock().mockResolvedValue({
+      worktreeChanged: true,
+      dirty: false,
+      committed: true,
+    }),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(handoff);
+  await dispatcher.idle();
+
+  const dispatchEnd = mockCalls<[DispatchEventLike]>(onEvent).find(
+    (call) => call[0].kind === "dispatch.end",
+  )?.[0];
+  expect(dispatchEnd).toBeDefined();
+  expect(dispatchEnd?.meta).not.toHaveProperty("commit_integrity");
+});
+
 test("autocommit is suppressed on non-success reasons", async () => {
   const onChainEnd = mock();
   const autocommitOnChainEnd = mock();
