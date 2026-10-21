@@ -68,6 +68,28 @@ describe("gh-task-sync full-reconcile throttle (Phase 3.1)", () => {
     expect(listCalls).toBe(1);
   });
 
+  test("sweeper scopes its reconciles to GitHub-side changes", async () => {
+    const seen: unknown[] = [];
+    const fakeService = {
+      syncAllLinkedTasks: (o?: unknown): Promise<GhTaskSyncSummary> => {
+        seen.push(o);
+        return Promise.resolve({
+          linked: 0,
+          pushed: 0,
+          pulled: 0,
+          errored: 0,
+          skipped: false,
+          results: [],
+        });
+      },
+    } as unknown as GhTaskSyncService;
+
+    const sweeper = createGhTaskSyncSweeper({ service: fakeService, now: () => 1_000_000 });
+    await sweeper.tick();
+
+    expect(seen).toEqual([{ fullReconcile: true, changedOnly: true }]);
+  });
+
   test("sweeper full-reconciles on the first tick, then only after fullReconcileIntervalMs elapses", async () => {
     let nowMs = Date.parse("2026-06-08T00:00:00.000Z");
     const fullFlags: boolean[] = [];

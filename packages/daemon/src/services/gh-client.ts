@@ -64,6 +64,11 @@ export interface GhIssueComment {
   url: string;
 }
 
+export interface GhIssuesUpdatedSince {
+  serverTime: string | null;
+  issues: { number: number; updatedAt: string }[];
+}
+
 export interface GhClient {
   createIssue(input: GhCreateIssueInput): Promise<{ number: number; url: string }>;
   viewIssue(repo: string, issueNumber: number): Promise<GhIssueView>;
@@ -75,6 +80,7 @@ export interface GhClient {
     issueNumber: number,
     opts?: { since?: string },
   ): Promise<GhIssueComment[]>;
+  listIssuesUpdatedSince?(repo: string, since: string): Promise<GhIssuesUpdatedSince>;
   getAuthenticatedLogin?(): Promise<string | null>;
   listOpenPullRequests?(): Promise<GhOpenPullRequest[]>;
   listOpenPullRequestsByHead?(headRefName: string): Promise<GhPullRequestLite[]>;
@@ -230,6 +236,40 @@ function parseGhIssueComments(text: string): GhIssueComment[] {
   return comments;
 }
 
+// `--include` prints each page's response headers ahead of its jq rows; the
+// first page's Date header is GitHub's own clock at the start of the listing.
+function parseIssuesUpdatedSince(text: string): GhIssuesUpdatedSince {
+  let serverTime: string | null = null;
+  const issues: GhIssuesUpdatedSince["issues"] = [];
+  for (const line of text.split("\n")) {
+    const row = /^(\d+)\t(\S+)$/.exec(line.trim());
+    if (row?.[1] && row[2]) {
+      issues.push({ number: Number(row[1]), updatedAt: row[2] });
+      continue;
+    }
+    const date = /^date:(.+)$/i.exec(line.trim());
+    const parsed = date?.[1] ? Date.parse(date[1].trim()) : Number.NaN;
+    if (serverTime === null && !Number.isNaN(parsed)) serverTime = new Date(parsed).toISOString();
+  }
+  return { serverTime, issues };
+}
+
+async function ghListIssuesUpdatedSince(
+  exec: GhExec,
+  repo: string,
+  since: string,
+): Promise<GhIssuesUpdatedSince> {
+  const text = await runOrThrow(exec, [
+    "api",
+    "--include",
+    "--paginate",
+    `repos/${repo}/issues?state=all&since=${encodeURIComponent(since)}&per_page=100`,
+    "--jq",
+    ".[] | [.number, .updated_at] | @tsv",
+  ]);
+  return parseIssuesUpdatedSince(text);
+}
+
 async function ghCreateIssue(
   exec: GhExec,
   input: GhCreateIssueInput,
@@ -350,6 +390,8 @@ export function createGhCliClient(
       ]);
       return parseGhIssueComments(text);
     },
+
+    listIssuesUpdatedSince: (repo, since) => ghListIssuesUpdatedSince(exec, repo, since),
 
     async getAuthenticatedLogin(): Promise<string | null> {
       const text = await runOrThrow(exec, ["api", "user", "--jq", ".login"]);
