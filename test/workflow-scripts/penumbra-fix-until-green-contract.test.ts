@@ -1552,3 +1552,106 @@ describe("penumbra-fix-until-green reply without a CHECK_RESULT marker", () => {
     );
   });
 });
+
+describe("penumbra-fix-until-green rubric grader schema and range", () => {
+  const graderScopeFanout = async () => ({
+    results: [
+      {
+        ok: true,
+        status: "completed",
+        branch: "test/x_h-777",
+        conversation_id: "c",
+        handoff_id: "h-777",
+        reliability_trustworthy: true,
+        check_line: "CHECK_RESULT: PASS",
+      },
+    ],
+  });
+
+  function graderStub(value: unknown) {
+    return async (_prompt: string, options?: Record<string, unknown>) => {
+      const label = String(options?.label ?? "");
+      if (label.startsWith("verify-check")) return { ran: true, check_exit: 0 };
+      if (label.startsWith("rubric")) return value;
+      return {};
+    };
+  }
+
+  test("the rubric grader schema requires the inspected flag", async () => {
+    const { agentCalls } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 1,
+        rubric: ["criterion one"],
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: graderScopeFanout,
+        agent: graderStub({
+          inspected: true,
+          overall_pass: true,
+          criteria: [{ index: 1, criterion: "criterion one", pass: true, evidence: "d" }],
+        }),
+      },
+    );
+
+    const rubricCall = agentCalls.find((c) => String(c.options?.label ?? "").startsWith("rubric"));
+    expect(rubricCall).toBeDefined();
+    const schema = rubricCall!.options?.schema as Record<string, unknown>;
+    expect(schema.required as string[]).toContain("inspected");
+    expect((schema.properties as Record<string, Record<string, unknown>>).inspected!.type).toBe(
+      "boolean",
+    );
+  });
+
+  test("the grader range uses defaults.branch_base when args.base is absent", async () => {
+    const { agentCalls } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 1,
+        rubric: ["criterion one"],
+        defaults: { caller_cwd: "/abs", branch_base: "feat/d" },
+      },
+      {
+        workflow: graderScopeFanout,
+        agent: graderStub({
+          inspected: true,
+          overall_pass: true,
+          criteria: [{ index: 1, criterion: "criterion one", pass: true, evidence: "d" }],
+        }),
+      },
+    );
+
+    const prompt = agentCalls.find((c) =>
+      String(c.options?.label ?? "").startsWith("rubric"),
+    )!.prompt;
+    expect(prompt).toContain("git -C /abs diff --stat feat/d...test/x_h-777");
+  });
+});
+
+describe("penumbra-fix-until-green proxy hint session guidance", () => {
+  test("the proxy hint tells the operator to start a new session", async () => {
+    const missingProxyStub = async () => ({
+      results: [
+        {
+          ok: false,
+          status: "proxy_error",
+          error_code: "not_found",
+          label: "t0",
+          index: 0,
+          error_summary: "proxy_error: agent type penumbra:penumbra-fanout-proxy not found",
+        },
+      ],
+    });
+
+    const { result } = await runFixUntilGreen(
+      { task: { message: "m" }, check: "true", maxRounds: 3, repo: "/repo" },
+      { workflow: missingProxyStub },
+    );
+
+    const rounds = (result?.rounds as Round[]) ?? [];
+    expect(rounds[0]?.hint).toContain("start a new Claude Code session");
+  });
+});

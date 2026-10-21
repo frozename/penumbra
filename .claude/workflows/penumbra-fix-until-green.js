@@ -1,7 +1,7 @@
 export const meta = {
   name: 'penumbra-fix-until-green',
   description: 'Dispatch an implementation task to the penumbra fleet, then loop: each round the worker runs a check command and reports PASS/FAIL; on FAIL, re-dispatch building on the previous branch with the failure log, until green or the round cap. Optionally run an independent rubric grader after a PASS; rubric failures count as FAIL and feed the next round. Optionally escalate to a stronger agent on the final round. Maestro lands the final green branch.',
-  whenToUse: 'When a change must satisfy a concrete check (typecheck, a test slice, a lint gate) and may need more than one attempt. Pass args.task.message + args.check (the shell command), optionally args.rubric / args.graderModel / args.agent / args.escalateTo / args.maxRounds. Nothing is landed.',
+  whenToUse: 'When a change must satisfy a concrete check (typecheck, a test slice, a lint gate) and may need more than one attempt. Pass args.task.message + args.check (the shell command), optionally args.rubric / args.graderModel / args.agent / args.escalateTo / args.maxRounds. Nothing is landed. Every rubric criterion must be checkable from the candidate diff alone: the grader never sees the worker reply, so a criterion such as the worker reported a proof can never pass and only burns rounds. Run it as the top-level Workflow: it nests penumbra-fanout through workflow(), and workflow() cannot be called from within a child workflow.',
   phases: [
     { title: 'Iterate', detail: 'dispatch → worker runs the check → optional independent rubric grade after PASS → on FAIL re-dispatch on the prior branch with the failure log; until green or capped' },
   ],
@@ -9,10 +9,15 @@ export const meta = {
 
 // args: { task: { message, task_class?, task_type? }, check: 'bun run typecheck',
 //         rubric?: string[], agent?, escalateTo?, maxRounds?, base?, defaults?,
-//         dispatcherModel?, graderModel?, parityCheck?: 'bun run check:ci' }
+//         dispatcherModel?, agentType?, graderModel?, parityCheck?: 'bun run check:ci' }
+// agentType: the fanout proxy agent type; omit it to use penumbra:penumbra-fanout-proxy, or pass 'inherit' for the generic proxy.
 // parityCheck requires the independent verifier (verifyCheck on by default); combining
 // it with verifyCheck:false is rejected because the parity gate would never run.
 // graderModel defaults to 'sonnet'; pass graderModel:'inherit' to use the session-default model.
+// Composition: run this as the top-level Workflow. Every round calls workflow('penumbra-fanout'), and workflow() cannot be called from within a child workflow; penumbra-loop-discover-to-green inlines this loop for that reason.
+// Rubric: the grader reads only the candidate diff (worktree_inspect, else git -C <repo> diff <base>...<branch>, with the repo from args.repo or caller_cwd). Write every criterion so the diff alone can prove it. A grader that cannot read the diff reports GRADER_UNAVAILABLE.
+// A reply without a CHECK_RESULT marker is UNKNOWN: with verifyCheck on, the independent verifier's check_exit decides the round; otherwise it is a FAIL.
+// A missing penumbra:penumbra-fanout-proxy agent stops round 1 with reason proxy_not_installed.
 // task-spec-validation:begin
 function validateSpec(spec) {
   const workflowName = spec.workflowName || 'workflow'
@@ -148,8 +153,9 @@ if (parityCheck !== null && !verifyCheck) {
 }
 const maxRounds = Math.max(0, input.maxRounds ?? 3)
 const base = input.base || 'main'
+const rubricBase = input.base || (typeof defaults.branch_base === 'string' && defaults.branch_base) || 'main'
 const rubric = Array.isArray(input.rubric) ? input.rubric.filter((c) => typeof c === 'string' && c.trim().length > 0) : []
-const PROXY_NOT_INSTALLED_HINT = "The fanout proxy agent penumbra:penumbra-fanout-proxy is not installed on this host (the Penumbra Claude Code plugin ships it as plugin/agents/penumbra-fanout-proxy.md). Install or enable that plugin, or pass agentType: 'inherit' to opt in to the generic proxy, which can run Bash."
+const PROXY_NOT_INSTALLED_HINT = "The fanout proxy agent penumbra:penumbra-fanout-proxy is not available in this session (the Penumbra Claude Code plugin ships it as plugin/agents/penumbra-fanout-proxy.md). Install or enable that plugin and start a new Claude Code session, or pass agentType: 'inherit' to opt in to the generic proxy, which can run Bash."
 
 const RUBRIC_RESULT = {
   type: 'object',
@@ -362,8 +368,8 @@ function rubricPrompt(branch, handoffId, repoRoot, worktreePath) {
     ``,
     ...(repoRoot ? [`Repository root: ${repoRoot}`, `Candidate worktree (derived; it may not exist): ${worktreePath}`] : ['Repository root: unknown (args.repo, args.caller_cwd and defaults.caller_cwd are unset or relative).']),
     `Inspect the worktree diff with mcp__penumbra__worktree_inspect({ handoff_id: "${handoffId}" }).`,
-    repoRoot ? `If worktree_inspect fails or returns not_found, read the diff with git -C ${repoRoot} diff --stat ${base}...${branch} and then git -C ${repoRoot} diff ${base}...${branch} -- <path>. Every command must use git -C ${repoRoot}; never invoke in your own working directory, which can be a different repository.` : 'If worktree_inspect fails, do not invoke the diff command in your own working directory, which can be a different repository.',
-    'If you cannot read the candidate diff by either route, return inspected:false with an empty criteria array and say why in notes. Set inspected:true only after you have read the candidate diff.',
+    repoRoot ? `If worktree_inspect fails or returns not_found, read the diff with git -C ${repoRoot} diff --stat ${rubricBase}...${branch} and then git -C ${repoRoot} diff ${rubricBase}...${branch} -- <path>. Run every diff as git -C ${repoRoot}, never from your own working directory, which can be a different repository.` : 'If worktree_inspect fails, return inspected:false: without a repository root the candidate cannot be located safely.',
+    'If you cannot read the candidate diff, return inspected:false with an empty criteria array and say why in notes. Set inspected:true only after you have read the candidate diff.',
     'Read only the hunks needed to grade the rubric-relevant changes. Grade every rubric criterion below against the actual diff and task intent.',
     rubric.map((c, i) => `${i + 1}. ${c}`).join('\n'),
     ``,
