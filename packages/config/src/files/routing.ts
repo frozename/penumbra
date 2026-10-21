@@ -50,7 +50,7 @@ export const RoutingConfigSchema = z
     role_routing: RoleRoutingConfigSchema.optional(),
     personas: z.record(z.string(), PersonaSchema).optional(),
     workloads: WorkloadsConfigSchema.optional(),
-    // Read by the worker's merge reconciler, which merges routing.yaml into its own config; the daemon ignores it.
+    // Read by the worker, whose config loader merges routing.yaml into its own config; the daemon ignores it.
     reconcilerAutoRebase: z.boolean().optional(),
   })
   .superRefine((value, ctx) => {
