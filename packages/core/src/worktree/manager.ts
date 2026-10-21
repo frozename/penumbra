@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { promisify } from "node:util";
 
 import { createLogger, type Logger } from "../logger.js";
+import { isResourceKill, wrapResourceScopeArgv } from "../process/resource-scope.js";
 import { classifyBranchLandStatus } from "./branch-land-probe.js";
 import { resolveHandoffBranchName } from "./branch-name.js";
 import { classifyGitHooks, type WorktreeGitHooks } from "./git-hooks.js";
@@ -205,8 +206,12 @@ export async function runIsolatedInstall(
     opts.timeoutMs ??
     readPositiveIntEnv("PENUMBRA_ISOLATED_INSTALL_TIMEOUT_MS", DEFAULT_ISOLATED_INSTALL_TIMEOUT_MS);
   const runner = opts.runner ?? defaultRunner;
+  const [installCmd = "bun", ...installArgs] = wrapResourceScopeArgv(
+    ["bun", ...ISOLATED_INSTALL_ARGS],
+    { label: "install" },
+  );
   try {
-    await runner("bun", [...ISOLATED_INSTALL_ARGS], {
+    await runner(installCmd, installArgs, {
       cwd: wtPath,
       timeout,
       maxBuffer: ISOLATED_INSTALL_MAX_BUFFER,
@@ -222,6 +227,15 @@ export async function runIsolatedInstall(
       throw new Error(`isolated bun install timed out after ${String(timeout)}ms`, {
         cause: err instanceof Error ? err : new Error(String(err)),
       });
+    }
+    if (isResourceKill(exitInfoFromError(err))) {
+      throw Object.assign(
+        new Error(
+          "isolated bun install was SIGKILLed outside penumbra (job scope MemoryMax or host OOM)",
+          { cause: err instanceof Error ? err : new Error(String(err)) },
+        ),
+        { resourceKilled: true as const, signal: "SIGKILL" },
+      );
     }
     const stderrTail = stderrTailFromError(err);
     if (stderrTail.length > 0) {
@@ -1573,6 +1587,8 @@ function readPositiveIntEnv(name: string, fallback: number): number {
 }
 
 // An external AbortSignal is screened above so its ABORT_ERR remains distinct.
+// Only our own kill is a timeout: execFile marks it `killed`, spawnSilent
+// raises ETIMEDOUT. A bare SIGKILL is a resource (OOM) kill, not a timeout.
 function isTimeoutError(err: unknown, timeoutMs?: number): boolean {
   if (typeof err !== "object" || err === null) return false;
   const code = "code" in err ? String((err as { code?: unknown }).code) : "";
@@ -1580,7 +1596,16 @@ function isTimeoutError(err: unknown, timeoutMs?: number): boolean {
   if (timeoutMs === undefined) return false;
   const killed = "killed" in err && (err as { killed?: unknown }).killed === true;
   const signal = "signal" in err ? String((err as { signal?: unknown }).signal) : "";
-  return killed || signal === "SIGTERM" || signal === "SIGKILL";
+  return killed || signal === "SIGTERM";
+}
+
+function exitInfoFromError(err: unknown): { exitCode: number | null; signal: string | null } {
+  if (typeof err !== "object" || err === null) return { exitCode: null, signal: null };
+  const e = err as { code?: unknown; signal?: unknown };
+  return {
+    exitCode: typeof e.code === "number" ? e.code : null,
+    signal: typeof e.signal === "string" ? e.signal : null,
+  };
 }
 
 function isAbortError(err: unknown): boolean {

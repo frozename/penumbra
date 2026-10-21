@@ -98,10 +98,7 @@ function makeRunner(opts?: { failBunInstall?: Error; timeoutBunInstall?: boolean
     if (cmd === "git" && args[0] === "worktree" && args[1] === "add") {
       fs.mkdirSync(args[3]!, { recursive: true });
       fs.writeFileSync(path.join(args[3]!, ".git"), "gitdir: fake\n");
-      copyIfExists(
-        path.join(runnerOpts.cwd!, "package.json"),
-        path.join(args[3]!, "package.json"),
-      );
+      copyIfExists(path.join(runnerOpts.cwd!, "package.json"), path.join(args[3]!, "package.json"));
       copyIfExists(path.join(runnerOpts.cwd!, "bun.lock"), path.join(args[3]!, "bun.lock"));
     }
     if (cmd === "git") {
@@ -518,8 +515,8 @@ test("isolated install timeout rethrows a clear timeout message", async () => {
 test("isolated install recognizes execFile timeout-kill error shapes", async () => {
   const timeoutErrors = [
     Object.assign(new Error("command killed"), { killed: true }),
+    Object.assign(new Error("command killed"), { killed: true, signal: "SIGKILL" }),
     Object.assign(new Error("command terminated"), { signal: "SIGTERM" }),
-    Object.assign(new Error("command killed"), { signal: "SIGKILL" }),
   ];
 
   for (const timeoutError of timeoutErrors) {
@@ -530,5 +527,24 @@ test("isolated install recognizes execFile timeout-kill error shapes", async () 
       }),
       "isolated bun install timed out after 25ms",
     );
+  }
+});
+
+test("isolated install reports a SIGKILL it did not send as a resource kill, not a timeout", async () => {
+  for (const resourceKill of [
+    Object.assign(new Error("command killed"), { killed: false, signal: "SIGKILL" }),
+    Object.assign(new Error("bun exited with code 137"), { code: 137, signal: null }),
+  ]) {
+    const err = await runIsolatedInstall(os.tmpdir(), {
+      timeoutMs: 25,
+      runner: () => Promise.reject(resourceKill),
+    }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toContain("SIGKILLed outside penumbra");
+    expect((err as Error).message).not.toContain("timed out");
+    expect((err as { resourceKilled?: boolean }).resourceKilled).toBe(true);
   }
 });

@@ -53,6 +53,8 @@ export const TerminalKilledPayload = z.object({
     "max_lifetime",
     "operator",
     "cancelled",
+    // SIGKILL not sent by Penumbra: the job scope's MemoryMax or a host OOM kill.
+    "resource",
   ]),
   handoff_id: z.string(),
 });

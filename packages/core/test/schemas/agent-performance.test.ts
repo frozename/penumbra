@@ -70,6 +70,23 @@ describe("agent performance schemas", () => {
     });
   });
 
+  it("declares the reconciler resource flags", () => {
+    const parsed = AgentPerformanceCaptureFromReconcilerSchema.parse({
+      handoff_id: "h1",
+      result: { status: "test_failed", resource_killed: true, resource_admission_timeout: true },
+    });
+    expect(parsed.result).toMatchObject({
+      resource_killed: true,
+      resource_admission_timeout: true,
+    });
+    expect(
+      AgentPerformanceCaptureFromReconcilerSchema.safeParse({
+        handoff_id: "h1",
+        result: { status: "test_failed", resource_killed: false },
+      }).success,
+    ).toBe(false);
+  });
+
   it("accepts verified reconciler status as a merge result status", () => {
     expect(MergeResultStatusSchema.safeParse("verified").success).toBe(true);
   });

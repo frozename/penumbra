@@ -163,6 +163,18 @@ function resolveReconcilerOutcome(
   return outcome;
 }
 
+// A resource kill or admission timeout is the host's fault: class it
+// `resource` and mark it an environment failure so routing stays neutral.
+function reconcilerFailureClassification(
+  result: AgentPerformanceCaptureFromReconciler["result"],
+): Pick<AgentPerformanceRow, "environment_failure" | "failure_class"> {
+  const resource = result.resource_killed === true || result.resource_admission_timeout === true;
+  return {
+    environment_failure: resource || result.verification_environment_error === true ? "y" : null,
+    ...(resource ? { failure_class: "resource" } : {}),
+  };
+}
+
 export function captureAgentPerformanceFromReconciler(opts: {
   db: Database;
   uuid: Uuid;
@@ -208,7 +220,7 @@ export function captureAgentPerformanceFromReconciler(opts: {
     source: "reconciler",
     gate_outcome: lookupLatestLaneGateOutcome(opts.db, input.handoff_id),
     notes: input.result.regression_summary ?? null,
-    environment_failure: input.result.verification_environment_error === true ? "y" : null,
+    ...reconcilerFailureClassification(input.result),
     metadata_json: JSON.stringify(metadata),
   };
   return upsertAgentPerformanceWithGuardedGateOutcome(opts.db, row);
