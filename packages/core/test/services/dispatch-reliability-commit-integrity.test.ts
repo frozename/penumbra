@@ -75,7 +75,11 @@ describe("classifyDispatchReliability commit integrity", () => {
   test("reports base_not_ancestor when both the branch and identity are wrong", () => {
     const report = classifyDispatchReliability(
       baseInput({
-        commitIntegrity: { ...CLEAN, base_is_ancestor: false, mismatched_commits: ["c".repeat(40)] },
+        commitIntegrity: {
+          ...CLEAN,
+          base_is_ancestor: false,
+          mismatched_commits: ["c".repeat(40)],
+        },
       }),
     );
 
