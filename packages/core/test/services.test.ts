@@ -154,7 +154,7 @@ test("buildServices wires resolveProjectRoot from projectRegistry", () => {
   expect(manager.repoRootFor("sirius")).toBe("/tmp/sirius-not-real");
 });
 
-test("buildServices without projectRegistry leaves resolveProjectRoot undefined", () => {
+test("buildServices without projectRegistry resolves no project roots", () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
@@ -195,4 +195,116 @@ test("buildServices with an empty projectRegistry keeps legacy worktree fallback
     baseFor(project_id: string): string;
   };
   expect(manager.baseFor("whatever")).toBe(rootDir);
+});
+
+test("buildServices worktree project resolution follows a reloaded projectRegistry", () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  const reg = new ProjectRegistry(
+    new Map([["sirius", { project_id: "sirius", root_path: "/tmp/sirius-not-real" }]]),
+  );
+
+  const services = buildServices({
+    env: {},
+    input: {},
+    storageRoot: "/tmp/svc-reload-test",
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    projectRegistry: reg,
+  });
+
+  services.projectRegistry = new ProjectRegistry(
+    new Map([
+      ["sirius", { project_id: "sirius", root_path: "/tmp/sirius-not-real" }],
+      ["vega", { project_id: "vega", root_path: "/tmp/vega-not-real" }],
+    ]),
+  );
+
+  expect(services.worktreeManager.projectRootFor("vega")).toBe("/tmp/vega-not-real");
+
+  const manager = services.worktreeManager as unknown as {
+    baseFor(project_id: string): string;
+  };
+  expect(manager.baseFor("vega")).toBe("/tmp/vega-not-real-worktrees");
+});
+
+test("buildServices with an empty boot projectRegistry resolves projects added by a reload", () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  const rootDir = "/tmp/svc-reload-empty-worktrees";
+  const services = buildServices({
+    env: {},
+    input: {},
+    storageRoot: "/tmp/svc-reload-empty-test",
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    worktreeRootDir: rootDir,
+    projectRegistry: new ProjectRegistry(new Map()),
+  });
+
+  const manager = services.worktreeManager as unknown as {
+    baseFor(project_id: string): string;
+  };
+  expect(manager.baseFor("vega")).toBe(rootDir);
+
+  services.projectRegistry = new ProjectRegistry(
+    new Map([["vega", { project_id: "vega", root_path: "/tmp/vega-not-real" }]]),
+  );
+  expect(manager.baseFor("vega")).toBe("/tmp/vega-not-real-worktrees");
+});
+
+test("buildServices worktree resolution falls back to the boot registry when the live registry cannot be read", () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  const reg = new ProjectRegistry(
+    new Map([["sirius", { project_id: "sirius", root_path: "/tmp/sirius-not-real" }]]),
+  );
+
+  const services = buildServices({
+    env: {},
+    input: {},
+    storageRoot: "/tmp/svc-boot-fallback-test",
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    projectRegistry: reg,
+  });
+
+  services.projectRegistry = {
+    list: () => {
+      throw new Error("registry unavailable");
+    },
+  } as unknown as ProjectRegistry;
+
+  expect(services.worktreeManager.projectRootFor("sirius")).toBe("/tmp/sirius-not-real");
+});
+
+test("buildServices requireKnownProjectId follows the live registry", () => {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+
+  const services = buildServices({
+    env: {},
+    input: {},
+    storageRoot: "/tmp/svc-require-known-test",
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    projectRegistry: new ProjectRegistry(new Map()),
+  });
+
+  const manager = services.worktreeManager as unknown as {
+    requireKnownProjectId?: () => boolean;
+  };
+  expect(manager.requireKnownProjectId?.()).toBe(false);
+
+  services.projectRegistry = new ProjectRegistry(
+    new Map([["vega", { project_id: "vega", root_path: "/tmp/vega-not-real" }]]),
+  );
+  expect(manager.requireKnownProjectId?.()).toBe(true);
 });
