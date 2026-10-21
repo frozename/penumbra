@@ -10,10 +10,14 @@ export {
   type HeavyJobLockOptions,
 } from "./heavy-job-lock.js";
 export {
+  DEFAULT_ADMIT_MEMTOTAL_FRACTION,
+  DEFAULT_ADMIT_MIN_GIB,
   type MemoryAdmission,
   type MemoryAdmissionDeps,
   parseMemAvailableGiB,
+  parseMemTotalGiB,
   readMemAvailableGiB,
+  resolveAdmitMinGiB,
   waitForMemory,
   type WaitForMemoryOptions,
 } from "./memory-admission.js";

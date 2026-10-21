@@ -53,3 +53,26 @@ test("the heavy-stage gate applies the same floor", async () => {
   expect(entry.ok).toBe(false);
   expect(res.scope).toEqual({ available: false, reason: "PENUMBRA_JOB_SCOPE=off" });
 });
+
+test("unset floor follows MemTotal: a 16 GiB host admits at 5 GiB free, a 124 GiB host does not", async () => {
+  const host =
+    (totalGiB: number, availableGiB: number): (() => Promise<string>) =>
+    () =>
+      Promise.resolve(
+        `MemTotal: ${String(totalGiB * 1024 * 1024)} kB\nMemAvailable: ${String(availableGiB * 1024 * 1024)} kB\n`,
+      );
+  const small = await setupWorkerJobResources(log, {
+    env: { PENUMBRA_JOB_ADMIT_WAIT_S: "0" },
+    prime,
+    lock: lock("job-resources-d"),
+    memory: { platform: "linux", readMeminfo: host(16, 5) },
+  });
+  expect(await small.admitClaim({ handoff_id: "h1" }, new AbortController().signal)).toBe(true);
+  const large = await setupWorkerJobResources(log, {
+    env: { PENUMBRA_JOB_ADMIT_WAIT_S: "0" },
+    prime,
+    lock: lock("job-resources-e"),
+    memory: { platform: "linux", readMeminfo: host(124, 15) },
+  });
+  expect(await large.admitClaim({ handoff_id: "h1" }, new AbortController().signal)).toBe(false);
+});

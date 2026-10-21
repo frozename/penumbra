@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 
 import {
   parseMemAvailableGiB,
+  parseMemTotalGiB,
   readMemAvailableGiB,
+  resolveAdmitMinGiB,
   waitForMemory,
 } from "@src/process/memory-admission.js";
 
@@ -115,5 +117,45 @@ describe("waitForMemory", () => {
     expect(
       await waitForMemory(20, { timeoutMs: 1, platform: "linux", readMeminfo: reject }),
     ).toMatchObject({ admitted: true, availableGiB: null });
+  });
+});
+
+describe("resolveAdmitMinGiB", () => {
+  const host = (totalGiB: number): { platform: "linux"; readMeminfo: () => Promise<string> } => ({
+    platform: "linux",
+    readMeminfo: () =>
+      Promise.resolve(`MemTotal: ${String(totalGiB * 1024 * 1024)} kB\nMemAvailable: 1 kB\n`),
+  });
+
+  test("parses MemTotal", () => {
+    expect(parseMemTotalGiB("MemTotal:       16777216 kB\n")).toBe(16);
+  });
+
+  test("unset: 20% of MemTotal on a small host (16 GiB CI runner -> 3.2 GiB)", async () => {
+    expect(await resolveAdmitMinGiB(undefined, host(16))).toBeCloseTo(3.2, 6);
+  });
+
+  test("unset: capped at 20 GiB on a large host (124 GiB -> 20 GiB)", async () => {
+    expect(await resolveAdmitMinGiB(undefined, host(124))).toBe(20);
+  });
+
+  test("an explicit value wins, including 0", async () => {
+    expect(await resolveAdmitMinGiB(50, host(16))).toBe(50);
+    expect(await resolveAdmitMinGiB(0, host(124))).toBe(0);
+  });
+
+  test("unset off Linux or with MemTotal unreadable: 20 GiB", async () => {
+    expect(
+      await resolveAdmitMinGiB(undefined, {
+        platform: "darwin",
+        readMeminfo: () => Promise.reject(new Error("must not read")),
+      }),
+    ).toBe(20);
+    expect(
+      await resolveAdmitMinGiB(undefined, {
+        platform: "linux",
+        readMeminfo: () => Promise.reject(new Error("unreadable")),
+      }),
+    ).toBe(20);
   });
 });

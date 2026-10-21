@@ -1231,10 +1231,9 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
       "oom_score_adj applied (via choom) to scoped jobs so a global OOM reaps them before long-lived services. 0 disables.",
   },
   PENUMBRA_JOB_ADMIT_MIN_GIB: {
-    schema: NonNegNum,
-    default: 20,
+    schema: OptNonNegNum,
     description:
-      "MemAvailable floor (GiB) the worker waits for before claiming a dispatch and before each heavy reconciler stage. 0 disables admission.",
+      "MemAvailable floor (GiB) the worker waits for before claiming a dispatch and before each heavy reconciler stage. Unset: min(20 GiB, 20% of MemTotal), so a small host (e.g. a 16 GiB CI runner) is not starved. An explicit value is used as-is; 0 disables admission.",
   },
   PENUMBRA_JOB_ADMIT_WAIT_S: {
     schema: NonNegInt,
@@ -1500,7 +1499,8 @@ export interface JobResourceEnv {
   memoryMax: string;
   swapMax: string;
   oomScoreAdj: number;
-  admitMinGiB: number;
+  /** Explicit floor, or undefined to derive one from MemTotal (resolveAdmitMinGiB). */
+  admitMinGiB: number | undefined;
   admitWaitS: number;
   heavyLockPath: string | undefined;
 }
@@ -1527,7 +1527,7 @@ export function getJobResourceEnv(env: NodeJS.ProcessEnv = process.env): JobReso
     memoryMax: parsed.PENUMBRA_JOB_MEMORY_MAX as string,
     swapMax: parsed.PENUMBRA_JOB_SWAP_MAX as string,
     oomScoreAdj: parsed.PENUMBRA_JOB_OOM_SCORE_ADJ as number,
-    admitMinGiB: parsed.PENUMBRA_JOB_ADMIT_MIN_GIB as number,
+    admitMinGiB: parsed.PENUMBRA_JOB_ADMIT_MIN_GIB as number | undefined,
     admitWaitS: parsed.PENUMBRA_JOB_ADMIT_WAIT_S as number,
     heavyLockPath: heavyLock !== undefined && heavyLock.trim() !== "" ? heavyLock : undefined,
   };

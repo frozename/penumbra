@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises";
 
 const KIB_PER_GIB = 1024 * 1024;
 const DEFAULT_POLL_MS = 10_000;
+export const DEFAULT_ADMIT_MIN_GIB = 20;
+export const DEFAULT_ADMIT_MEMTOTAL_FRACTION = 0.2;
 
 export interface MemoryAdmissionDeps {
   platform?: NodeJS.Platform;
@@ -27,21 +29,56 @@ export type MemoryAdmission =
       waitedMs: number;
     };
 
-export function parseMemAvailableGiB(meminfo: string): number | null {
-  const match = /^MemAvailable:\s+(\d+)\s+kB/m.exec(meminfo);
+const MEMINFO_FIELD_RE = {
+  MemAvailable: /^MemAvailable:\s+(\d+)\s+kB/m,
+  MemTotal: /^MemTotal:\s+(\d+)\s+kB/m,
+} as const;
+
+function parseMeminfoGiB(meminfo: string, field: keyof typeof MEMINFO_FIELD_RE): number | null {
+  const match = MEMINFO_FIELD_RE[field].exec(meminfo);
   if (!match?.[1]) return null;
   return Number.parseInt(match[1], 10) / KIB_PER_GIB;
 }
 
-export async function readMemAvailableGiB(deps: MemoryAdmissionDeps = {}): Promise<number | null> {
+export function parseMemAvailableGiB(meminfo: string): number | null {
+  return parseMeminfoGiB(meminfo, "MemAvailable");
+}
+
+export function parseMemTotalGiB(meminfo: string): number | null {
+  return parseMeminfoGiB(meminfo, "MemTotal");
+}
+
+async function readMeminfoGiB(
+  field: keyof typeof MEMINFO_FIELD_RE,
+  deps: MemoryAdmissionDeps,
+): Promise<number | null> {
   if ((deps.platform ?? process.platform) !== "linux") return null;
   try {
     const read = deps.readMeminfo ?? ((): Promise<string> => readFile("/proc/meminfo", "utf8"));
-    const text = await read();
-    return parseMemAvailableGiB(text);
+    return parseMeminfoGiB(await read(), field);
   } catch {
     return null;
   }
+}
+
+export async function readMemAvailableGiB(deps: MemoryAdmissionDeps = {}): Promise<number | null> {
+  return await readMeminfoGiB("MemAvailable", deps);
+}
+
+/**
+ * The admission floor: an explicit value as-is, otherwise
+ * min(20 GiB, 20% of MemTotal) so a host far smaller than the Z13 (a 16 GiB CI
+ * runner) is not held below an unreachable floor. Off Linux, or with
+ * MemTotal unreadable, the default is 20 GiB (waitForMemory is a no-op there).
+ */
+export async function resolveAdmitMinGiB(
+  explicit: number | undefined,
+  deps: MemoryAdmissionDeps = {},
+): Promise<number> {
+  if (explicit !== undefined) return explicit;
+  const totalGiB = await readMeminfoGiB("MemTotal", deps);
+  if (totalGiB === null) return DEFAULT_ADMIT_MIN_GIB;
+  return Math.min(DEFAULT_ADMIT_MIN_GIB, totalGiB * DEFAULT_ADMIT_MEMTOTAL_FRACTION);
 }
 
 function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
