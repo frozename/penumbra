@@ -139,6 +139,48 @@ Five sweepers cooperate:
 
 The `stdio-acp` adapter emits a synthetic `agent.heartbeat` lifecycle event every 60 s while the agent subprocess is alive but emits no `session/update` for ≥ 45 s. This keeps the sweepers' liveness signal accurate for agents that don't naturally emit `agent_thought_chunk` (gemini-acp default is the canonical case).
 
+## Job resource limits
+
+Dispatched jobs run in memory-capped transient systemd user scopes, so a runaway gate is OOM-killed inside its own cgroup instead of taking down a long-lived service. On the Z13 a resident LLM seat holds ~92 GiB; two parallel typed lint/test runs from dispatched agents twice drove a global OOM that killed the seat ([penumbra#250](https://github.com/frozename/penumbra/issues/250); seat side: [llamactl#196](https://github.com/frozename/llamactl/issues/196)).
+
+Each job is wrapped as `systemd-run --user --scope --collect --quiet -p MemoryHigh= -p MemoryMax= -p MemorySwapMax= -- choom -n <adj> -- <cmd>`. systemd 255 rejects `OOMScoreAdjust=` on scopes, so `choom` applies the OOM score inside the scope. What is scoped:
+
+- **Agent processes**: agent CLIs (`cli-spawn`) and ACP servers (`stdio-acp`, `opencode-acp`). There is one scope per process, and it caps every tool child the agent runs. A warm-pooled ACP server keeps one scope across all the dispatches it serves.
+- **Per command**: ACP terminal commands, the merge reconciler's `bun tsc -b`, `bun test` and root test shard (its git calls are not scoped), isolated `bun install`, and daemon `fs_exec`.
+- **Per session**: daemon `shell_run` sessions. The cap covers the whole session, and a kill is not attributed to a single command.
+
+Every wrapper step execs in place, so pids, process-group kills, timeouts and cancel paths are unchanged. Each scope is bound to the caller's own user unit with `BindsTo=` and `StopPropagatedFrom=`. Stopping, restarting or crashing `penumbra-worker.service` or `penumbra-daemon.service` therefore still stops its jobs, as the service's control-group kill used to.
+
+**Admission and serialization.** The worker waits until `MemAvailable` reaches the floor before claiming a dispatch. The wait happens after the concurrency slot is taken and before the claim. If the wait expires, the handoff stays unclaimed and is re-offered. Each heavy reconciler stage (typecheck, and tests including the merge-base baseline) first takes a host-wide `flock(1)` lock, then waits for the same floor. If either wait expires, the stage reports `verification_environment_error` with `resource_admission_timeout`. The lock is a flock helper process tied to the worker's lifetime, so a crashed worker never leaves a stale lock. It also works across several worker processes.
+
+**The `resource` failure class.** Penumbra classes a SIGKILL (or exit 137) as a resource kill when it did not send the kill itself as a timeout, output-overflow or cancel kill.
+
+- **Reconciler**: the result carries `resource_killed` and `verification_environment_error`. Capture records `agent_performance.failure_class='resource'` and `environment_failure='y'`, so routing stays neutral and the agent is not charged with `test_failed` or `typecheck_failed`.
+- **`fs_exec`**: the response includes `signal` and `resource_killed: true`.
+- **ACP terminal commands**: the `terminal.killed` event carries `reason: "resource"`.
+- **Isolated install**: the error says the install was SIGKILLed; it no longer calls the kill a timeout.
+
+| Variable                     | Default                            | Meaning                                                                                                                                                 |
+| ---------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PENUMBRA_JOB_SCOPE`         | `auto`                             | `auto`: scope when `systemd-run` and the user manager are reachable. `on`: same, and also warn when unavailable on non-Linux hosts. `off`: never scope. |
+| `PENUMBRA_JOB_MEMORY_HIGH`   | `12G`                              | Per-scope `MemoryHigh=` (reclaim/throttle threshold)                                                                                                    |
+| `PENUMBRA_JOB_MEMORY_MAX`    | `16G`                              | Per-scope `MemoryMax=` (in-scope OOM kill)                                                                                                              |
+| `PENUMBRA_JOB_SWAP_MAX`      | `1G`                               | Per-scope `MemorySwapMax=`                                                                                                                              |
+| `PENUMBRA_JOB_OOM_SCORE_ADJ` | `900`                              | `oom_score_adj` for scoped jobs; `0` disables `choom`                                                                                                   |
+| `PENUMBRA_JOB_ADMIT_MIN_GIB` | `20`                               | `MemAvailable` floor for claims and heavy stages; `0` disables admission                                                                                |
+| `PENUMBRA_JOB_ADMIT_WAIT_S`  | `900`                              | How long to wait for the floor, and separately for the heavy-stage lock                                                                                 |
+| `PENUMBRA_JOB_HEAVY_LOCK`    | `~/.penumbra/locks/heavy-job.lock` | `flock(1)` lock file that serializes heavy reconciler stages                                                                                            |
+
+**Enabling, disabling and checking.**
+
+- Changes take effect when the worker and daemon restart.
+- At startup, each process runs the exact scope argv once against `true`. It then logs either `job resource scopes enabled` or a single warning, and falls back to unscoped jobs. A probe can fail on an old systemd or an unreachable user bus.
+- Set `PENUMBRA_JOB_SCOPE=off` to stop scoping, and `PENUMBRA_JOB_ADMIT_MIN_GIB=0` to stop admission.
+- To see live job scopes, run `systemctl --user list-units 'penumbra-*.scope'`. In-scope OOM kills are logged by `journalctl --user` against the `penumbra-<label>-<id>.scope` unit.
+- Tests force `PENUMBRA_JOB_SCOPE=off` (`test/setup.ts`). Scoping tests inject their own config.
+
+**Manual counterpart.** Heavy jobs run outside Penumbra (hand-run gates, whole-repo typecheck or eslint) should use the operator's `flock` + `systemd-run --scope` wrapper (on the Z13, `handoff-kit/heavy.sh`). To make Penumbra's reconcile stages queue behind those jobs, point `PENUMBRA_JOB_HEAVY_LOCK` at that wrapper's lock file.
+
 ## Plan registrar — use, read, update
 
 The registrar is the durable record of a multi-phase initiative: what shipped, what is owed, and which traps were already paid for. It outlives the session, the plan document and the branch. Treat it as the initiative's source of truth for _state_, and git/GitHub as the source of truth for _fact_ — the two drift, and when they disagree, git wins.
