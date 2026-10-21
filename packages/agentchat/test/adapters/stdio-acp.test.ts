@@ -260,6 +260,75 @@ function createPermissionHarness(
   };
 }
 
+/**
+ * Streams the given session/update payloads through a real StdioAcpClient and
+ * returns the recorded response. An advertised MCP server keeps tool_call
+ * updates on the handler path instead of the no-capability kill.
+ */
+async function finalTextForSessionUpdates(
+  updates: readonly Record<string, unknown>[],
+): Promise<string> {
+  const handle = makeMockAcpHandle();
+  const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+  startServer.mockResolvedValue(handle);
+  const adapter = new StdioAcpAdapter(
+    { binary: "mock-acp", mcpServers: [makePenumbraMcpServer()] },
+    {
+      startServer,
+      createClient: (h: StdioAcpHandle): StdioAcpClient =>
+        new StdioAcpClient({ stdin: h.stdin, stdout: h.stdout }),
+    },
+  );
+
+  const dispatchPromise = dispatch(adapter, {
+    prompt: "hello",
+    signal: new AbortController().signal,
+  });
+
+  await sleep(10);
+  handle.stdout.write(
+    JSON.stringify({ jsonrpc: "2.0", result: { protocolVersion: 1, authMethods: [] }, id: 1 }) +
+      "\n",
+  );
+  await sleep(10);
+  handle.stdout.write(
+    JSON.stringify({ jsonrpc: "2.0", result: { sessionId: "session-123" }, id: 2 }) + "\n",
+  );
+  await sleep(10);
+  for (const update of updates) {
+    handle.stdout.write(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: { sessionId: "session-123", update },
+      }) + "\n",
+    );
+  }
+  await sleep(10);
+  handle.stdout.write(
+    JSON.stringify({ jsonrpc: "2.0", result: { stopReason: "end_turn" }, id: 3 }) + "\n",
+  );
+
+  const result = await dispatchPromise;
+  return result.text;
+}
+
+function messageChunkUpdate(text: string, phase?: string): Record<string, unknown> {
+  return {
+    sessionUpdate: "agent_message_chunk",
+    content: { type: "text", text },
+    ...(phase === undefined ? {} : { _meta: { codex: { phase } } }),
+  };
+}
+
+const TOOL_CALL_UPDATE = {
+  sessionUpdate: "tool_call",
+  toolCallId: "tu_1",
+  title: "shell",
+  status: "in_progress",
+  input: { command: "git restore ." },
+};
+
 describe("StdioAcpAdapter", () => {
   it("kills a silent child when initialize exceeds bootTimeoutMs", async () => {
     const handle = makeMockAcpHandle({
@@ -933,6 +1002,58 @@ describe("StdioAcpAdapter", () => {
     const result = await dispatchPromise;
     expect(result.text).toBe("world");
     expect(handle.kill).toHaveBeenCalled();
+  });
+
+  it("starts the message segment after a tool_call on its own line", async () => {
+    const text = await finalTextForSessionUpdates([
+      messageChunkUpdate("Now restore:"),
+      TOOL_CALL_UPDATE,
+      messageChunkUpdate("CHECK_RESULT: PASS"),
+    ]);
+
+    expect(text).toBe("Now restore:\nCHECK_RESULT: PASS");
+  });
+
+  it("keeps chunks of one segment concatenated after a tool_call_update boundary", async () => {
+    const text = await finalTextForSessionUpdates([
+      messageChunkUpdate("Running the check."),
+      { sessionUpdate: "tool_call_update", toolCallId: "tu_1", status: "completed" },
+      messageChunkUpdate("CHECK_"),
+      messageChunkUpdate("RESULT: PASS"),
+    ]);
+
+    expect(text).toBe("Running the check.\nCHECK_RESULT: PASS");
+  });
+
+  it("adds no separator before the first segment or after one ending in a newline", async () => {
+    const thought = {
+      sessionUpdate: "agent_thought_chunk",
+      content: { type: "text", text: "planning" },
+    };
+    const text = await finalTextForSessionUpdates([
+      thought,
+      messageChunkUpdate("Step one\n"),
+      TOOL_CALL_UPDATE,
+      messageChunkUpdate("Step two"),
+      thought,
+      messageChunkUpdate("CHECK_RESULT: PASS"),
+    ]);
+
+    expect(text).toBe("Step one\nStep two\nCHECK_RESULT: PASS");
+  });
+
+  it("separates codex final_answer segments split by a tool call", async () => {
+    const text = await finalTextForSessionUpdates([
+      messageChunkUpdate("Checking the callers.", "commentary"),
+      TOOL_CALL_UPDATE,
+      messageChunkUpdate("Findings:", "final_answer"),
+      TOOL_CALL_UPDATE,
+      messageChunkUpdate("Still checking.", "commentary"),
+      messageChunkUpdate("NO_", "final_answer"),
+      messageChunkUpdate("BUGS", "final_answer"),
+    ]);
+
+    expect(text).toBe("Findings:\nNO_BUGS");
   });
 
   it("routes agent_thought_chunk notifications through ThoughtCapture", async () => {
