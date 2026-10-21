@@ -408,11 +408,11 @@ test("a cancel for another handoff in the same conversation does not abort", asy
   const started = new Promise<void>((r) => {
     resolveStarted = r;
   });
-  let capturedSignal: AbortSignal | null = null;
+  const signalRef: { signal: AbortSignal | null } = { signal: null };
 
   const dispatchFn = mock().mockImplementation(
     async (_handoff: DispatcherHandoff, _onChunk: (d: string) => void, signal: AbortSignal) => {
-      capturedSignal = signal;
+      signalRef.signal = signal;
       resolveStarted();
       await Promise.race([
         new Promise<string>((r) => {
@@ -455,7 +455,7 @@ test("a cancel for another handoff in the same conversation does not abort", asy
     { client, dispatcher, workerId: "w1" },
   );
 
-  expect(capturedSignal?.aborted).toBe(false);
+  expect(signalRef.signal?.aborted).toBe(false);
 
   handleControlEvent(
     { type: "cancel", conversation_id: "c-swept", handoff_id: "h-swept" },
