@@ -143,6 +143,7 @@ describe("merge reconciler project repo resolution (#219)", () => {
   let repoC: string;
   let worktree: WorktreeHandle;
   let verdicts: ReconcilerVerdict[];
+  const handoffId = "h-pr-219";
 
   beforeEach(() => {
     tmp = realpathSync(mkdtempSync(join(tmpdir(), "penumbra-reconcile-project-root-")));
