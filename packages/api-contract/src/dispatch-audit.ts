@@ -8,6 +8,8 @@ export const DispatchReliabilityStatusSchema = z.enum([
   "non_terminal_stale",
   "cancel_completed",
   "watchdog_only",
+  "base_not_ancestor",
+  "commit_identity_mismatch",
   "no_agent_output",
   "no_worktree_activity",
   "tool_failure_with_end_turn",
@@ -17,6 +19,19 @@ export const DispatchReliabilityStatusSchema = z.enum([
   "timeline_inconsistent",
 ]);
 export type DispatchReliabilityStatus = z.infer<typeof DispatchReliabilityStatusSchema>;
+
+const GitShaSchema = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
+
+export const CommitIntegrityEvidenceSchema = z
+  .object({
+    base_sha: GitShaSchema,
+    head_sha: GitShaSchema,
+    base_is_ancestor: z.boolean(),
+    identity: z.object({ name: z.string(), email: z.string() }),
+    mismatched_commits: z.array(GitShaSchema),
+  })
+  .loose();
+export type CommitIntegrityEvidence = z.infer<typeof CommitIntegrityEvidenceSchema>;
 
 export const DispatchRecommendedActionSchema = z.enum([
   "wait",
@@ -39,6 +54,7 @@ const DispatchReliabilityEvidenceSchema = z
     watchdog_failed: z.boolean(),
     cancel_requested: z.boolean(),
     adapter_streaming: z.boolean().nullable(),
+    commit_integrity: CommitIntegrityEvidenceSchema.nullable().optional(),
   })
   .loose();
 export type DispatchReliabilityEvidence = z.infer<typeof DispatchReliabilityEvidenceSchema>;
