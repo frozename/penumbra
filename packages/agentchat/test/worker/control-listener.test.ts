@@ -455,6 +455,7 @@ test("a cancel for another handoff in the same conversation does not abort", asy
     { client, dispatcher, workerId: "w1" },
   );
 
+  await new Promise((r) => setTimeout(r, 0));
   expect(signalRef.signal?.aborted).toBe(false);
 
   handleControlEvent(
@@ -463,4 +464,6 @@ test("a cancel for another handoff in the same conversation does not abort", asy
   );
 
   await dispatcher.idle();
+
+  expect(signalRef.signal?.aborted).toBe(true);
 });
