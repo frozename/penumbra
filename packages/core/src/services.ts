@@ -417,11 +417,9 @@ export function buildServices(opts: BuildServicesOpts): Services {
   const dispatchEvents = new DispatchEventBus();
   // eslint-disable-next-line prefer-const -- closure reads before assignment; daemon reload mutates the returned object's projectRegistry in-place
   let services: Services | undefined;
-  const worktreeManager = createServicesWorktreeManager(
-    opts,
-    log,
-    () => services?.projectRegistry ?? opts.projectRegistry,
-  );
+  const liveRegistry = (): ProjectRegistry | undefined =>
+    services?.projectRegistry ?? opts.projectRegistry;
+  const worktreeManager = createServicesWorktreeManager(opts, log, liveRegistry);
   const watchdog: Watchdog = {
     recordHeartbeat: () => undefined,
     hasActiveWorker: () => false,
@@ -433,7 +431,7 @@ export function buildServices(opts: BuildServicesOpts): Services {
   const scratchWorktrees = new ScratchWorktreesService({
     db: opts.db,
     worktreeManager,
-    projectRegistry: opts.projectRegistry,
+    projectRegistry: liveRegistry,
     dispatchEventLog,
     log,
     mainRepoDir: opts.mainRepoDir,

@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -307,4 +308,87 @@ test("buildServices requireKnownProjectId follows the live registry", () => {
     new Map([["vega", { project_id: "vega", root_path: "/tmp/vega-not-real" }]]),
   );
   expect(manager.requireKnownProjectId?.()).toBe(true);
+});
+
+function initCommittedRepo(repo: string): void {
+  execFileSync("git", ["init", "-q", "-b", "main", repo], { stdio: "ignore" });
+  execFileSync(
+    "git",
+    [
+      "-C",
+      repo,
+      "-c",
+      "user.name=test",
+      "-c",
+      "user.email=test@example.com",
+      "commit",
+      "-q",
+      "--allow-empty",
+      "-m",
+      "init",
+    ],
+    { stdio: "ignore" },
+  );
+}
+
+// Boots with an empty registry and then registers `vega` the way
+// daemon_reload_config does: by replacing services.projectRegistry.
+function buildServicesThenRegisterVega(
+  storageRoot: string,
+  repo: string,
+): ReturnType<typeof buildServices> {
+  const db = new Database(":memory:");
+  loadSqliteVec(db);
+  migrate(db, { embeddingDim: 384 });
+  const services = buildServices({
+    env: {},
+    input: {},
+    storageRoot,
+    db,
+    embedder: new TestEmbedder({ dim: 384 }),
+    projectRegistry: new ProjectRegistry(new Map()),
+  });
+  services.projectRegistry = new ProjectRegistry(
+    new Map([["vega", { project_id: "vega", root_path: repo }]]),
+  );
+  return services;
+}
+
+test("buildServices scratch worktrees match a project added by a reloaded projectRegistry", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-svc-scratch-match-"));
+  try {
+    const repo = join(dir, "vega");
+    initCommittedRepo(repo);
+    const services = buildServicesThenRegisterVega(join(dir, "storage"), repo);
+
+    expect(services.scratchWorktrees.scratchCwdProject(repo)).toEqual({
+      status: "matched",
+      project_id: "vega",
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildServices scratch orphan sweep reaps the scratch base of a project added by a reload", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-svc-scratch-sweep-"));
+  try {
+    const repo = join(dir, "vega");
+    initCommittedRepo(repo);
+    const storageRoot = join(dir, "storage");
+    const crashed = buildServicesThenRegisterVega(storageRoot, repo);
+    const handle = await crashed.scratchWorktrees.acquire({
+      owner_run_id: "run-orphan",
+      cwd: repo,
+    });
+    expect(handle.project_id).toBe("vega");
+
+    // A fresh boot of the same daemon has no live set, so the previous
+    // incarnation's scratch is an orphan it must find under vega's base.
+    const restarted = buildServicesThenRegisterVega(storageRoot, repo);
+    const sweep = await restarted.scratchWorktrees.sweepOrphans();
+    expect(sweep.reaped).toContain(handle.path);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

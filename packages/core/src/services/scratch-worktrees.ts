@@ -64,7 +64,12 @@ interface LiveScratch {
 export interface ScratchWorktreesOpts {
   db: Database;
   worktreeManager: WorktreeManager;
-  projectRegistry?: ProjectRegistry;
+  /**
+   * Read on every registry lookup: daemon_reload_config swaps the registry on
+   * the services object, so a captured instance would hide projects added or
+   * changed after boot.
+   */
+  projectRegistry?: () => ProjectRegistry | undefined;
   dispatchEventLog?: DispatchEventLog;
   log?: Logger;
   now?: () => number;
@@ -249,7 +254,7 @@ export class ScratchWorktreesService {
     const gitDir = resolveWorktreeGitDir(cwd);
     const common = gitDir === null ? null : realpathOrNull(resolveCommonGitDir(gitDir));
     if (common === null) return { status: "not_git" };
-    for (const entry of this.opts.projectRegistry?.list() ?? []) {
+    for (const entry of this.opts.projectRegistry?.()?.list() ?? []) {
       if (realpathOrNull(this.commonDirForRepoRoot(entry.root_path)) === common) {
         return { status: "matched", project_id: entry.project_id };
       }
@@ -276,7 +281,7 @@ export class ScratchWorktreesService {
 
   private projectIdForRoot(repoRoot: string): string | null {
     const realRoot = realpathOrNull(repoRoot);
-    for (const entry of this.opts.projectRegistry?.list() ?? []) {
+    for (const entry of this.opts.projectRegistry?.()?.list() ?? []) {
       if (realpathOrNull(entry.root_path) === realRoot) return entry.project_id;
     }
     return null;
@@ -361,7 +366,7 @@ export class ScratchWorktreesService {
   private configuredRepoRoots(): string[] {
     const roots = new Set<string>();
     if (this.opts.mainRepoDir !== undefined) roots.add(this.opts.mainRepoDir);
-    for (const entry of this.opts.projectRegistry?.list() ?? []) {
+    for (const entry of this.opts.projectRegistry?.()?.list() ?? []) {
       roots.add(entry.root_path);
     }
     return [...roots];
