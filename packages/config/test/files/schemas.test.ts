@@ -328,6 +328,21 @@ describe("RoutingConfigSchema", () => {
     ).toThrow(/foo/);
   });
 
+  test("accepts the worker's reconcilerAutoRebase key", () => {
+    const parsed = RoutingConfigSchema.parse(
+      parseYaml(`${loadFixture("routing")}\nreconcilerAutoRebase: false\n`),
+    );
+    expect(parsed.reconcilerAutoRebase).toBe(false);
+  });
+
+  test("rejects a non-boolean reconcilerAutoRebase", () => {
+    expect(() =>
+      RoutingConfigSchema.parse(
+        parseYaml(`${loadFixture("routing")}\nreconcilerAutoRebase: sometimes\n`),
+      ),
+    ).toThrow(/reconcilerAutoRebase/);
+  });
+
   test("missing required field throws", () => {
     const parsed = parseYaml(loadFixture("routing")) as {
       workloads: { review_adversarial: Record<string, unknown> };

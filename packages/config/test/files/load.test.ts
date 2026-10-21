@@ -185,4 +185,14 @@ providers:
   test("exports the hand-seat whitelist constant for other packages", () => {
     expect(BILLED_HAND_SEAT_WHITELIST).toContain("deepseek-v4-flash-http");
   });
+
+  test("loads a routing.yaml that sets reconcilerAutoRebase", () => {
+    const dir = makeTempDir();
+    writeConfigDir(dir, { routing: `${fixture("routing")}\nreconcilerAutoRebase: false\n` });
+
+    const loaded = loadAgentChatConfigFromDir(dir);
+
+    expect(loaded.reconcilerAutoRebase).toBe(false);
+    expect(loaded.default_roles.executor).toBe("claude-acp-sonnet");
+  });
 });
