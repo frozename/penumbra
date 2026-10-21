@@ -427,6 +427,74 @@ describe("buildDispatchAuditReport", () => {
     expect(report?.recommended_action).toBe("retry");
   });
 
+  test("flags a dispatch whose dispatch.end shows the branch left its base", () => {
+    const svc = services();
+    createCompletedHandoff(svc, "h-reset", "c-reset");
+    recordCompleteTimeline(svc, "h-reset", {
+      status: "ok",
+      worktree_changed: true,
+      dirty: false,
+      committed: true,
+      commit_integrity: {
+        base_sha: "a".repeat(40),
+        head_sha: "b".repeat(40),
+        base_is_ancestor: false,
+        identity: { name: "Penumbra Worker", email: "worker@example.com" },
+        mismatched_commits: [],
+      },
+    });
+    writeAgentResponse(svc, "c-reset", "DONE");
+
+    const report = buildDispatchAuditReport(svc, "h-reset");
+
+    expect(report?.status).toBe("base_not_ancestor");
+    expect(report?.trustworthy).toBe(false);
+    expect(report?.recommended_action).toBe("review_manually");
+    expect(report?.evidence.commit_integrity?.base_sha).toBe("a".repeat(40));
+    expect(DispatchAuditResponseSchema.safeParse({ report }).success).toBe(true);
+  });
+
+  test("lists commits made under another identity", () => {
+    const svc = services();
+    createCompletedHandoff(svc, "h-idmis", "c-idmis");
+    recordCompleteTimeline(svc, "h-idmis", {
+      status: "ok",
+      worktree_changed: true,
+      dirty: false,
+      committed: true,
+      commit_integrity: {
+        base_sha: "a".repeat(40),
+        head_sha: "b".repeat(40),
+        base_is_ancestor: true,
+        identity: { name: "Penumbra Worker", email: "worker@example.com" },
+        mismatched_commits: ["c".repeat(40)],
+      },
+    });
+    writeAgentResponse(svc, "c-idmis", "DONE");
+
+    const report = buildDispatchAuditReport(svc, "h-idmis");
+
+    expect(report?.status).toBe("commit_identity_mismatch");
+    expect(report?.summary).toContain("c".repeat(12));
+  });
+
+  test("ignores malformed commit-integrity meta", () => {
+    const svc = services();
+    createCompletedHandoff(svc, "h-corrupt", "c-corrupt");
+    recordCompleteTimeline(svc, "h-corrupt", {
+      status: "ok",
+      worktree_changed: true,
+      dirty: false,
+      committed: true,
+      commit_integrity: { base_is_ancestor: "no" },
+    });
+    writeAgentResponse(svc, "c-corrupt", "DONE");
+
+    const report = buildDispatchAuditReport(svc, "h-corrupt");
+
+    expect(report?.status).toBe("complete");
+  });
+
   test("no agent output stays untrustworthy and absent metadata stays null", () => {
     const svc = services();
     createCompletedHandoff(svc, "h-empty", "c-empty");
