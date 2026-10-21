@@ -1,0 +1,16 @@
+bun test v1.3.14 (0d9b296a)
+
+::group::f-skip-todo/f.test.ts:
+(pass) passes [0.14ms]
+(skip) skipped one
+(skip) skipped two
+(todo) todo one
+
+::endgroup::
+
+ 1 pass
+ 2 skip
+ 1 todo
+ 0 fail
+ 1 expect() calls
+Ran 4 tests across 1 file. [22.00ms]

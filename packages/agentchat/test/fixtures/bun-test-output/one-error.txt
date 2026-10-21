@@ -1,0 +1,26 @@
+bun test v1.3.14 (0d9b296a)
+
+::group::d-err1/broken.test.ts:
+
+# Unhandled error between tests
+-------------------------------
+1 | import { test } from "bun:test";
+2 | throw new Error("load failure one");
+              ^
+error: load failure one
+      at /repo/d-err1/broken.test.ts:2:11
+
+::error file=d-err1/broken.test.ts,line=2,col=11,title=error: load failure one::%0A      at /repo/d-err1/broken.test.ts:2:11
+-------------------------------
+
+
+::group::d-err1/ok.test.ts:
+(pass) passes [0.09ms]
+
+::endgroup::
+
+ 1 pass
+ 1 fail
+ 1 error
+ 1 expect() calls
+Ran 2 tests across 2 files. [22.00ms]

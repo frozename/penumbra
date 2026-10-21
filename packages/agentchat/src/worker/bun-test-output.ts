@@ -125,9 +125,11 @@ function unenumerableFailureKey(init: {
 
 export function parseBunTestReport(rawOutput: string): BunTestReport {
   const output = rawOutput.replaceAll(ANSI_PATTERN, "");
-  const pass = lastNum(output, /(\d+)\s+pass\b/g);
-  const fails = lastNum(output, /(\d+)\s+fail\b/g);
-  const errors = lastNum(output, /(\d+)\s+error\b/g) ?? 0;
+  // Whole summary lines only (" 2 pass", " 1 error", " 2 errors"): test titles and
+  // logs carry text like "HTTP 503 error", and Bun pluralises only "errors".
+  const pass = lastNum(output, /^[ \t]*(\d+) pass[ \t]*$/gm);
+  const fails = lastNum(output, /^[ \t]*(\d+) fail[ \t]*$/gm);
+  const errors = lastNum(output, /^[ \t]*(\d+) errors?[ \t]*$/gm) ?? 0;
   const reachedSummary = /Ran\s+\d+\s+tests?\b/.test(output);
   const knownPanic = /Bun has crashed|panic\(main thread\)/.test(output);
   const failNames = collectNames(output, "fail");
@@ -138,7 +140,10 @@ export function parseBunTestReport(rawOutput: string): BunTestReport {
     ...errorNames.map((name) => `error:${name}`),
   ];
   const failureSuitePaths = collectFailureSuitePaths(output);
-  const reportedFailureCount = (fails ?? 0) + errors;
+  // Bun counts a test file that fails to load as both a fail and an error, without a
+  // "(fail)" line, so the fails that have no such line overlap the errors.
+  const loadFailures = Math.min(errors, Math.max(0, (fails ?? 0) - failNames.length));
+  const reportedFailureCount = (fails ?? 0) + errors - loadFailures;
   if (reportedFailureCount > failureKeys.length) {
     failureKeys.push(
       unenumerableFailureKey({

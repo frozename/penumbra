@@ -16,21 +16,50 @@
  * known teardown panic. A real test failure (fail > 0), a load error (error > 0),
  * or any crash BEFORE the summary (no "Ran N tests" line) still fails the gate.
  *
- * Keep the child process asynchronous and stream both output pipes. Node's
- * spawnSync default pipe buffer is 1 MiB per stream; large Bun shards can exceed
- * that before reaching the final summary, causing the gate itself to terminate
- * the child with ENOBUFS and then parse truncated output. Relay raw pipe chunks
+ * Keep the child process asynchronous and stream both outputs. Node's spawnSync
+ * default pipe buffer is 1 MiB per stream; large Bun shards can exceed that
+ * before reaching the final summary, causing the gate itself to terminate the
+ * child with ENOBUFS and then parse truncated output. Relay raw chunks
  * unchanged, and decode only the accumulated parser text.
+ *
+ * The child writes to unlinked temporary files that the gate tails, not to
+ * pipes. `bun test` sets O_NONBLOCK on dups of its stdout/stderr, which flips
+ * the shared pipe for its native reporter too; that reporter drops the final
+ * summary after a few EAGAINs and still exits 0, so a gate that drained a full
+ * pipe too slowly turned a passing shard red with no "Ran N tests" line. A
+ * regular-file write never returns EAGAIN, so relay speed cannot lose output.
  */
-import type { Readable, Writable } from "node:stream";
+import type { Writable } from "node:stream";
 
 import { spawn } from "node:child_process";
+import { closeSync, mkdtempSync, openSync, readSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import {
   isKnownBunTeardownPanicPass,
   parseBunTestReport,
 } from "../packages/agentchat/src/worker/bun-test-output.js";
+
+const POLL_MS = 50;
+
+interface Capture {
+  childFd: number;
+  readFd: number;
+}
+
+// Unlinked once open: the fds keep both files alive, and nothing is left behind
+// however the gate exits.
+const captureDir = mkdtempSync(join(tmpdir(), "bun-test-gate-"));
+function openCapture(name: string): Capture {
+  const path = join(captureDir, name);
+  return { childFd: openSync(path, "w"), readFd: openSync(path, "r") };
+}
+const stdoutCapture = openCapture("stdout");
+const stderrCapture = openCapture("stderr");
+rmSync(captureDir, { force: true, recursive: true });
 
 // Always exclude stale compiled test shadows in dist/ — the package tsconfigs are
 // noEmit, so any packages/*/dist/test/*.test.js are leftover artifacts that bun
@@ -40,11 +69,15 @@ const child = spawn(
   "bun",
   ["test", "--path-ignore-patterns=**/dist/**", ...process.argv.slice(2)],
   {
-    stdio: ["inherit", "pipe", "pipe"],
+    stdio: ["inherit", stdoutCapture.childFd, stderrCapture.childFd],
   },
 );
+closeSync(stdoutCapture.childFd);
+closeSync(stderrCapture.childFd);
 
-function writeChunk(stream: Writable, chunk: Buffer | string): Promise<void> {
+let childRunning = true;
+
+function writeChunk(stream: Writable, chunk: Buffer): Promise<void> {
   return new Promise((resolve, reject) => {
     stream.write(chunk, (error) => {
       if (error) reject(error);
@@ -53,39 +86,49 @@ function writeChunk(stream: Writable, chunk: Buffer | string): Promise<void> {
   });
 }
 
-async function collectAndForward(stream: Readable, target: Writable): Promise<string> {
+async function tailAndForward(capture: Capture, target: Writable): Promise<string> {
   const decoder = new StringDecoder("utf8");
+  const buffer = Buffer.alloc(64 * 1024);
   let output = "";
+  let finalPass = false;
 
-  for await (const chunk of stream) {
-    if (typeof chunk === "string") {
-      output += chunk;
+  while (!finalPass) {
+    // Sampled before reading: once the child is gone, this pass reaches the end
+    // of everything it wrote.
+    finalPass = !childRunning;
+    let bytesRead = readSync(capture.readFd, buffer, 0, buffer.length, null);
+    while (bytesRead > 0) {
+      const chunk = Buffer.from(buffer.subarray(0, bytesRead));
+      output += decoder.write(chunk);
       await writeChunk(target, chunk);
-    } else {
-      const buffer = Buffer.from(chunk);
-      output += decoder.write(buffer);
-      await writeChunk(target, buffer);
+      bytesRead = readSync(capture.readFd, buffer, 0, buffer.length, null);
     }
+    if (!finalPass) await sleep(POLL_MS);
   }
 
+  closeSync(capture.readFd);
   output += decoder.end();
   return output;
 }
 
 async function waitForChild(): Promise<{ code: number | null; signal: NodeJS.Signals | null }> {
-  return await new Promise((resolve, reject) => {
-    child.once("error", (error) => {
-      reject(error);
+  try {
+    return await new Promise((resolve, reject) => {
+      child.once("error", (error) => {
+        reject(error);
+      });
+      child.once("close", (code, signal) => {
+        resolve({ code, signal });
+      });
     });
-    child.once("close", (code, signal) => {
-      resolve({ code, signal });
-    });
-  });
+  } finally {
+    childRunning = false;
+  }
 }
 
 const [stdout, stderr, result] = await Promise.all([
-  collectAndForward(child.stdout, process.stdout),
-  collectAndForward(child.stderr, process.stderr),
+  tailAndForward(stdoutCapture, process.stdout),
+  tailAndForward(stderrCapture, process.stderr),
   waitForChild(),
 ]);
 
