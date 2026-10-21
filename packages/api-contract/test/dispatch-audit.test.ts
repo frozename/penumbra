@@ -225,3 +225,50 @@ test("DispatchReliabilityReportSchema accepts evidence with commit_integrity", (
   };
   expect(DispatchReliabilityReportSchema.safeParse(report).success).toBe(true);
 });
+
+function reportWithCommitIntegrity(commitIntegrity: unknown): unknown {
+  return {
+    handoff_id: "h1",
+    status: "base_not_ancestor",
+    terminal: true,
+    trustworthy: false,
+    summary: "branch left its base",
+    missing_events: [],
+    evidence: {
+      handoff_status: "completed",
+      event_count: 5,
+      response_count: 1,
+      worktree_changed: true,
+      dispatch_end_committed: true,
+      reconciled: null,
+      watchdog_failed: false,
+      cancel_requested: false,
+      adapter_streaming: null,
+      commit_integrity: commitIntegrity,
+    },
+    recommended_action: "review_manually",
+  };
+}
+
+test("DispatchReliabilityReportSchema rejects evidence with malformed commit_integrity", () => {
+  expect(
+    DispatchReliabilityReportSchema.safeParse(reportWithCommitIntegrity(EVIDENCE)).success,
+  ).toBe(true);
+  expect(
+    DispatchReliabilityReportSchema.safeParse(
+      reportWithCommitIntegrity({ ...EVIDENCE, base_is_ancestor: "no" }),
+    ).success,
+  ).toBe(false);
+});
+
+test("CommitIntegrityEvidenceSchema rejects a non-hex head_sha", () => {
+  expect(
+    CommitIntegrityEvidenceSchema.safeParse({ ...EVIDENCE, head_sha: "g".repeat(40) }).success,
+  ).toBe(false);
+});
+
+test("CommitIntegrityEvidenceSchema rejects a non-hex base_sha", () => {
+  expect(
+    CommitIntegrityEvidenceSchema.safeParse({ ...EVIDENCE, base_sha: "g".repeat(40) }).success,
+  ).toBe(false);
+});

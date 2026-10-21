@@ -117,6 +117,56 @@ describe("getWorktreeSnapshot against a WorktreeManager worktree", () => {
     expect(result.commitIntegrity?.mismatched_total).toBe(1);
   });
 
+  it("probes commit integrity with the caller's env", async () => {
+    await manager.createWorktree(HANDOFF_ID);
+
+    const result = await getWorktreeSnapshot(HANDOFF_ID, {
+      getWorktree: (id) => manager.getWorktree(id),
+      env: {
+        ...FIXTURE_ENV,
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "user.name",
+        GIT_CONFIG_VALUE_0: "Env Override",
+      },
+    });
+
+    expect(result.commitIntegrity?.identity).toEqual({
+      name: "Env Override",
+      email: OWNER.email,
+    });
+  });
+
+  it("still probes commit integrity when git status and reflog fail", async () => {
+    const baseSha = await git(repoDir, ["rev-parse", "HEAD"]);
+    await manager.createWorktree(HANDOFF_ID);
+    const failingRunner: WorktreeCommandRunner = (cmd, args, opts) => {
+      if (args[0] === "status" || args[0] === "reflog") {
+        return Promise.reject(new Error("git status or reflog failed"));
+      }
+      return fixtureRunner(cmd, args, opts);
+    };
+
+    const result = await getWorktreeSnapshot(HANDOFF_ID, {
+      getWorktree: (id) => manager.getWorktree(id),
+      runner: failingRunner,
+      env: FIXTURE_ENV,
+    });
+
+    expect(result).toEqual({
+      worktreeChanged: false,
+      dirty: false,
+      committed: false,
+      commitIntegrity: {
+        base_sha: baseSha,
+        head_sha: baseSha,
+        base_is_ancestor: true,
+        identity: OWNER,
+        mismatched_commits: [],
+        mismatched_total: 0,
+      },
+    });
+  });
+
   it("returns unknown fields and no evidence for a handoff without a worktree", async () => {
     expect(await snapshot("88888888-8888-4888-8888-888888888888")).toEqual({
       worktreeChanged: null,
