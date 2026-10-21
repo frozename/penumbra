@@ -24,6 +24,7 @@ import {
   createWorktreeInspectionHarness,
   gitOutput,
   seedInspectionHandoff,
+  type WorktreeInspectionHarness,
 } from "../helpers/worktree-inspection.js";
 
 try {
@@ -75,6 +76,35 @@ interface ErrorBody {
 
 async function readJson<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
+}
+
+const BASE_CHAIN_LIMIT = 16;
+
+function commitFeatureBase(harness: WorktreeInspectionHarness): void {
+  gitOutput(harness, harness.repoRoot, ["checkout", "-b", "feature/base"]);
+  writeFileSync(join(harness.repoRoot, "feature-only.txt"), "feature only\n");
+  gitOutput(harness, harness.repoRoot, ["add", "feature-only.txt"]);
+  gitOutput(harness, harness.repoRoot, ["commit", "-m", "feature only"]);
+  gitOutput(harness, harness.repoRoot, ["checkout", "main"]);
+}
+
+// Seeds `links` same-project handoffs chain/1 -> chain/2 -> ... -> root and returns the
+// head of the chain. Only chain/1 exists in Git, because it seeds the inspected worktree.
+function seedOwnedBaseChain(
+  harness: WorktreeInspectionHarness,
+  links: number,
+  root: string,
+): string {
+  for (let link = 1; link <= links; link += 1) {
+    seedInspectionHandoff(harness.services, {
+      handoffId: `00000000-0000-4000-8000-${String(link).padStart(12, "0")}`,
+      projectId: "project-a",
+      branchName: `chain/${String(link)}`,
+      branchBase: link === links ? root : `chain/${String(link + 1)}`,
+    });
+  }
+  gitOutput(harness, harness.repoRoot, ["branch", "chain/1", root]);
+  return "chain/1";
 }
 
 function tempServices(): Services {
@@ -235,6 +265,7 @@ test("worktree.inspect of a later round diffs against the first round's base", a
     expect(body.base_ref).toBe("feature/base");
     expect(body.base_fallback).toBe(false);
     expect(body.base_fallback_reason).toBeNull();
+    expect(body.base_attempted_ref).toBe("feature/base");
     expect(body.diff_against_main).toContain("round-two.txt");
     expect(body.diff_against_main).toContain("candidate.txt");
     expect(body.diff_against_main).not.toContain("feature-only.txt");
@@ -348,6 +379,7 @@ test("worktree.inspect follows a deleted intermediate handoff branch to the root
     expect(body.base_ref).toBe("feature/base");
     expect(body.base_fallback).toBe(false);
     expect(body.base_fallback_reason).toBeNull();
+    expect(body.base_attempted_ref).toBe("feature/base");
     expect(body.diff_against_main).toContain("round-two.txt");
   } finally {
     harness.cleanup();
@@ -414,6 +446,139 @@ test("worktree.inspect falls back to main when the base chain cycles", async () 
     expect(body.base_ref).toBe("main");
     expect(body.base_fallback).toBe(true);
     expect(body.base_fallback_reason).toBe("chain_limit");
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("worktree.inspect follows a base chain of exactly the chain limit to its root", async () => {
+  const harness = createWorktreeInspectionHarness();
+  try {
+    commitFeatureBase(harness);
+    const branchBase = seedOwnedBaseChain(harness, BASE_CHAIN_LIMIT, "feature/base");
+    const handle = await createInspectionWorktree(harness, { branchBase });
+
+    const res = await worktreesInspectRoute(
+      new Request(`http://h/worktrees/${handle.handoffId}`),
+      handle.handoffId,
+      harness.services,
+    );
+    expect(res.status).toBe(200);
+    const body = await readJson<WorktreeInspectBody>(res);
+    expect(body.base_ref).toBe("feature/base");
+    expect(body.base_fallback).toBe(false);
+    expect(body.base_fallback_reason).toBeNull();
+    expect(body.base_attempted_ref).toBe("feature/base");
+    expect(body.diff_against_main).toContain("candidate.txt");
+    expect(body.diff_against_main).not.toContain("feature-only.txt");
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("worktree.inspect falls back to main when a non-cycling base chain exceeds the limit", async () => {
+  const harness = createWorktreeInspectionHarness();
+  try {
+    commitFeatureBase(harness);
+    const branchBase = seedOwnedBaseChain(harness, BASE_CHAIN_LIMIT + 1, "feature/base");
+    const handle = await createInspectionWorktree(harness, { branchBase });
+
+    const res = await worktreesInspectRoute(
+      new Request(`http://h/worktrees/${handle.handoffId}`),
+      handle.handoffId,
+      harness.services,
+    );
+    expect(res.status).toBe(200);
+    const body = await readJson<WorktreeInspectBody>(res);
+    expect(body.base_ref).toBe("main");
+    expect(body.base_fallback).toBe(true);
+    expect(body.base_fallback_reason).toBe("chain_limit");
+    expect(body.base_attempted_ref).toBe(`chain/${String(BASE_CHAIN_LIMIT + 1)}`);
+    expect(body.diff_against_main).toContain("candidate.txt");
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("worktree.inspect falls back to main when a base handoff is its own branch_base", async () => {
+  const harness = createWorktreeInspectionHarness();
+  try {
+    gitOutput(harness, harness.repoRoot, ["branch", "loop/self", "main"]);
+    seedInspectionHandoff(harness.services, {
+      handoffId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      projectId: "project-a",
+      branchName: "loop/self",
+      branchBase: "loop/self",
+    });
+    const handle = await createInspectionWorktree(harness, { branchBase: "loop/self" });
+
+    const res = await worktreesInspectRoute(
+      new Request(`http://h/worktrees/${handle.handoffId}`),
+      handle.handoffId,
+      harness.services,
+    );
+    expect(res.status).toBe(200);
+    const body = await readJson<WorktreeInspectBody>(res);
+    expect(body.base_ref).toBe("main");
+    expect(body.base_fallback).toBe(true);
+    expect(body.base_fallback_reason).toBe("chain_limit");
+    expect(body.base_attempted_ref).toBe("loop/self");
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("worktree.inspect names only the refs it passed to rev-parse when no base resolves", async () => {
+  const harness = createWorktreeInspectionHarness();
+  try {
+    gitOutput(harness, harness.repoRoot, ["branch", "loop/self", "main"]);
+    gitOutput(harness, harness.repoRoot, ["branch", "feature/gone", "main"]);
+    seedInspectionHandoff(harness.services, {
+      handoffId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      projectId: "project-a",
+      branchName: "loop/self",
+      branchBase: "loop/self",
+    });
+    const cases = [
+      { handle: await createInspectionWorktree(harness), tried: "main" },
+      {
+        handle: await createInspectionWorktree(harness, {
+          handoffId: "abababab-abab-4bab-8bab-abababababab",
+          branchBase: "HEAD",
+        }),
+        tried: "main",
+      },
+      {
+        handle: await createInspectionWorktree(harness, {
+          handoffId: "cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd",
+          branchBase: "loop/self",
+        }),
+        tried: "main",
+      },
+      {
+        handle: await createInspectionWorktree(harness, {
+          handoffId: "efefefef-efef-4fef-8fef-efefefefefef",
+          branchBase: "feature/gone",
+        }),
+        tried: "feature/gone, main",
+      },
+    ];
+    gitOutput(harness, harness.repoRoot, ["branch", "-D", "feature/gone"]);
+    gitOutput(harness, harness.repoRoot, ["branch", "-m", "main", "trunk"]);
+
+    for (const { handle, tried } of cases) {
+      const res = await worktreesInspectRoute(
+        new Request(`http://h/worktrees/${handle.handoffId}`),
+        handle.handoffId,
+        harness.services,
+      );
+      expect(res.status).toBe(500);
+      const body = await readJson<ErrorBody>(res);
+      expect(body.error).toEqual({
+        code: "inspection_failed",
+        message: `no inspection base resolves (tried ${tried})`,
+      });
+    }
   } finally {
     harness.cleanup();
   }

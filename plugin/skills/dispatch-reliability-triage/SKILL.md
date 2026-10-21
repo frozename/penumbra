@@ -10,7 +10,7 @@ Use this skill any time a `chain_start` dispatch returns failure, hangs past the
 ## Triage Workflow
 
 1. `mcp__penumbra__handoff_get(handoff_id, compact=true)` for terminal status, `error_message`, `worker_id`, and `branch_base`.
-2. `mcp__penumbra__worktree_inspect(handoff_id)` for diff against main plus branch log. Cosmetic failures often landed a commit; verify the worktree state, not the agent self-report.
+2. `mcp__penumbra__worktree_inspect(handoff_id)` for the diff against the dispatch base (`base_ref`; `base_fallback` is `true` when it fell back to `main`) plus branch log. Cosmetic failures often landed a commit; verify the worktree state, not the agent self-report.
 3. `mcp__penumbra__chain_get_response(conversation_id, which='final')` for the last thing the agent actually said.
 4. Match the symptom against the taxonomy below. If it matches, follow that recipe.
 5. If nothing matches, capture the symptom signature and write a new t2 memory note before retrying. Recall has to learn the failure mode.

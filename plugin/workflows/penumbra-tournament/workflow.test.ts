@@ -42,6 +42,7 @@ type InspectionMock = {
   logTruncated?: boolean;
   totalTruncated?: boolean;
   projectId?: string;
+  baseRef?: string;
 };
 
 type ReinspectionOverride = {
@@ -71,6 +72,10 @@ function makeInspection(handoffId: string, opts: Partial<InspectionMock> = {}): 
     branch_log: opts.log ?? "abc1234 commit message",
     head_sha: opts.headSha ?? FULL_SHA_40,
     branch_name: opts.branchName ?? `feature/${handoffId}`,
+    base_ref: opts.baseRef ?? "main",
+    base_fallback: false,
+    base_attempted_ref: opts.baseRef ?? "main",
+    base_fallback_reason: null,
     dirty: opts.dirty ?? false,
     truncation: {
       diff_against_main: opts.diffTruncated ?? false,
@@ -1402,6 +1407,7 @@ test("judge prompt contains do NOT modify or land instruction", async () => {
         branchName: "feature/cand-0",
         diff: "diff content",
         log: "log content",
+        baseRef: "feature/stacked-base",
       },
     ],
   });
@@ -1411,6 +1417,7 @@ test("judge prompt contains do NOT modify or land instruction", async () => {
   const judgeRequest = capturedRequests.find((r) => r.tool_free === true);
   expect(judgeRequest?.message).toContain("Do NOT modify or land anything");
   expect(judgeRequest?.message).toContain("diff content");
+  expect(judgeRequest?.message).toContain("**Diff against feature/stacked-base:**\ndiff content");
   expect(judgeRequest?.message).toContain("log content");
   expect(judgeRequest?.message).toContain("feature/cand-0");
   expect(judgeRequest?.message).toContain("agent-a");

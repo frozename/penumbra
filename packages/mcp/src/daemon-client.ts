@@ -778,9 +778,15 @@ export class DaemonClient {
     return await this.get("/worktrees");
   }
 
-  async inspectWorktree(
-    handoff_id: string,
-  ): Promise<{ worktree: unknown; diff_against_main: string; branch_log: string }> {
+  async inspectWorktree(handoff_id: string): Promise<{
+    worktree: unknown;
+    diff_against_main: string;
+    branch_log: string;
+    base_ref: string;
+    base_fallback: boolean;
+    base_attempted_ref: string;
+    base_fallback_reason: "unresolvable" | "rejected_ref" | "chain_limit" | null;
+  }> {
     return await this.get(`/worktrees/${encodeURIComponent(handoff_id)}`);
   }
 

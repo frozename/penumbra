@@ -13,8 +13,8 @@ Agents can report failure even when the intended work landed, usually through a 
    Confirm the handoff reached a terminal state. Capture `worker_id` and any `error_message`.
 2. `mcp__penumbra__worktree_inspect(handoff_id)`  
    Read the worktree path and agent branch name from Penumbra. Penumbra owns the path layout; do not assume any filesystem location.
-3. Inspect the diff and branch log returned by `worktree_inspect`. The diff is against `main`; the branch log shows the commits the agent landed.
-4. If you need to run commands against the worktree, use the returned path: `git -C <path> log --oneline -10`, `git -C <path> diff main...HEAD --stat`, `git -C <path> status`.
+3. Inspect the diff and branch log returned by `worktree_inspect`. Both are against the dispatch base named in `base_ref`, the root `branch_base` of the handoff chain, which may be a feature or stacked branch rather than `main`. When `base_fallback` is `true`, that base could not be used and inspection fell back to `main`; `base_attempted_ref` and `base_fallback_reason` say which ref and why. The branch log shows the commits the agent landed.
+4. If you need to run commands against the worktree, use the returned path and `base_ref`: `git -C <path> log --oneline -10`, `git -C <path> diff <base_ref>...HEAD --stat`, `git -C <path> status`.
 5. If the project has a focused test command, run it against that worktree path before merging.
 
 ## Decision Matrix

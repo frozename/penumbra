@@ -321,9 +321,15 @@ export class PenumbraClient {
   async dispatchAudit(handoff_id: string): Promise<{ report: DispatchReliabilityReport }> {
     return await this.get(`/dispatch/audit?handoff_id=${encodeURIComponent(handoff_id)}`);
   }
-  async inspectWorktree(
-    handoff_id: string,
-  ): Promise<{ worktree: WorktreeHandle; diff_against_main: string; branch_log: string }> {
+  async inspectWorktree(handoff_id: string): Promise<{
+    worktree: WorktreeHandle;
+    diff_against_main: string;
+    branch_log: string;
+    base_ref: string;
+    base_fallback: boolean;
+    base_attempted_ref: string;
+    base_fallback_reason: "unresolvable" | "rejected_ref" | "chain_limit" | null;
+  }> {
     return await this.get(`/worktrees/${encodeURIComponent(handoff_id)}`);
   }
   async grepInWorktree(

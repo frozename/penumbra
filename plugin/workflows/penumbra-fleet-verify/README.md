@@ -24,6 +24,10 @@ The local structural interface is derived from the accepted `WorkflowCtx.worktre
   branch_log: string;
   head_sha: string;
   branch_name: string;
+  base_ref: string;
+  base_fallback: boolean;
+  base_attempted_ref: string;
+  base_fallback_reason: "unresolvable" | "rejected_ref" | "chain_limit" | null;
   dirty: boolean;
   truncation: {
     diff_against_main: boolean;
@@ -32,6 +36,8 @@ The local structural interface is derived from the accepted `WorkflowCtx.worktre
   };
 } | null
 ```
+
+Despite its name, `diff_against_main` (like `branch_log`) is taken against `base_ref`, the root dispatch base of the handoff's `branch_base` chain. `base_fallback` is `true` when that base could not be used and inspection fell back to `main`; `base_attempted_ref` and `base_fallback_reason` name the ref and why.
 
 The workflow uses one strict runtime binding check for the candidate before verification, the verifier checkout after it finishes, and the candidate after verification. Every inspection must contain a `created` handle, the expected handoff, `branch_name === worktree.branchName === expected branch`, a matching `projectId` when the optional field is present, a measured 40- or 64-hex `head_sha`, `dirty: false`, and all three truncation flags set to literal `false`. Null, thrown, malformed, non-created, foreign, dirty, mismatched, or individually truncated inspections remain explicit unavailable evidence and cannot become landable.
 

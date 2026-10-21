@@ -1249,7 +1249,8 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
   },
   worktree_inspect: {
     descriptor: {
-      description: "Returns the diff and branch log for a specific worktree.",
+      description:
+        "Returns the diff and branch log for a specific worktree. The diff (diff_against_main) and log are against base_ref, the root dispatch base of the handoff's branch_base chain; base_fallback, base_attempted_ref and base_fallback_reason report when that base could not be used and inspection fell back to main.",
       inputSchema: WorktreeInspectInputShape,
     },
     makeHandler: worktreeInspectHandler as unknown as ToolDef["makeHandler"],

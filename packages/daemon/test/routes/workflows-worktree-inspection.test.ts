@@ -416,6 +416,33 @@ test("expired and mid-call workflow deadlines stop further Git reads", async () 
   }
 });
 
+test("a deadline that expires during base resolution fails as a deadline, not a missing base", async () => {
+  const harness = createWorktreeInspectionHarness();
+  try {
+    const handle = await createInspectionWorktree(harness);
+    const actual = actualGitRunner(harness);
+    let expired = false;
+    const result = await inspectWorktreeForHandoff(harness.services, handle.handoffId, {
+      expectedProjectId: "project-a",
+      deadline: () => ({ remaining_ms: expired ? 0 : 5_000, expired }),
+      runGit: async (args, opts) => {
+        const gitResult = await actual(args, opts);
+        if (args.includes("status")) expired = true;
+        return gitResult;
+      },
+    });
+
+    expect(expired).toBe(true);
+    expect(result).toEqual({
+      ok: false,
+      code: "inspection_failed",
+      message: "worktree inspection deadline expired",
+    });
+  } finally {
+    harness.cleanup();
+  }
+});
+
 test("snapshot command timeout, output overflow, and Git errors are explicit failures", async () => {
   const harness = createWorktreeInspectionHarness();
   try {

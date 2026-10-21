@@ -55,6 +55,12 @@ const defaultRunGit: WorktreeInspectionCommandRunner = async (args, opts) => {
   return await execFile("git", [...args], { ...opts, encoding: "utf8" });
 };
 
+class InspectionDeadlineError extends Error {
+  constructor() {
+    super("worktree inspection deadline expired");
+  }
+}
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -85,6 +91,8 @@ type ResolvedInspectionBase = {
 // owner in the same project (findByBranchName is unscoped, so a stray row from
 // another project must not redirect the diff); a cycle or chain-limit exhaustion is
 // reported as exhausted so the caller falls back to main rather than a still-owned ref.
+// MAX_BASE_CHAIN bounds owned links, so the unowned root a full-length chain points at
+// still resolves.
 function rootInspectionBase(
   services: Services,
   branchBase: string | null | undefined,
@@ -93,10 +101,10 @@ function rootInspectionBase(
   let ref = branchBase ?? "main";
   const seen = new Set<string>();
   while (!seen.has(ref)) {
-    if (seen.size >= MAX_BASE_CHAIN) return { ref, exhausted: true };
     seen.add(ref);
     const owner = services.handoffReader.findByBranchName(ref);
     if (owner?.project_id !== projectId) return { ref, exhausted: false };
+    if (seen.size > MAX_BASE_CHAIN) return { ref, exhausted: true };
     ref = owner.branch_base ?? "main";
   }
   return { ref, exhausted: true };
@@ -112,18 +120,21 @@ async function tryRevParse(
 ): Promise<string | undefined> {
   try {
     return (await git(["rev-parse", "--verify", `${ref}^{commit}`])).trim();
-  } catch {
+  } catch (err) {
+    // A spent budget is not a missing ref; swallowing it would report the deadline
+    // as "no inspection base resolves".
+    if (err instanceof InspectionDeadlineError) throw err;
     return undefined;
   }
 }
 
 async function resolveMainSha(
   git: (args: readonly string[]) => Promise<string>,
-  attemptedRef: string,
+  triedRefs: readonly string[],
 ): Promise<string> {
   const mainSha = await tryRevParse(git, "main");
   if (mainSha === undefined) {
-    throw new Error(`no inspection base resolves (tried ${attemptedRef}, main)`);
+    throw new Error(`no inspection base resolves (tried ${[...triedRefs, "main"].join(", ")})`);
   }
   return mainSha;
 }
@@ -132,8 +143,9 @@ async function fallbackToMain(
   git: (args: readonly string[]) => Promise<string>,
   attemptedRef: string,
   reason: InspectionFallbackReason,
+  triedRefs: readonly string[],
 ): Promise<ResolvedInspectionBase> {
-  const baseSha = await resolveMainSha(git, attemptedRef);
+  const baseSha = await resolveMainSha(git, triedRefs);
   return { baseRef: "main", baseSha, attemptedRef, fallbackReason: reason };
 }
 
@@ -143,20 +155,20 @@ async function resolveInspectionBase(
 ): Promise<ResolvedInspectionBase> {
   const attemptedRef = root.ref;
   if (root.exhausted) {
-    return await fallbackToMain(git, attemptedRef, "chain_limit");
+    return await fallbackToMain(git, attemptedRef, "chain_limit", []);
   }
   if (root.ref === "main") {
-    const baseSha = await resolveMainSha(git, attemptedRef);
+    const baseSha = await resolveMainSha(git, []);
     return { baseRef: "main", baseSha, attemptedRef, fallbackReason: null };
   }
   if (!isInspectableRef(root.ref)) {
-    return await fallbackToMain(git, attemptedRef, "rejected_ref");
+    return await fallbackToMain(git, attemptedRef, "rejected_ref", []);
   }
   const sha = await tryRevParse(git, root.ref);
   if (sha !== undefined) {
     return { baseRef: root.ref, baseSha: sha, attemptedRef, fallbackReason: null };
   }
-  return await fallbackToMain(git, attemptedRef, "unresolvable");
+  return await fallbackToMain(git, attemptedRef, "unresolvable", [root.ref]);
 }
 
 function truncateUtf8(value: string, maxBytes: number): { value: string; truncated: boolean } {
@@ -296,7 +308,7 @@ export async function inspectWorktreeForHandoff(
 
   const git = async (args: readonly string[]): Promise<string> => {
     const timeout = remainingMs();
-    if (timeout <= 0) throw new Error("worktree inspection deadline expired");
+    if (timeout <= 0) throw new InspectionDeadlineError();
     const result = await runGit(["-c", "core.fsmonitor=false", "-C", canonicalPath, ...args], {
       timeout,
       maxBuffer: COMMAND_MAX_BUFFER_BYTES,
