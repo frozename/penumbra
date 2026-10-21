@@ -1,8 +1,4 @@
-import type {
-  CommitIntegrityEvidence,
-  DispatchEventInput,
-  Logger,
-} from "@penumbra/core";
+import type { CommitIntegrityEvidence, DispatchEventInput, Logger } from "@penumbra/core";
 
 import type { DispatchHandoffResult } from "../cli/dispatch-handoff.js";
 import type { DiscordNotificationEvent } from "./discord-events.js";
