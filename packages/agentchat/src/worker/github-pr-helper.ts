@@ -48,6 +48,44 @@ export const defaultSpawnRunner: SpawnRunner = {
     }),
 };
 
+/** The PR base is not a branch on `origin`; raised before anything is pushed. */
+export class PRBaseUnavailableError extends Error {
+  readonly code = "pr_base_unavailable" as const;
+  readonly baseBranch: string;
+
+  constructor(baseBranch: string) {
+    super(`PR base branch "${baseBranch}" does not exist on origin`);
+    this.name = "PRBaseUnavailableError";
+    this.baseBranch = baseBranch;
+  }
+}
+
+// Handoffs record the base as a local ref (`origin/main`, `refs/heads/main`),
+// but `gh pr create --base` and the remote probe need the bare branch name.
+const LOCAL_BASE_PREFIXES = ["refs/remotes/origin/", "refs/heads/", "origin/"] as const;
+
+export function normalizePRBase(baseBranch: string): string {
+  for (const prefix of LOCAL_BASE_PREFIXES) {
+    if (baseBranch.startsWith(prefix)) return baseBranch.slice(prefix.length);
+  }
+  return baseBranch;
+}
+
+async function assertBaseOnRemote(base: string, cwd: string, runner: SpawnRunner): Promise<void> {
+  // ls-remote matches patterns against ref-name tails, so a bare `main` would
+  // also accept `refs/heads/x/main`; the fully qualified ref pins the branch.
+  const probe = await runner.run(
+    "git",
+    ["ls-remote", "--exit-code", "--heads", "origin", `refs/heads/${base}`],
+    { cwd },
+  );
+  if (probe.code === 0) return;
+  // --exit-code reserves 2 for "no matching ref"; anything else means the
+  // remote could not be asked, which says nothing about the base itself.
+  if (probe.code === 2) throw new PRBaseUnavailableError(base);
+  throw new Error(`git ls-remote failed (${String(probe.code)}): ${probe.stderr.slice(0, 500)}`);
+}
+
 export interface DispatchPRBodyInput {
   agentName: string;
   handoffId: string;
@@ -100,7 +138,13 @@ export async function createDispatchPR(
   );
 
   try {
-    await runner.run("git", ["push", "-u", "origin", args.branch], { cwd: args.cwd });
+    const base = normalizePRBase(args.baseBranch);
+    await assertBaseOnRemote(base, args.cwd, runner);
+
+    const push = await runner.run("git", ["push", "-u", "origin", args.branch], { cwd: args.cwd });
+    if (push.code !== 0) {
+      throw new Error(`git push failed (${String(push.code)}): ${push.stderr.slice(0, 500)}`);
+    }
 
     await fs.writeFile(bodyFile, args.body, "utf8");
 
@@ -108,7 +152,7 @@ export async function createDispatchPR(
       "pr",
       "create",
       "--base",
-      args.baseBranch,
+      base,
       "--head",
       args.branch,
       "--title",

@@ -26,7 +26,11 @@ import {
   isKnownBunTeardownPanicPass,
   parseBunTestReport,
 } from "./bun-test-output.js";
-import { createDispatchPR, renderDispatchPRBody } from "./github-pr-helper.js";
+import {
+  createDispatchPR,
+  PRBaseUnavailableError,
+  renderDispatchPRBody,
+} from "./github-pr-helper.js";
 import {
   runThoughtAnalyzer,
   type ThoughtAnalyzerDeps,
@@ -54,7 +58,11 @@ export interface MergeResult {
   worktree_dirty?: boolean;
   pr_url?: string;
   pr_number?: number;
-  error_code?: "invalid_branch_base" | "invalid_branch" | "invalid_test_package_path";
+  error_code?:
+    | "invalid_branch_base"
+    | "invalid_branch"
+    | "invalid_test_package_path"
+    | "pr_base_unavailable";
   verification_environment_error?: true;
 }
 
@@ -2044,6 +2052,7 @@ async function runPrCreationStage(ctx: ReconcileCtx): Promise<MergeResult> {
     const result: MergeResult = {
       status: "pr_creation_failed",
       regression_summary: String(err),
+      ...(err instanceof PRBaseUnavailableError ? { error_code: err.code } : {}),
     };
     await emitResult(ctx, result);
     return result;

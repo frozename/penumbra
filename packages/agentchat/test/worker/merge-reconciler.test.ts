@@ -20,7 +20,11 @@ import { join } from "node:path";
 
 import { PenumbraHttpError } from "@src/penumbra-client.js";
 import { resolveAffectedPackages, scopeDiffToPackages } from "@src/worker/affected-packages.js";
-import type { CreatePRArgs, CreatePRResult } from "@src/worker/github-pr-helper.js";
+import {
+  type CreatePRArgs,
+  type CreatePRResult,
+  PRBaseUnavailableError,
+} from "@src/worker/github-pr-helper.js";
 import {
   createMergeReconciler,
   MERGE_RESULT_STATUSES,
@@ -1374,6 +1378,41 @@ test("PR creation failure returns pr_creation_failed", async () => {
     status: "pr_creation_failed",
     regression_summary: "Error: Boom",
     progressReported: true,
+  });
+});
+
+test("PR base missing on origin returns pr_creation_failed with pr_base_unavailable", async () => {
+  handoffRows.set(
+    "h_base_gone",
+    makeHandoffRow({
+      handoff_id: "h_base_gone",
+      conversation_id: "c-base-gone",
+      message: "stacked dispatch",
+      open_pr_on_review: true,
+    }),
+  );
+  createDispatchPRMock.mockImplementation(
+    (args: CreatePRArgs, _log: Logger): Promise<CreatePRResult> => {
+      prCalls.push({ args });
+      return Promise.reject(new PRBaseUnavailableError("stage/s-1"));
+    },
+  );
+
+  const result = await reconcile("h_base_gone");
+
+  expect(prCalls).toHaveLength(1);
+  expect(result.status).toBe("pr_creation_failed");
+  expect(result.error_code).toBe("pr_base_unavailable");
+  expect(progressCalls).toContainEqual({
+    id: "h_base_gone",
+    payload: {
+      type: "merge-result",
+      handoff_id: "h_base_gone",
+      status: "pr_creation_failed",
+      regression_summary:
+        'PRBaseUnavailableError: PR base branch "stage/s-1" does not exist on origin',
+      error_code: "pr_base_unavailable",
+    },
   });
 });
 
