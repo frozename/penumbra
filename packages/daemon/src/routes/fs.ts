@@ -1,6 +1,11 @@
 import type { HandoffRow, Services } from "@penumbra/core";
 
-import { FsPathError, resolveInsideWorktree } from "@penumbra/core";
+import {
+  FsPathError,
+  isResourceKill,
+  resolveInsideWorktree,
+  wrapResourceScopeArgv,
+} from "@penumbra/core";
 import { spawn } from "node:child_process";
 import * as fsNode from "node:fs";
 import * as path from "node:path";
@@ -629,8 +634,12 @@ export async function worktreesExecRoute(
   if (remainingMs <= 0) return execTimedOutResponse();
 
   return await new Promise<Response>((resolve) => {
-    const child = spawn(command, {
-      shell: true,
+    // `/bin/sh -c` is what `shell: true` ran; spelling it out lets the job be
+    // wrapped in a memory-capped scope.
+    const [file = "/bin/sh", ...args] = wrapResourceScopeArgv(["/bin/sh", "-c", command], {
+      label: "fs-exec",
+    });
+    const child = spawn(file, args, {
       cwd,
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
@@ -675,10 +684,13 @@ export async function worktreesExecRoute(
       );
     }, remainingMs);
 
-    child.on("close", (code: number | null) => {
+    child.on("close", (code: number | null, signal: NodeJS.Signals | null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      // The timeout path settles before its SIGKILL lands, so a SIGKILL seen
+      // here came from a scope MemoryMax or host OOM kill.
+      const resourceKilled = isResourceKill({ exitCode: code, signal });
       resolve(
         json({
           stdout: finalize(stdoutBuffer),
@@ -686,6 +698,8 @@ export async function worktreesExecRoute(
           exit_code: code,
           timed_out: false,
           truncated: stdoutBuffer.truncated || stderrBuffer.truncated,
+          ...(signal ? { signal } : {}),
+          ...(resourceKilled ? { resource_killed: true } : {}),
         }),
       );
     });

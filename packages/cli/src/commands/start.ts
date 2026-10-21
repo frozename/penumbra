@@ -11,6 +11,7 @@ import {
   loadProjectRegistry,
   loadSqliteVec,
   migrate,
+  primeResourceScope,
   resolveEmbedder,
   resolveStorageDbPath,
 } from "@penumbra/core";
@@ -272,6 +273,9 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
     });
     activeLog = services.log;
     logWorkflowRegistryErrors(services.log, workflowRegistry);
+    // fs_exec and shell sessions run in memory-capped scopes (penumbra#250);
+    // probe systemd-run once so an unusable host degrades with one warning.
+    await primeResourceScope();
     const runtimeServices = services as typeof services & {
       shellConfig?: ReturnType<typeof loadShellConfig>;
       shellSessionPool?: ShellSessionPool;

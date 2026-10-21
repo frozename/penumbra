@@ -1,5 +1,6 @@
 import type { Readable, Writable } from "node:stream";
 
+import { isResourceKill, wrapResourceScopeArgv } from "@penumbra/core";
 import { spawn } from "node:child_process";
 
 import { wrapSandboxExecArgv } from "../worker/sandbox-spawn.js";
@@ -60,10 +61,15 @@ export function startStdioAcpServer(opts: StartStdioAcpServerOptions): Promise<S
     );
   }
 
-  const spawnArgv =
+  // One scope per ACP server process: it caps the agent and every tool child it
+  // runs. A warm-pooled server is reused across dispatches, so its scope (and
+  // cap) spans all of them.
+  const spawnArgv = wrapResourceScopeArgv(
     sandboxProfile !== undefined
       ? wrapSandboxExecArgv([binary, ...args], sandboxProfile)
-      : [binary, ...args];
+      : [binary, ...args],
+    { label: "acp-server" },
+  );
   const child = spawn(spawnArgv[0] ?? binary, spawnArgv.slice(1), {
     cwd,
     env,
@@ -100,8 +106,14 @@ export function startStdioAcpServer(opts: StartStdioAcpServerOptions): Promise<S
   });
 
   let spawnError: Error | null = null;
+  let killRequested = false;
   const exited = new Promise<number | null>((resolve) => {
-    child.on("exit", (code) => {
+    child.on("exit", (code, exitSignal) => {
+      if (isResourceKill({ exitCode: code, signal: exitSignal }) && !killRequested) {
+        console.error(
+          `stdio-acp-server: binary=${binary} pid=${String(child.pid)} was SIGKILLed outside penumbra (job scope MemoryMax or host OOM)`,
+        );
+      }
       resolve(code);
     });
     child.on("error", (err) => {
@@ -131,6 +143,7 @@ export function startStdioAcpServer(opts: StartStdioAcpServerOptions): Promise<S
   };
 
   const kill = (): void => {
+    killRequested = true;
     signalProcess("SIGTERM");
     const timer = setTimeout(() => {
       signalProcess("SIGKILL");

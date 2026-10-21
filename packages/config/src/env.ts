@@ -58,6 +58,10 @@ const Port = z.coerce
   .refine((v) => !Number.isNaN(v), {
     message: "must be a valid port number",
   });
+const JobMemorySize = z
+  .string()
+  .regex(/^(?:\d+(?:\.\d+)?[KMGT]?|\d{1,3}%|infinity)$/i, "must be a systemd size (e.g. 12G)");
+const JobOomScoreAdj = z.preprocess(emptyToNaN, z.coerce.number().int().min(0).max(1000));
 const OptStr = z.string().optional();
 const ReqStr = z.string().min(1);
 const OptNonNegInt = NonNegInt.optional();
@@ -1198,6 +1202,51 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
       "Timeout in milliseconds for the isolated `bun install` run on a new worktree (core/worktree/manager.ts).",
   },
 
+  // ── job resource limits (core/process/resource-scope.ts) ────────────
+  PENUMBRA_JOB_SCOPE: {
+    schema: z.enum(["auto", "on", "off"]),
+    default: "auto",
+    description:
+      "Run dispatched jobs (agent processes, ACP terminal commands, reconciler stages, isolated installs, fs_exec) in memory-capped `systemd-run --user --scope` units. auto = when systemd-run and the user manager are reachable; on = same, but warn when unavailable on any platform; off = never.",
+  },
+  PENUMBRA_JOB_MEMORY_HIGH: {
+    schema: JobMemorySize,
+    default: "12G",
+    description: "MemoryHigh= (throttle threshold) for each job scope.",
+  },
+  PENUMBRA_JOB_MEMORY_MAX: {
+    schema: JobMemorySize,
+    default: "16G",
+    description: "MemoryMax= (in-scope OOM kill threshold) for each job scope.",
+  },
+  PENUMBRA_JOB_SWAP_MAX: {
+    schema: JobMemorySize,
+    default: "1G",
+    description: "MemorySwapMax= for each job scope.",
+  },
+  PENUMBRA_JOB_OOM_SCORE_ADJ: {
+    schema: JobOomScoreAdj,
+    default: 900,
+    description:
+      "oom_score_adj applied (via choom) to scoped jobs so a global OOM reaps them before long-lived services. 0 disables.",
+  },
+  PENUMBRA_JOB_ADMIT_MIN_GIB: {
+    schema: OptNonNegNum,
+    description:
+      "MemAvailable floor (GiB) the worker waits for before claiming a dispatch and before each heavy reconciler stage. Unset: min(20 GiB, 20% of MemTotal), so a small host (e.g. a 16 GiB CI runner) is not starved. An explicit value is used as-is; 0 disables admission.",
+  },
+  PENUMBRA_JOB_ADMIT_WAIT_S: {
+    schema: NonNegInt,
+    default: 900,
+    description:
+      "Seconds to wait for the admission floor (and for the host-wide heavy-stage lock) before giving up.",
+  },
+  PENUMBRA_JOB_HEAVY_LOCK: {
+    schema: OptStr,
+    description:
+      "flock(1)-compatible lock file serializing heavy reconciler stages host-wide. Default ~/.penumbra/locks/heavy-job.lock.",
+  },
+
   // ── auto-recall ─────────────────────────────────────────────────────
   PENUMBRA_AUTO_RECALL_PROJECT_BRIEF: {
     schema: Bool,
@@ -1431,4 +1480,55 @@ export function getSessionExtractMaxCharsPerChunk(env: NodeJS.ProcessEnv = proce
 
 export function getSessionExtractMaxChunks(env: NodeJS.ProcessEnv = process.env): number {
   return parseEnv(env).PENUMBRA_SESSION_EXTRACT_MAX_CHUNKS as number;
+}
+
+const JOB_RESOURCE_ENV_KEYS = [
+  "PENUMBRA_JOB_SCOPE",
+  "PENUMBRA_JOB_MEMORY_HIGH",
+  "PENUMBRA_JOB_MEMORY_MAX",
+  "PENUMBRA_JOB_SWAP_MAX",
+  "PENUMBRA_JOB_OOM_SCORE_ADJ",
+  "PENUMBRA_JOB_ADMIT_MIN_GIB",
+  "PENUMBRA_JOB_ADMIT_WAIT_S",
+  "PENUMBRA_JOB_HEAVY_LOCK",
+] as const;
+
+export interface JobResourceEnv {
+  scope: "auto" | "on" | "off";
+  memoryHigh: string;
+  memoryMax: string;
+  swapMax: string;
+  oomScoreAdj: number;
+  /** Explicit floor, or undefined to derive one from MemTotal (resolveAdmitMinGiB). */
+  admitMinGiB: number | undefined;
+  admitWaitS: number;
+  heavyLockPath: string | undefined;
+}
+
+/**
+ * Job resource-limit settings, parsed from only their own keys so an unrelated
+ * malformed PENUMBRA_* variable cannot break every spawn site that reads them.
+ */
+export function getJobResourceEnv(env: NodeJS.ProcessEnv = process.env): JobResourceEnv {
+  const subset: Record<string, string | undefined> = {};
+  for (const key of JOB_RESOURCE_ENV_KEYS) {
+    if (key in env) subset[key] = env[key];
+  }
+  const parsed: Record<string, unknown> = EnvSchema.pick(
+    Object.fromEntries(JOB_RESOURCE_ENV_KEYS.map((key) => [key, true])) as Record<
+      (typeof JOB_RESOURCE_ENV_KEYS)[number],
+      true
+    >,
+  ).parse(subset);
+  const heavyLock = parsed.PENUMBRA_JOB_HEAVY_LOCK as string | undefined;
+  return {
+    scope: parsed.PENUMBRA_JOB_SCOPE as JobResourceEnv["scope"],
+    memoryHigh: parsed.PENUMBRA_JOB_MEMORY_HIGH as string,
+    memoryMax: parsed.PENUMBRA_JOB_MEMORY_MAX as string,
+    swapMax: parsed.PENUMBRA_JOB_SWAP_MAX as string,
+    oomScoreAdj: parsed.PENUMBRA_JOB_OOM_SCORE_ADJ as number,
+    admitMinGiB: parsed.PENUMBRA_JOB_ADMIT_MIN_GIB as number | undefined,
+    admitWaitS: parsed.PENUMBRA_JOB_ADMIT_WAIT_S as number,
+    heavyLockPath: heavyLock !== undefined && heavyLock.trim() !== "" ? heavyLock : undefined,
+  };
 }

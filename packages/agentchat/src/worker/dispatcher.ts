@@ -89,6 +89,13 @@ export interface WorkerDispatcherDeps<H extends DispatcherHandoff = DispatcherHa
    * See worker/claim-affinity.ts.
    */
   claimGraceMs?: (handoff: H) => number;
+  /**
+   * Optional host-memory admission, awaited after the semaphore and before the
+   * claim. Resolving false leaves the handoff unclaimed (re-offered later via
+   * onClaimRetryable) instead of starting an agent into a full host. The
+   * signal aborts on cancel/stop.
+   */
+  admitClaim?: (handoff: H, signal: AbortSignal) => Promise<boolean>;
   /** Injectable delay (test seam); defaults to setTimeout. */
   delay?: (ms: number) => Promise<void>;
   /**
@@ -1183,6 +1190,24 @@ interface DispatcherState {
   delay: (ms: number) => Promise<void>;
 }
 
+// A cancel that lands before or during the wait falls through to the claim so
+// the lifecycle resolves it exactly like any other pre-dispatch cancel.
+async function deferredByAdmission(
+  deps: WorkerDispatcherDeps,
+  handoff: DispatcherHandoff,
+  signal: AbortSignal,
+): Promise<boolean> {
+  if (!deps.admitClaim) return false;
+  const admitted = await deps.admitClaim(handoff, signal);
+  if (admitted || signal.aborted) return false;
+  deps.log.warn(
+    { handoff_id: handoff.handoff_id },
+    "claim deferred: host memory admission not reached; leaving handoff unclaimed",
+  );
+  deps.onClaimRetryable?.(handoff.handoff_id);
+  return true;
+}
+
 async function handleOne(state: DispatcherState, handoff: DispatcherHandoff): Promise<void> {
   evictStaleClaimRetryState(state.claimRetryState);
   // Cross-project claim affinity. Hold back before claiming so a home-repoRoot
@@ -1205,6 +1230,7 @@ async function handleOne(state: DispatcherState, handoff: DispatcherHandoff): Pr
   );
   state.activeAborts.set(handoff.conversation_id, { handoff_id: handoff.handoff_id, abort });
   try {
+    if (await deferredByAdmission(state.deps, handoff, abort.signal)) return;
     const claim = await attemptClaim(state.deps, handoff, state.claimRetryState);
     if (!claim.ok) {
       return;

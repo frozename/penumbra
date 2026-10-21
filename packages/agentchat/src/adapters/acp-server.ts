@@ -1,3 +1,4 @@
+import { wrapResourceScopeArgv } from "@penumbra/core";
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import * as net from "node:net";
 
@@ -322,14 +323,17 @@ function spawnAcpChild(opts: StartAcpServerOptions, port: number): ChildProcessW
     return env;
   })();
 
-  const spawnArgv =
+  // One scope per ACP server (warm-pooled servers span several dispatches).
+  const spawnArgv = wrapResourceScopeArgv(
     opts.sandboxProfile !== undefined
       ? wrapSandboxExecArgv(
           [opts.opencodeBinary ?? "opencode", ...args],
           opts.sandboxProfile,
           opts.sandboxDeps,
         )
-      : [opts.opencodeBinary ?? "opencode", ...args];
+      : [opts.opencodeBinary ?? "opencode", ...args],
+    { label: "acp-server" },
+  );
 
   const spawnProcess = opts.spawn ?? spawn;
   const child = spawnProcess(spawnArgv[0] ?? "opencode", spawnArgv.slice(1), {

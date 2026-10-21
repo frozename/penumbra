@@ -77,6 +77,7 @@ import { registerExecutor, unregisterExecutor } from "../src/worker/executor-reg
 import { emitHeartbeat } from "../src/worker/heartbeat-emit.js";
 import { startHeartbeatLoop } from "../src/worker/heartbeat-loop.js";
 import { workerInjectRoute } from "../src/worker/inject-route.js";
+import { setupWorkerJobResources } from "../src/worker/job-resources.js";
 import { createMergeReconciler, type MergeResult } from "../src/worker/merge-reconciler.js";
 import { loadNotificationConfig } from "../src/worker/notification-config.js";
 import { resolveNotificationRoute } from "../src/worker/notification-router.js";
@@ -253,6 +254,9 @@ const eventQueue = new DispatchEventQueue({
   send: (events, signal): Promise<void> => client.postDispatchEvents(events, signal),
 });
 const settings = SettingsDefaults.build({ env: process.env, input: {} });
+// Memory-capped job scopes + admission (penumbra#250): probe systemd-run once
+// before any job spawns, and gate claims / heavy reconciler stages on memory.
+const jobResources = await setupWorkerJobResources(log);
 const projectRegistry = new WorkerProjectRegistry(undefined, (msg) => {
   log.warn({ worker_id: workerId }, msg);
 });
@@ -1090,6 +1094,7 @@ const reconcileWorktree = createMergeReconciler({
     client.captureAgentPerformanceFromReconciler({ handoff_id: id, result: { ...result } }),
   reconcilerAutoRebase: config.reconcilerAutoRebase,
   settings,
+  heavyStageGate: jobResources.heavyStageGate,
   emitVerdict: (verdict) =>
     client
       .observe({
@@ -1519,6 +1524,7 @@ const dispatcher = createWorkerDispatcher({
       getWorktree: (id) => worktreeManager.getWorktree(id),
     }),
   claim: (id) => client.claimHandoff(id, workerId),
+  admitClaim: (handoff, signal) => jobResources.admitClaim(handoff, signal),
   // Cross-project claim affinity. `config` is read lazily (each handoff) so the
   // warm_pool flag survives hot-reload, mirroring computePrewarmTargetsNow.
   claimGraceMs: (rawHandoff): number => {

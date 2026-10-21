@@ -1,10 +1,18 @@
 import type { Subprocess } from "bun";
 
+import { wrapResourceScopeArgv } from "@penumbra/core";
+
 import {
   buildFramedCommand,
   parseFramedOutput,
   type ParseFramedOutputResult,
 } from "./shell-framing.js";
+
+// One memory-capped scope per persistent shell session: the cap covers every
+// command the session runs, but a kill is not attributed to a single command.
+function sessionArgv(argv: string[]): string[] {
+  return wrapResourceScopeArgv(argv, { label: "shell-session" });
+}
 
 export interface CreateSessionInput {
   handoffId: string;
@@ -627,7 +635,7 @@ export class ShellSessionPool {
     if (pty) {
       try {
         const spawnWithPty = Bun.spawn as unknown as BunSpawnWithPty;
-        return spawnWithPty(["bash", "--norc", "--noprofile", "-i"], {
+        return spawnWithPty(sessionArgv(["bash", "--norc", "--noprofile", "-i"]), {
           cwd,
           env,
           stdin: "pipe",
@@ -640,7 +648,7 @@ export class ShellSessionPool {
       }
     }
 
-    return Bun.spawn(["bash", "--norc", "--noprofile"], {
+    return Bun.spawn(sessionArgv(["bash", "--norc", "--noprofile"]), {
       cwd,
       env,
       stdin: "pipe",

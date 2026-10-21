@@ -156,6 +156,7 @@ export {
   PlanWriter,
   type RegisterPlanInput,
 } from "./plans/writer.js";
+export * from "./process/index.js";
 export { findProjectIdByCwd } from "./projects/registry-cwd.js";
 export {
   defaultProjectRegistryPath,

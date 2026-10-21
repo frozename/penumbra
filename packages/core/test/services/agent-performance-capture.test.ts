@@ -10,6 +10,7 @@ import {
   meaningfulOutput,
   MIN_RESPONSE_CHARS,
 } from "@src/services/agent-performance-capture.js";
+import { isNeutralPerformanceOutcome } from "@src/services/agent-routing.js";
 
 if (process.platform === "darwin") {
   try {
@@ -1586,6 +1587,60 @@ describe("captureAgentPerformanceFromReconciler", () => {
       >(`SELECT outcome, environment_failure FROM agent_performance WHERE handoff_id = 'h1'`)
       .get();
     expect(persisted).toEqual({ outcome: "test_failed", environment_failure: "y" });
+  });
+
+  it("classes a resource kill as failure_class=resource and keeps routing neutral", () => {
+    for (const [id, flag] of [
+      ["perf-resource-kill", { resource_killed: true }],
+      ["perf-resource-admit", { resource_admission_timeout: true }],
+    ] as const) {
+      const row = captureAgentPerformanceFromReconciler({
+        db,
+        uuid: () => id,
+        clock: () => new Date("2026-10-21T12:04:00Z"),
+        input: {
+          handoff_id: "h1",
+          result: {
+            status: "test_failed",
+            regression_summary: "verification environment error (tests): SIGKILLed",
+            verification_environment_error: true,
+            ...flag,
+          },
+        },
+      });
+      expect(row.failure_class).toBe("resource");
+      expect(row.environment_failure).toBe("y");
+      expect(isNeutralPerformanceOutcome(row)).toBe(true);
+      const persisted = db
+        .query<
+          { failure_class: string | null; environment_failure: string | null },
+          []
+        >(`SELECT failure_class, environment_failure FROM agent_performance WHERE handoff_id = 'h1'`)
+        .get();
+      expect(persisted).toEqual({ failure_class: "resource", environment_failure: "y" });
+    }
+  });
+
+  it("a resource flag alone still marks the row an environment failure", () => {
+    const row = captureAgentPerformanceFromReconciler({
+      db,
+      uuid: () => "perf-resource-only",
+      clock: () => new Date("2026-10-21T12:04:00Z"),
+      input: { handoff_id: "h1", result: { status: "typecheck_failed", resource_killed: true } },
+    });
+    expect(row).toMatchObject({ failure_class: "resource", environment_failure: "y" });
+  });
+
+  it("an ordinary test failure gets no resource class and stays charged", () => {
+    const row = captureAgentPerformanceFromReconciler({
+      db,
+      uuid: () => "perf-plain-fail",
+      clock: () => new Date("2026-10-21T12:04:00Z"),
+      input: { handoff_id: "h1", result: { status: "test_failed", regression_summary: "x" } },
+    });
+    expect(row.failure_class).toBeUndefined();
+    expect(row.environment_failure).toBeNull();
+    expect(isNeutralPerformanceOutcome(row)).toBe(false);
   });
   it("computes exact signals for a multi-event handoff with one dispatch.end", () => {
     const insertEvt = db.prepare(

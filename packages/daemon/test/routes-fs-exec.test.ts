@@ -191,6 +191,33 @@ describe("worktrees exec route", () => {
     expect(body.timed_out).toBe(false);
   });
 
+  it("flags a SIGKILL it did not send as a resource kill and records the signal", async () => {
+    const services = fakeServices({ H1: tmp });
+    const req = new Request("http://x/worktrees/H1/exec", {
+      method: "POST",
+      body: JSON.stringify({ command: "echo partial; kill -9 $$", timeout_ms: 5000 }),
+    });
+    const res = await worktreesExecRoute(req, "H1", services);
+    const body = await jsonBody<ExecBody & { signal?: string; resource_killed?: boolean }>(res);
+    expect(body.stdout).toContain("partial");
+    expect(body.exit_code).toBeNull();
+    expect(body.signal).toBe("SIGKILL");
+    expect(body.resource_killed).toBe(true);
+    expect(body.timed_out).toBe(false);
+  });
+
+  it("does not flag an ordinary failure as a resource kill", async () => {
+    const services = fakeServices({ H1: tmp });
+    const req = new Request("http://x/worktrees/H1/exec", {
+      method: "POST",
+      body: JSON.stringify({ command: "exit 3", timeout_ms: 5000 }),
+    });
+    const body = await jsonBody<ExecBody & { resource_killed?: boolean }>(
+      await worktreesExecRoute(req, "H1", services),
+    );
+    expect(body.resource_killed).toBeUndefined();
+  });
+
   it("returns 403 dangerous_command for matched pattern WITHOUT running", async () => {
     const commandRan = false;
     const services = fakeServices(

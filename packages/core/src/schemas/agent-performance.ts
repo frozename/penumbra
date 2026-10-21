@@ -105,6 +105,8 @@ export const AgentPerformanceCaptureFromReconcilerSchema = z.object({
     regression_summary: z.string().optional(),
     timed_out: z.boolean().optional(),
     verification_environment_error: z.literal(true).optional(),
+    resource_killed: z.literal(true).optional(),
+    resource_admission_timeout: z.literal(true).optional(),
   }),
 });
 export type AgentPerformanceCaptureFromReconciler = z.infer<

@@ -2,13 +2,17 @@
 import * as core from "@penumbra/core";
 import {
   type HandoffRow,
+  type HeavyJobGate,
   ISOLATED_INSTALL_CACHE_KEY,
+  isResourceKill,
+  isResourceScopeLaunchFailure,
   type Logger,
   type Settings,
   type WorktreeCommandRunner,
   type WorktreeCommandRunnerOptions,
   type WorktreeHandle,
   type WorktreeManager,
+  wrapResourceScopeArgv,
 } from "@penumbra/core";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -64,6 +68,10 @@ export interface MergeResult {
     | "invalid_test_package_path"
     | "pr_base_unavailable";
   verification_environment_error?: true;
+  /** A verification command was SIGKILLed outside penumbra (scope MemoryMax / host OOM). */
+  resource_killed?: true;
+  /** The host-wide heavy-stage lock or memory admission floor was not reached in time. */
+  resource_admission_timeout?: true;
 }
 
 type CheckStatus = "pass" | "fail" | "skipped" | "error";
@@ -139,6 +147,8 @@ export interface ReconcilerDeps {
   listThoughtEvents?: (handoffId: string) => Promise<ThoughtRow[]>;
   getParentHandoffId?: (handoffId: string) => Promise<string | null>;
   settings?: Pick<Settings, "reconcileTypecheckTimeoutSec" | "reconcileTestTimeoutSec">;
+  /** Serializes heavy stages host-wide and waits for the memory floor first. */
+  heavyStageGate?: HeavyJobGate;
 }
 
 type ReconcilerExecOptions = Pick<
@@ -172,6 +182,7 @@ interface CommandResult {
 interface BunTestCommandOutcome {
   timedOut: boolean;
   envFailure: boolean;
+  resourceKilled: boolean;
   passed: boolean;
   exitCode: number;
   stdout: string;
@@ -246,13 +257,21 @@ function isValidPackageRoot(path: string): boolean {
 
 class CommandFailure extends Error {
   readonly exitCode: number | null;
+  readonly signal: string | null;
   readonly stdout: string;
   readonly stderr: string;
 
-  constructor(opts: { message: string; exitCode: number | null; stdout: string; stderr: string }) {
+  constructor(opts: {
+    message: string;
+    exitCode: number | null;
+    signal?: string | null;
+    stdout: string;
+    stderr: string;
+  }) {
     super(opts.message);
     this.name = "CommandFailure";
     this.exitCode = opts.exitCode;
+    this.signal = opts.signal ?? null;
     this.stdout = opts.stdout;
     this.stderr = opts.stderr;
   }
@@ -260,6 +279,7 @@ class CommandFailure extends Error {
 
 interface CommandErrorInfo {
   exitCode: number;
+  signal: string | null;
   stdout: string;
   stderr: string;
 }
@@ -268,26 +288,40 @@ function commandErrorInfo(err: unknown): CommandErrorInfo {
   if (err instanceof CommandFailure) {
     return {
       exitCode: err.exitCode ?? -1,
+      signal: err.signal,
       stdout: err.stdout,
       stderr: err.stderr,
     };
   }
   if (typeof err === "object" && err !== null) {
-    const e = err as { code?: unknown; stdout?: unknown; stderr?: unknown };
+    const e = err as { code?: unknown; signal?: unknown; stdout?: unknown; stderr?: unknown };
     return {
       exitCode: typeof e.code === "number" ? e.code : -1,
+      signal: typeof e.signal === "string" ? e.signal : null,
       stdout: typeof e.stdout === "string" ? e.stdout : "",
       stderr: typeof e.stderr === "string" ? e.stderr : "",
     };
   }
-  return { exitCode: -1, stdout: "", stderr: "" };
+  return { exitCode: -1, signal: null, stdout: "", stderr: "" };
 }
 
 // Empty stdout and stderr means verification never produced a real diagnostic
-// signal; treat it as an environment fault, not dispatched-code failure.
+// signal; treat it as an environment fault, not dispatched-code failure. So is
+// systemd-run failing to start the job scope.
 function isVerificationEnvironmentFailure(info: CommandErrorInfo): boolean {
-  return info.stdout.trim() === "" && info.stderr.trim() === "";
+  return (
+    (info.stdout.trim() === "" && info.stderr.trim() === "") ||
+    (info.exitCode === 1 && isResourceScopeLaunchFailure(info.stderr))
+  );
 }
+
+// Timeouts never reach here (runCommand settles before its own SIGKILL lands),
+// so a SIGKILL / 137 is a scope MemoryMax or host OOM kill.
+function isResourceKilledCommand(info: CommandErrorInfo): boolean {
+  return isResourceKill({ exitCode: info.exitCode, signal: info.signal });
+}
+
+const RESOURCE_KILL_DETAIL = "SIGKILLed outside penumbra (job scope MemoryMax or host OOM)";
 
 /** Small wrapper so command construction stays type-safe at call sites. */
 function toCommandArgs(file: string, args: string[]): CommandArgs {
@@ -316,7 +350,10 @@ function startCommand(
     };
   }
 
-  const proc = spawn(file, args, {
+  // git calls are light; only bun (tsc, tests) runs in a memory-capped scope.
+  const spawnArgv =
+    file === "git" ? argv : wrapResourceScopeArgv(argv, { label: `reconcile-${file}` });
+  const proc = spawn(spawnArgv[0] ?? file, spawnArgv.slice(1), {
     cwd,
     shell: false,
     detached: process.platform !== "win32",
@@ -334,14 +371,15 @@ function startCommand(
 
   return {
     promise: new Promise<CommandResult>((resolve, reject) => {
-      proc.on("close", (code) => {
+      proc.on("close", (code, signal) => {
         if (code === 0) {
           resolve({ stdout, stderr });
         } else {
           reject(
             new CommandFailure({
-              message: `Command failed with code ${String(code)}: ${commandText}`,
+              message: `Command failed with ${signal ? `signal ${signal}` : `code ${String(code)}`}: ${commandText}`,
               exitCode: code,
+              signal,
               stdout,
               stderr,
             }),
@@ -1450,6 +1488,14 @@ async function runTypecheckStage(ctx: ReconcileCtx): Promise<MergeResult | null>
     return await runScopedTypecheck(ctx, affectedPackages, timeout);
   } catch (err: unknown) {
     const info = commandErrorInfo(err);
+    if (isResourceKilledCommand(info)) {
+      return await emitResourceEnvironmentError(
+        ctx,
+        "typecheck",
+        RESOURCE_KILL_DETAIL,
+        "resource_killed",
+      );
+    }
     if (isVerificationEnvironmentFailure(info)) {
       ctx.state.typecheckStatus = "error";
       ctx.deps.log.warn(
@@ -1495,6 +1541,7 @@ async function runParsedBunCommand(
     return {
       timedOut: res.timedOut === true,
       envFailure: false,
+      resourceKilled: false,
       passed: res.timedOut === true ? false : didBunTestCommandPass(0, report),
       exitCode: 0,
       stdout,
@@ -1507,6 +1554,7 @@ async function runParsedBunCommand(
     return {
       timedOut: false,
       envFailure: isVerificationEnvironmentFailure(info),
+      resourceKilled: isResourceKilledCommand(info),
       passed: didBunTestCommandPass(info.exitCode, report),
       exitCode: info.exitCode,
       stdout: info.stdout,
@@ -1612,6 +1660,7 @@ function environmentFailureOutcome(err: unknown): BunTestCommandOutcome {
   return {
     timedOut: false,
     envFailure: true,
+    resourceKilled: isResourceKilledCommand(info),
     passed: false,
     exitCode: info.exitCode,
     stdout: info.stdout,
@@ -1813,6 +1862,59 @@ async function emitTestEnvironmentError(
   return result;
 }
 
+async function emitResourceEnvironmentError(
+  ctx: ReconcileCtx,
+  stage: "tests" | "typecheck",
+  detail: string,
+  kind: "resource_admission_timeout" | "resource_killed",
+): Promise<MergeResult> {
+  if (stage === "typecheck") ctx.state.typecheckStatus = "error";
+  else ctx.state.testStatus = "error";
+  ctx.deps.log.warn(
+    { handoffId: ctx.handoffId, stage, kind, detail },
+    "verification hit a host resource limit; not attributable to dispatched code",
+  );
+  const result: MergeResult = {
+    status: stage === "typecheck" ? "typecheck_failed" : "test_failed",
+    regression_summary: `verification environment error (${stage}): ${detail}`,
+    verification_environment_error: true,
+    ...(kind === "resource_killed"
+      ? { resource_killed: true as const }
+      : { resource_admission_timeout: true as const }),
+  };
+  await emitResult(ctx, result);
+  return result;
+}
+
+function stageRunsCommands(state: ReconcileState, stage: "tests" | "typecheck"): boolean {
+  const { affectedPackages } = state;
+  if (affectedPackages === null || affectedPackages.length > 0) return true;
+  return stage === "typecheck" ? state.deletedPackages.length > 0 : state.runRootTestShard;
+}
+
+async function runHeavyStage(
+  ctx: ReconcileCtx,
+  stage: "tests" | "typecheck",
+  run: () => Promise<MergeResult | null>,
+): Promise<MergeResult | null> {
+  const gate = ctx.deps.heavyStageGate;
+  if (!gate || !stageRunsCommands(ctx.state, stage)) return await run();
+  const entry = await gate.enter(`reconcile-${stage}`);
+  if (!entry.ok) {
+    return await emitResourceEnvironmentError(
+      ctx,
+      stage,
+      entry.reason,
+      "resource_admission_timeout",
+    );
+  }
+  try {
+    return await run();
+  } finally {
+    await entry.release();
+  }
+}
+
 async function evaluateBunTestOutcome(
   ctx: ReconcileCtx,
   testArgs: string[],
@@ -1821,6 +1923,14 @@ async function evaluateBunTestOutcome(
 ): Promise<MergeResult | null> {
   if (outcome.timedOut) {
     return await emitTestFailure(ctx, "tests timed out", true);
+  }
+  if (outcome.resourceKilled) {
+    return await emitResourceEnvironmentError(
+      ctx,
+      "tests",
+      RESOURCE_KILL_DETAIL,
+      "resource_killed",
+    );
   }
   if (outcome.envFailure) {
     return await emitTestEnvironmentError(ctx, "empty stdout/stderr from test command");
@@ -1836,6 +1946,14 @@ async function evaluateBunTestOutcome(
   const baseline = await getCachedBunTestBaseline(ctx, testArgs, deadline);
   if (baseline.timedOut) {
     return await emitTestEnvironmentError(ctx, "baseline tests timed out");
+  }
+  if (baseline.resourceKilled) {
+    return await emitResourceEnvironmentError(
+      ctx,
+      "tests",
+      `baseline ${RESOURCE_KILL_DETAIL}`,
+      "resource_killed",
+    );
   }
   if (baseline.envFailure) {
     return await emitTestEnvironmentError(
@@ -1922,29 +2040,42 @@ async function runTestsStage(ctx: ReconcileCtx): Promise<MergeResult | null> {
     // is outside the reconciler's threat model.
     return await runDiffScopedShards(ctx, scopedTestPaths, deadline);
   } catch (err: unknown) {
-    const info = commandErrorInfo(err);
-    if (isVerificationEnvironmentFailure(info)) {
-      state.testStatus = "error";
-      deps.log.warn(
-        { handoffId, stage: "tests", err: String(err) },
-        "verification environment failed; not attributable to dispatched code",
-      );
-      const result: MergeResult = {
-        status: "test_failed",
-        regression_summary: `verification environment error (tests): ${String(err)}`,
-        verification_environment_error: true,
-      };
-      await emitResult(ctx, result);
-      return result;
-    }
-    state.testStatus = "fail";
+    return await emitTestsStageError(ctx, err);
+  }
+}
+
+async function emitTestsStageError(ctx: ReconcileCtx, err: unknown): Promise<MergeResult> {
+  const { deps, handoffId, state } = ctx;
+  const info = commandErrorInfo(err);
+  if (isResourceKilledCommand(info)) {
+    return await emitResourceEnvironmentError(
+      ctx,
+      "tests",
+      RESOURCE_KILL_DETAIL,
+      "resource_killed",
+    );
+  }
+  if (isVerificationEnvironmentFailure(info)) {
+    state.testStatus = "error";
+    deps.log.warn(
+      { handoffId, stage: "tests", err: String(err) },
+      "verification environment failed; not attributable to dispatched code",
+    );
     const result: MergeResult = {
       status: "test_failed",
-      regression_summary: info.stderr || info.stdout || String(err),
+      regression_summary: `verification environment error (tests): ${String(err)}`,
+      verification_environment_error: true,
     };
     await emitResult(ctx, result);
     return result;
   }
+  state.testStatus = "fail";
+  const result: MergeResult = {
+    status: "test_failed",
+    regression_summary: info.stderr || info.stdout || String(err),
+  };
+  await emitResult(ctx, result);
+  return result;
 }
 
 async function runDiffScopedShards(
@@ -2117,10 +2248,10 @@ export function createMergeReconciler(
     await resolveReconcileSnapshot(ctx);
     await gatherChangedFiles(ctx);
 
-    const typecheckResult = await runTypecheckStage(ctx);
+    const typecheckResult = await runHeavyStage(ctx, "typecheck", () => runTypecheckStage(ctx));
     if (typecheckResult) return typecheckResult;
 
-    const testResult = await runTestsStage(ctx);
+    const testResult = await runHeavyStage(ctx, "tests", () => runTestsStage(ctx));
     if (testResult) return testResult;
 
     return await globalMergeLock.withLock(async () => {
