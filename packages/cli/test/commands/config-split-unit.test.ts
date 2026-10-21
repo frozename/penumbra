@@ -105,6 +105,33 @@ describe("runConfigSplit", () => {
     expect(quotas.providers[0]?.name).toBe("anthropic");
   });
 
+  test("carries a legacy reconcilerAutoRebase: false into routing.yaml", async () => {
+    const srcDir = await makeTempDir();
+    const src = join(srcDir, "agentchat.yaml");
+    const original = readFileSync(fixturePath("agentchat-legacy.yaml"), "utf8");
+    const modified = original.replace("reconcilerAutoRebase: true", "reconcilerAutoRebase: false");
+    expect(modified).toContain("reconcilerAutoRebase: false");
+    writeFileSync(src, modified, "utf8");
+
+    const dest = await makeTempDir();
+    const code = await runConfigSplit({ source: src, dest });
+    expect(code).toBe(0);
+    const routing = RoutingConfigSchema.parse(
+      YAML.parse(readFileSync(join(dest, "routing.yaml"), "utf8")),
+    );
+    expect(routing.reconcilerAutoRebase).toBe(false);
+  });
+
+  test("leaves the default reconcilerAutoRebase out of routing.yaml", async () => {
+    const dest = await makeTempDir();
+    const code = await runConfigSplit({ source: fixturePath("agentchat-legacy.yaml"), dest });
+    expect(code).toBe(0);
+    const routing = RoutingConfigSchema.parse(
+      YAML.parse(readFileSync(join(dest, "routing.yaml"), "utf8")),
+    );
+    expect(routing.reconcilerAutoRebase).toBeUndefined();
+  });
+
   test("normalizes legacy array-shaped personas and string synthesizers", async () => {
     const dir = await makeTempDir();
     const legacy = YAML.parse(readFileSync(fixturePath("agentchat-legacy.yaml"), "utf8")) as Record<

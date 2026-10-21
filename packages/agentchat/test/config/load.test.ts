@@ -598,5 +598,18 @@ agents:
       expect(cfg.agents[0]!.name).toBe("planner");
       expect(cfg.providers[0]!.name).toBe("anthropic");
     });
+
+    test("reads reconcilerAutoRebase from routing.yaml", () => {
+      const dir = writeSplitDir();
+      writeFileSync(
+        join(dir, "routing.yaml"),
+        `\ndefault_roles:\n  planner: planner\nreconcilerAutoRebase: false\n`,
+      );
+      expect(loadConfigFromDir(dir).reconcilerAutoRebase).toBe(false);
+    });
+
+    test("defaults reconcilerAutoRebase to true when routing.yaml omits it", () => {
+      expect(loadConfigFromDir(writeSplitDir()).reconcilerAutoRebase).toBe(true);
+    });
   });
 });
