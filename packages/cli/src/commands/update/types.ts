@@ -2,6 +2,8 @@ export interface ExecOptions {
   cwd?: string;
   timeoutMs?: number;
   env?: Readonly<Record<string, string | undefined>>;
+  /** Aborting sends the child SIGTERM. */
+  signal?: AbortSignal;
 }
 
 export interface ExecResult {
@@ -142,14 +144,26 @@ export interface ServiceManager {
 
 export interface InstallResult {
   ok: boolean;
-  /** False when the install never started (e.g. the heavy-job gate timed out). */
+  /** False when bun never started, so node_modules is untouched. */
   ran: boolean;
   detail: string;
 }
 
-export interface InstallPort {
-  install(repo: string): Promise<InstallResult>;
+export interface InstallLease {
+  release(): Promise<void>;
 }
+
+export type InstallGate = { ok: true; lease: InstallLease } | { ok: false; detail: string };
+
+export interface InstallPort {
+  /** The host heavy-job lock plus the memory admission floor; may wait a long time. */
+  acquire(): Promise<InstallGate>;
+  /** `bun install --frozen-lockfile`; the caller holds a lease from acquire(). */
+  run(repo: string, signal?: AbortSignal): Promise<InstallResult>;
+}
+
+/** Registers SIGINT/SIGTERM/SIGHUP handling; returns the unregister function. */
+export type OnSignal = (handler: (signal: string) => void) => () => void;
 
 export type UpdateMode = "apply" | "check" | "rollback";
 
@@ -190,8 +204,10 @@ export interface UpdateContext {
   manager: ServiceManager | null;
   managerReason: string | null;
   heavyLock: HeavyLockInfo;
-  /** The bun binary running this CLI (used in the detached-run hint). */
+  /** The services' bun (ExecStart), else the one running this CLI. */
   bunPath: string;
+  onSignal: OnSignal;
+  exit: (code: number) => void;
   /** Progress line (stderr under --json). */
   say: (line: string) => void;
 }

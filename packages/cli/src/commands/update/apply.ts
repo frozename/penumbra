@@ -1,5 +1,13 @@
 import { appendHistory } from "./history.js";
-import { waitForIdle } from "./idle.js";
+import { planMove, planRecovery, type Progress, type RecoveryPlan } from "./plan.js";
+import {
+  type MoveState,
+  newMoveState,
+  releaseLease,
+  runSteps,
+  type StepEnv,
+  type StepsResult,
+} from "./steps.js";
 import {
   EXIT_NEEDS_OPERATOR,
   EXIT_OK,
@@ -8,222 +16,49 @@ import {
   type ServiceManager,
   type UpdateContext,
 } from "./types.js";
-import { type LogWatch, verifyRuntime, watchLogs } from "./verify.js";
 
-export type Step =
-  | { kind: "freeze" }
-  | { kind: "install" }
-  | { kind: "move"; how: "fast-forward" | "reset"; to: string }
-  | { kind: "record"; entry: string }
-  | { kind: "restart" }
-  | { kind: "unfreeze" }
-  | { kind: "verify"; expect: string; restarted: "both" | "worker" }
-  | { kind: "wait-idle"; requireDaemon: boolean };
-
-export interface MoveState {
-  frozen: boolean;
-  installRan: boolean;
-  restartAttempted: boolean;
-  watch: LogWatch | null;
-  completed: string[];
-  notes: string[];
-}
-
-export type StepsResult = { ok: true } | { ok: false; step: Step; detail: string };
-
-export interface MoveOutcome {
-  outcome: "refused" | "rollback-failed" | "rolled-back" | "updated";
-  exitCode: number;
-  from: string;
-  to: string;
-  completed: string[];
-  failure: { step: string; detail: string } | null;
-  recovery: { completed: string[]; failure: { step: string; detail: string } | null } | null;
-  notes: string[];
-}
-
-export function stepLabel(step: Step): string {
-  switch (step.kind) {
-    case "move":
-      return `${step.how} ${step.to.slice(0, 12)}`;
-    case "record":
-      return `record "${step.entry}"`;
-    case "verify":
-      return `verify ${step.expect.slice(0, 12)}`;
-    case "freeze":
-    case "install":
-    case "restart":
-    case "unfreeze":
-    case "wait-idle":
-      return step.kind;
-  }
-}
-
-/**
- * The ordered procedure for one move of the checkout. With a freezable worker
- * (systemd) the worker is stopped once idle, so it cannot claim work while the
- * checkout and node_modules change under it; otherwise idleness is re-checked
- * just before the restart.
- */
-export function planMove(input: {
+export interface MoveRequest {
   mode: "apply" | "rollback";
   from: string;
   to: string;
   depsChanged: boolean;
-  canFreeze: boolean;
-}): Step[] {
-  const requireDaemon = input.mode === "apply";
-  const steps: Step[] = [{ kind: "wait-idle", requireDaemon }];
-  if (input.canFreeze) steps.push({ kind: "freeze" });
-  steps.push(
-    { kind: "record", entry: `${input.mode} from=${input.from} to=${input.to}` },
-    { kind: "move", how: input.mode === "apply" ? "fast-forward" : "reset", to: input.to },
-  );
-  if (input.depsChanged) steps.push({ kind: "install" });
-  if (!input.canFreeze) steps.push({ kind: "wait-idle", requireDaemon });
-  steps.push({ kind: "restart" }, { kind: "verify", expect: input.to, restarted: "both" });
-  return steps;
 }
 
-/** Steps that put the runtime back on `good` after a failed move, given how far it got. */
-export function planRecovery(input: {
-  good: string;
-  head: string;
-  state: Pick<MoveState, "frozen" | "installRan" | "restartAttempted">;
-  canFreeze: boolean;
-}): Step[] {
-  const { state } = input;
-  const steps: Step[] = [];
-  if (input.canFreeze && state.restartAttempted && !state.frozen) steps.push({ kind: "freeze" });
-  if (input.head !== input.good) steps.push({ kind: "move", how: "reset", to: input.good });
-  if (state.installRan) steps.push({ kind: "install" });
-  if (state.restartAttempted || input.head !== input.good || state.installRan) {
-    steps.push({ kind: "restart" }, { kind: "verify", expect: input.good, restarted: "both" });
-  } else if (state.frozen) {
-    steps.push({ kind: "unfreeze" }, { kind: "verify", expect: input.good, restarted: "worker" });
-  }
-  return steps;
+type Failure = { step: string; detail: string } | null;
+
+export interface MoveOutcome {
+  outcome: "needs-operator" | "refused" | "rolled-back" | "updated";
+  exitCode: number;
+  from: string;
+  to: string;
+  completed: string[];
+  failure: Failure;
+  recovery: { completed: string[]; failure: Failure } | null;
+  notes: string[];
 }
 
-export function newMoveState(): MoveState {
-  return {
-    frozen: false,
-    installRan: false,
-    restartAttempted: false,
-    watch: null,
-    completed: [],
-    notes: [],
-  };
+function short(sha: string): string {
+  return sha.slice(0, 12);
 }
 
-async function runVerify(
-  ctx: UpdateContext,
-  manager: ServiceManager,
-  step: Extract<Step, { kind: "verify" }>,
-  state: MoveState,
-): Promise<string | null> {
-  const watch = state.watch ?? (await watchLogs(ctx, manager));
-  const scoped: LogWatch =
-    step.restarted === "worker"
-      ? {
-          ...watch,
-          daemon: { ...watch.daemon, source: { kind: "none", reason: "daemon not restarted" } },
-        }
-      : watch;
-  const res = await verifyRuntime(ctx, manager, scoped, step.expect);
-  state.notes.push(...res.notes);
-  return res.ok ? null : res.detail;
+function message(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
-async function runInstall(ctx: UpdateContext, state: MoveState): Promise<string | null> {
-  ctx.say("bun install --frozen-lockfile (memory-capped, under the heavy-job lock)");
-  const res = await ctx.install.install(ctx.repo);
-  state.installRan ||= res.ran;
-  return res.ok ? null : `bun install failed: ${res.detail}`;
+function failureOf(result: StepsResult): Failure {
+  return result.ok ? null : { step: result.step, detail: result.detail };
 }
 
-async function runIdle(ctx: UpdateContext, requireDaemon: boolean): Promise<string | null> {
-  const res = await waitForIdle(ctx, { budgetS: ctx.options.waitIdleS, requireDaemon });
-  if (res.ok) return null;
-  return `still busy after ${String(ctx.options.waitIdleS)}s (${res.reasons.join("; ")}); retry later or raise --wait-idle`;
-}
-
-async function runServiceStep(
-  ctx: UpdateContext,
-  manager: ServiceManager,
-  kind: "freeze" | "restart" | "unfreeze",
-  state: MoveState,
-): Promise<null> {
-  if (kind === "freeze") {
-    await manager.freeze();
-    state.frozen = true;
-    ctx.say(`stopped ${manager.workerName} so it claims no new work during the update`);
-    return null;
-  }
-  state.watch = await watchLogs(ctx, manager);
-  if (kind === "unfreeze") {
-    await manager.unfreeze();
-  } else {
-    state.restartAttempted = true;
-    await manager.restart();
-  }
-  state.frozen = false;
-  return null;
-}
-
-async function runStep(
-  ctx: UpdateContext,
-  manager: ServiceManager,
-  step: Step,
-  state: MoveState,
-): Promise<string | null> {
-  switch (step.kind) {
-    case "wait-idle":
-      return await runIdle(ctx, step.requireDaemon);
-    case "record":
-      await appendHistory(ctx.fs, ctx.clock, ctx.historyPath, step.entry);
-      return null;
-    case "move":
-      await (step.how === "fast-forward"
-        ? ctx.git.fastForward(step.to)
-        : ctx.git.resetHard(step.to));
-      return null;
-    case "install":
-      return await runInstall(ctx, state);
-    case "verify":
-      return await runVerify(ctx, manager, step, state);
-    case "freeze":
-    case "restart":
-    case "unfreeze":
-      return await runServiceStep(ctx, manager, step.kind, state);
+/** Closing history lines never change the outcome; a write failure becomes a note. */
+async function closeHistory(ctx: UpdateContext, state: MoveState, entry: string): Promise<void> {
+  try {
+    await appendHistory(ctx.fs, ctx.clock, ctx.historyPath, entry);
+  } catch (err) {
+    state.notes.push(`WARNING could not append "${entry}" to ${ctx.historyPath}: ${message(err)}`);
   }
 }
 
-export async function runSteps(
-  ctx: UpdateContext,
-  manager: ServiceManager,
-  steps: Step[],
-  state: MoveState,
-): Promise<StepsResult> {
-  for (const step of steps) {
-    ctx.say(`→ ${stepLabel(step)}`);
-    let detail: string | null;
-    try {
-      detail = await runStep(ctx, manager, step, state);
-    } catch (err) {
-      detail = err instanceof Error ? err.message : String(err);
-    }
-    if (detail !== null) return { ok: false, step, detail };
-    state.completed.push(stepLabel(step));
-  }
-  return { ok: true };
-}
-
-function failureOf(result: StepsResult): { step: string; detail: string } | null {
-  return result.ok ? null : { step: stepLabel(result.step), detail: result.detail };
-}
-
-async function currentHead(ctx: UpdateContext, fallback: string): Promise<string> {
+async function headOr(ctx: UpdateContext, fallback: string): Promise<string> {
   try {
     return await ctx.git.head();
   } catch {
@@ -231,77 +66,143 @@ async function currentHead(ctx: UpdateContext, fallback: string): Promise<string
   }
 }
 
-interface MoveRequest {
-  mode: "apply" | "rollback";
-  from: string;
-  to: string;
-  depsChanged: boolean;
+/** Invariant: the command never exits with the worker it stopped still stopped. */
+async function ensureWorkerRunning(env: StepEnv): Promise<void> {
+  if (!env.state.frozen) return;
+  try {
+    await env.manager.unfreeze();
+    env.state.frozen = false;
+    env.state.notes.push(`started ${env.manager.workerName} again`);
+  } catch (err) {
+    env.state.notes.push(
+      `WARNING could not start ${env.manager.workerName} (${message(err)}); start it by hand`,
+    );
+  }
 }
 
-async function recover(
-  ctx: UpdateContext,
-  manager: ServiceManager,
-  req: MoveRequest,
-  state: MoveState,
-  failed: StepsResult,
-): Promise<MoveOutcome> {
-  const head = await currentHead(ctx, req.to);
-  const changed = head !== req.from || state.installRan || state.restartAttempted;
+async function emergencyExit(env: StepEnv, signal: string): Promise<void> {
+  env.ctx.say(`${signal} again: starting the worker if it is stopped, then exiting`);
+  await ensureWorkerRunning(env);
+  const head = await headOr(env.ctx, "unknown");
+  await closeHistory(env.ctx, env.state, `interrupted head=${head} (${signal})`);
+  await releaseLease(env.state).catch(() => undefined);
+  for (const note of env.state.notes) env.ctx.say(note);
+  env.ctx.exit(130);
+}
+
+/** First signal: stop after the current step and recover. Second: restore the worker and exit. */
+function watchSignals(env: StepEnv, controller: AbortController): () => void {
+  let received = 0;
+  return env.ctx.onSignal((signal) => {
+    received++;
+    if (received === 1) {
+      env.ctx.say(
+        `${signal}: stopping after the current step and restoring (send it again to force)`,
+      );
+      controller.abort(signal);
+      return;
+    }
+    void emergencyExit(env, signal);
+  });
+}
+
+function snapshot(state: MoveState): Progress {
+  return {
+    frozen: state.frozen,
+    movedTo: state.movedTo,
+    installRan: state.installRan,
+    restartAttempted: state.restartAttempted,
+  };
+}
+
+function recoveryPlan(env: StepEnv, req: MoveRequest, head: string): RecoveryPlan {
+  const progress = snapshot(env.state);
+  if (req.mode === "rollback" && (progress.installRan || progress.restartAttempted)) {
+    return {
+      kind: "hands-off",
+      reason: `the rollback to ${short(req.to)} failed after changing the runtime; not moving the checkout again`,
+    };
+  }
+  return planRecovery({ from: req.from, head, progress, canFreeze: env.manager.canFreeze });
+}
+
+async function recover(env: StepEnv, req: MoveRequest, failed: StepsResult): Promise<MoveOutcome> {
+  const { ctx, state } = env;
+  const head = await headOr(ctx, req.to);
   const base = {
     from: req.from,
     to: req.to,
-    completed: [...state.completed],
+    completed: failed.completed,
     failure: failureOf(failed),
   };
-  if (req.mode === "rollback" && changed) {
-    await appendHistory(ctx.fs, ctx.clock, ctx.historyPath, `rollback-failed to=${req.to}`);
+  const plan = recoveryPlan(env, req, head);
+  if (plan.kind === "hands-off") {
+    await closeHistory(ctx, state, `needs-operator head=${head}`);
+    const recovery = { completed: [], failure: { step: "recovery", detail: plan.reason } };
     return {
       ...base,
-      outcome: "rollback-failed",
+      outcome: "needs-operator",
       exitCode: EXIT_NEEDS_OPERATOR,
-      recovery: null,
-      notes: state.notes,
+      recovery,
+      notes: [],
     };
   }
-  const steps = planRecovery({ good: req.from, head, state, canFreeze: manager.canFreeze });
-  if (steps.length > 0) {
-    ctx.say(changed ? `rolling back to ${req.from.slice(0, 12)}` : "restoring the worker");
+  if (plan.steps.length > 0) {
+    ctx.say(plan.changedBack ? `rolling back to ${short(req.from)}` : "putting things back");
   }
-  const recoveryState = { ...newMoveState(), frozen: state.frozen };
-  const result = await runSteps(ctx, manager, steps, recoveryState);
-  const recovery = { completed: recoveryState.completed, failure: failureOf(result) };
-  const notes = [...state.notes, ...recoveryState.notes];
+  const result = await runSteps({ ctx, manager: env.manager, state }, plan.steps);
+  const recovery = { completed: result.completed, failure: failureOf(result) };
   if (!result.ok) {
-    await appendHistory(ctx.fs, ctx.clock, ctx.historyPath, `rollback-failed to=${req.from}`);
-    return { ...base, outcome: "rollback-failed", exitCode: EXIT_NEEDS_OPERATOR, recovery, notes };
+    await closeHistory(ctx, state, `needs-operator head=${await headOr(ctx, head)}`);
+    return {
+      ...base,
+      outcome: "needs-operator",
+      exitCode: EXIT_NEEDS_OPERATOR,
+      recovery,
+      notes: [],
+    };
   }
-  if (!changed) return { ...base, outcome: "refused", exitCode: EXIT_REFUSED, recovery, notes };
-  await appendHistory(ctx.fs, ctx.clock, ctx.historyPath, `rolled-back to=${req.from}`);
-  return { ...base, outcome: "rolled-back", exitCode: EXIT_ROLLED_BACK, recovery, notes };
+  if (plan.changedBack) {
+    await closeHistory(ctx, state, `rolled-back to=${req.from}`);
+    return { ...base, outcome: "rolled-back", exitCode: EXIT_ROLLED_BACK, recovery, notes: [] };
+  }
+  if (state.recorded) await closeHistory(ctx, state, `aborted at=${req.from}`);
+  return { ...base, outcome: "refused", exitCode: EXIT_REFUSED, recovery, notes: [] };
 }
 
-/** Runs one move (apply or rollback); a failed apply is rolled back automatically. */
+/** Runs one move (apply or rollback); a failure is put back as far as it is safe to. */
 export async function runMove(
   ctx: UpdateContext,
   manager: ServiceManager,
   req: MoveRequest,
 ): Promise<MoveOutcome> {
-  const steps = planMove({ ...req, canFreeze: manager.canFreeze });
-  const state = newMoveState();
-  const result = await runSteps(ctx, manager, steps, state);
-  if (result.ok) {
-    await appendHistory(ctx.fs, ctx.clock, ctx.historyPath, `ok ${req.to}`);
-    return {
-      outcome: "updated",
-      exitCode: EXIT_OK,
-      from: req.from,
-      to: req.to,
-      completed: state.completed,
-      failure: null,
-      recovery: null,
-      notes: state.notes,
-    };
+  const env: StepEnv = { ctx, manager, state: newMoveState() };
+  const controller = new AbortController();
+  const unwatch = watchSignals(env, controller);
+  try {
+    const steps = planMove({ ...req, canFreeze: manager.canFreeze });
+    const forward = await runSteps({ ...env, signal: controller.signal }, steps);
+    let outcome: MoveOutcome;
+    if (forward.ok) {
+      await closeHistory(ctx, env.state, `ok ${req.to}`);
+      outcome = {
+        outcome: "updated",
+        exitCode: EXIT_OK,
+        from: req.from,
+        to: req.to,
+        completed: forward.completed,
+        failure: null,
+        recovery: null,
+        notes: [],
+      };
+    } else {
+      ctx.say(`FAILED at ${forward.step}: ${forward.detail}`);
+      outcome = await recover(env, req, forward);
+    }
+    await ensureWorkerRunning(env);
+    return { ...outcome, notes: env.state.notes };
+  } finally {
+    unwatch();
+    await releaseLease(env.state).catch(() => undefined);
   }
-  ctx.say(`FAILED at ${stepLabel(result.step)}: ${result.detail}`);
-  return await recover(ctx, manager, req, state, result);
 }

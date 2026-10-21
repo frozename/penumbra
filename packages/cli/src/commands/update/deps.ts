@@ -1,7 +1,16 @@
 import { appendFile, mkdir, open, readFile, realpath, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import type { Clock, Exec, ExecOptions, ExecResult, FsPort, HostPort, Http } from "./types.js";
+import type {
+  Clock,
+  Exec,
+  ExecOptions,
+  ExecResult,
+  FsPort,
+  HostPort,
+  Http,
+  OnSignal,
+} from "./types.js";
 
 const MAX_LOG_READ_BYTES = 8 * 1024 * 1024;
 
@@ -32,12 +41,18 @@ export const defaultExec: Exec = async (argv, opts = {}) => {
           timeout.hit = true;
           child.kill("SIGKILL");
         }, opts.timeoutMs);
+  const onAbort = (): void => {
+    child.kill("SIGTERM");
+  };
+  if (opts.signal?.aborted) onAbort();
+  else opts.signal?.addEventListener("abort", onAbort, { once: true });
   const [code, stdout, stderr] = await Promise.all([
     child.exited,
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
   ]);
   clearTimeout(timer);
+  opts.signal?.removeEventListener("abort", onAbort);
   const result: ExecResult = { code: timeout.hit ? 124 : code, stdout, stderr };
   return result;
 };
@@ -107,3 +122,16 @@ export function createDefaultHost(exec: Exec): HostPort {
   };
   return port;
 }
+
+const HANDLED_SIGNALS: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
+
+/** While registered, these signals no longer kill the process; the handler decides. */
+export const defaultOnSignal: OnSignal = (handler) => {
+  const listener = (signal: NodeJS.Signals): void => {
+    handler(signal);
+  };
+  for (const signal of HANDLED_SIGNALS) process.on(signal, listener);
+  return () => {
+    for (const signal of HANDLED_SIGNALS) process.off(signal, listener);
+  };
+};

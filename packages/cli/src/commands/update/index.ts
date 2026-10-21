@@ -10,11 +10,18 @@ import {
   selfCommand,
 } from "./check.js";
 import { createDaemonPort, createLogReader } from "./daemon.js";
-import { createDefaultHost, defaultClock, defaultExec, defaultFs, defaultHttp } from "./deps.js";
+import {
+  createDefaultHost,
+  defaultClock,
+  defaultExec,
+  defaultFs,
+  defaultHttp,
+  defaultOnSignal,
+} from "./deps.js";
 import { checkReportJson, formatCheckReport } from "./format.js";
 import { createCiPort, createGitPort } from "./git.js";
-import { lastHistoryFrom } from "./history.js";
-import { createInstallPort, resolveHeavyLock } from "./install.js";
+import { lastCompletedFrom } from "./history.js";
+import { createInstallPort, resolveBunPath, resolveHeavyLock } from "./install.js";
 import { parseUpdateArgs, UPDATE_USAGE } from "./options.js";
 import { checkSelfSafety } from "./self-safety.js";
 import { type ManagerSelection, selectServiceManager } from "./service-manager.js";
@@ -32,6 +39,7 @@ import {
   type Http,
   type InstallPort,
   type LogReader,
+  type OnSignal,
   type UpdateContext,
   UpdateError,
   type UpdateOptions,
@@ -48,7 +56,10 @@ export interface UpdateDeps {
   cwd: string;
   /** Directory of this CLI; its checkout is the default --repo. */
   cliDir: string;
+  /** Fallback bun when the service's ExecStart does not name one. */
   bunPath: string;
+  onSignal: OnSignal;
+  exit: (code: number) => void;
   out: (line: string) => void;
   err: (line: string) => void;
   /** Test seams: replace a port built from exec/http/fs. */
@@ -74,6 +85,8 @@ export function defaultUpdateDeps(): UpdateDeps {
     cwd: process.cwd(),
     cliDir: import.meta.dir,
     bunPath: process.execPath,
+    onSignal: defaultOnSignal,
+    exit: (code) => process.exit(code),
     out: (line) => process.stdout.write(`${line}\n`),
     err: (line) => process.stderr.write(`${line}\n`),
   };
@@ -102,6 +115,7 @@ export async function createUpdateContext(
   const selection = await selectManager(options, deps);
   const state = selection.manager ? await selection.manager.state().catch(() => null) : null;
   const heavyLock = resolveHeavyLock(deps.env, state, deps.home);
+  const bunPath = resolveBunPath(state, deps.bunPath);
   const say = options.json ? deps.err : deps.out;
   return {
     options,
@@ -116,12 +130,14 @@ export async function createUpdateContext(
     logs: deps.ports?.logs ?? createLogReader(deps.fs, deps.exec, deps.clock),
     install:
       deps.ports?.install ??
-      createInstallPort({ exec: deps.exec, bunPath: deps.bunPath, env: deps.env, heavyLock }),
+      createInstallPort({ exec: deps.exec, bunPath, env: deps.env, heavyLock }),
     clock: deps.clock,
     manager: selection.manager,
     managerReason: selection.reason,
     heavyLock,
-    bunPath: deps.bunPath,
+    bunPath,
+    onSignal: deps.onSignal,
+    exit: deps.exit,
     say,
   };
 }
@@ -143,7 +159,7 @@ function emitOutcome(
     updated: `done: ${from} -> ${to}. Roll back with: penumbra update --rollback ${from}`,
     refused: `nothing changed: ${outcome.failure?.detail ?? "refused"}`,
     "rolled-back": `update to ${to} failed (${outcome.failure?.detail ?? "?"}); rolled back to ${from}`,
-    "rollback-failed": `runtime needs attention: ${outcome.recovery?.failure?.detail ?? outcome.failure?.detail ?? "?"}; inspect the daemon/worker units and ${ctx.historyPath}`,
+    "needs-operator": `runtime needs attention. Failed: ${outcome.failure?.detail ?? "?"}. Recovery: ${outcome.recovery?.failure?.detail ?? "none"}. Inspect the daemon/worker units, git -C ${ctx.repo} log and ${ctx.historyPath}`,
   };
   (outcome.exitCode === EXIT_OK ? deps.out : deps.err)(
     `penumbra update: ${messages[outcome.outcome]}`,
@@ -207,7 +223,7 @@ async function runCheckOrApply(ctx: UpdateContext, deps: UpdateDeps): Promise<nu
 
 async function rollbackTarget(ctx: UpdateContext): Promise<string> {
   const wanted =
-    ctx.options.rollbackSha ?? lastHistoryFrom((await ctx.fs.readText(ctx.historyPath)) ?? "");
+    ctx.options.rollbackSha ?? lastCompletedFrom((await ctx.fs.readText(ctx.historyPath)) ?? "");
   if (wanted === null) {
     throw new UpdateError(`no rollback target in ${ctx.historyPath}; pass a sha`);
   }

@@ -126,7 +126,7 @@ export async function verifyRuntime(
   ctx: UpdateContext,
   manager: ServiceManager,
   watch: LogWatch,
-  expectSha: string,
+  expectSha: string | null,
 ): Promise<VerifyResult> {
   const unhealthy = await waitHealthy(ctx, manager);
   if (unhealthy) return { ok: false, detail: unhealthy, notes: [] };
@@ -135,6 +135,7 @@ export async function verifyRuntime(
   if (missing.length > 0) {
     return { ok: false, detail: `startup marker(s) missing: ${missing.join(", ")}`, notes };
   }
+  if (expectSha === null) return { ok: true, detail: "worker started", notes };
   const head = await ctx.git.head();
   if (head !== expectSha) {
     return {

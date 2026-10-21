@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test";
 
 import { createDaemonPort, createLogReader } from "@src/commands/update/daemon.js";
 import { createCiPort, createGitPort, parseGhRunState } from "@src/commands/update/git.js";
-import { resolveHeavyLock, scopeInstallArgv } from "@src/commands/update/install.js";
+import {
+  resolveBunPath,
+  resolveHeavyLock,
+  scopeInstallArgv,
+} from "@src/commands/update/install.js";
 import {
   createLaunchdManager,
   createSystemdManager,
@@ -237,7 +241,15 @@ describe("git and CI ports", () => {
     await git.fetch("v1.2.3");
     await git.fastForward("b".repeat(40));
     await git.resetHard("a".repeat(40));
-    expect(calls.map((c) => c.slice(3).join(" "))).toEqual([
+    expect(calls[0]?.slice(0, 6)).toEqual([
+      "git",
+      "--no-optional-locks",
+      "-c",
+      "core.hooksPath=/dev/null",
+      "-C",
+      "/srv/penumbra",
+    ]);
+    expect(calls.map((c) => c.slice(6).join(" "))).toEqual([
       "fetch --quiet origin main",
       "fetch --quiet origin",
       `merge --ff-only --quiet ${"b".repeat(40)}`,
@@ -250,6 +262,9 @@ describe("git and CI ports", () => {
     expect(await createGitPort(changed.exec, "/r").depsChanged("a", "b")).toBe(true);
     expect(changed.calls[0]).toEqual([
       "git",
+      "--no-optional-locks",
+      "-c",
+      "core.hooksPath=/dev/null",
       "-C",
       "/r",
       "diff",
@@ -263,6 +278,22 @@ describe("git and CI ports", () => {
       "packages/integrations/*/package.json",
     ]);
     expect(await createGitPort(fakeExec().exec, "/r").depsChanged("a", "b")).toBe(false);
+  });
+
+  test("status for --check never takes optional locks", async () => {
+    const { exec, calls } = fakeExec(() => ({ stdout: " M a.ts\n" }));
+    expect(await createGitPort(exec, "/r").trackedChanges()).toEqual([" M a.ts"]);
+    expect(calls[0]).toEqual([
+      "git",
+      "--no-optional-locks",
+      "-c",
+      "core.hooksPath=/dev/null",
+      "-C",
+      "/r",
+      "status",
+      "--porcelain",
+      "--untracked-files=no",
+    ]);
   });
 
   test("a detached HEAD has no branch", async () => {
@@ -414,6 +445,29 @@ describe("install helpers", () => {
       path: "/h/.penumbra/locks/heavy-job.lock",
       source: "default",
     });
+  });
+
+  test("the install uses the services' bun, else the CLI's", () => {
+    const unit = {
+      name: "u",
+      loaded: true,
+      active: true,
+      pid: 1,
+      workingDirectory: null,
+      environment: {},
+    };
+    const withArgv = (argv: string[]): Parameters<typeof resolveBunPath>[0] => ({
+      daemon: { ...unit, argv },
+      worker: { ...unit, argv: [] },
+    });
+    expect(
+      resolveBunPath(withArgv(["/home/op/.bun/bin/bun", "/x/penumbra.ts"]), "/usr/bin/bun"),
+    ).toBe("/home/op/.bun/bin/bun");
+    expect(resolveBunPath(withArgv(["/usr/bin/node", "/x.js"]), "/usr/bin/bun")).toBe(
+      "/usr/bin/bun",
+    );
+    expect(resolveBunPath(withArgv(["bun", "/x.ts"]), "/usr/bin/bun")).toBe("/usr/bin/bun");
+    expect(resolveBunPath(null, "/usr/bin/bun")).toBe("/usr/bin/bun");
   });
 
   test("the install runs unscoped when PENUMBRA_JOB_SCOPE=off", () => {

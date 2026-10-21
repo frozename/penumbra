@@ -43,6 +43,7 @@ export interface CheckReport {
   trackedChanges: string[];
   runtime: RuntimeReport;
   heavyLock: HeavyLockInfo;
+  bun: string;
   selfSafety: SelfSafety;
   blockers: string[];
   applyReady: boolean;
@@ -196,6 +197,7 @@ export async function buildCheckReport(ctx: UpdateContext): Promise<CheckReport>
     trackedChanges,
     runtime,
     heavyLock: ctx.heavyLock,
+    bun: ctx.bunPath,
     selfSafety,
   };
   const blockers = upToDate

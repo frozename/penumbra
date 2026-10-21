@@ -13,9 +13,17 @@ function firstLine(text: string): string {
   return text.trim().split("\n")[0] ?? "";
 }
 
+/**
+ * Every call skips optional locks (a read never takes index.lock from a concurrent
+ * land) and runs without hooks (the service checkout's hooks are not ours to run).
+ */
+function gitArgv(dir: string, args: string[]): string[] {
+  return ["git", "--no-optional-locks", "-c", "core.hooksPath=/dev/null", "-C", dir, ...args];
+}
+
 export function createGitPort(exec: Exec, dir: string): GitPort {
   const git = async (args: string[], timeoutMs = GIT_TIMEOUT_MS): Promise<string> => {
-    const res = await exec(["git", "-C", dir, ...args], { timeoutMs });
+    const res = await exec(gitArgv(dir, args), { timeoutMs });
     if (res.code !== 0) {
       throw new UpdateError(
         `git ${args.join(" ")} failed (exit ${String(res.code)}): ${firstLine(res.stderr)}`,
@@ -24,12 +32,12 @@ export function createGitPort(exec: Exec, dir: string): GitPort {
     return res.stdout;
   };
   const exitCode = async (args: string[]): Promise<number> =>
-    (await exec(["git", "-C", dir, ...args], { timeoutMs: GIT_TIMEOUT_MS })).code;
+    (await exec(gitArgv(dir, args), { timeoutMs: GIT_TIMEOUT_MS })).code;
 
   const port: GitPort = {
     topLevel: async () => (await git(["rev-parse", "--show-toplevel"])).trim(),
     branch: async () => {
-      const res = await exec(["git", "-C", dir, "symbolic-ref", "--quiet", "--short", "HEAD"]);
+      const res = await exec(gitArgv(dir, ["symbolic-ref", "--quiet", "--short", "HEAD"]));
       return res.code === 0 ? res.stdout.trim() || null : null;
     },
     fetch: async (ref) => {
@@ -38,15 +46,7 @@ export function createGitPort(exec: Exec, dir: string): GitPort {
       await git(["fetch", "--quiet", ...args], FETCH_TIMEOUT_MS);
     },
     resolve: async (ref) => {
-      const res = await exec([
-        "git",
-        "-C",
-        dir,
-        "rev-parse",
-        "--verify",
-        "--quiet",
-        `${ref}^{commit}`,
-      ]);
+      const res = await exec(gitArgv(dir, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]));
       return res.code === 0 ? res.stdout.trim() || null : null;
     },
     head: async () => (await git(["rev-parse", "HEAD"])).trim(),

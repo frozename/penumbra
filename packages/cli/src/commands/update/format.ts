@@ -57,7 +57,7 @@ export function formatCheckReport(report: CheckReport): string[] {
     ...targetLines(report),
     `  local changes: ${report.trackedChanges.length === 0 ? "none" : String(report.trackedChanges.length)}`,
     ...runtimeLines(report.runtime),
-    `  heavy-job lock: ${report.heavyLock.path} (${report.heavyLock.source})`,
+    `  heavy-job lock: ${report.heavyLock.path} (${report.heavyLock.source}); bun: ${report.bun}`,
   ];
   if (report.upToDate) return lines;
   if (report.blockers.length === 0) {

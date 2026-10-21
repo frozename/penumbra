@@ -91,6 +91,16 @@ describe("penumbra update --apply", () => {
       `history ok ${SHA_B}`,
     ]);
     expect(world.head).toBe(SHA_B);
+    expect(
+      world.events.slice(world.events.indexOf("gate"), world.events.indexOf("restart")),
+    ).toEqual([
+      "gate",
+      "freeze",
+      `history apply from=${SHA_A} to=${SHA_B}`,
+      "ff b",
+      "install",
+      "gate released",
+    ]);
     expect(world.out.join("\n")).toContain(`done: ${SHA_A.slice(0, 12)} -> ${SHA_B.slice(0, 12)}`);
     expect(world.out.join("\n")).toContain("worker: job memory admission floor 20 GiB");
   });
@@ -253,12 +263,29 @@ describe("penumbra update --apply", () => {
     expect(world.err.join("\n")).toContain(`rolled back to ${SHA_A.slice(0, 12)}`);
   });
 
-  test("a failed install restores the old checkout without reinstalling when bun never ran", async () => {
+  test("a heavy-job gate timeout refuses before the worker is stopped", async () => {
     const world = new World();
     world.depsChanged = true;
-    world.install = { ok: false, ran: false, detail: "heavy-job lock not acquired within 900s" };
+    world.gate = { ok: false, detail: "heavy-job lock /l not acquired within 900s" };
 
-    expect(await run(world, ["--apply", "--json"])).toBe(3);
+    expect(await run(world, ["--apply", "--json"])).toBe(1);
+
+    expect(world.mutations()).toEqual([]);
+    expect(world.json()).toMatchObject({
+      outcome: "refused",
+      failure: {
+        step: "wait-idle + heavy-job gate",
+        detail: "heavy-job gate: heavy-job lock /l not acquired within 900s",
+      },
+    });
+  });
+
+  test("bun that never started: reset and start the worker, no reinstall or restart", async () => {
+    const world = new World();
+    world.depsChanged = true;
+    world.install = { ok: false, ran: false, detail: "exit 127: bun: not found" };
+
+    expect(await run(world, ["--apply", "--json"])).toBe(1);
 
     expect(world.mutations()).toEqual([
       "freeze",
@@ -266,23 +293,39 @@ describe("penumbra update --apply", () => {
       "ff b",
       "install",
       "reset a",
+      "unfreeze",
+      `history aborted at=${SHA_A}`,
+    ]);
+    expect(world.json()).toMatchObject({ outcome: "refused", failure: { step: "install" } });
+  });
+
+  test("bun that ran and failed: reset, reinstall, restart once idle", async () => {
+    const world = new World();
+    world.depsChanged = true;
+    world.install = { ok: false, ran: true, detail: "exit 1: lockfile had changes" };
+    world.duringInstall = (): void => {
+      world.install = { ok: true, ran: true, detail: "installed" };
+    };
+
+    expect(await run(world, ["--apply"])).toBe(3);
+
+    expect(world.mutations()).toEqual([
+      "freeze",
+      `history apply from=${SHA_A} to=${SHA_B}`,
+      "ff b",
+      "install",
+      "reset a",
+      "install",
       "restart",
       `history rolled-back to=${SHA_A}`,
     ]);
-    expect(world.json()).toMatchObject({
-      outcome: "rolled-back",
-      failure: {
-        step: "install",
-        detail: "bun install failed: heavy-job lock not acquired within 900s",
-      },
-    });
   });
 
   test("exits 4 when the rollback does not come up either", async () => {
     const world = new World();
     world.bootsOk = (): boolean => false;
     expect(await run(world, ["--apply", "--verify-timeout", "4"])).toBe(4);
-    expect(world.files.get(HISTORY)).toContain(`rollback-failed to=${SHA_A}`);
+    expect(world.files.get(HISTORY)).toContain(`needs-operator head=${SHA_A}`);
     expect(world.err.join("\n")).toContain("runtime needs attention");
   });
 });
@@ -364,14 +407,21 @@ describe("penumbra update --rollback", () => {
     world.head = SHA_B;
     world.healthy = false;
     world.inFlight = [{ ok: false, error: "GET /handoffs failed: connection refused" }];
-    world.files.set(HISTORY, `x apply from=${SHA_A} to=${SHA_B}\n`);
+    world.files.set(HISTORY, `x apply from=${SHA_A} to=${SHA_B}\nx ok ${SHA_B}\n`);
     expect(await run(world, ["--rollback"])).toBe(0);
     expect(world.head).toBe(SHA_A);
   });
 
-  test("refuses when the target is already checked out (e.g. after an automatic rollback)", async () => {
+  test("an apply that was rolled back is not a rollback target", async () => {
     const world = new World();
     world.files.set(HISTORY, `x apply from=${SHA_A} to=${SHA_B}\nx rolled-back to=${SHA_A}\n`);
+    expect(await run(world, ["--rollback"])).toBe(1);
+    expect(world.err.join("\n")).toContain("no rollback target");
+  });
+
+  test("refuses when the target is already checked out", async () => {
+    const world = new World();
+    world.files.set(HISTORY, `x apply from=${SHA_A} to=${SHA_B}\nx ok ${SHA_B}\n`);
     expect(await run(world, ["--rollback"])).toBe(1);
     expect(world.err.join("\n")).toContain(`already at ${SHA_A.slice(0, 12)}`);
   });
@@ -408,7 +458,8 @@ describe("penumbra update --rollback", () => {
     world.head = SHA_B;
     world.bootsOk = (): boolean => false;
     expect(await run(world, ["--rollback", SHA_A, "--verify-timeout", "2"])).toBe(4);
-    expect(world.files.get(HISTORY)).toContain(`rollback-failed to=${SHA_A}`);
+    expect(world.files.get(HISTORY)).toContain(`needs-operator head=${SHA_A}`);
+    expect(world.mutations()).not.toContain("reset b");
   });
 });
 

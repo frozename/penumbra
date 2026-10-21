@@ -64,12 +64,19 @@ export type IdleWait = { ok: true; waitedS: number } | { ok: false; reasons: str
 /** Polls until idle or `budgetS` runs out; a budget of 0 probes once. */
 export async function waitForIdle(
   ctx: UpdateContext,
-  opts: { budgetS: number; requireDaemon: boolean; pollMs?: number },
+  opts: {
+    budgetS: number;
+    requireDaemon: boolean;
+    pollMs?: number;
+    signal?: AbortSignal | undefined;
+  },
 ): Promise<IdleWait> {
   const start = ctx.clock.now();
   const pollMs = opts.pollMs ?? IDLE_POLL_MS;
   let lastSaid = "";
   for (;;) {
+    if (opts.signal?.aborted)
+      return { ok: false, reasons: [`interrupted by ${String(opts.signal.reason)}`] };
     const probe = await probeIdle(ctx, opts);
     const waitedMs = ctx.clock.now() - start;
     if (probe.idle) return { ok: true, waitedS: Math.round(waitedMs / 1000) };

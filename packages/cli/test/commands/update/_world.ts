@@ -1,7 +1,12 @@
 import type { UpdateDeps } from "@src/commands/update/index.js";
 import type {
+  DaemonPort,
+  GitPort,
   InFlight,
+  InstallGate,
+  InstallPort,
   InstallResult,
+  LogReader,
   LogSource,
   RuntimeState,
   ServiceManager,
@@ -15,6 +20,14 @@ export const STORAGE = "/state";
 export const HISTORY = `${STORAGE}/update-history.log`;
 
 const IDLE: InFlight = { ok: true, dispatched: [], approved: 0 };
+
+export const BUSY: InFlight = {
+  ok: true,
+  dispatched: [{ handoffId: "0123456789", agent: "claude", workerId: "w" }],
+  approved: 0,
+};
+
+type InstallGateResult = { ok: true } | { ok: false; detail: string };
 
 /** A scriptable host: git checkout, systemd units, daemon API and logs, all in memory. */
 export class World {
@@ -41,6 +54,14 @@ export class World {
   scopes: string[] = [];
   children: string[] = [];
   install: InstallResult = { ok: true, ran: true, detail: "installed" };
+  gate: InstallGateResult = { ok: true };
+  /** Runs during install.run(), e.g. to deliver a signal mid-install. */
+  duringInstall: () => void = () => undefined;
+  /** Runs on every in-flight poll, after the scripted answer is chosen. */
+  onPoll: (poll: number) => void = () => undefined;
+  polls = 0;
+  exitCode: number | null = null;
+  signalHandler: ((signal: string) => void) | null = null;
   cgroup = "0::/user.slice/user-1000.slice/user@1000.service/app.slice/term.scope\n";
   parents = new Map<number, number>([[4242, 4000]]);
   bindsTo = new Map<string, string[]>();
@@ -49,6 +70,7 @@ export class World {
   manager: ServiceManager | null = this.systemd();
   managerReason: string | null = null;
   workingDirectory = REPO;
+  serviceBun = "/usr/bin/bun";
   workerEnv: Record<string, string> = {};
 
   state(): RuntimeState {
@@ -58,7 +80,7 @@ export class World {
       active,
       pid: active ? pid : null,
       workingDirectory: this.workingDirectory,
-      argv: ["/usr/bin/bun", `${this.workingDirectory}/packages/cli/bin/penumbra.ts`, "start"],
+      argv: [this.serviceBun, `${this.workingDirectory}/packages/cli/bin/penumbra.ts`, "start"],
       environment: {},
     });
     return {
@@ -131,6 +153,15 @@ export class World {
       cwd: REPO,
       cliDir: `${REPO}/packages/cli/src/commands/update`,
       bunPath: "/usr/bin/bun",
+      onSignal: (handler) => {
+        this.signalHandler = handler;
+        return () => {
+          this.signalHandler = null;
+        };
+      },
+      exit: (code) => {
+        this.exitCode = code;
+      },
       out: (line) => this.out.push(line),
       err: (line) => this.err.push(line),
       clock: {
@@ -162,86 +193,132 @@ export class World {
         children: () => Promise.resolve([...this.children]),
       },
       ports: {
-        git: {
-          topLevel: () => Promise.resolve(REPO),
-          branch: () => Promise.resolve(this.branch),
-          fetch: (ref) => {
-            this.events.push(`fetch ${ref}`);
-            return Promise.resolve();
-          },
-          resolve: (ref) => {
-            if (/^[0-9a-f]{40}$/.test(ref)) return Promise.resolve(ref);
-            if (/^[0-9a-f]{7,39}$/.test(ref)) {
-              return Promise.resolve(
-                [SHA_A, SHA_B, SHA_C].find((sha) => sha.startsWith(ref)) ?? null,
-              );
-            }
-            return Promise.resolve(this.refs.get(ref) ?? null);
-          },
-          head: () => Promise.resolve(this.head),
-          isAncestor: (a, b) => {
-            const target = this.refs.get(b) ?? b;
-            return Promise.resolve(a === target || this.ancestry.has(`${a}>${target}`));
-          },
-          log: () =>
-            Promise.resolve({ count: 2, lines: ["bbbbbbb feat: two", "ccccccc fix: one"] }),
-          depsChanged: () => Promise.resolve(this.depsChanged),
-          trackedChanges: () => Promise.resolve([...this.tracked]),
-          fastForward: (to) => {
-            this.events.push(`ff ${to.slice(0, 1)}`);
-            this.head = to;
-            return Promise.resolve();
-          },
-          resetHard: (to) => {
-            this.events.push(`reset ${to.slice(0, 1)}`);
-            this.head = to;
-            return Promise.resolve();
-          },
-        },
+        git: this.gitPort(),
         ci: { state: () => Promise.resolve(this.ci) },
-        daemon: {
-          health: () =>
-            Promise.resolve({
-              ok: this.healthy,
-              port: 45787,
-              detail: this.healthy ? "ok" : "connection refused",
-            }),
-          inFlight: () =>
-            Promise.resolve(
-              this.inFlight.length > 1
-                ? (this.inFlight.shift() ?? IDLE)
-                : (this.inFlight[0] ?? IDLE),
-            ),
-        },
-        logs: {
-          cursor: (source) =>
-            Promise.resolve({
-              kind: "offset",
-              value:
-                source.kind === "file" ? this.logs[source.path as "daemon" | "worker"].length : 0,
-            }),
-          readSince: (source, cursor) =>
-            Promise.resolve(
-              source.kind === "file" && cursor.kind === "offset"
-                ? this.logs[source.path as "daemon" | "worker"].slice(cursor.value)
-                : "",
-            ),
-        },
-        install: {
-          install: () => {
-            this.events.push("install");
-            return Promise.resolve(this.install);
-          },
-        },
+        daemon: this.daemonPort(),
+        logs: this.logsPort(),
+        install: this.installPort(),
         manager: { manager: this.manager, reason: this.managerReason },
       },
     };
     return deps;
   }
 
-  /** Events that change the checkout or the runtime (fetch excluded). */
+  private gitPort(): GitPort {
+    const port: GitPort = {
+      topLevel: () => Promise.resolve(REPO),
+      branch: () => Promise.resolve(this.branch),
+      fetch: (ref) => {
+        this.events.push(`fetch ${ref}`);
+        return Promise.resolve();
+      },
+      resolve: (ref) => {
+        if (/^[0-9a-f]{40}$/.test(ref)) return Promise.resolve(ref);
+        if (/^[0-9a-f]{7,39}$/.test(ref)) {
+          return Promise.resolve([SHA_A, SHA_B, SHA_C].find((sha) => sha.startsWith(ref)) ?? null);
+        }
+        return Promise.resolve(this.refs.get(ref) ?? null);
+      },
+      head: () => Promise.resolve(this.head),
+      isAncestor: (a, b) => {
+        const target = this.refs.get(b) ?? b;
+        return Promise.resolve(a === target || this.ancestry.has(`${a}>${target}`));
+      },
+      log: () => Promise.resolve({ count: 2, lines: ["bbbbbbb feat: two", "ccccccc fix: one"] }),
+      depsChanged: () => Promise.resolve(this.depsChanged),
+      trackedChanges: () => Promise.resolve([...this.tracked]),
+      fastForward: (to) => {
+        this.events.push(`ff ${to.slice(0, 1)}`);
+        if (!this.ancestry.has(`${this.head}>${to}`)) {
+          return Promise.reject(
+            new Error("git merge --ff-only failed: Not possible to fast-forward"),
+          );
+        }
+        this.head = to;
+        return Promise.resolve();
+      },
+      resetHard: (to) => {
+        this.events.push(`reset ${to.slice(0, 1)}`);
+        this.head = to;
+        return Promise.resolve();
+      },
+    };
+    return port;
+  }
+
+  private daemonPort(): DaemonPort {
+    const port: DaemonPort = {
+      health: () =>
+        Promise.resolve({
+          ok: this.healthy,
+          port: 45787,
+          detail: this.healthy ? "ok" : "connection refused",
+        }),
+      inFlight: () => {
+        const answer =
+          this.inFlight.length > 1 ? (this.inFlight.shift() ?? IDLE) : (this.inFlight[0] ?? IDLE);
+        this.polls += 1;
+        this.onPoll(this.polls);
+        return Promise.resolve(answer);
+      },
+    };
+    return port;
+  }
+
+  private logsPort(): LogReader {
+    const port: LogReader = {
+      cursor: (source) =>
+        Promise.resolve({
+          kind: "offset",
+          value: source.kind === "file" ? this.logs[source.path as "daemon" | "worker"].length : 0,
+        }),
+      readSince: (source, cursor) =>
+        Promise.resolve(
+          source.kind === "file" && cursor.kind === "offset"
+            ? this.logs[source.path as "daemon" | "worker"].slice(cursor.value)
+            : "",
+        ),
+    };
+    return port;
+  }
+
+  private installPort(): InstallPort {
+    const port: InstallPort = {
+      acquire: (): Promise<InstallGate> => {
+        this.events.push("gate");
+        const gate = this.gate;
+        return Promise.resolve(
+          gate.ok
+            ? {
+                ok: true,
+                lease: {
+                  release: (): Promise<void> => {
+                    this.events.push("gate released");
+                    return Promise.resolve();
+                  },
+                },
+              }
+            : gate,
+        );
+      },
+      run: () => {
+        this.events.push("install");
+        const result = this.install;
+        this.duringInstall();
+        return Promise.resolve(result);
+      },
+    };
+    return port;
+  }
+
+  /** Events that change the checkout or the runtime (fetch and gate bookkeeping excluded). */
   mutations(): string[] {
-    return this.events.filter((event) => !event.startsWith("fetch"));
+    return this.events.filter((event) => !event.startsWith("fetch") && !event.startsWith("gate"));
+  }
+
+  /** Delivers SIGINT/SIGTERM/SIGHUP to the running command. */
+  signal(name: string): void {
+    this.signalHandler?.(name);
   }
 
   json(): Record<string, unknown> {

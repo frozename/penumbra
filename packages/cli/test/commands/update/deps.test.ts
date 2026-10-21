@@ -26,6 +26,17 @@ describe("defaultExec", () => {
     });
   });
 
+  test("aborting the signal terminates the child", async () => {
+    const controller = new AbortController();
+    const started = Date.now();
+    setTimeout(() => {
+      controller.abort("SIGINT");
+    }, 50);
+    const res = await defaultExec(["sleep", "5"], { signal: controller.signal });
+    expect(res.code).not.toBe(0);
+    expect(Date.now() - started).toBeLessThan(3_000);
+  });
+
   test("a missing binary is exit 127, a timeout is exit 124", async () => {
     expect((await defaultExec(["penumbra-update-no-such-binary"])).code).toBe(127);
     expect((await defaultExec(["sleep", "5"], { timeoutMs: 50 })).code).toBe(124);

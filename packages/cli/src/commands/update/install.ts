@@ -9,10 +9,11 @@ import {
   resolveAdmitMinGiB,
   resolveResourceScopeConfig,
 } from "@penumbra/core";
+import { basename, isAbsolute } from "node:path";
 
 import type { Exec, HeavyLockInfo, InstallPort, RuntimeState } from "./types.js";
 
-const INSTALL_TIMEOUT_MS = 20 * 60_000;
+const INSTALL_TIMEOUT_MS = 10 * 60_000;
 const HEAVY_LOCK_KEY = "PENUMBRA_JOB_HEAVY_LOCK";
 
 /**
@@ -49,9 +50,16 @@ export function scopeInstallArgv(argv: string[], env: NodeJS.ProcessEnv): string
   });
 }
 
+/** The bun the services run (ExecStart / launchd program), else the one running this CLI. */
+export function resolveBunPath(state: RuntimeState | null, fallback: string): string {
+  const bin = state?.daemon.argv[0];
+  return bin && isAbsolute(bin) && basename(bin) === "bun" ? bin : fallback;
+}
+
 /**
- * `bun install --frozen-lockfile` serialized under the host heavy-job lock and the
- * memory admission floor (the worker's own heavy-stage gate), inside a job scope.
+ * `bun install --frozen-lockfile` in a memory-capped job scope, behind the host
+ * heavy-job lock and memory admission floor (the worker's own heavy-stage gate).
+ * acquire() is separate so the caller can wait for it before stopping the worker.
  */
 export function createInstallPort(opts: {
   exec: Exec;
@@ -60,7 +68,7 @@ export function createInstallPort(opts: {
   heavyLock: HeavyLockInfo;
 }): InstallPort {
   const port: InstallPort = {
-    install: async (repo) => {
+    acquire: async () => {
       const jobEnv = getJobResourceEnv(opts.env);
       const log = createLogger({ component: "penumbra-update", level: "silent" });
       const gate = createHeavyJobGate({
@@ -70,20 +78,19 @@ export function createInstallPort(opts: {
         log,
       });
       const entry = await gate.enter("penumbra-update-install");
-      if (!entry.ok) return { ok: false, ran: false, detail: entry.reason };
-      try {
-        const argv = scopeInstallArgv([opts.bunPath, "install", "--frozen-lockfile"], opts.env);
-        const res = await opts.exec(argv, { cwd: repo, timeoutMs: INSTALL_TIMEOUT_MS });
-        return res.code === 0
-          ? { ok: true, ran: true, detail: "installed" }
-          : {
-              ok: false,
-              ran: true,
-              detail: `exit ${String(res.code)}: ${tail(res.stderr || res.stdout)}`,
-            };
-      } finally {
-        await entry.release();
-      }
+      return entry.ok
+        ? { ok: true, lease: { release: entry.release } }
+        : { ok: false, detail: entry.reason };
+    },
+    run: async (repo, signal) => {
+      const argv = scopeInstallArgv([opts.bunPath, "install", "--frozen-lockfile"], opts.env);
+      const res = await opts.exec(argv, { cwd: repo, timeoutMs: INSTALL_TIMEOUT_MS, signal });
+      if (res.code === 0) return { ok: true, ran: true, detail: "installed" };
+      return {
+        ok: false,
+        ran: res.code !== 127,
+        detail: `exit ${String(res.code)}: ${tail(res.stderr || res.stdout)}`,
+      };
     },
   };
   return port;

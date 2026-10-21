@@ -10,11 +10,15 @@ systemd --user or launchd). Default is --check.
 
   --check              read-only (apart from git fetch): current -> target, new
                        commits, dependency changes, target CI, runtime activity
-  --apply              fast-forward to the target, bun install if bun.lock or a
-                       package.json changed, restart the daemon and worker, verify;
-                       rolls back automatically when verification fails
-  --rollback [sha]     go back to sha (default: the last from= in
-                       <storage root>/update-history.log), same procedure
+  --apply              wait until idle, stop the worker (systemd), fast-forward,
+                       bun install if bun.lock or a package.json changed, restart
+                       the daemon and worker, verify; a failure puts back what
+                       this run changed (never a commit it did not make)
+  --rollback [sha]     go back to sha (default: the from= of the last completed
+                       move in <storage root>/update-history.log), same procedure
+
+  Ctrl-C stops after the current step and restores; a second Ctrl-C starts the
+  worker again and exits 130. Run it from a terminal, not from a dispatched job.
 
 options:
   --ref <ref>              target (default origin/main)
