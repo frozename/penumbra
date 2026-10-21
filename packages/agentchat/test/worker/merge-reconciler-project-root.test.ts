@@ -4,7 +4,6 @@ import {
   type WorktreeHandle,
   WorktreeManager,
 } from "@penumbra/core";
-
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { execFile, execFileSync } from "node:child_process";
 import {
@@ -16,7 +15,6 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
