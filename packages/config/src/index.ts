@@ -7,9 +7,11 @@ export {
   getMcpResponseBudgetTokens,
   getSessionExtractMaxCharsPerChunk,
   getSessionExtractMaxChunks,
+  getUpdateEnv,
   isMcpInvocationLogEnabled,
   type JobResourceEnv,
   parseEnv,
+  type UpdateEnv,
 } from "./env.js";
 export {
   AgentPinSchema,
