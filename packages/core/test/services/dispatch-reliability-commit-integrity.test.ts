@@ -67,6 +67,8 @@ describe("classifyDispatchReliability commit integrity", () => {
     const report = classifyDispatchReliability(baseInput({ commitIntegrity }));
 
     expect(report.status).toBe("commit_identity_mismatch");
+    expect(report.trustworthy).toBe(false);
+    expect(report.recommended_action).toBe("review_manually");
     expect(report.summary).toContain("c".repeat(12));
     expect(report.summary).toContain("worker@example.com");
     expect(report.evidence.commit_integrity).toEqual(commitIntegrity);
@@ -112,5 +114,35 @@ describe("classifyDispatchReliability commit integrity", () => {
     expect(report.status).toBe("complete");
     expect(report.trustworthy).toBe(false);
     expect(report.recommended_action).toBe("wait");
+  });
+
+  test("commit integrity outranks result integrity", () => {
+    const withCommit = classifyDispatchReliability(
+      baseInput({
+        responseCount: 0,
+        finalResponseText: "",
+        commitIntegrity: { ...CLEAN, base_is_ancestor: false },
+      }),
+    );
+    expect(withCommit.status).toBe("base_not_ancestor");
+
+    const withoutCommit = classifyDispatchReliability(
+      baseInput({ responseCount: 0, finalResponseText: "" }),
+    );
+    expect(withoutCommit.status).toBe("no_agent_output");
+  });
+
+  test("missing lifecycle outranks commit integrity", () => {
+    const report = classifyDispatchReliability(
+      baseInput({
+        events: [
+          { kind: "proc.spawn", ts: "2026-05-01T00:00:02.000Z" },
+          { kind: "proc.exited.resolved", ts: "2026-05-01T00:00:08.000Z" },
+          { kind: "dispatch.end", ts: "2026-05-01T00:00:09.000Z", meta: { status: "ok" } },
+        ],
+        commitIntegrity: { ...CLEAN, base_is_ancestor: false },
+      }),
+    );
+    expect(report.status).toBe("missing_dispatch_start");
   });
 });

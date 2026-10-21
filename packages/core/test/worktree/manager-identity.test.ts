@@ -174,6 +174,86 @@ describe("WorktreeManager.createWorktree — git identity inheritance", () => {
     await manager.teardownWorktree(handoffId, true);
   });
 
+  it("does not fail createWorktree and records no base when reading the base commit fails", async () => {
+    repo = await setupTempRepo("penumbra-wt-dispatch-base-read-fail-", {
+      user: { name: "Parent Author", email: "parent@example.com" },
+    });
+
+    const baseRunner = isolatedRunner(repo.isolatedEnv);
+    let intercepted = false;
+    const failingRunner: WorktreeCommandRunner = (cmd, args, opts) => {
+      if (
+        !intercepted &&
+        args.length === 4 &&
+        args[0] === "-C" &&
+        args[2] === "rev-parse" &&
+        args[3] === "HEAD"
+      ) {
+        intercepted = true;
+        return Promise.reject(new Error("rev-parse failed"));
+      }
+      return baseRunner(cmd, args, opts);
+    };
+
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: repo.repoDir,
+      runner: failingRunner,
+    });
+
+    const handle = await manager.createWorktree("77777777-7777-4777-8777-777777777777");
+
+    await expect(
+      git(
+        handle.path,
+        ["config", "--worktree", "--get", DISPATCH_BASE_CONFIG_KEY],
+        repo.isolatedEnv,
+      ),
+    ).rejects.toThrow();
+
+    await manager.teardownWorktree("77777777-7777-4777-8777-777777777777", true);
+  });
+
+  it("records no base when the base commit is not a SHA", async () => {
+    repo = await setupTempRepo("penumbra-wt-dispatch-base-not-sha-", {
+      user: { name: "Parent Author", email: "parent@example.com" },
+    });
+
+    const baseRunner = isolatedRunner(repo.isolatedEnv);
+    let intercepted = false;
+    const badOutputRunner: WorktreeCommandRunner = (cmd, args, opts) => {
+      if (
+        !intercepted &&
+        args.length === 4 &&
+        args[0] === "-C" &&
+        args[2] === "rev-parse" &&
+        args[3] === "HEAD"
+      ) {
+        intercepted = true;
+        return Promise.resolve({ stdout: "not-a-sha\n", stderr: "" });
+      }
+      return baseRunner(cmd, args, opts);
+    };
+
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: repo.repoDir,
+      runner: badOutputRunner,
+    });
+
+    const handle = await manager.createWorktree("88888888-8888-4888-8888-888888888888");
+
+    await expect(
+      git(
+        handle.path,
+        ["config", "--worktree", "--get", DISPATCH_BASE_CONFIG_KEY],
+        repo.isolatedEnv,
+      ),
+    ).rejects.toThrow();
+
+    await manager.teardownWorktree("88888888-8888-4888-8888-888888888888", true);
+  });
+
   it("falls back to the base ref commit author when the parent git config is absent", async () => {
     repo = await setupTempRepo("penumbra-wt-identity-commit-", {
       commitAuthor: { name: "Commit Author", email: "commit@example.com" },
