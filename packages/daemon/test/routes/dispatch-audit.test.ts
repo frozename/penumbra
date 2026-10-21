@@ -106,6 +106,41 @@ function recordCompleteTimeline(
   ]);
 }
 
+// DispatchEventLog writes only worker and daemon rows; the stale-handoff
+// sweeper inserts its own source directly, so this mirrors that insert.
+function recordSweeperDispatchEnd(svc: Services, handoffId: string, ts: string): void {
+  svc.db.run(
+    `INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      handoffId,
+      null,
+      "sweeper",
+      "dispatch.end",
+      ts,
+      JSON.stringify({
+        status: "failed",
+        reason: "stale_force_resolve",
+        classifier_status: "non_terminal_stale",
+      }),
+    ],
+  );
+}
+
+const LEFT_BASE_DISPATCH_END_META = {
+  status: "ok",
+  worktree_changed: true,
+  dirty: false,
+  committed: true,
+  commit_integrity: {
+    base_sha: "a".repeat(40),
+    head_sha: "b".repeat(40),
+    base_is_ancestor: false,
+    identity: { name: "Penumbra Worker", email: "worker@example.com" },
+    mismatched_commits: [],
+  },
+};
+
 function writeAgentResponse(svc: Services, conversationId: string, response: string): void {
   svc.t0Writer.write({
     event_id: "response-1",
@@ -541,5 +576,33 @@ describe("buildDispatchAuditReport", () => {
     expect(report!.trustworthy).toBe(false);
     expect(report!.evidence.worktree_changed).toBeNull();
     expect(report!.evidence.dispatch_end_committed).toBeNull();
+  });
+
+  test("reports the worker's evidence when its dispatch.end follows a sweeper's", () => {
+    const svc = services();
+    createCompletedHandoff(svc, "h-swept", "c-swept");
+    recordSweeperDispatchEnd(svc, "h-swept", "2026-05-01T00:00:05.000Z");
+    recordCompleteTimeline(svc, "h-swept", LEFT_BASE_DISPATCH_END_META);
+    writeAgentResponse(svc, "c-swept", "DONE");
+
+    const report = buildDispatchAuditReport(svc, "h-swept");
+
+    expect(report?.status).toBe("base_not_ancestor");
+    expect(report?.evidence.commit_integrity?.base_sha).toBe("a".repeat(40));
+    expect(report?.evidence.dispatch_end_committed).toBe(true);
+  });
+
+  test("reads only the last dispatch.end when a sweeper's follows the worker's", () => {
+    const svc = services();
+    createCompletedHandoff(svc, "h-late-sweep", "c-late-sweep");
+    recordCompleteTimeline(svc, "h-late-sweep", LEFT_BASE_DISPATCH_END_META);
+    recordSweeperDispatchEnd(svc, "h-late-sweep", "2026-05-01T00:00:09.500Z");
+    writeAgentResponse(svc, "c-late-sweep", "DONE");
+
+    const report = buildDispatchAuditReport(svc, "h-late-sweep");
+
+    expect(report?.status).toBe("complete");
+    expect(report?.evidence.commit_integrity).toBeUndefined();
+    expect(report?.evidence.dispatch_end_committed).toBeNull();
   });
 });
