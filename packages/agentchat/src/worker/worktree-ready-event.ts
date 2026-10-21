@@ -1,4 +1,4 @@
-import type { DispatchEventInput, WorktreeMode } from "@penumbra/core";
+import type { DispatchEventInput, WorktreeHandle, WorktreeMode } from "@penumbra/core";
 
 export function buildWorktreeReadyEvent(input: {
   handoffId: string;
@@ -6,6 +6,7 @@ export function buildWorktreeReadyEvent(input: {
   worktreeMode: WorktreeMode;
   durationMs: number;
   ts?: string;
+  gitHooks?: WorktreeHandle["gitHooks"];
 }): DispatchEventInput {
   return {
     handoff_id: input.handoffId,
@@ -16,6 +17,7 @@ export function buildWorktreeReadyEvent(input: {
     meta: {
       worktree_mode: input.worktreeMode,
       duration_ms: input.durationMs,
+      ...(input.gitHooks ? { git_hooks: input.gitHooks.status } : {}),
     },
   };
 }

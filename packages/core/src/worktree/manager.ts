@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { createLogger, type Logger } from "../logger.js";
 import { classifyBranchLandStatus } from "./branch-land-probe.js";
 import { resolveHandoffBranchName } from "./branch-name.js";
+import { classifyGitHooks, type WorktreeGitHooks } from "./git-hooks.js";
 import {
   resolveWorktreeGitDir as resolveScratchGitDir,
   SCRATCH_OWNER_FILE,
@@ -66,6 +67,8 @@ export interface WorktreeHandle {
   status: "created" | "merged" | "failed" | "expired";
   projectId?: string;
   worktreeMode: WorktreeMode;
+  // Set by createWorktree; absent on rediscovered handles.
+  gitHooks?: WorktreeGitHooks;
 }
 
 export interface OrphanWorktreeHandle {
@@ -269,6 +272,15 @@ export class WorktreeManager {
     opts?: { cwd?: string },
   ): Promise<{ stdout: string; stderr: string }> {
     return this.runner("git", args, { ...opts, encoding: "utf8" });
+  }
+
+  private async readHooksPath(wtPath: string): Promise<string | null> {
+    try {
+      const { stdout } = await this.git(["-C", wtPath, "config", "--get", "core.hooksPath"]);
+      return stdout.replace(/\r?\n$/, "");
+    } catch {
+      return null; // git exits 1 when core.hooksPath is unset
+    }
   }
 
   private baseFor(project_id?: string): string {
@@ -539,6 +551,15 @@ export class WorktreeManager {
 
       await this.finalizeWorktreeMode(wtPath, repoRoot, handoffId, worktreeMode, opts?.signal);
 
+      // Both modes share this gap: .husky/_ is generated and untracked, and git resolves a relative core.hooksPath against the worktree root; symlink_mirror only links node_modules.
+      const gitHooks = classifyGitHooks(wtPath, await this.readHooksPath(wtPath));
+      if (gitHooks.status === "missing" || gitHooks.status === "empty") {
+        this.log.warn(
+          { handoffId, hooksPath: gitHooks.configured, status: gitHooks.status },
+          "worktree git hooks are not installed; commits will skip them",
+        );
+      }
+
       const handle: WorktreeHandle = {
         handoffId,
         path: wtPath,
@@ -548,6 +569,7 @@ export class WorktreeManager {
         status: "created",
         projectId: project_id,
         worktreeMode,
+        gitHooks,
       };
 
       this.worktrees.set(handoffId, handle);
