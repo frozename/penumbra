@@ -262,7 +262,7 @@ test("orphan exhausted re-offers", async () => {
   assertReoffered(services, emitted, "failed");
 });
 
-test("stale sweeper force-resolve re-offers", async () => {
+test("stale sweeper force-resolve holds the slot until the worker reports dispatch.end, then the sweep re-offers", async () => {
   const { services, emitted } = setup(() => new Date("2026-05-04T12:00:00.000Z"));
   seedRunningAndWaiting(services, emitted);
   services.db
@@ -287,7 +287,25 @@ test("stale sweeper force-resolve re-offers", async () => {
   await Promise.resolve();
 
   expect(result.resolved).toEqual(["running"]);
-  assertReoffered(services, emitted, "failed");
+  expect(emitted.some((r) => r.handoff_id === "waiting")).toBe(false);
+
+  services.dispatchEventLog.record({
+    handoff_id: "running",
+    worker_id: "W-A",
+    source: "worker",
+    kind: "dispatch.end",
+    ts: "2026-05-04T12:00:01.000Z",
+  });
+  createProviderCapacityReoffer({ services }).sweep();
+
+  expect(emitted.some((r) => r.handoff_id === "waiting" && r.status === "approved")).toBe(true);
+  const reofferRow = services.db
+    .query<
+      { meta_json: string | null },
+      [string]
+    >("SELECT meta_json FROM dispatch_events WHERE handoff_id=? AND kind='claim.reoffer'")
+    .get("waiting");
+  expect(JSON.parse(reofferRow?.meta_json ?? "{}")).toMatchObject({ cause: "sweep" });
 });
 
 test("watchdog fallback re-offers", async () => {

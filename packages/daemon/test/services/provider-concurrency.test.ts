@@ -1,14 +1,16 @@
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
-import { expect, mock, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 
 import {
+  countProviderInFlight,
   listCappedProviders,
   type ProviderConcurrencyDecision,
   recordProviderCapRefusal,
   resolveProviderConcurrencyDecision,
   resolveProviderSeatNames,
+  STALE_SWEEP_DRAIN_GRACE_MS,
 } from "@src/services/provider-concurrency.js";
 
 try {
@@ -159,4 +161,111 @@ test("recordProviderCapRefusal logs info every time and records claim.provider_c
     >("SELECT COUNT(*) AS n FROM dispatch_events WHERE handoff_id='h' AND kind='claim.provider_cap_refused'")
     .get();
   expect(row?.n).toBe(2);
+});
+
+function seedApprovedHandoff(
+  services: Services,
+  handoff_id: string,
+  opts: { to?: string; ts?: string; tsOffsetMs?: number } = {},
+): void {
+  const ts =
+    opts.ts ??
+    new Date(Date.parse("2026-05-21T10:00:00.000Z") + (opts.tsOffsetMs ?? 0)).toISOString();
+  services.handoffWriter.createApproved({
+    handoff_id,
+    ts,
+    project_id: null,
+    conversation_id: `conv-${handoff_id}`,
+    from: "planner",
+    to: opts.to ?? "claude-a",
+    to_role: null,
+    message: "go",
+    triggered_by_event_id: null,
+    resolved_by: "machine-test",
+    resolved_at: "2026-05-21T10:00:00.000Z",
+    chain_max_hops: null,
+    chain_trust_mode: null,
+    chain_task_type: null,
+    use_worktree: null,
+    parent_handoff_id: null,
+    dispatch_kind: null,
+    workflow_run_id: null,
+  });
+}
+
+describe("countProviderInFlight stale-sweep drain hold (#218)", () => {
+  test("(a) holds slot after sweeper force-resolve until worker dispatch.end arrives", () => {
+    const services = tempServices();
+    configureProviderCap(services, 1);
+    const count = (seats: string[]): number => countProviderInFlight(services, seats);
+
+    seedApprovedHandoff(services, "h-swept", { to: "claude-a" });
+    services.handoffWriter.claimDispatch("h-swept", "W-A");
+    expect(count(["claude-a", "claude-b"])).toBe(1);
+
+    services.handoffWriter.markFailed("h-swept", {
+      reason: "stale_force_resolve",
+      resolved_by: "stale-handoff-sweeper",
+      ts: "2026-05-21T10:00:00.000Z",
+    });
+    expect(count(["claude-a", "claude-b"])).toBe(1);
+
+    services.db.run(
+      `INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json) VALUES (?, NULL, 'sweeper', 'dispatch.end', ?, NULL)`,
+      ["h-swept", "2026-05-21T10:00:01.000Z"],
+    );
+    expect(count(["claude-a", "claude-b"])).toBe(1);
+
+    services.dispatchEventLog.record({
+      handoff_id: "h-swept",
+      worker_id: "W-A",
+      source: "worker",
+      kind: "dispatch.end",
+      ts: "2026-05-21T10:00:05.000Z",
+    });
+    expect(count(["claude-a", "claude-b"])).toBe(0);
+  });
+
+  test("(b) releases slot when resolved_at falls outside the drain grace window", () => {
+    const services = tempServices();
+    configureProviderCap(services, 1);
+    const count = (seats: string[]): number => countProviderInFlight(services, seats);
+
+    seedApprovedHandoff(services, "h-swept", { to: "claude-a" });
+    services.handoffWriter.claimDispatch("h-swept", "W-A");
+    expect(count(["claude-a", "claude-b"])).toBe(1);
+
+    const staleTs = new Date(
+      Date.parse("2026-05-21T10:00:00.000Z") - STALE_SWEEP_DRAIN_GRACE_MS - 1000,
+    ).toISOString();
+    services.handoffWriter.markFailed("h-swept", {
+      reason: "stale_force_resolve",
+      resolved_by: "stale-handoff-sweeper",
+      ts: staleTs,
+    });
+    expect(count(["claude-a", "claude-b"])).toBe(0);
+  });
+
+  test("(c) does not hold slot for non-sweeper resolved_by values", () => {
+    const services = tempServices();
+    configureProviderCap(services, 1);
+    const count = (seats: string[]): number => countProviderInFlight(services, seats);
+
+    seedApprovedHandoff(services, "h-fail", { to: "claude-a" });
+    services.handoffWriter.claimDispatch("h-fail", "W-A");
+    services.handoffWriter.markFailed("h-fail", {
+      reason: "dispatch error",
+      ts: "2026-05-21T10:00:00.000Z",
+    });
+
+    seedApprovedHandoff(services, "h-cancel", { to: "claude-a", tsOffsetMs: 1 });
+    services.handoffWriter.claimDispatch("h-cancel", "W-A");
+    services.handoffWriter.markFailed("h-cancel", {
+      reason: "cancelled",
+      resolved_by: "cancel",
+      ts: "2026-05-21T10:00:00.000Z",
+    });
+
+    expect(count(["claude-a", "claude-b"])).toBe(0);
+  });
 });

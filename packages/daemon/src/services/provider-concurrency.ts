@@ -7,7 +7,18 @@ export interface ProviderConcurrencyDecision {
   in_flight_count: number;
 }
 
-type ConcurrencyServices = Pick<Services, "db" | "agentchatConfig" | "providerQuotas">;
+type ConcurrencyServices = Pick<Services, "db" | "agentchatConfig" | "providerQuotas"> &
+  Partial<Pick<Services, "clock">>;
+
+// Matches the ACP prompt timeout; bounds a worker that never reports dispatch.end.
+export const STALE_SWEEP_DRAIN_GRACE_MS = 15 * 60_000;
+
+// alias h, exactly one positional param: the resolved_at cutoff ISO
+export const SWEEPER_DRAINING_SQL = `(h.status='failed' AND h.resolved_by='stale-handoff-sweeper' AND h.worker_id IS NOT NULL AND h.resolved_at >= ? AND NOT EXISTS (SELECT 1 FROM dispatch_events de WHERE de.handoff_id = h.handoff_id AND de.kind = 'dispatch.end' AND de.source = 'worker'))`;
+
+export function sweeperDrainCutoffIso(now: Date): string {
+  return new Date(now.getTime() - STALE_SWEEP_DRAIN_GRACE_MS).toISOString();
+}
 
 export function countProviderInFlight(
   services: ConcurrencyServices,
@@ -18,11 +29,11 @@ export function countProviderInFlight(
   const row = services.db
     .query<{ n: number }, string[]>(
       `SELECT COUNT(*) AS n
-         FROM handoffs
-        WHERE status='dispatched'
-          AND to_agent IN (${placeholders})`,
+         FROM handoffs h
+        WHERE h.to_agent IN (${placeholders})
+          AND (h.status='dispatched' OR ${SWEEPER_DRAINING_SQL})`,
     )
-    .get(...providerSeatNames);
+    .get(...providerSeatNames, sweeperDrainCutoffIso(services.clock?.() ?? new Date()));
   return row?.n ?? 0;
 }
 
