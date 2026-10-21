@@ -425,6 +425,7 @@ export {
 } from "./services/dispatch-prompt-refiner.js";
 export {
   classifyDispatchReliability,
+  type CommitIntegrityEvidence,
   type DispatchRecommendedAction,
   type DispatchReliabilityEvent,
   type DispatchReliabilityHandoff,

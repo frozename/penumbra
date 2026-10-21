@@ -1,0 +1,112 @@
+import { describe, expect, test } from "bun:test";
+
+import {
+  classifyDispatchReliability,
+  type CommitIntegrityEvidence,
+  type DispatchReliabilityHandoff,
+  type DispatchReliabilityInput,
+} from "@src/services/dispatch-reliability.js";
+
+function handoff(overrides: Partial<DispatchReliabilityHandoff> = {}): DispatchReliabilityHandoff {
+  return {
+    handoff_id: "h-1",
+    status: "completed",
+    ts: "2026-05-01T00:00:00.000Z",
+    resolved_at: "2026-05-01T00:00:10.000Z",
+    cancel_requested_at: null,
+    chain_task_type: "implement_small",
+    use_worktree: 1,
+    ...overrides,
+  };
+}
+
+function baseInput(overrides: Partial<DispatchReliabilityInput> = {}): DispatchReliabilityInput {
+  return {
+    handoff: handoff(),
+    events: [
+      { kind: "dispatch.start", ts: "2026-05-01T00:00:01.000Z" },
+      { kind: "proc.spawn", ts: "2026-05-01T00:00:02.000Z" },
+      { kind: "proc.exited.resolved", ts: "2026-05-01T00:00:08.000Z" },
+      { kind: "dispatch.end", ts: "2026-05-01T00:00:09.000Z", meta: { status: "ok" } },
+    ],
+    responseCount: 1,
+    finalResponseText: "DONE",
+    worktreeChanged: true,
+    dispatchEndCommitted: true,
+    reconciled: true,
+    adapterStreaming: true,
+    now: new Date("2026-05-01T00:00:20.000Z"),
+    staleAfterMs: 120_000,
+    ...overrides,
+  };
+}
+
+const CLEAN: CommitIntegrityEvidence = {
+  base_sha: "a".repeat(40),
+  head_sha: "b".repeat(40),
+  base_is_ancestor: true,
+  identity: { name: "Penumbra Worker", email: "worker@example.com" },
+  mismatched_commits: [],
+};
+
+describe("classifyDispatchReliability commit integrity", () => {
+  test("flags a terminal dispatch whose branch head does not descend from the base", () => {
+    const report = classifyDispatchReliability(
+      baseInput({ commitIntegrity: { ...CLEAN, base_is_ancestor: false } }),
+    );
+
+    expect(report.status).toBe("base_not_ancestor");
+    expect(report.trustworthy).toBe(false);
+    expect(report.recommended_action).toBe("review_manually");
+    expect(report.summary).toContain("b".repeat(12));
+    expect(report.summary).toContain("a".repeat(12));
+  });
+
+  test("flags commits not authored and committed as the dispatch identity", () => {
+    const commitIntegrity = { ...CLEAN, mismatched_commits: ["c".repeat(40)] };
+    const report = classifyDispatchReliability(baseInput({ commitIntegrity }));
+
+    expect(report.status).toBe("commit_identity_mismatch");
+    expect(report.summary).toContain("c".repeat(12));
+    expect(report.summary).toContain("worker@example.com");
+    expect(report.evidence.commit_integrity).toEqual(commitIntegrity);
+  });
+
+  test("reports base_not_ancestor when both the branch and identity are wrong", () => {
+    const report = classifyDispatchReliability(
+      baseInput({
+        commitIntegrity: { ...CLEAN, base_is_ancestor: false, mismatched_commits: ["c".repeat(40)] },
+      }),
+    );
+
+    expect(report.status).toBe("base_not_ancestor");
+  });
+
+  test("accepts a terminal dispatch with clean commit integrity", () => {
+    const report = classifyDispatchReliability(baseInput({ commitIntegrity: CLEAN }));
+
+    expect(report.status).toBe("complete");
+    expect(report.trustworthy).toBe(true);
+    expect(report.recommended_action).toBe("accept");
+  });
+
+  test("stays complete when no commit integrity evidence is supplied", () => {
+    const report = classifyDispatchReliability(baseInput());
+
+    expect(report.status).toBe("complete");
+    expect(report.recommended_action).toBe("accept");
+  });
+
+  test("ignores commit integrity for a non-terminal handoff", () => {
+    const report = classifyDispatchReliability(
+      baseInput({
+        handoff: handoff({ status: "dispatched", resolved_at: null }),
+        commitIntegrity: { ...CLEAN, base_is_ancestor: false },
+      }),
+    );
+
+    expect(report.status).toBe("complete");
+    expect(report.trustworthy).toBe(false);
+    expect(report.recommended_action).toBe("wait");
+  });
+});

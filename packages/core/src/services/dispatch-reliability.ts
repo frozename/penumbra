@@ -1,5 +1,6 @@
 import {
   AgentTaskTypeSchema,
+  type CommitIntegrityEvidence as CommitIntegrityEvidenceAlias,
   type DispatchRecommendedAction as DispatchRecommendedActionAlias,
   type DispatchReliabilityStatus as DispatchReliabilityStatusAlias,
 } from "@penumbra/api-contract";
@@ -7,6 +8,8 @@ import {
 export type DispatchReliabilityStatus = DispatchReliabilityStatusAlias;
 
 export type DispatchRecommendedAction = DispatchRecommendedActionAlias;
+
+export type CommitIntegrityEvidence = CommitIntegrityEvidenceAlias;
 
 export interface DispatchReliabilityEvent {
   kind: string;
@@ -35,6 +38,7 @@ export interface DispatchReliabilityInput {
   adapterStreaming: boolean | null;
   dispatchPrompt?: string | null;
   dispatchEndDirty?: boolean | null;
+  commitIntegrity?: CommitIntegrityEvidence | null;
   now?: Date;
   staleAfterMs?: number;
   activityIdleMs?: number;
@@ -57,6 +61,7 @@ export interface DispatchReliabilityReport {
     watchdog_failed: boolean;
     cancel_requested: boolean;
     adapter_streaming: boolean | null;
+    commit_integrity?: CommitIntegrityEvidence | null;
   };
   recommended_action: DispatchRecommendedAction;
   classifier_decline?: {
@@ -115,6 +120,7 @@ function buildClassificationContext(input: DispatchReliabilityInput): Classifica
       watchdog_failed: watchdogFailed,
       cancel_requested: cancelRequested,
       adapter_streaming: input.adapterStreaming,
+      ...(input.commitIntegrity ? { commit_integrity: input.commitIntegrity } : {}),
     },
   };
 }
@@ -204,6 +210,32 @@ function classifyMissingLifecycle(ctx: ClassificationContext): DispatchReliabili
       "dispatch.end event is missing",
       ctx.terminal ? "review_manually" : "wait",
       ["dispatch.end"],
+    );
+  }
+  return null;
+}
+
+function classifyCommitIntegrity(ctx: ClassificationContext): DispatchReliabilityReport | null {
+  const ci = ctx.input.commitIntegrity;
+  if (!ctx.terminal || !ci) return null;
+  if (!ci.base_is_ancestor) {
+    return makeReport(
+      ctx,
+      "base_not_ancestor",
+      false,
+      `branch head ${ci.head_sha.slice(0, 12)} does not descend from dispatch base ${ci.base_sha.slice(0, 12)}`,
+      "review_manually",
+      [],
+    );
+  }
+  if (ci.mismatched_commits.length > 0) {
+    return makeReport(
+      ctx,
+      "commit_identity_mismatch",
+      false,
+      `commits not authored and committed as ${ci.identity.name} <${ci.identity.email}>: ${ci.mismatched_commits.map((sha) => sha.slice(0, 12)).join(", ")}`,
+      "review_manually",
+      [],
     );
   }
   return null;
@@ -322,6 +354,7 @@ export function classifyDispatchReliability(
   const earlyReport =
     classifyStaleAndCancel(ctx) ??
     classifyMissingLifecycle(ctx) ??
+    classifyCommitIntegrity(ctx) ??
     classifyResultIntegrity(ctx) ??
     classifyIncompleteTurn(ctx);
   if (earlyReport) return earlyReport;
