@@ -5,7 +5,11 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { promisify } from "node:util";
 
-import { type WorktreeCommandRunner, WorktreeManager } from "@src/worktree/manager.js";
+import {
+  DISPATCH_BASE_CONFIG_KEY,
+  type WorktreeCommandRunner,
+  WorktreeManager,
+} from "@src/worktree/manager.js";
 
 const execFile = promisify(execFileCb);
 
@@ -133,6 +137,129 @@ describe("WorktreeManager.createWorktree — git identity inheritance", () => {
     expect(logAuthor.trim()).toBe("Parent Author <parent@example.com>");
 
     await manager.teardownWorktree("11111111-1111-4111-8111-111111111111", true);
+  });
+
+  it("records the dispatch base commit in the worktree config and keeps it after new commits", async () => {
+    repo = await setupTempRepo("penumbra-wt-dispatch-base-", {
+      user: { name: "Parent Author", email: "parent@example.com" },
+    });
+
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: repo.repoDir,
+      runner: isolatedRunner(repo.isolatedEnv),
+    });
+
+    const handoffId = "66666666-6666-4666-8666-666666666666";
+    const { stdout: baseShaOut } = await git(repo.repoDir, ["rev-parse", "HEAD"], repo.isolatedEnv);
+    const baseSha = baseShaOut.trim();
+
+    const handle = await manager.createWorktree(handoffId);
+
+    await commitInWorktree(handle.path, repo.isolatedEnv);
+
+    const { stdout: recordedOut } = await git(
+      handle.path,
+      ["config", "--worktree", "--get", DISPATCH_BASE_CONFIG_KEY],
+      repo.isolatedEnv,
+    );
+    const recorded = recordedOut.trim();
+    const { stdout: headOut } = await git(handle.path, ["rev-parse", "HEAD"], repo.isolatedEnv);
+    const head = headOut.trim();
+
+    expect(recorded).toBe(baseSha);
+    expect(head).not.toBe(recorded);
+    expect(DISPATCH_BASE_CONFIG_KEY).toBe("penumbra.dispatchBase");
+
+    await manager.teardownWorktree(handoffId, true);
+  });
+
+  it("does not fail createWorktree and records no base when reading the base commit fails", async () => {
+    repo = await setupTempRepo("penumbra-wt-dispatch-base-read-fail-", {
+      user: { name: "Parent Author", email: "parent@example.com" },
+    });
+
+    const baseRunner = isolatedRunner(repo.isolatedEnv);
+    let intercepted = false;
+    const failingRunner: WorktreeCommandRunner = (cmd, args, opts) => {
+      if (
+        !intercepted &&
+        args.length === 4 &&
+        args[0] === "-C" &&
+        args[2] === "rev-parse" &&
+        args[3] === "HEAD"
+      ) {
+        intercepted = true;
+        return Promise.reject(new Error("rev-parse failed"));
+      }
+      return baseRunner(cmd, args, opts);
+    };
+
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: repo.repoDir,
+      runner: failingRunner,
+    });
+
+    const handle = await manager.createWorktree("77777777-7777-4777-8777-777777777777");
+
+    let baseRecorded = true;
+    try {
+      await git(
+        handle.path,
+        ["config", "--worktree", "--get", DISPATCH_BASE_CONFIG_KEY],
+        repo.isolatedEnv,
+      );
+    } catch {
+      baseRecorded = false;
+    }
+    expect(baseRecorded).toBe(false);
+
+    await manager.teardownWorktree("77777777-7777-4777-8777-777777777777", true);
+  });
+
+  it("records no base when the base commit is not a SHA", async () => {
+    repo = await setupTempRepo("penumbra-wt-dispatch-base-not-sha-", {
+      user: { name: "Parent Author", email: "parent@example.com" },
+    });
+
+    const baseRunner = isolatedRunner(repo.isolatedEnv);
+    let intercepted = false;
+    const badOutputRunner: WorktreeCommandRunner = (cmd, args, opts) => {
+      if (
+        !intercepted &&
+        args.length === 4 &&
+        args[0] === "-C" &&
+        args[2] === "rev-parse" &&
+        args[3] === "HEAD"
+      ) {
+        intercepted = true;
+        return Promise.resolve({ stdout: "not-a-sha\n", stderr: "" });
+      }
+      return baseRunner(cmd, args, opts);
+    };
+
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: repo.repoDir,
+      runner: badOutputRunner,
+    });
+
+    const handle = await manager.createWorktree("88888888-8888-4888-8888-888888888888");
+
+    let baseRecorded = true;
+    try {
+      await git(
+        handle.path,
+        ["config", "--worktree", "--get", DISPATCH_BASE_CONFIG_KEY],
+        repo.isolatedEnv,
+      );
+    } catch {
+      baseRecorded = false;
+    }
+    expect(baseRecorded).toBe(false);
+
+    await manager.teardownWorktree("88888888-8888-4888-8888-888888888888", true);
   });
 
   it("falls back to the base ref commit author when the parent git config is absent", async () => {

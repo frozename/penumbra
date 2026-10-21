@@ -423,15 +423,7 @@ export {
   REFINER_INPUT_MAX_BYTES,
   REFINER_OUTPUT_MAX_BYTES,
 } from "./services/dispatch-prompt-refiner.js";
-export {
-  classifyDispatchReliability,
-  type DispatchRecommendedAction,
-  type DispatchReliabilityEvent,
-  type DispatchReliabilityHandoff,
-  type DispatchReliabilityInput,
-  type DispatchReliabilityReport,
-  type DispatchReliabilityStatus,
-} from "./services/dispatch-reliability.js";
+export * from "./services/dispatch-reliability.js";
 export {
   collectMentionedPaths,
   type DispatchRoutingGuardInput,
@@ -629,6 +621,7 @@ export {
   type WorktreeGcCandidateReason,
 } from "./worktree/gc-candidates.js";
 export {
+  DISPATCH_BASE_CONFIG_KEY,
   ISOLATED_INSTALL_ARGS,
   ISOLATED_INSTALL_CACHE_KEY,
   isPathInsideOrEqual,

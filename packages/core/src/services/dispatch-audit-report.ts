@@ -1,5 +1,10 @@
 import type { Database } from "bun:sqlite";
 
+import {
+  type CommitIntegrityEvidence,
+  CommitIntegrityEvidenceSchema,
+} from "@penumbra/api-contract";
+
 import type { HandoffRow } from "../schemas/handoff.js";
 
 // This exported source is compiled in consumer projects whose aliases resolve within those packages.
@@ -45,6 +50,17 @@ function readDispatchEndFlag(
     if (typeof value === "boolean") return value;
   }
   return null;
+}
+
+function readCommitIntegrity(
+  events: { kind: string; meta: unknown }[],
+): CommitIntegrityEvidence | null {
+  const meta = lastDispatchEnd(events)?.meta;
+  if (!meta || typeof meta !== "object") return null;
+  const parsed = CommitIntegrityEvidenceSchema.safeParse(
+    (meta as Record<string, unknown>).commit_integrity,
+  );
+  return parsed.success ? parsed.data : null;
 }
 
 function readClassifierDecline(
@@ -105,6 +121,7 @@ export function buildDispatchAuditReportForHandoff(
     adapterStreaming: null,
     dispatchPrompt: handoff.message,
     dispatchEndDirty: readDispatchEndFlag(events, "dirty"),
+    commitIntegrity: readCommitIntegrity(events),
     now: sources.clock(),
   });
 

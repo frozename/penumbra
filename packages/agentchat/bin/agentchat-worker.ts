@@ -126,6 +126,7 @@ import {
 } from "../src/worker/worktree-integration.js";
 import { createWorkerWorktreeManager } from "../src/worker/worktree-manager.js";
 import { buildWorktreeReadyEvent } from "../src/worker/worktree-ready-event.js";
+import { getWorktreeSnapshot } from "../src/worker/worktree-snapshot.js";
 import { WriteToolsExecutor } from "../src/worker/write-tools-executor.js";
 
 function flag(name: string, fallback?: string): string | undefined {
@@ -1513,36 +1514,10 @@ const dispatcher = createWorkerDispatcher({
   onDispatchEvent: (event) => {
     void postDiscordEvent(event);
   },
-  // Captured at dispatch.end so the reliability classifier has a stable
-  // signal even after a maestro FF-merges and main moves past HEAD. Uses
-  // git status (filtered to skip node_modules/.test-storage) plus a HEAD
-  // != worktree-base check via reflog presence — reflog has >1 entry only
-  // if commits actually happened on the agent branch.
-  getWorktreeSnapshot: async (handoffId) => {
-    const wt = worktreeManager.getWorktree(handoffId);
-    if (!wt) return { worktreeChanged: null, dirty: null, committed: null };
-    const { promisify } = await import("node:util");
-    const { exec: execCb } = await import("node:child_process");
-    const exec = promisify(execCb);
-    try {
-      const [statusRes, reflogRes] = await Promise.all([
-        exec(
-          `git -C "${wt.path}" status --short --untracked-files=all -- '.' ':(exclude)node_modules' ':(exclude)packages/*/node_modules' ':(exclude).test-storage'`,
-        ).catch(() => ({ stdout: "" })),
-        exec(
-          `git -C "${wt.path}" reflog show --no-decorate ${wt.branchName} 2>/dev/null | wc -l`,
-        ).catch(() => ({ stdout: "0" })),
-      ]);
-      const dirty = statusRes.stdout.trim().length > 0;
-      // Reflog of a freshly-created branch has 1 entry (the branch creation).
-      // >1 means commits / amends happened.
-      const reflogEntries = parseInt(reflogRes.stdout.trim(), 10) || 0;
-      const committed = reflogEntries > 1;
-      return { worktreeChanged: dirty || committed, dirty, committed };
-    } catch {
-      return { worktreeChanged: null, dirty: null, committed: null };
-    }
-  },
+  getWorktreeSnapshot: (handoffId) =>
+    getWorktreeSnapshot(handoffId, {
+      getWorktree: (id) => worktreeManager.getWorktree(id),
+    }),
   claim: (id) => client.claimHandoff(id, workerId),
   // Cross-project claim affinity. `config` is read lazily (each handoff) so the
   // warm_pool flag survives hot-reload, mirroring computePrewarmTargetsNow.
