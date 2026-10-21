@@ -862,6 +862,7 @@ interface DispatchTurnContext {
   arm: () => void;
   markUpdate: () => void;
   accumulate: (text: string, phase?: string) => void;
+  markSegmentBreak: () => void;
   permissionContext: StdioAcpPermissionContext;
   toolNames: Map<string, string>;
 }
@@ -1170,6 +1171,14 @@ function codexChunkPhase(update: AcpSessionUpdate): string | undefined {
   return typeof phase === "string" && phase.length > 0 ? phase : undefined;
 }
 
+// A tool call or thought between two message chunks ends a message segment.
+// Without a separator the next segment's first line is glued onto the last
+// line of the previous one, so line-initial markers like CHECK_RESULT are lost.
+function appendMessageSegment(buffer: string, text: string, segmentBreak: boolean): string {
+  if (segmentBreak && buffer.length > 0 && !buffer.endsWith("\n")) return `${buffer}\n${text}`;
+  return buffer + text;
+}
+
 function handleAgentMessageChunk(ctx: DispatchTurnContext, update: AcpSessionUpdate): void {
   const content = update.content;
   if (content?.type !== "text" || typeof content.text !== "string") return;
@@ -1277,12 +1286,15 @@ function dispatchSessionUpdate(ctx: DispatchTurnContext, update: AcpSessionUpdat
       handleAgentMessageChunk(ctx, update);
       break;
     case "agent_thought_chunk":
+      ctx.markSegmentBreak();
       handleAgentThoughtChunk(ctx, update);
       break;
     case "tool_call":
+      ctx.markSegmentBreak();
       handleToolCall(ctx, update);
       break;
     case "tool_call_update":
+      ctx.markSegmentBreak();
       handleToolCallUpdate(ctx, update);
       break;
     case "usage_update":
@@ -1949,12 +1961,14 @@ export class StdioAcpAdapter implements Adapter {
 interface MessagePhaseAccum {
   sawPhasedChunk: boolean;
   finalAnswerText: string;
+  finalAnswerSegmentBreak: boolean;
 }
 
 interface DispatchState {
   server: StdioAcpHandle | null;
   pooledEntry: AcpWarmPoolEntry | null;
   accumulatedText: string;
+  segmentBreak: boolean;
   messagePhase: MessagePhaseAccum;
   frameworkOverheadMs: number | undefined;
   errorThrown: boolean;
@@ -1993,8 +2007,13 @@ function buildInlineTurnContext(args: InlineTurnContextArgs): DispatchTurnContex
     markUpdate: (): void => {
       state.lastSessionUpdateTs = Date.now();
     },
+    markSegmentBreak: (): void => {
+      state.segmentBreak = true;
+      state.messagePhase.finalAnswerSegmentBreak = true;
+    },
     accumulate: (text: string, phase?: string): void => {
-      state.accumulatedText += text;
+      state.accumulatedText = appendMessageSegment(state.accumulatedText, text, state.segmentBreak);
+      state.segmentBreak = false;
       // codex-acp tags each agent_message_chunk with _meta.codex.phase
       // ("commentary" progress narration vs "final_answer"). Only
       // final_answer chunks count toward the recorded response; unknown
@@ -2008,7 +2027,13 @@ function buildInlineTurnContext(args: InlineTurnContextArgs): DispatchTurnContex
       if (phase === undefined) return;
       state.messagePhase.sawPhasedChunk = true;
       if (phase === CODEX_FINAL_ANSWER_PHASE) {
-        state.messagePhase.finalAnswerText += text;
+        const phases = state.messagePhase;
+        phases.finalAnswerText = appendMessageSegment(
+          phases.finalAnswerText,
+          text,
+          phases.finalAnswerSegmentBreak,
+        );
+        phases.finalAnswerSegmentBreak = false;
       }
     },
     permissionContext,
@@ -2153,7 +2178,12 @@ function computeDispatchConstants(
 // turn's recorded response.
 function resetPromptTurnAccumulators(state: DispatchState): void {
   state.accumulatedText = "";
-  state.messagePhase = { sawPhasedChunk: false, finalAnswerText: "" };
+  state.segmentBreak = false;
+  state.messagePhase = {
+    sawPhasedChunk: false,
+    finalAnswerText: "",
+    finalAnswerSegmentBreak: false,
+  };
 }
 
 function createDispatchState(): DispatchState {
@@ -2161,7 +2191,8 @@ function createDispatchState(): DispatchState {
     server: null,
     pooledEntry: null,
     accumulatedText: "",
-    messagePhase: { sawPhasedChunk: false, finalAnswerText: "" },
+    segmentBreak: false,
+    messagePhase: { sawPhasedChunk: false, finalAnswerText: "", finalAnswerSegmentBreak: false },
     frameworkOverheadMs: undefined,
     errorThrown: false,
     warmupTimedOut: false,
