@@ -812,7 +812,9 @@ describe("penumbra-fix-until-green independent check verification", () => {
     );
     expect(verifyCall).toBeDefined();
     expect(verifyCall!.prompt).toContain("/abs-worktrees/h-123");
-    expect(verifyCall!.prompt).toContain("git -C '/abs' worktree list");
+    expect(verifyCall!.prompt).toContain(
+      "If that directory does not exist, locate the worktree with `git -C '/abs' worktree list` and pick the entry for the branch named feat/x (or the handoff id h-123), then cd to it.",
+    );
     expect(verifyCall!.prompt).toContain("feat/x");
     expect(verifyCall!.prompt).toContain("h-123");
   });
@@ -2204,14 +2206,21 @@ describe("penumbra-fix-until-green read-only grader and verifier on the shared c
     ],
   });
 
-  async function prompts(repo: string) {
+  async function prompts(repo: string, extra: Record<string, unknown> = {}) {
     const { agentCalls, error } = await runFixUntilGreen(
-      { task: { message: "m" }, check: "true", maxRounds: 1, rubric: ["criterion one"], repo },
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 1,
+        rubric: ["criterion one"],
+        repo,
+        ...extra,
+      },
       {
         workflow: passFanout,
         agent: async (_prompt, options) => {
           const label = String(options?.label ?? "");
-          if (label.startsWith("verify-check")) return { ran: true, check_exit: 0 };
+          if (label.startsWith("verify-check")) return { ran: true, check_exit: 0, parity_exit: 0 };
           if (label.startsWith("rubric"))
             return {
               inspected: true,
@@ -2282,18 +2291,57 @@ describe("penumbra-fix-until-green read-only grader and verifier on the shared c
     }
   });
 
-  test("without an absolute repository root the verifier takes only the exact worktree and never checks out", async () => {
-    const { verifier } = await prompts("relative/path");
+  test("with an absolute repository root the verifier is told to measure the CHECK and run the PARITY", async () => {
+    const { verifier } = await prompts("/abs", { parityCheck: "make ci-parity" });
+
+    expect(verifier).toContain("The worker claimed PASS. Do not trust that claim — measure it.");
+    expect(verifier).toContain(
+      "Run this CHECK command VERBATIM by spawning bash with the command as a single argument:\n    bash -c 'true'",
+    );
+    expect(verifier).toContain(
+      "Then run this PARITY command VERBATIM in the same worktree, by spawning bash with the command as a single argument:\n    bash -c 'make ci-parity'",
+    );
+    expect(verifier).toContain("never report parity_exit before the PARITY command has exited.");
+    expect(verifier).not.toContain("must not run");
+  });
+
+  test("without an absolute repository root the verifier reports ran:false and runs no bare git worktree list", async () => {
+    const { verifier } = await prompts("relative/path", { parityCheck: "make ci-parity" });
+    const readOnlyLine =
+      "Read-only rule: in the repository root use only git -C <repo> diff|show|log|rev-parse|ls-tree and git -C <repo> worktree list. Never run checkout, switch, reset, stash, clean, commit, branch, worktree add or worktree remove, in the repository root or in any other checkout. Running the CHECK verbatim inside the dispatch worktree is allowed even when the CHECK itself invokes git.";
+    const noRootLine =
+      "The repository root could not be derived from input.repo, input.caller_cwd, or defaults.caller_cwd, so the dispatch worktree cannot be located safely. Do not run the CHECK below and do not run git from your own working directory, which can be a different repository: set ran:false, check_exit:-1, and say in notes that no repository root was known. Never check the branch test/x_h-777 out anywhere to run the CHECK.";
+    const lines = verifier.split("\n");
 
     expect(verifier).toContain(
       "Read-only rule: in the repository root use only git -C <repo> diff|show|log|rev-parse|ls-tree and git -C <repo> worktree list.",
     );
     expect(verifier).not.toContain("relative/path");
     expect(verifier).toContain(
-      "use an entry only if its branch is exactly test/x_h-777 (or its path names the handoff id h-777), then cd to it.",
+      "Do not run the CHECK below and do not run git from your own working directory, which can be a different repository: set ran:false, check_exit:-1, and say in notes that no repository root was known.",
     );
     expect(verifier).toContain(
-      "If no entry matches, set ran:false, check_exit:-1, and say so in notes; never check the branch out anywhere to run the CHECK.",
+      "Never check the branch test/x_h-777 out anywhere to run the CHECK.",
+    );
+    expect(verifier).not.toContain("git worktree list");
+    expect(verifier).not.toMatch(/`git[^`]*worktree list/);
+    expect(verifier).not.toContain("Run this CHECK command VERBATIM");
+    // The two lines above are pinned whole, so nothing can be appended to them. Any other line
+    // that told the verifier to run git, cd, or run or measure the CHECK or PARITY would have it
+    // do so in its own working directory, which can be a different repository.
+    expect(lines).toContain(readOnlyLine);
+    expect(lines).toContain(noRootLine);
+    const rest = lines.filter((line) => line !== readOnlyLine && line !== noRootLine).join("\n");
+    expect(rest).not.toMatch(/\bgit\b/);
+    expect(rest).not.toMatch(/\bcd\b/);
+    expect(rest).not.toMatch(/\bmeasure\b/i);
+    expect(rest).not.toMatch(/\b[Rr]un\b[^.:\n]*\b(CHECK|PARITY)\b/);
+    expect(rest).toContain(
+      "The worker claimed PASS, and without a repository root that result cannot be verified here.",
+    );
+    expect(rest).toContain("this is the CHECK you must not run:\n    bash -c 'true'");
+    expect(rest).toContain(
+      "this is the PARITY command you must not run:\n    bash -c 'make ci-parity'",
     );
   });
 });

@@ -599,20 +599,26 @@ for (let i = 0; i < maxRounds; i++) {
       'You are an independent CHECK verifier. Do not edit, commit, push, or land anything.',
       readOnlyRule(hasRepoRoot ? repoRoot : null, true),
       '',
-      verdict.passed ? 'The worker claimed PASS. Do not trust that claim — measure it.' : 'The worker final message carried no CHECK_RESULT line, so its result is unknown. Measure the CHECK yourself.',
+      // Without a repository root the worktree cannot be found, so no line may tell the verifier
+      // to run anything: it would run in its own working directory, which can be another repository.
+      hasRepoRoot
+        ? (verdict.passed ? 'The worker claimed PASS. Do not trust that claim — measure it.' : 'The worker final message carried no CHECK_RESULT line, so its result is unknown. Measure the CHECK yourself.')
+        : `The worker ${verdict.passed ? 'claimed PASS' : 'final message carried no CHECK_RESULT line'}, and without a repository root that result cannot be verified here.`,
       '',
       worktreePath
         ? `Run the CHECK only inside the dispatch worktree, which is likely at ${shellQuote(worktreePath)}: try \`cd ${shellQuote(worktreePath)}\` first. If that directory does not exist, locate the worktree with \`git -C ${shellQuote(repoRoot)} worktree list\` and pick the entry for the branch named ${r.branch} (or the handoff id ${r.handoff_id}), then cd to it. If you still cannot locate it, set ran:false, check_exit:-1, and say so in notes; never check the branch out in the repository root or anywhere else to run the CHECK.`
-        : `The repository root could not be derived from input.repo, input.caller_cwd, or defaults.caller_cwd. Run the CHECK only inside the dispatch worktree: run \`git worktree list\` from your own working directory and use an entry only if its branch is exactly ${r.branch} (or its path names the handoff id ${r.handoff_id}), then cd to it. If no entry matches, set ran:false, check_exit:-1, and say so in notes; never check the branch out anywhere to run the CHECK.`,
+        : `The repository root could not be derived from input.repo, input.caller_cwd, or defaults.caller_cwd, so the dispatch worktree cannot be located safely. Do not run the CHECK below and do not run git from your own working directory, which can be a different repository: set ran:false, check_exit:-1, and say in notes that no repository root was known. Never check the branch ${r.branch} out anywhere to run the CHECK.`,
       '',
-      'Run this CHECK command VERBATIM by spawning bash with the command as a single argument:',
+      hasRepoRoot ? 'Run this CHECK command VERBATIM by spawning bash with the command as a single argument:' : 'For reference only, since no repository root is known, this is the CHECK you must not run:',
       `    ${bashCheckCommand(check)}`,
       ...(parityCheck
         ? [
             '',
-            'Then run this PARITY command VERBATIM in the same worktree, by spawning bash with the command as a single argument:',
+            hasRepoRoot ? 'Then run this PARITY command VERBATIM in the same worktree, by spawning bash with the command as a single argument:' : 'and this is the PARITY command you must not run:',
             `    ${bashCheckCommand(parityCheck)}`,
-            'The PARITY command replays the blocking CI steps and can take about 7 minutes, which can exceed a single Bash call\'s timeout cap. Run it in the background writing to a log file and poll until the process exits (or run it at the maximum allowed timeout and then keep waiting on the process); never report parity_exit before the PARITY command has exited.',
+            ...(hasRepoRoot
+              ? ['The PARITY command replays the blocking CI steps and can take about 7 minutes, which can exceed a single Bash call\'s timeout cap. Run it in the background writing to a log file and poll until the process exits (or run it at the maximum allowed timeout and then keep waiting on the process); never report parity_exit before the PARITY command has exited.']
+              : []),
           ]
         : []),
       '',
