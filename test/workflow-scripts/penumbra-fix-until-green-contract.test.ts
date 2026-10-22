@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 
 import { readRuntimeBody, runWorkflowCapturingPrompts } from "./harness.js";
 
@@ -16,6 +17,7 @@ interface Round {
   reason?: string;
   rubric_status?: string;
   rubric_grade?: unknown;
+  rubric_overall_disagreement?: boolean;
   passed?: boolean;
   verified?: boolean;
   check_exit?: number;
@@ -810,7 +812,9 @@ describe("penumbra-fix-until-green independent check verification", () => {
     );
     expect(verifyCall).toBeDefined();
     expect(verifyCall!.prompt).toContain("/abs-worktrees/h-123");
-    expect(verifyCall!.prompt).toContain("git worktree list");
+    expect(verifyCall!.prompt).toContain(
+      "If that directory does not exist, locate the worktree with `git -C '/abs' worktree list` and pick the entry for the branch named feat/x (or the handoff id h-123), then cd to it.",
+    );
     expect(verifyCall!.prompt).toContain("feat/x");
     expect(verifyCall!.prompt).toContain("h-123");
   });
@@ -1351,7 +1355,7 @@ describe("penumbra-fix-until-green rubric grader scope", () => {
     )!.prompt;
     expect(prompt).toContain("Repository root: /srv/other-repo");
     expect(prompt).toContain("/srv/other-repo-worktrees/h-777");
-    expect(prompt).toContain("git -C /srv/other-repo diff --stat feat/base...test/x_h-777");
+    expect(prompt).toContain("git -C '/srv/other-repo' diff --stat 'feat/base...test/x_h-777'");
     expect(prompt).toContain('mcp__penumbra__worktree_inspect({ handoff_id: "h-777" })');
     expect(prompt).not.toMatch(/\bgit (?!-C )/);
   });
@@ -1378,7 +1382,7 @@ describe("penumbra-fix-until-green rubric grader scope", () => {
     const prompt = agentCalls.find((c) =>
       String(c.options?.label ?? "").startsWith("rubric"),
     )!.prompt;
-    expect(prompt).toContain("git -C /abs diff --stat main...test/x_h-777");
+    expect(prompt).toContain("git -C '/abs' diff --stat 'main...test/x_h-777'");
   });
 
   test("grader returning inspected:false yields GRADER_UNAVAILABLE without a second round", async () => {
@@ -1627,7 +1631,7 @@ describe("penumbra-fix-until-green rubric grader schema and range", () => {
     const prompt = agentCalls.find((c) =>
       String(c.options?.label ?? "").startsWith("rubric"),
     )!.prompt;
-    expect(prompt).toContain("git -C /abs diff --stat feat/d...test/x_h-777");
+    expect(prompt).toContain("git -C '/abs' diff --stat 'feat/d...test/x_h-777'");
   });
 });
 
@@ -1758,5 +1762,586 @@ describe("penumbra-fix-until-green fails closed on an unattested grade or unmark
     const lastOutput = String(result?.last_output ?? "");
     expect(lastOutput).toContain("no CHECK_RESULT marker");
     expect(lastOutput).not.toContain("worker's PASS");
+  });
+});
+
+describe("penumbra-fix-until-green verdict-aware verifier logs and grader text", () => {
+  function fanoutWithCheckLine(checkLine: string) {
+    return async () => ({
+      results: [
+        {
+          ok: true,
+          status: "completed",
+          branch: "test/x_h-777",
+          conversation_id: "c",
+          handoff_id: "h-777",
+          reliability_trustworthy: true,
+          check_line: checkLine,
+        },
+      ],
+    });
+  }
+
+  const verdictCases = [
+    {
+      name: "a worker PASS",
+      checkLine: "CHECK_RESULT: PASS",
+      unavailableLog:
+        "fix-until-green round 1: independent CHECK verifier unavailable; worker PASS not attested on test/x_h-777",
+      measuredLog:
+        "fix-until-green round 1: worker claimed PASS but the independent CHECK verifier measured check_exit=1; treating as FAIL",
+    },
+    {
+      name: "an unmarked round",
+      checkLine: "I committed the change.",
+      unavailableLog:
+        "fix-until-green round 1: independent CHECK verifier unavailable; unmarked round not attested on test/x_h-777",
+      measuredLog:
+        "fix-until-green round 1: round had no CHECK_RESULT marker and the independent CHECK verifier measured check_exit=1; treating as FAIL",
+    },
+  ];
+
+  for (const verdictCase of verdictCases) {
+    test(`an unavailable verifier logs the verdict of ${verdictCase.name}`, async () => {
+      const { logs, error } = await runFixUntilGreen(
+        { task: { message: "m" }, check: "true", maxRounds: 1, defaults: { caller_cwd: "/abs" } },
+        { workflow: fanoutWithCheckLine(verdictCase.checkLine), agent: async () => null },
+      );
+
+      expect(error).toBeUndefined();
+      expect(logs).toContain(verdictCase.unavailableLog);
+    });
+
+    test(`a verifier-measured FAIL logs the verdict of ${verdictCase.name}`, async () => {
+      const { logs, error } = await runFixUntilGreen(
+        { task: { message: "m" }, check: "true", maxRounds: 1, defaults: { caller_cwd: "/abs" } },
+        {
+          workflow: fanoutWithCheckLine(verdictCase.checkLine),
+          agent: async () => ({
+            ran: true,
+            check_exit: 1,
+            failing_segment: "true",
+            output_tail: "boom",
+          }),
+        },
+      );
+
+      expect(error).toBeUndefined();
+      expect(logs).toContain(verdictCase.measuredLog);
+    });
+  }
+
+  const passingCriterion = { index: 1, criterion: "criterion one", pass: true, evidence: "d" };
+  const graderCases = [
+    {
+      name: "inspected:false",
+      grade: { inspected: false, criteria: [], notes: "branch not found" },
+      problem: "could not locate the candidate diff",
+    },
+    {
+      name: "no inspected key",
+      grade: { overall_pass: true, criteria: [passingCriterion] },
+      problem: "did not attest that it read the candidate diff",
+    },
+    {
+      name: "inspected:null",
+      grade: { inspected: null, overall_pass: true, criteria: [passingCriterion] },
+      problem: "did not attest that it read the candidate diff",
+    },
+    {
+      name: "a null result",
+      grade: null,
+      problem: "was unavailable",
+    },
+  ];
+
+  for (const graderCase of graderCases) {
+    test(`a grade with ${graderCase.name} says the grader ${graderCase.problem}`, async () => {
+      const { result, logs, error } = await runFixUntilGreen(
+        {
+          task: { message: "m" },
+          check: "true",
+          maxRounds: 2,
+          rubric: ["criterion one"],
+          defaults: { caller_cwd: "/abs" },
+        },
+        {
+          workflow: fanoutWithCheckLine("CHECK_RESULT: PASS"),
+          agent: async (_prompt, options) => {
+            const label = String(options?.label ?? "");
+            if (label.startsWith("verify-check")) return { ran: true, check_exit: 0 };
+            if (label.startsWith("rubric")) return graderCase.grade;
+            return {};
+          },
+        },
+      );
+
+      expect(error).toBeUndefined();
+      expect(result?.green).toBe(false);
+      expect(result?.last_output).toBe(
+        `Independent rubric grader ${graderCase.problem}; rubric not attested.`,
+      );
+      expect(logs).toContain(
+        `fix-until-green round 1: grader ${graderCase.problem}; rubric not attested on test/x_h-777`,
+      );
+    });
+  }
+});
+
+describe("penumbra-fix-until-green AGENTS.md workflow table", () => {
+  test("the fix-until-green row lists the agentType? and verifyCheck? args the script accepts", () => {
+    const row = readFileSync("AGENTS.md", "utf8")
+      .split("\n")
+      .find((line) => line.startsWith("| `penumbra-fix-until-green`"));
+
+    expect(row).toBeDefined();
+    expect(row).toContain("agentType?");
+    expect(row).toContain("verifyCheck?");
+  });
+});
+
+describe("penumbra-fix-until-green rubric verdict from per-criterion grades", () => {
+  const rubric = ["criterion one", "criterion two"];
+  const one = { index: 1, criterion: "criterion one", pass: true, evidence: "hunk 1" };
+  const two = { index: 2, criterion: "criterion two", pass: true, evidence: "hunk 2" };
+  const passFanout = async () => ({
+    results: [
+      {
+        ok: true,
+        status: "completed",
+        branch: "test/x_h-777",
+        conversation_id: "c",
+        handoff_id: "h-777",
+        reliability_trustworthy: true,
+        check_line: "CHECK_RESULT: PASS",
+      },
+    ],
+  });
+
+  async function grade(value: unknown) {
+    return await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 2,
+        rubric,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: passFanout,
+        agent: async (_prompt, options) => {
+          const label = String(options?.label ?? "");
+          if (label.startsWith("verify-check")) return { ran: true, check_exit: 0 };
+          if (label.startsWith("rubric")) return value;
+          return {};
+        },
+      },
+    );
+  }
+
+  function secondRoundMessage(workflowCalls: Array<{ name: string; args: unknown }>): string {
+    const fanoutCalls = workflowCalls.filter((call) => call.name === "penumbra-fanout");
+    expect(fanoutCalls).toHaveLength(2);
+    return String((fanoutCalls[1]!.args as FanoutArgs).tasks[0]?.message ?? "");
+  }
+
+  const unsupportedPasses = [
+    {
+      name: "an empty criteria list",
+      criteria: [],
+      failure: "- criterion one: grader did not return this criterion",
+    },
+    {
+      name: "a failing criterion",
+      criteria: [one, { ...two, pass: false, evidence: "no test" }],
+      failure: "- criterion two: no test",
+    },
+    {
+      name: "a missing criterion",
+      criteria: [one],
+      failure: "- criterion two: grader did not return this criterion",
+    },
+    {
+      name: "a failing duplicated criterion",
+      criteria: [one, two, { ...two, pass: false, evidence: "again" }],
+      failure: "- criterion two: hunk 2; again",
+    },
+    {
+      name: "one criterion graded under both indexes",
+      criteria: [one, { ...one, index: 2 }],
+      failure: "- criterion two: grader did not return this criterion",
+    },
+  ];
+
+  for (const unsupported of unsupportedPasses) {
+    test(`overall_pass:true with ${unsupported.name} is not green`, async () => {
+      const { result, workflowCalls, logs, error } = await grade({
+        inspected: true,
+        overall_pass: true,
+        criteria: unsupported.criteria,
+      });
+
+      expect(error).toBeUndefined();
+      expect(result?.green).toBe(false);
+      const rounds = result?.rounds as Round[];
+      expect(rounds[0]?.passed).toBe(false);
+      expect(rounds[0]?.rubric_overall_disagreement).toBe(true);
+      expect(logs.some((line) => line.includes("overall_pass=true disagrees"))).toBe(true);
+      const message = secondRoundMessage(workflowCalls);
+      expect(message).toContain(unsupported.failure);
+      expect(message).not.toContain("overall_pass=false or an incomplete result");
+    });
+  }
+
+  const strayItems = [
+    {
+      name: "a duplicated criterion",
+      criteria: [one, two, { ...two, evidence: "again" }],
+      reasons: "duplicate",
+    },
+    {
+      name: "an unknown extra criterion",
+      criteria: [one, two, { index: 9, criterion: "style nit", pass: true, evidence: "x" }],
+      reasons: "unknown",
+    },
+    {
+      name: "an item whose text names another criterion",
+      criteria: [one, two, { ...one, index: 2 }],
+      reasons: "conflict",
+    },
+  ];
+
+  for (const stray of strayItems) {
+    test(`passing criteria with ${stray.name} are not green and are no overall_pass disagreement`, async () => {
+      const { result, workflowCalls, logs, error } = await grade({
+        inspected: true,
+        overall_pass: true,
+        criteria: stray.criteria,
+      });
+
+      expect(error).toBeUndefined();
+      expect(result?.green).toBe(false);
+      const rounds = result?.rounds as Round[];
+      expect(rounds[0]?.passed).toBe(false);
+      expect(rounds[0]?.rubric_overall_disagreement).toBe(false);
+      expect(logs.some((line) => line.includes("disagrees with its per-criterion grades"))).toBe(
+        false,
+      );
+      expect(logs).toContain(
+        `fix-until-green round 1: grader returned 1 item(s) outside the rubric (${stray.reasons}); the rubric cannot be green on test/x_h-777`,
+      );
+      const message = secondRoundMessage(workflowCalls);
+      expect(message).toContain(
+        "The check command passed, but the independent rubric grader returned items outside the rubric (a stray, duplicated or misnumbered grade), so the round was not accepted. That is a grading problem, not a defect in the change: do not change code for it.",
+      );
+      expect(message).not.toContain("failed these criteria");
+      expect(message).not.toMatch(/^- /m);
+    });
+  }
+
+  test("failed criteria are listed and stray items are named as a grading problem", async () => {
+    const { result, workflowCalls, error } = await grade({
+      inspected: true,
+      overall_pass: false,
+      criteria: [
+        one,
+        { ...two, pass: false, evidence: "no test" },
+        { index: 9, criterion: "style nit", pass: true, evidence: "x" },
+      ],
+    });
+
+    expect(error).toBeUndefined();
+    expect((result?.rounds as Round[])[0]?.rubric_overall_disagreement).toBe(false);
+    const message = secondRoundMessage(workflowCalls);
+    expect(message).toContain(
+      "The check command passed, but independent rubric grading failed these criteria:\n- criterion two: no test\nThe independent rubric grader also returned items outside the rubric",
+    );
+    expect(message).not.toContain("style nit");
+  });
+
+  test("overall_pass:false over passing criteria and a stray item names the stray item as the cause", async () => {
+    const { result, logs, error } = await grade({
+      inspected: true,
+      overall_pass: false,
+      criteria: [one, two, { index: 9, criterion: "style nit", pass: true, evidence: "x" }],
+    });
+
+    expect(error).toBeUndefined();
+    expect(result?.green).toBe(false);
+    expect((result?.rounds as Round[])[0]?.rubric_overall_disagreement).toBe(true);
+    expect(logs).toContain(
+      "fix-until-green round 1: grader overall_pass=false disagrees with its per-criterion grades; the criteria decide (rubric FAIL: items outside the rubric) on test/x_h-777",
+    );
+  });
+
+  test("overall_pass:false with every criterion passing is green, logged and not re-dispatched", async () => {
+    const { result, workflowCalls, logs, error } = await grade({
+      inspected: true,
+      overall_pass: false,
+      criteria: [one, two],
+      notes: "a caution about naming",
+    });
+
+    expect(error).toBeUndefined();
+    expect(result?.green).toBe(true);
+    expect(result?.rounds_used).toBe(1);
+    expect(workflowCalls.filter((call) => call.name === "penumbra-fanout")).toHaveLength(1);
+    const rounds = result?.rounds as Round[];
+    expect(rounds[0]?.passed).toBe(true);
+    expect(rounds[0]?.rubric_overall_disagreement).toBe(true);
+    expect(logs).toContain(
+      "fix-until-green round 1: grader overall_pass=false disagrees with its per-criterion grades; the criteria decide (rubric PASS) on test/x_h-777",
+    );
+  });
+
+  test("an agreeing overall_pass records no disagreement", async () => {
+    const { result } = await grade({ inspected: true, overall_pass: true, criteria: [one, two] });
+
+    expect(result?.green).toBe(true);
+    expect((result?.rounds as Round[])[0]?.rubric_overall_disagreement).toBe(false);
+  });
+
+  const agreements = [
+    {
+      name: "no overall_pass over passing criteria",
+      value: { inspected: true, criteria: [one, two] },
+      green: true,
+    },
+    {
+      name: "overall_pass:false over a failing criterion",
+      value: { inspected: true, overall_pass: false, criteria: [one, { ...two, pass: false }] },
+      green: false,
+    },
+    {
+      name: "no overall_pass over a failing criterion",
+      value: { inspected: true, criteria: [one, { ...two, pass: false }] },
+      green: false,
+    },
+  ];
+
+  for (const agreement of agreements) {
+    test(`${agreement.name} records and logs no disagreement`, async () => {
+      const { result, logs, error } = await grade(agreement.value);
+
+      expect(error).toBeUndefined();
+      expect(result?.green).toBe(agreement.green);
+      expect((result?.rounds as Round[])[0]?.rubric_overall_disagreement).toBe(false);
+      expect(logs.some((line) => line.includes("disagrees with its per-criterion grades"))).toBe(
+        false,
+      );
+    });
+  }
+
+  test("overall_pass:true over a failing criterion logs rubric FAIL and feeds the notes forward", async () => {
+    const { workflowCalls, logs } = await grade({
+      inspected: true,
+      overall_pass: true,
+      criteria: [one, { ...two, pass: false, evidence: "no test" }],
+      notes: "a caution about naming",
+    });
+
+    expect(logs).toContain(
+      "fix-until-green round 1: grader overall_pass=true disagrees with its per-criterion grades; the criteria decide (rubric FAIL) on test/x_h-777",
+    );
+    const message = secondRoundMessage(workflowCalls);
+    expect(message).toContain("- criterion two: no test");
+    expect(message).toContain("Grader notes: a caution about naming");
+  });
+
+  test("the RUBRIC_RESULT schema ties overall_pass to every criterion passing", async () => {
+    const { agentCalls } = await grade({
+      inspected: true,
+      overall_pass: true,
+      criteria: [one, two],
+    });
+
+    const schema = agentCalls.find((call) =>
+      String(call.options?.label ?? "").startsWith("rubric"),
+    )!.options?.schema as { properties: { overall_pass: { description: string } } };
+    expect(schema.properties.overall_pass.description).toContain(
+      'must equal "every criterion passed"',
+    );
+  });
+
+  test("the grader prompt ties overall_pass to every criterion passing", async () => {
+    const { agentCalls } = await grade({
+      inspected: true,
+      overall_pass: true,
+      criteria: [one, two],
+    });
+
+    const prompt = agentCalls.find((call) =>
+      String(call.options?.label ?? "").startsWith("rubric"),
+    )!.prompt;
+    expect(prompt).toContain('overall_pass must equal "every criterion passed"');
+    expect(prompt).toContain("Put cautions, nits and reservations in notes, never in overall_pass");
+  });
+
+  test("the native README documents both rubric differences from the native workflow", () => {
+    const readme = readFileSync("plugin/workflows/penumbra-fix-until-green/README.md", "utf8");
+
+    expect(readme).toContain("rubric_overall_disagreement: true");
+    expect(readme).toContain("still requires `overall_pass === true`");
+    expect(readme).toContain(
+      "accepts a paraphrased criterion text under a valid index, because graders shorten criteria",
+    );
+    expect(readme).toContain(
+      "This native workflow requires the index and the text to name the same criterion (`resolveMatchIndex`)",
+    );
+  });
+});
+
+describe("penumbra-fix-until-green read-only grader and verifier on the shared clone", () => {
+  const passFanout = async () => ({
+    results: [
+      {
+        ok: true,
+        status: "completed",
+        branch: "test/x_h-777",
+        conversation_id: "c",
+        handoff_id: "h-777",
+        reliability_trustworthy: true,
+        check_line: "CHECK_RESULT: PASS",
+      },
+    ],
+  });
+
+  async function prompts(repo: string, extra: Record<string, unknown> = {}) {
+    const { agentCalls, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 1,
+        rubric: ["criterion one"],
+        repo,
+        ...extra,
+      },
+      {
+        workflow: passFanout,
+        agent: async (_prompt, options) => {
+          const label = String(options?.label ?? "");
+          if (label.startsWith("verify-check")) return { ran: true, check_exit: 0, parity_exit: 0 };
+          if (label.startsWith("rubric"))
+            return {
+              inspected: true,
+              overall_pass: true,
+              criteria: [{ index: 1, criterion: "criterion one", pass: true, evidence: "d" }],
+            };
+          return {};
+        },
+      },
+    );
+    expect(error).toBeUndefined();
+    const promptFor = (prefix: string) =>
+      agentCalls.find((call) => String(call.options?.label ?? "").startsWith(prefix))!.prompt;
+    return { grader: promptFor("rubric"), verifier: promptFor("verify-check") };
+  }
+
+  const forbidden =
+    "Never run checkout, switch, reset, stash, clean, commit, branch, worktree add or worktree remove, in the repository root or in any other checkout.";
+
+  test("both prompts carry the read-only rule for the repository root", async () => {
+    const { grader, verifier } = await prompts("/abs");
+
+    expect(grader).toContain(
+      "Read-only rule: in the repository root use only git -C '/abs' diff|show|log|rev-parse|ls-tree.",
+    );
+    expect(grader).toContain(forbidden);
+    expect(verifier).toContain(
+      "Read-only rule: in the repository root use only git -C '/abs' diff|show|log|rev-parse|ls-tree and git -C '/abs' worktree list.",
+    );
+    expect(verifier).toContain(forbidden);
+
+    const checkMayUseGit =
+      "Running the CHECK verbatim inside the dispatch worktree is allowed even when the CHECK itself invokes git.";
+    expect(verifier).toContain(checkMayUseGit);
+    expect(grader).not.toContain(checkMayUseGit);
+  });
+
+  test("the grader grades from the diff and never runs the check", async () => {
+    const { grader } = await prompts("/abs");
+
+    expect(grader).toContain(
+      "Grade from the diff alone: do not run the CHECK command, tests, builds or installs.",
+    );
+    expect(grader).not.toContain("command output");
+  });
+
+  test("the verifier runs the check only in the dispatch worktree found through git -C <repo>", async () => {
+    const { verifier } = await prompts("/abs");
+
+    expect(verifier).toContain("Run the CHECK only inside the dispatch worktree");
+    expect(verifier).toContain("`git -C '/abs' worktree list`");
+    expect(verifier).toContain(
+      "If you still cannot locate it, set ran:false, check_exit:-1, and say so in notes; never check the branch out in the repository root or anywhere else to run the CHECK.",
+    );
+  });
+
+  test("a repository root with a space is quoted in every printed command", async () => {
+    const { grader, verifier } = await prompts("/srv/my repo");
+
+    expect(grader).toContain("git -C '/srv/my repo' diff --stat 'main...test/x_h-777'");
+    expect(grader).toContain("git -C '/srv/my repo' diff 'main...test/x_h-777' -- <path>");
+    expect(verifier).toContain("`cd '/srv/my repo-worktrees/h-777'`");
+    expect(verifier).toContain("`git -C '/srv/my repo' worktree list`");
+    for (const prompt of [grader, verifier]) {
+      const commandLines = prompt.split("\n").filter((line) => /\bgit -C |\bcd /.test(line));
+      expect(commandLines.length).toBeGreaterThan(0);
+      for (const line of commandLines) expect(line).not.toMatch(/(?<!')\/srv\/my repo/);
+    }
+  });
+
+  test("with an absolute repository root the verifier is told to measure the CHECK and run the PARITY", async () => {
+    const { verifier } = await prompts("/abs", { parityCheck: "make ci-parity" });
+
+    expect(verifier).toContain("The worker claimed PASS. Do not trust that claim — measure it.");
+    expect(verifier).toContain(
+      "Run this CHECK command VERBATIM by spawning bash with the command as a single argument:\n    bash -c 'true'",
+    );
+    expect(verifier).toContain(
+      "Then run this PARITY command VERBATIM in the same worktree, by spawning bash with the command as a single argument:\n    bash -c 'make ci-parity'",
+    );
+    expect(verifier).toContain("never report parity_exit before the PARITY command has exited.");
+    expect(verifier).not.toContain("must not run");
+  });
+
+  test("without an absolute repository root the verifier reports ran:false and runs no bare git worktree list", async () => {
+    const { verifier } = await prompts("relative/path", { parityCheck: "make ci-parity" });
+    const readOnlyLine =
+      "Read-only rule: in the repository root use only git -C <repo> diff|show|log|rev-parse|ls-tree and git -C <repo> worktree list. Never run checkout, switch, reset, stash, clean, commit, branch, worktree add or worktree remove, in the repository root or in any other checkout. Running the CHECK verbatim inside the dispatch worktree is allowed even when the CHECK itself invokes git.";
+    const noRootLine =
+      "The repository root could not be derived from input.repo, input.caller_cwd, or defaults.caller_cwd, so the dispatch worktree cannot be located safely. Do not run the CHECK below and do not run git from your own working directory, which can be a different repository: set ran:false, check_exit:-1, and say in notes that no repository root was known. Never check the branch test/x_h-777 out anywhere to run the CHECK.";
+    const lines = verifier.split("\n");
+
+    expect(verifier).toContain(
+      "Read-only rule: in the repository root use only git -C <repo> diff|show|log|rev-parse|ls-tree and git -C <repo> worktree list.",
+    );
+    expect(verifier).not.toContain("relative/path");
+    expect(verifier).toContain(
+      "Do not run the CHECK below and do not run git from your own working directory, which can be a different repository: set ran:false, check_exit:-1, and say in notes that no repository root was known.",
+    );
+    expect(verifier).toContain(
+      "Never check the branch test/x_h-777 out anywhere to run the CHECK.",
+    );
+    expect(verifier).not.toContain("git worktree list");
+    expect(verifier).not.toMatch(/`git[^`]*worktree list/);
+    expect(verifier).not.toContain("Run this CHECK command VERBATIM");
+    // The two lines above are pinned whole, so nothing can be appended to them. Any other line
+    // that told the verifier to run git, cd, or run or measure the CHECK or PARITY would have it
+    // do so in its own working directory, which can be a different repository.
+    expect(lines).toContain(readOnlyLine);
+    expect(lines).toContain(noRootLine);
+    const rest = lines.filter((line) => line !== readOnlyLine && line !== noRootLine).join("\n");
+    expect(rest).not.toMatch(/\bgit\b/);
+    expect(rest).not.toMatch(/\bcd\b/);
+    expect(rest).not.toMatch(/\bmeasure\b/i);
+    expect(rest).not.toMatch(/\b[Rr]un\b[^.:\n]*\b(CHECK|PARITY)\b/);
+    expect(rest).toContain(
+      "The worker claimed PASS, and without a repository root that result cannot be verified here.",
+    );
+    expect(rest).toContain("this is the CHECK you must not run:\n    bash -c 'true'");
+    expect(rest).toContain(
+      "this is the PARITY command you must not run:\n    bash -c 'make ci-parity'",
+    );
   });
 });

@@ -18,7 +18,7 @@ const start = declarationIndex("parseCheck");
 const end = declarationIndex("hopFields");
 expect(end, "hopFields must follow parseCheck").toBeGreaterThan(start);
 
-const parseCheck = new Function(`${source.slice(start, end)}\nreturn parseCheck`)();
+const parseCheck = new Function("log", `${source.slice(start, end)}\nreturn parseCheck`)(() => {});
 
 test("passes when PASS marker is on the first line", () => {
   expect(parseCheck("CHECK_RESULT: PASS\nAll good")).toEqual({ passed: true, output: "" });
@@ -214,4 +214,82 @@ test("a PASS seen only in failure_tail is not trusted (stays unknown)", () => {
     unknown: true,
     output: "Summary.\nCHECK_RESULT: PASS",
   });
+});
+
+test("first_line FAIL found only in failure_tail is a failure, not unknown, without a check_line", () => {
+  const tail = "x\nCHECK_RESULT: FAIL\ny";
+
+  expect(parseCheck({ failure_tail: tail })).toEqual({ passed: false, output: tail });
+});
+
+test("first_line without check_line or a marker in failure_tail is unknown and reports the tail", () => {
+  expect(parseCheck({ failure_tail: "tail" })).toEqual({
+    passed: false,
+    unknown: true,
+    output: "tail",
+  });
+});
+
+test("no parse output stringifies the result object", () => {
+  const unknownEmpty = { passed: false, unknown: true, output: "" };
+  const cases = [
+    { result: parseCheck({}), expected: unknownEmpty },
+    { result: parseCheck({}, "full"), expected: unknownEmpty },
+    {
+      result: parseCheck({ check_line: "CHECK_RESULT: FAIL" }, "full"),
+      expected: { passed: false, output: "CHECK_RESULT: FAIL" },
+    },
+    {
+      result: parseCheck({ failure_tail: "CHECK_RESULT: FAIL" }, "full"),
+      expected: { passed: false, output: "CHECK_RESULT: FAIL" },
+    },
+    {
+      result: parseCheck({ check_line: 7, response: null, failure_tail: { nested: true } }),
+      expected: unknownEmpty,
+    },
+    {
+      result: parseCheck({ check_line: 7, response: null, failure_tail: { nested: true } }, "full"),
+      expected: unknownEmpty,
+    },
+  ];
+
+  for (const { result, expected } of cases) {
+    expect(result.passed).toBe(false);
+    expect(result.output).not.toContain("[object Object]");
+    expect(result).toEqual(expected);
+  }
+});
+
+test("full mode without a response scans and reports failure_tail before check_line", () => {
+  const tail = "x\nCHECK_RESULT: FAIL\ny";
+
+  expect(parseCheck({ check_line: "Working", failure_tail: tail }, "full")).toEqual({
+    passed: false,
+    output: tail,
+  });
+});
+
+test("full mode without a response keeps an explicit FAIL in check_line beside a markerless tail", () => {
+  expect(
+    parseCheck({ check_line: "CHECK_RESULT: FAIL", failure_tail: "```\nboom" }, "full"),
+  ).toEqual({ passed: false, output: "```\nboom" });
+});
+
+test("full mode without a response does not trust a PASS in check_line or failure_tail", () => {
+  expect(parseCheck({ check_line: "CHECK_RESULT: PASS" }, "full")).toEqual({
+    passed: false,
+    unknown: true,
+    output: "CHECK_RESULT: PASS",
+  });
+  expect(parseCheck({ failure_tail: "CHECK_RESULT: PASS" }, "full")).toEqual({
+    passed: false,
+    unknown: true,
+    output: "CHECK_RESULT: PASS",
+  });
+});
+
+test("first_line output prefers failure_tail over response and check_line", () => {
+  expect(
+    parseCheck({ check_line: "I committed.", response: "the response", failure_tail: "the tail" }),
+  ).toEqual({ passed: false, unknown: true, output: "the tail" });
 });

@@ -16,6 +16,8 @@ export const meta = {
 // graderModel defaults to 'sonnet'; pass graderModel:'inherit' to use the session-default model.
 // Composition: run this as the top-level Workflow. Every round calls workflow('penumbra-fanout'), and workflow() cannot be called from within a child workflow; penumbra-loop-discover-to-green inlines this loop for that reason.
 // Rubric: the grader reads only the candidate diff (worktree_inspect, else git -C <repo> diff <base>...<branch>, with the repo from args.repo or caller_cwd). Write every criterion so the diff alone can prove it. A grader that cannot read the diff reports GRADER_UNAVAILABLE.
+// Rubric matching: a grader item counts for the criterion its index names, even under paraphrased text, unless its text exactly names a different criterion; that conflict counts for neither.
+// Rubric verdict: green only when the grade has inspected:true and every criterion is graded exactly once and passes; a stray, duplicate or conflicting item fails the round. overall_pass does not decide; when it disagrees with the per-criterion grades the round logs it and records rubric_overall_disagreement:true. Stray, duplicate or conflicting items are logged and forwarded as grading problems, not as an overall_pass disagreement.
 // A reply without a CHECK_RESULT marker is UNKNOWN: with verifyCheck on, the independent verifier's check_exit decides the round; otherwise it is a FAIL.
 // A missing penumbra:penumbra-fanout-proxy agent stops round 1 with reason proxy_not_installed.
 // task-spec-validation:begin
@@ -164,7 +166,7 @@ const RUBRIC_RESULT = {
   properties: {
     overall_pass: {
       type: 'boolean',
-      description: 'explicit verdict for the whole rubric; decide from this field',
+      description: 'must equal "every criterion passed"; cautions belong in notes, and the verdict comes from the per-criterion grades',
     },
     inspected: {
       type: 'boolean',
@@ -244,43 +246,58 @@ function roundMessage(roundIndex, prevBranch, prevOutput) {
 }
 
 function parseCheck(result, responseMode = 'first_line') {
-  const hasCheckLine = result && typeof result === 'object' && typeof result.check_line === 'string'
-  const hasResponse = result && typeof result === 'object' && typeof result.response === 'string'
-  const useFirstLine = responseMode === 'first_line' && hasCheckLine
+  const isObject = result !== null && typeof result === 'object'
+  const checkLine = isObject && typeof result.check_line === 'string' ? result.check_line : null
+  const response = isObject && typeof result.response === 'string' ? result.response : null
+  const failureTail = isObject && typeof result.failure_tail === 'string' ? result.failure_tail : ''
+  // check_line is optional in the fanout result schema; when it and the response are
+  // both absent, failure_tail is the only text that can carry an explicit FAIL.
+  const useFirstLine = responseMode === 'first_line' && isObject && (checkLine !== null || response === null)
   if (!useFirstLine && responseMode !== 'first_line') {
     log(`WARNING: fix-until-green: response_mode is ${responseMode}; check parsing will scan the full worker response for CHECK_RESULT rather than only the first line.`)
   }
+  // Never stringify the result object itself: it would scan and report "[object Object]".
+  // Without a response, failure_tail and check_line are the only text that can carry an
+  // explicit FAIL. A PASS there is not trusted, as in the first_line failure_tail scan,
+  // because the response this mode asked for never arrived.
+  const responseMissing = !useFirstLine && isObject && response === null
   const text = useFirstLine
-    ? String(result.check_line || '')
-    : hasResponse
-      ? String(result.response || '')
-      : String(result || '')
-  // CommonMark fences open with <=3 leading spaces plus 3+ matching ticks/tildes;
-  // only an equal-or-longer run of the same marker character closes them.
-  const scanText = stripFencedBlocks(text)
+    ? checkLine || ''
+    : response !== null
+      ? response
+      : isObject
+        ? failureTail || checkLine || ''
+        : String(result || '')
+  // check_line and failure_tail are separate fragments; scanning them apart keeps a fence
+  // left open in one from hiding a marker in the other.
+  const scanSources = responseMissing ? [failureTail, checkLine || ''] : [text]
   let sawPass = false
   let sawFail = false
-  for (const line of scanText.split('\n')) {
-    // Marker must be line-initial with <=3 leading spaces, matching the
-    // CommonMark indented-code-block boundary used by fence scanning.
-    const marker = /^ {0,3}CHECK_RESULT:\s*(PASS|FAIL)\b/i.exec(line)
-    if (!marker) continue
-    if (marker[1].toUpperCase() === 'FAIL') sawFail = true
-    if (marker[1].toUpperCase() === 'PASS') sawPass = true
+  for (const scanSource of scanSources) {
+    // CommonMark fences open with <=3 leading spaces plus 3+ matching ticks/tildes;
+    // only an equal-or-longer run of the same marker character closes them.
+    for (const line of stripFencedBlocks(scanSource).split('\n')) {
+      // Marker must be line-initial with <=3 leading spaces, matching the
+      // CommonMark indented-code-block boundary used by fence scanning.
+      const marker = /^ {0,3}CHECK_RESULT:\s*(PASS|FAIL)\b/i.exec(line)
+      if (!marker) continue
+      if (marker[1].toUpperCase() === 'FAIL') sawFail = true
+      if (marker[1].toUpperCase() === 'PASS' && !responseMissing) sawPass = true
+    }
   }
   if (!sawFail && sawPass) return { passed: true, output: '' }
   let fullSawPass = false
   let fullSawFail = false
-  const fallbackText = hasResponse ? String(result.response || '') : String(result.failure_tail || '')
+  const fallbackText = response !== null ? response : failureTail
   if (useFirstLine && !sawFail && !sawPass && fallbackText) {
     const fullScan = stripFencedBlocks(fallbackText)
     for (const line of fullScan.split('\n')) {
       const marker = /^ {0,3}CHECK_RESULT:\s*(PASS|FAIL)\b/i.exec(line)
       if (!marker) continue
       if (marker[1].toUpperCase() === 'FAIL') fullSawFail = true
-      if (marker[1].toUpperCase() === 'PASS' && hasResponse) fullSawPass = true
+      if (marker[1].toUpperCase() === 'PASS' && response !== null) fullSawPass = true
     }
-    if (hasResponse && !fullSawFail && fullSawPass) {
+    if (response !== null && !fullSawFail && fullSawPass) {
       log('fix-until-green: check_line held no CHECK_RESULT marker (worker narrated first); recovered the verdict from the full response.')
       return { passed: true, output: '' }
     }
@@ -288,7 +305,7 @@ function parseCheck(result, responseMode = 'first_line') {
   // No line-initial, unfenced marker anywhere: UNKNOWN, not FAIL.
   const unknown = !sawPass && !sawFail && !fullSawPass && !fullSawFail
   if (useFirstLine) {
-    return { passed: false, ...(unknown ? { unknown: true } : {}), output: String(result.failure_tail || result.response || result.check_line || '').slice(-4000) }
+    return { passed: false, ...(unknown ? { unknown: true } : {}), output: (failureTail || response || checkLine || '').slice(-4000) }
   }
   return { passed: false, ...(unknown ? { unknown: true } : {}), output: text.slice(-4000) }
 }
@@ -351,11 +368,23 @@ function hopFields(result) {
   }
 }
 
+// The repository root is a clone that people and other workflows share, so a grader
+// or verifier that moves its HEAD or dirties its tree breaks unrelated work.
+function readOnlyRule(repoRoot, allowWorktreeList) {
+  const git = repoRoot ? `git -C ${shellQuote(repoRoot)}` : 'git -C <repo>'
+  const allowed = `${git} diff|show|log|rev-parse|ls-tree${allowWorktreeList ? ` and ${git} worktree list` : ''}`
+  return `Read-only rule: in the repository root use only ${allowed}. Never run checkout, switch, reset, stash, clean, commit, branch, worktree add or worktree remove, in the repository root or in any other checkout.${allowWorktreeList ? ' Running the CHECK verbatim inside the dispatch worktree is allowed even when the CHECK itself invokes git.' : ''}`
+}
+
 function rubricPrompt(branch, handoffId, repoRoot, worktreePath) {
   const title = task.title || task.task_name || task.label || task.name || 'Untitled task'
   const messagePreview = `${String(task.message || '').slice(0, 400)}…`
+  const git = repoRoot ? `git -C ${shellQuote(repoRoot)}` : null
+  const range = shellQuote(`${rubricBase}...${branch}`)
   return [
     `You are an independent rubric grader. Your job is to REFUTE the work, not confirm it. Do not edit, dispatch, land, push, or alter branches.`,
+    readOnlyRule(repoRoot, false),
+    'Grade from the diff alone: do not run the CHECK command, tests, builds or installs. The independent CHECK verifier measures the CHECK.',
     ``,
     `Original task:`,
     `Title: ${title}`,
@@ -369,12 +398,13 @@ function rubricPrompt(branch, handoffId, repoRoot, worktreePath) {
     ``,
     ...(repoRoot ? [`Repository root: ${repoRoot}`, `Candidate worktree (derived; it may not exist): ${worktreePath}`] : ['Repository root: unknown (args.repo, args.caller_cwd and defaults.caller_cwd are unset or relative).']),
     `Inspect the worktree diff with mcp__penumbra__worktree_inspect({ handoff_id: "${handoffId}" }).`,
-    repoRoot ? `If worktree_inspect fails or returns not_found, read the diff with git -C ${repoRoot} diff --stat ${rubricBase}...${branch} and then git -C ${repoRoot} diff ${rubricBase}...${branch} -- <path>. Run every diff as git -C ${repoRoot}, never from your own working directory, which can be a different repository.` : 'If worktree_inspect fails, return inspected:false: without a repository root the candidate cannot be located safely.',
+    git ? `If worktree_inspect fails or returns not_found, read the diff with ${git} diff --stat ${range} and then ${git} diff ${range} -- <path>. Run every diff as ${git}, never from your own working directory, which can be a different repository.` : 'If worktree_inspect fails, return inspected:false: without a repository root the candidate cannot be located safely.',
     'If you cannot read the candidate diff, return inspected:false with an empty criteria array and say why in notes. Set inspected:true only after you have read the candidate diff.',
     'Read only the hunks needed to grade the rubric-relevant changes. Grade every rubric criterion below against the actual diff and task intent.',
     rubric.map((c, i) => `${i + 1}. ${c}`).join('\n'),
     ``,
-    `For each criterion, pass=true only when the diff clearly satisfies it. Evidence must cite concrete files, hunks, command output, or observed diff facts. Return RUBRIC_RESULT with an explicit boolean "overall_pass" verdict, plus exactly one item per criterion: index is the criterion's number in the list above, and criterion is its text verbatim.`,
+    `For each criterion, pass=true only when the diff clearly satisfies it. Evidence must cite concrete files, hunks, or observed diff facts. Return RUBRIC_RESULT with exactly one item per criterion: index is the criterion's number in the list above, and criterion is its text verbatim.`,
+    `overall_pass must equal "every criterion passed": true when every item has pass=true, false otherwise. Put cautions, nits and reservations in notes, never in overall_pass; the verdict is taken from the per-criterion grades.`,
   ].join('\n')
 }
 
@@ -394,12 +424,21 @@ function matchRubricGrade(rubric, grade) {
   const buckets = rubric.map(() => [])
   const criteria = Array.isArray(grade && grade.criteria) ? grade.criteria : []
 
+  const extra = []
   for (const item of criteria) {
     const index = item && Number.isInteger(item.index) && item.index >= 1 && item.index <= rubric.length ? item.index - 1 : -1
+    const normalizedCriterion = normalizeRubricCriterion(item && item.criterion)
     let matchIndex = index
 
+    // Graders shorten criterion text, so a valid index places a paraphrase. Text that exactly
+    // names a different criterion means the index cannot be trusted, and counting the item for
+    // either criterion could grade one twice and leave the other ungraded.
+    if (index >= 0 && normalizedCriterion && normalizedRubric[index] !== normalizedCriterion && normalizedRubric.includes(normalizedCriterion)) {
+      extra.push({ criterion: String((item && item.criterion) || ''), reason: 'conflict' })
+      continue
+    }
+
     if (matchIndex < 0) {
-      const normalizedCriterion = normalizeRubricCriterion(item && item.criterion)
       matchIndex = normalizedRubric.findIndex((criterion) => criterion && criterion === normalizedCriterion)
 
       if (matchIndex < 0 && normalizedCriterion) {
@@ -414,6 +453,8 @@ function matchRubricGrade(rubric, grade) {
 
     if (matchIndex >= 0) {
       buckets[matchIndex].push(item)
+    } else {
+      extra.push({ criterion: String((item && item.criterion) || ''), reason: 'unknown' })
     }
   }
 
@@ -423,6 +464,9 @@ function matchRubricGrade(rubric, grade) {
     if (!items.length) {
       missing.push(criterion)
       return { index: rubricIndex + 1, criterion, pass: false, evidence: '' }
+    }
+    if (items.length > 1) {
+      extra.push({ criterion, reason: 'duplicate' })
     }
     return {
       index: rubricIndex + 1,
@@ -435,19 +479,18 @@ function matchRubricGrade(rubric, grade) {
     }
   })
 
-  return { results, missing }
+  return { results, missing, extra }
 }
 // rubric-match:end
 
-// Rubric verdict contract: decide from the explicit `overall_pass` boolean when
-// it is present; otherwise fall back to requiring every `criteria[i].pass` to be
-// `true`. Never infer PASS/FAIL by string-matching `notes` or the exact-text matcher.
+// Rubric verdict contract: the caller has already required inspected:true; the
+// rubric is green only when no grader item is a duplicate, unknown or conflict and every
+// rubric criterion passes (a missing criterion never passes). overall_pass does
+// not decide: graders have set it false on fully passing work to flag a caution,
+// and true over empty or failing criteria. Never infer PASS/FAIL from `notes`.
 function rubricVerdict(grade) {
-  if (grade && typeof grade.overall_pass === 'boolean') {
-    return grade.overall_pass
-  }
-  const criteria = Array.isArray(grade && grade.criteria) ? grade.criteria : []
-  return criteria.length > 0 && criteria.every((c) => c && c.pass === true)
+  const matched = matchRubricGrade(rubric, grade)
+  return matched.extra.length === 0 && matched.results.every((c) => c.pass)
 }
 
 function rubricFailureOutput(grade) {
@@ -457,18 +500,25 @@ function rubricFailureOutput(grade) {
   const missingSet = new Set(missing)
   const failed = matched.results.filter((c) => !c.pass && !missingSet.has(c.criterion))
 
-  const lines = ['The check command passed, but independent rubric grading failed these criteria:']
-  for (const c of failed) {
-    lines.push(`- ${c.criterion}: ${c.evidence || '(no evidence provided)'}`)
-  }
-  for (const c of missing) {
-    lines.push(`- ${c}: grader did not return this criterion`)
-  }
-  if (!failed.length && !missing.length) {
-    lines.push('The rubric grader returned overall_pass=false or an incomplete result.')
-    if (grade && grade.notes) {
-      lines.push(`Grader notes: ${grade.notes}`)
+  const lines = []
+  if (failed.length > 0 || missing.length > 0) {
+    lines.push('The check command passed, but independent rubric grading failed these criteria:')
+    for (const c of failed) {
+      lines.push(`- ${c.criterion}: ${c.evidence || '(no evidence provided)'}`)
     }
+    for (const c of missing) {
+      lines.push(`- ${c}: grader did not return this criterion`)
+    }
+  }
+  // Stray, duplicate and conflicting items are grading artifacts the next worker cannot fix,
+  // so they are named as such rather than listed as failed criteria.
+  if (matched.extra.length > 0) {
+    lines.push(
+      `${lines.length > 0 ? 'The independent rubric grader also' : 'The check command passed, but the independent rubric grader'} returned items outside the rubric (a stray, duplicated or misnumbered grade), so the round was not accepted. That is a grading problem, not a defect in the change: do not change code for it.`,
+    )
+  }
+  if (grade && grade.notes) {
+    lines.push(`Grader notes: ${grade.notes}`)
   }
   return lines.join('\n')
 }
@@ -547,21 +597,28 @@ for (let i = 0; i < maxRounds; i++) {
   if ((verdict.passed || verifyMissingMarker) && verifyCheck) {
     const verifyPrompt = [
       'You are an independent CHECK verifier. Do not edit, commit, push, or land anything.',
+      readOnlyRule(hasRepoRoot ? repoRoot : null, true),
       '',
-      verdict.passed ? 'The worker claimed PASS. Do not trust that claim — measure it.' : 'The worker final message carried no CHECK_RESULT line, so its result is unknown. Measure the CHECK yourself.',
+      // Without a repository root the worktree cannot be found, so no line may tell the verifier
+      // to run anything: it would run in its own working directory, which can be another repository.
+      hasRepoRoot
+        ? (verdict.passed ? 'The worker claimed PASS. Do not trust that claim — measure it.' : 'The worker final message carried no CHECK_RESULT line, so its result is unknown. Measure the CHECK yourself.')
+        : `The worker ${verdict.passed ? 'claimed PASS' : 'final message carried no CHECK_RESULT line'}, and without a repository root that result cannot be verified here.`,
       '',
       worktreePath
-        ? `The worktree is likely at ${worktreePath}; try that directory first. If it does not exist, locate the worktree yourself: run \`git worktree list\` and filter for the branch named ${r.branch} (or the handoff id ${r.handoff_id}). cd to that worktree. Only if you still cannot locate it after that, set ran:false, check_exit:-1, and note this in notes.`
-        : `The worktree path could not be derived from input.repo, input.caller_cwd, or defaults.caller_cwd. Locate the worktree yourself: run \`git worktree list\` and filter for the branch named ${r.branch} (or the handoff id ${r.handoff_id}). cd to that worktree. Only if you cannot locate it after that, set ran:false, check_exit:-1, and note this in notes.`,
+        ? `Run the CHECK only inside the dispatch worktree, which is likely at ${shellQuote(worktreePath)}: try \`cd ${shellQuote(worktreePath)}\` first. If that directory does not exist, locate the worktree with \`git -C ${shellQuote(repoRoot)} worktree list\` and pick the entry for the branch named ${r.branch} (or the handoff id ${r.handoff_id}), then cd to it. If you still cannot locate it, set ran:false, check_exit:-1, and say so in notes; never check the branch out in the repository root or anywhere else to run the CHECK.`
+        : `The repository root could not be derived from input.repo, input.caller_cwd, or defaults.caller_cwd, so the dispatch worktree cannot be located safely. Do not run the CHECK below and do not run git from your own working directory, which can be a different repository: set ran:false, check_exit:-1, and say in notes that no repository root was known. Never check the branch ${r.branch} out anywhere to run the CHECK.`,
       '',
-      'Run this CHECK command VERBATIM by spawning bash with the command as a single argument:',
+      hasRepoRoot ? 'Run this CHECK command VERBATIM by spawning bash with the command as a single argument:' : 'For reference only, since no repository root is known, this is the CHECK you must not run:',
       `    ${bashCheckCommand(check)}`,
       ...(parityCheck
         ? [
             '',
-            'Then run this PARITY command VERBATIM in the same worktree, by spawning bash with the command as a single argument:',
+            hasRepoRoot ? 'Then run this PARITY command VERBATIM in the same worktree, by spawning bash with the command as a single argument:' : 'and this is the PARITY command you must not run:',
             `    ${bashCheckCommand(parityCheck)}`,
-            'The PARITY command replays the blocking CI steps and can take about 7 minutes, which can exceed a single Bash call\'s timeout cap. Run it in the background writing to a log file and poll until the process exits (or run it at the maximum allowed timeout and then keep waiting on the process); never report parity_exit before the PARITY command has exited.',
+            ...(hasRepoRoot
+              ? ['The PARITY command replays the blocking CI steps and can take about 7 minutes, which can exceed a single Bash call\'s timeout cap. Run it in the background writing to a log file and poll until the process exits (or run it at the maximum allowed timeout and then keep waiting on the process); never report parity_exit before the PARITY command has exited.']
+              : []),
           ]
         : []),
       '',
@@ -626,7 +683,10 @@ for (let i = 0; i < maxRounds; i++) {
       }
       const notInspected = grade != null && grade.inspected !== true
       if (grade == null || notInspected) {
-        const graderUnavailableOutput = notInspected ? 'Independent rubric grader could not locate the candidate diff; rubric not attested.' : 'Independent rubric grader was unavailable; rubric not attested.'
+        // Only inspected:false says the diff could not be found; a missing or null
+        // flag means the grader never attested that it read the diff at all.
+        const graderProblem = grade == null ? 'was unavailable' : grade.inspected === false ? 'could not locate the candidate diff' : 'did not attest that it read the candidate diff'
+        const graderUnavailableOutput = `Independent rubric grader ${graderProblem}; rubric not attested.`
         rounds.push({
           round: i + 1,
           agent: agentForRound,
@@ -641,13 +701,23 @@ for (let i = 0; i < maxRounds; i++) {
           ci_parity: parityCheck !== null && checkVerified,
           passed: false,
         })
-        log(`fix-until-green round ${i + 1}: ${notInspected ? 'grader could not locate the candidate diff' : 'grader was unavailable'}; rubric not attested on ${r.branch}`)
+        log(`fix-until-green round ${i + 1}: grader ${graderProblem}; rubric not attested on ${r.branch}`)
         prevOutput = graderUnavailableOutput
         break
       }
-      // Decide from the grader's explicit overall_pass when present;
-      // fall back to all(criteria.pass). Never infer from the notes string.
       const rubricPassed = rubricVerdict(grade)
+      const rubricMatch = matchRubricGrade(rubric, grade)
+      // overall_pass is only cross-checked: a disagreement is surfaced for the operator
+      // but never turns passing criteria red or feeds a new round. Stray, duplicate or
+      // conflicting items fail the round on their own and say nothing about overall_pass,
+      // so it is compared with the per-criterion grades alone.
+      const rubricOverallDisagreement = typeof grade.overall_pass === 'boolean' && grade.overall_pass !== rubricMatch.results.every((c) => c.pass)
+      if (rubricOverallDisagreement) {
+        log(`fix-until-green round ${i + 1}: grader overall_pass=${grade.overall_pass} disagrees with its per-criterion grades; the criteria decide (rubric ${rubricPassed ? 'PASS' : rubricMatch.results.every((c) => c.pass) ? 'FAIL: items outside the rubric' : 'FAIL'}) on ${r.branch}`)
+      }
+      if (rubricMatch.extra.length > 0) {
+        log(`fix-until-green round ${i + 1}: grader returned ${rubricMatch.extra.length} item(s) outside the rubric (${rubricMatch.extra.map((item) => item.reason).join(', ')}); the rubric cannot be green on ${r.branch}`)
+      }
       const failedOutput = rubricPassed ? '' : rubricFailureOutput(grade)
       rounds.push({
         round: i + 1,
@@ -659,6 +729,7 @@ for (let i = 0; i < maxRounds; i++) {
         check_passed: verdict.passed,
         check_verify_status: checkVerifyStatus,
         rubric_grade: grade,
+        rubric_overall_disagreement: rubricOverallDisagreement,
         verified: checkVerified,
         ci_parity: parityCheck !== null && checkVerified,
       })
