@@ -24,7 +24,15 @@ interface Mocks {
 function makeMocks(): { daemon: DaemonClient; mocks: Mocks } {
   const listWorktrees = mock<ListWorktreesFn>(() => Promise.resolve({ worktrees: [] }));
   const inspectWorktree = mock<InspectWorktreeFn>(() =>
-    Promise.resolve({ worktree: {}, diff_against_main: "", branch_log: "" }),
+    Promise.resolve({
+      worktree: {},
+      diff_against_main: "",
+      branch_log: "",
+      base_ref: "origin/main",
+      base_fallback: false,
+      base_attempted_ref: "origin/main",
+      base_fallback_reason: null,
+    }),
   );
   const cleanupWorktree = mock<CleanupWorktreeFn>(() => Promise.resolve({ status: "torn_down" }));
   const startChain = mock<StartChainFn>(() =>
