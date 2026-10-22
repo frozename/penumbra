@@ -99,6 +99,44 @@ test("combines duplicate items for one criterion and fails if any item fails", (
   });
 });
 
+test("an index whose text exactly names another criterion is a conflict that counts for neither", () => {
+  const rubric = ["A must hold", "B must hold"];
+  const grade = {
+    criteria: [
+      { index: 1, criterion: "A must hold", pass: true, evidence: "a" },
+      { index: 2, criterion: "A must hold", pass: true, evidence: "a again" },
+    ],
+  };
+
+  expect(matchRubricGrade(rubric, grade)).toEqual({
+    results: [
+      { index: 1, criterion: rubric[0], pass: true, evidence: "a" },
+      { index: 2, criterion: rubric[1], pass: false, evidence: "" },
+    ],
+    missing: ["B must hold"],
+    extra: [{ criterion: "A must hold", reason: "conflict" }],
+  });
+});
+
+test("a conflict is detected after the same normalization as text matching", () => {
+  const rubric = ["A must hold", "B must hold"];
+  const grade = {
+    criteria: [
+      { index: 2, criterion: "1) a   MUST hold.", pass: true, evidence: "misnumbered" },
+      { index: 2, criterion: "B must hold", pass: true, evidence: "b" },
+    ],
+  };
+
+  expect(matchRubricGrade(rubric, grade)).toEqual({
+    results: [
+      { index: 1, criterion: rubric[0], pass: false, evidence: "" },
+      { index: 2, criterion: rubric[1], pass: true, evidence: "b" },
+    ],
+    missing: ["A must hold"],
+    extra: [{ criterion: "1) a   MUST hold.", reason: "conflict" }],
+  });
+});
+
 test("reports unmatched stray grader items as extra", () => {
   const rubric = ["Keep meta export first"];
   const grade = {

@@ -16,7 +16,8 @@ export const meta = {
 // graderModel defaults to 'sonnet'; pass graderModel:'inherit' to use the session-default model.
 // Composition: run this as the top-level Workflow. Every round calls workflow('penumbra-fanout'), and workflow() cannot be called from within a child workflow; penumbra-loop-discover-to-green inlines this loop for that reason.
 // Rubric: the grader reads only the candidate diff (worktree_inspect, else git -C <repo> diff <base>...<branch>, with the repo from args.repo or caller_cwd). Write every criterion so the diff alone can prove it. A grader that cannot read the diff reports GRADER_UNAVAILABLE.
-// Rubric verdict: green only when the grade has inspected:true and every criterion is graded exactly once and passes. overall_pass does not decide; when it disagrees with the criteria the round logs it and records rubric_overall_disagreement:true.
+// Rubric matching: a grader item counts for the criterion its index names, even under paraphrased text, unless its text exactly names a different criterion; that conflict counts for neither.
+// Rubric verdict: green only when the grade has inspected:true and every criterion is graded exactly once and passes; a stray, duplicate or conflicting item fails the round. overall_pass does not decide; when it disagrees with the per-criterion grades the round logs it and records rubric_overall_disagreement:true. Stray, duplicate or conflicting items are logged and forwarded as grading problems, not as an overall_pass disagreement.
 // A reply without a CHECK_RESULT marker is UNKNOWN: with verifyCheck on, the independent verifier's check_exit decides the round; otherwise it is a FAIL.
 // A missing penumbra:penumbra-fanout-proxy agent stops round 1 with reason proxy_not_installed.
 // task-spec-validation:begin
@@ -426,10 +427,18 @@ function matchRubricGrade(rubric, grade) {
   const extra = []
   for (const item of criteria) {
     const index = item && Number.isInteger(item.index) && item.index >= 1 && item.index <= rubric.length ? item.index - 1 : -1
+    const normalizedCriterion = normalizeRubricCriterion(item && item.criterion)
     let matchIndex = index
 
+    // Graders shorten criterion text, so a valid index places a paraphrase. Text that exactly
+    // names a different criterion means the index cannot be trusted, and counting the item for
+    // either criterion could grade one twice and leave the other ungraded.
+    if (index >= 0 && normalizedCriterion && normalizedRubric[index] !== normalizedCriterion && normalizedRubric.includes(normalizedCriterion)) {
+      extra.push({ criterion: String((item && item.criterion) || ''), reason: 'conflict' })
+      continue
+    }
+
     if (matchIndex < 0) {
-      const normalizedCriterion = normalizeRubricCriterion(item && item.criterion)
       matchIndex = normalizedRubric.findIndex((criterion) => criterion && criterion === normalizedCriterion)
 
       if (matchIndex < 0 && normalizedCriterion) {
@@ -475,7 +484,7 @@ function matchRubricGrade(rubric, grade) {
 // rubric-match:end
 
 // Rubric verdict contract: the caller has already required inspected:true; the
-// rubric is green only when no grader item is a duplicate or unknown and every
+// rubric is green only when no grader item is a duplicate, unknown or conflict and every
 // rubric criterion passes (a missing criterion never passes). overall_pass does
 // not decide: graders have set it false on fully passing work to flag a caution,
 // and true over empty or failing criteria. Never infer PASS/FAIL from `notes`.
@@ -491,15 +500,22 @@ function rubricFailureOutput(grade) {
   const missingSet = new Set(missing)
   const failed = matched.results.filter((c) => !c.pass && !missingSet.has(c.criterion))
 
-  const lines = ['The check command passed, but independent rubric grading failed these criteria:']
-  for (const c of failed) {
-    lines.push(`- ${c.criterion}: ${c.evidence || '(no evidence provided)'}`)
+  const lines = []
+  if (failed.length > 0 || missing.length > 0) {
+    lines.push('The check command passed, but independent rubric grading failed these criteria:')
+    for (const c of failed) {
+      lines.push(`- ${c.criterion}: ${c.evidence || '(no evidence provided)'}`)
+    }
+    for (const c of missing) {
+      lines.push(`- ${c}: grader did not return this criterion`)
+    }
   }
-  for (const c of missing) {
-    lines.push(`- ${c}: grader did not return this criterion`)
-  }
-  for (const item of matched.extra) {
-    lines.push(item.reason === 'duplicate' ? `- ${item.criterion}: grader returned this criterion more than once` : `- ${item.criterion || '(blank)'}: grader returned a criterion that is not in the rubric`)
+  // Stray, duplicate and conflicting items are grading artifacts the next worker cannot fix,
+  // so they are named as such rather than listed as failed criteria.
+  if (matched.extra.length > 0) {
+    lines.push(
+      `${lines.length > 0 ? 'The independent rubric grader also' : 'The check command passed, but the independent rubric grader'} returned items outside the rubric (a stray, duplicated or misnumbered grade), so the round was not accepted. That is a grading problem, not a defect in the change: do not change code for it.`,
+    )
   }
   if (grade && grade.notes) {
     lines.push(`Grader notes: ${grade.notes}`)
@@ -684,11 +700,17 @@ for (let i = 0; i < maxRounds; i++) {
         break
       }
       const rubricPassed = rubricVerdict(grade)
+      const rubricMatch = matchRubricGrade(rubric, grade)
       // overall_pass is only cross-checked: a disagreement is surfaced for the operator
-      // but never turns passing criteria red or feeds a new round.
-      const rubricOverallDisagreement = typeof grade.overall_pass === 'boolean' && grade.overall_pass !== rubricPassed
+      // but never turns passing criteria red or feeds a new round. Stray, duplicate or
+      // conflicting items fail the round on their own and say nothing about overall_pass,
+      // so it is compared with the per-criterion grades alone.
+      const rubricOverallDisagreement = typeof grade.overall_pass === 'boolean' && grade.overall_pass !== rubricMatch.results.every((c) => c.pass)
       if (rubricOverallDisagreement) {
-        log(`fix-until-green round ${i + 1}: grader overall_pass=${grade.overall_pass} disagrees with its per-criterion grades; the criteria decide (rubric ${rubricPassed ? 'PASS' : 'FAIL'}) on ${r.branch}`)
+        log(`fix-until-green round ${i + 1}: grader overall_pass=${grade.overall_pass} disagrees with its per-criterion grades; the criteria decide (rubric ${rubricPassed ? 'PASS' : rubricMatch.results.every((c) => c.pass) ? 'FAIL: items outside the rubric' : 'FAIL'}) on ${r.branch}`)
+      }
+      if (rubricMatch.extra.length > 0) {
+        log(`fix-until-green round ${i + 1}: grader returned ${rubricMatch.extra.length} item(s) outside the rubric (${rubricMatch.extra.map((item) => item.reason).join(', ')}); the rubric cannot be green on ${r.branch}`)
       }
       const failedOutput = rubricPassed ? '' : rubricFailureOutput(grade)
       rounds.push({

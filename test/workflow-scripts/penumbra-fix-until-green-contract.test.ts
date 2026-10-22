@@ -1960,14 +1960,14 @@ describe("penumbra-fix-until-green rubric verdict from per-criterion grades", ()
       failure: "- criterion two: grader did not return this criterion",
     },
     {
-      name: "a duplicated criterion",
-      criteria: [one, two, { ...two, evidence: "again" }],
-      failure: "- criterion two: grader returned this criterion more than once",
+      name: "a failing duplicated criterion",
+      criteria: [one, two, { ...two, pass: false, evidence: "again" }],
+      failure: "- criterion two: hunk 2; again",
     },
     {
-      name: "an unknown extra criterion",
-      criteria: [one, two, { index: 9, criterion: "style nit", pass: true, evidence: "x" }],
-      failure: "- style nit: grader returned a criterion that is not in the rubric",
+      name: "one criterion graded under both indexes",
+      criteria: [one, { ...one, index: 2 }],
+      failure: "- criterion two: grader did not return this criterion",
     },
   ];
 
@@ -1990,6 +1990,87 @@ describe("penumbra-fix-until-green rubric verdict from per-criterion grades", ()
       expect(message).not.toContain("overall_pass=false or an incomplete result");
     });
   }
+
+  const strayItems = [
+    {
+      name: "a duplicated criterion",
+      criteria: [one, two, { ...two, evidence: "again" }],
+      reasons: "duplicate",
+    },
+    {
+      name: "an unknown extra criterion",
+      criteria: [one, two, { index: 9, criterion: "style nit", pass: true, evidence: "x" }],
+      reasons: "unknown",
+    },
+    {
+      name: "an item whose text names another criterion",
+      criteria: [one, two, { ...one, index: 2 }],
+      reasons: "conflict",
+    },
+  ];
+
+  for (const stray of strayItems) {
+    test(`passing criteria with ${stray.name} are not green and are no overall_pass disagreement`, async () => {
+      const { result, workflowCalls, logs, error } = await grade({
+        inspected: true,
+        overall_pass: true,
+        criteria: stray.criteria,
+      });
+
+      expect(error).toBeUndefined();
+      expect(result?.green).toBe(false);
+      const rounds = result?.rounds as Round[];
+      expect(rounds[0]?.passed).toBe(false);
+      expect(rounds[0]?.rubric_overall_disagreement).toBe(false);
+      expect(logs.some((line) => line.includes("disagrees with its per-criterion grades"))).toBe(
+        false,
+      );
+      expect(logs).toContain(
+        `fix-until-green round 1: grader returned 1 item(s) outside the rubric (${stray.reasons}); the rubric cannot be green on test/x_h-777`,
+      );
+      const message = secondRoundMessage(workflowCalls);
+      expect(message).toContain(
+        "The check command passed, but the independent rubric grader returned items outside the rubric (a stray, duplicated or misnumbered grade), so the round was not accepted. That is a grading problem, not a defect in the change: do not change code for it.",
+      );
+      expect(message).not.toContain("failed these criteria");
+      expect(message).not.toMatch(/^- /m);
+    });
+  }
+
+  test("failed criteria are listed and stray items are named as a grading problem", async () => {
+    const { result, workflowCalls, error } = await grade({
+      inspected: true,
+      overall_pass: false,
+      criteria: [
+        one,
+        { ...two, pass: false, evidence: "no test" },
+        { index: 9, criterion: "style nit", pass: true, evidence: "x" },
+      ],
+    });
+
+    expect(error).toBeUndefined();
+    expect((result?.rounds as Round[])[0]?.rubric_overall_disagreement).toBe(false);
+    const message = secondRoundMessage(workflowCalls);
+    expect(message).toContain(
+      "The check command passed, but independent rubric grading failed these criteria:\n- criterion two: no test\nThe independent rubric grader also returned items outside the rubric",
+    );
+    expect(message).not.toContain("style nit");
+  });
+
+  test("overall_pass:false over passing criteria and a stray item names the stray item as the cause", async () => {
+    const { result, logs, error } = await grade({
+      inspected: true,
+      overall_pass: false,
+      criteria: [one, two, { index: 9, criterion: "style nit", pass: true, evidence: "x" }],
+    });
+
+    expect(error).toBeUndefined();
+    expect(result?.green).toBe(false);
+    expect((result?.rounds as Round[])[0]?.rubric_overall_disagreement).toBe(true);
+    expect(logs).toContain(
+      "fix-until-green round 1: grader overall_pass=false disagrees with its per-criterion grades; the criteria decide (rubric FAIL: items outside the rubric) on test/x_h-777",
+    );
+  });
 
   test("overall_pass:false with every criterion passing is green, logged and not re-dispatched", async () => {
     const { result, workflowCalls, logs, error } = await grade({
@@ -2094,11 +2175,17 @@ describe("penumbra-fix-until-green rubric verdict from per-criterion grades", ()
     expect(prompt).toContain("Put cautions, nits and reservations in notes, never in overall_pass");
   });
 
-  test("the native README documents that the native workflow still requires overall_pass", () => {
+  test("the native README documents both rubric differences from the native workflow", () => {
     const readme = readFileSync("plugin/workflows/penumbra-fix-until-green/README.md", "utf8");
 
     expect(readme).toContain("rubric_overall_disagreement: true");
     expect(readme).toContain("still requires `overall_pass === true`");
+    expect(readme).toContain(
+      "accepts a paraphrased criterion text under a valid index, because graders shorten criteria",
+    );
+    expect(readme).toContain(
+      "This native workflow requires the index and the text to name the same criterion (`resolveMatchIndex`)",
+    );
   });
 });
 
