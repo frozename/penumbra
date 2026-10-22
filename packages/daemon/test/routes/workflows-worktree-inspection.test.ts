@@ -443,6 +443,116 @@ test("a deadline that expires during base resolution fails as a deadline, not a 
   }
 });
 
+function verifyFailure(message: string, extra: Record<string, unknown> = {}): Error {
+  return Object.assign(new Error(message), extra);
+}
+
+test("a deadline that expires while base rev-parse runs fails as a deadline, not a missing base", async () => {
+  const harness = createWorktreeInspectionHarness();
+  try {
+    const handle = await createInspectionWorktree(harness);
+    const actual = actualGitRunner(harness);
+    const timeoutKill = {
+      killed: true,
+      signal: "SIGTERM",
+      code: null,
+      stdout: "",
+      stderr: "",
+    };
+    for (const scenario of [
+      { name: "killed as the budget ran out", kill: timeoutKill, expireBudget: true },
+      { name: "killed by the command timeout", kill: timeoutKill, expireBudget: false },
+      { name: "failed after the budget ran out", kill: { code: 128 }, expireBudget: true },
+    ]) {
+      let expired = false;
+      let verifyCalls = 0;
+      const result = await inspectWorktreeForHandoff(harness.services, handle.handoffId, {
+        expectedProjectId: "project-a",
+        deadline: () => ({ remaining_ms: expired ? 0 : 5_000, expired }),
+        runGit: async (args, opts) => {
+          if (args.includes("--verify")) {
+            verifyCalls += 1;
+            if (scenario.expireBudget) expired = true;
+            throw verifyFailure(
+              "Command failed: git rev-parse --verify main^{commit}",
+              scenario.kill,
+            );
+          }
+          return await actual(args, opts);
+        },
+      });
+
+      expect({ scenario: scenario.name, verifyCalls }).toEqual({
+        scenario: scenario.name,
+        verifyCalls: 1,
+      });
+      expect({ scenario: scenario.name, result }).toEqual({
+        scenario: scenario.name,
+        result: {
+          ok: false,
+          code: "inspection_failed",
+          message: "worktree inspection deadline expired",
+        },
+      });
+    }
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("a base rev-parse failure with budget left still reports or falls back as a missing base", async () => {
+  const harness = createWorktreeInspectionHarness();
+  try {
+    const mainHandle = await createInspectionWorktree(harness);
+    const actual = actualGitRunner(harness);
+    const failVerify =
+      (ref: string): WorktreeInspectionCommandRunner =>
+      async (args, opts) => {
+        if (args.includes(`${ref}^{commit}`)) {
+          throw verifyFailure(`Command failed: git rev-parse --verify ${ref}^{commit}`, {
+            code: 128,
+            killed: false,
+            signal: null,
+          });
+        }
+        return await actual(args, opts);
+      };
+
+    const mainRoot = await inspectWorktreeForHandoff(harness.services, mainHandle.handoffId, {
+      expectedProjectId: "project-a",
+      deadline: () => ({ remaining_ms: 5_000, expired: false }),
+      runGit: failVerify("main"),
+    });
+    expect(mainRoot).toEqual({
+      ok: false,
+      code: "inspection_failed",
+      message: "no inspection base resolves (tried main)",
+    });
+
+    gitOutput(harness, harness.repoRoot, ["branch", "feature/root-base", "main"]);
+    const featureHandle = await createInspectionWorktree(harness, {
+      handoffId: "33333333-3333-4333-8333-333333333333",
+      branchBase: "feature/root-base",
+    });
+    const featureRoot = await inspectWorktreeForHandoff(harness.services, featureHandle.handoffId, {
+      expectedProjectId: "project-a",
+      deadline: () => ({ remaining_ms: 5_000, expired: false }),
+      runGit: failVerify("feature/root-base"),
+    });
+    expect(featureRoot.ok).toBe(true);
+    if (!featureRoot.ok) throw new Error(featureRoot.message);
+    expect(featureRoot.inspection).toMatchObject({
+      base_ref: "main",
+      base_fallback: true,
+      base_attempted_ref: "feature/root-base",
+      base_fallback_reason: "unresolvable",
+    });
+    expect(featureRoot.inspection.diff_against_main).toContain("candidate.txt");
+  } finally {
+    harness.cleanup();
+  }
+});
+
 test("snapshot command timeout, output overflow, and Git errors are explicit failures", async () => {
   const harness = createWorktreeInspectionHarness();
   try {

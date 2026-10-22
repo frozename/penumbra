@@ -215,6 +215,7 @@ function hasExpectedInspectionShape(
     worktree.storageRoot,
     worktree.createdAt,
     inspection.branch_name,
+    inspection.base_ref,
     headSha,
   ];
   const requiredConditions = [

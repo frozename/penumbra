@@ -887,6 +887,39 @@ test("rejects an inspection whose worktree branch does not bind to the latest br
   }
 });
 
+test("rejects an inspection without base_ref instead of judging a diff against undefined", async () => {
+  const { ctx, db, capturedRequests } = setupTournament({
+    agents: ["agent-a", "agent-b"],
+    branchNames: ["feature/cand-0", "feature/cand-1"],
+    judgeResponse: verdictJsonBlock("feature/cand-1", "agent-b", [
+      { branch: "feature/cand-1", agent: "agent-b", score: 9 },
+    ]),
+  });
+  ctx.worktreeInspect = async (handoffId) => {
+    const inspection = makeInspection(handoffId, {
+      branchName: handoffId === "cand-h-0" ? "feature/cand-0" : "feature/cand-1",
+    });
+    if (handoffId !== "cand-h-0") return inspection;
+    const legacy: Record<string, unknown> = { ...inspection };
+    delete legacy.base_ref;
+    return legacy as WorktreeInspection;
+  };
+
+  try {
+    const result = await runTournament(ctx);
+
+    expect(result.ok).toBe(true);
+    expect(result.winner).toBe("feature/cand-1");
+    expect(result.candidates[0]?.inspection_valid).toBe(false);
+    expect(result.candidates[1]?.inspection_valid).toBe(true);
+    const judgeRequest = capturedRequests.find((request) => request.tool_free === true);
+    expect(judgeRequest?.message).toContain("**Diff against main:**");
+    expect(judgeRequest?.message).not.toContain("undefined");
+  } finally {
+    db.close();
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Inspection dirty — dirty worktree is filtered
 // ---------------------------------------------------------------------------

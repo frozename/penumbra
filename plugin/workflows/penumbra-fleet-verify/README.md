@@ -37,7 +37,11 @@ The local structural interface is derived from the accepted `WorkflowCtx.worktre
 } | null
 ```
 
-Despite its name, `diff_against_main` (like `branch_log`) is taken against `base_ref`, the root dispatch base of the handoff's `branch_base` chain. `base_fallback` is `true` when that base could not be used and inspection fell back to `main`; `base_attempted_ref` and `base_fallback_reason` name the ref and why.
+Despite its name, `diff_against_main` (like `branch_log`) is taken against `base_ref`: the root dispatch base found by walking the handoff's `branch_base` through refs owned by handoffs in the same project, or `main` on fallback. For a stacked task or a later fix round both are therefore cumulative over the whole chain. `base_fallback` is `true` when inspection fell back to `main`. `base_attempted_ref` is the ref the walk tried: equal to `base_ref` without fallback; on `chain_limit` it is the still-owned ref where the walk stopped, not a root. `base_fallback_reason` is one of:
+
+- `unresolvable`: the attempted ref does not resolve to a commit, for example because its branch was deleted.
+- `rejected_ref`: the attempted ref is not a plain branch name (`HEAD`, `@`, a `..` range or disallowed characters), so it is never passed to git.
+- `chain_limit`: the walk hit a cycle or the owned-link limit before reaching a ref no same-project handoff owns.
 
 The workflow uses one strict runtime binding check for the candidate before verification, the verifier checkout after it finishes, and the candidate after verification. Every inspection must contain a `created` handle, the expected handoff, `branch_name === worktree.branchName === expected branch`, a matching `projectId` when the optional field is present, a measured 40- or 64-hex `head_sha`, `dirty: false`, and all three truncation flags set to literal `false`. Null, thrown, malformed, non-created, foreign, dirty, mismatched, or individually truncated inspections remain explicit unavailable evidence and cannot become landable.
 

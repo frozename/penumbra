@@ -2,6 +2,7 @@ import { expect, mock, test } from "bun:test";
 
 import { type DaemonClient, DaemonHttpError } from "@src/daemon-client.js";
 import { chainStartHandler } from "@src/tools/chain-start.js";
+import { TOOL_REGISTRY } from "@src/tools/registry.js";
 import { worktreeCleanupHandler } from "@src/tools/worktree-cleanup.js";
 import { worktreeInspectHandler } from "@src/tools/worktree-inspect.js";
 import { worktreeListHandler } from "@src/tools/worktree-list.js";
@@ -60,6 +61,20 @@ test("worktree.inspect tool calls daemon", async () => {
   const handler = worktreeInspectHandler(daemon);
   await handler({ handoff_id: "h1" });
   expect(mocks.inspectWorktree).toHaveBeenCalledWith("h1");
+});
+
+test("worktree_inspect description names base_ref and every base fallback reason", () => {
+  const description = TOOL_REGISTRY.worktree_inspect?.descriptor.description ?? "";
+  for (const term of [
+    "base_ref",
+    "base_attempted_ref",
+    "base_fallback_reason",
+    "unresolvable",
+    "rejected_ref",
+    "chain_limit",
+  ]) {
+    expect({ term, present: description.includes(term) }).toEqual({ term, present: true });
+  }
 });
 
 test("worktree.inspect surfaces the daemon inspection error code and message", async () => {
