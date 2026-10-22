@@ -18,7 +18,7 @@ const start = declarationIndex("parseCheck");
 const end = declarationIndex("hopFields");
 expect(end, "hopFields must follow parseCheck").toBeGreaterThan(start);
 
-const parseCheck = new Function(`${source.slice(start, end)}\nreturn parseCheck`)();
+const parseCheck = new Function("log", `${source.slice(start, end)}\nreturn parseCheck`)(() => {});
 
 test("passes when PASS marker is on the first line", () => {
   expect(parseCheck("CHECK_RESULT: PASS\nAll good")).toEqual({ passed: true, output: "" });
@@ -214,4 +214,39 @@ test("a PASS seen only in failure_tail is not trusted (stays unknown)", () => {
     unknown: true,
     output: "Summary.\nCHECK_RESULT: PASS",
   });
+});
+
+test("first_line FAIL found only in failure_tail is a failure, not unknown, without a check_line", () => {
+  const tail = "x\nCHECK_RESULT: FAIL\ny";
+
+  expect(parseCheck({ failure_tail: tail })).toEqual({ passed: false, output: tail });
+});
+
+test("first_line without check_line or a marker in failure_tail is unknown and reports the tail", () => {
+  expect(parseCheck({ failure_tail: "tail" })).toEqual({
+    passed: false,
+    unknown: true,
+    output: "tail",
+  });
+});
+
+test("no parse output stringifies the result object", () => {
+  const results = [
+    parseCheck({}),
+    parseCheck({}, "full"),
+    parseCheck({ check_line: "CHECK_RESULT: FAIL" }, "full"),
+    parseCheck({ failure_tail: "CHECK_RESULT: FAIL" }, "full"),
+    parseCheck({ check_line: 7, response: null, failure_tail: { nested: true } }),
+  ];
+
+  for (const result of results) {
+    expect(result.passed).toBe(false);
+    expect(result.output).not.toContain("[object Object]");
+  }
+});
+
+test("first_line output prefers failure_tail over response and check_line", () => {
+  expect(
+    parseCheck({ check_line: "I committed.", response: "the response", failure_tail: "the tail" }),
+  ).toEqual({ passed: false, unknown: true, output: "the tail" });
 });

@@ -244,17 +244,24 @@ function roundMessage(roundIndex, prevBranch, prevOutput) {
 }
 
 function parseCheck(result, responseMode = 'first_line') {
-  const hasCheckLine = result && typeof result === 'object' && typeof result.check_line === 'string'
-  const hasResponse = result && typeof result === 'object' && typeof result.response === 'string'
-  const useFirstLine = responseMode === 'first_line' && hasCheckLine
+  const isObject = result !== null && typeof result === 'object'
+  const checkLine = isObject && typeof result.check_line === 'string' ? result.check_line : null
+  const response = isObject && typeof result.response === 'string' ? result.response : null
+  const failureTail = isObject && typeof result.failure_tail === 'string' ? result.failure_tail : ''
+  // check_line is optional in the fanout result schema; when it and the response are
+  // both absent, failure_tail is the only text that can carry an explicit FAIL.
+  const useFirstLine = responseMode === 'first_line' && isObject && (checkLine !== null || response === null)
   if (!useFirstLine && responseMode !== 'first_line') {
     log(`WARNING: fix-until-green: response_mode is ${responseMode}; check parsing will scan the full worker response for CHECK_RESULT rather than only the first line.`)
   }
+  // Never stringify the result object itself: it would scan and report "[object Object]".
   const text = useFirstLine
-    ? String(result.check_line || '')
-    : hasResponse
-      ? String(result.response || '')
-      : String(result || '')
+    ? checkLine || ''
+    : response !== null
+      ? response
+      : isObject
+        ? ''
+        : String(result || '')
   // CommonMark fences open with <=3 leading spaces plus 3+ matching ticks/tildes;
   // only an equal-or-longer run of the same marker character closes them.
   const scanText = stripFencedBlocks(text)
@@ -271,16 +278,16 @@ function parseCheck(result, responseMode = 'first_line') {
   if (!sawFail && sawPass) return { passed: true, output: '' }
   let fullSawPass = false
   let fullSawFail = false
-  const fallbackText = hasResponse ? String(result.response || '') : String(result.failure_tail || '')
+  const fallbackText = response !== null ? response : failureTail
   if (useFirstLine && !sawFail && !sawPass && fallbackText) {
     const fullScan = stripFencedBlocks(fallbackText)
     for (const line of fullScan.split('\n')) {
       const marker = /^ {0,3}CHECK_RESULT:\s*(PASS|FAIL)\b/i.exec(line)
       if (!marker) continue
       if (marker[1].toUpperCase() === 'FAIL') fullSawFail = true
-      if (marker[1].toUpperCase() === 'PASS' && hasResponse) fullSawPass = true
+      if (marker[1].toUpperCase() === 'PASS' && response !== null) fullSawPass = true
     }
-    if (hasResponse && !fullSawFail && fullSawPass) {
+    if (response !== null && !fullSawFail && fullSawPass) {
       log('fix-until-green: check_line held no CHECK_RESULT marker (worker narrated first); recovered the verdict from the full response.')
       return { passed: true, output: '' }
     }
@@ -288,7 +295,7 @@ function parseCheck(result, responseMode = 'first_line') {
   // No line-initial, unfenced marker anywhere: UNKNOWN, not FAIL.
   const unknown = !sawPass && !sawFail && !fullSawPass && !fullSawFail
   if (useFirstLine) {
-    return { passed: false, ...(unknown ? { unknown: true } : {}), output: String(result.failure_tail || result.response || result.check_line || '').slice(-4000) }
+    return { passed: false, ...(unknown ? { unknown: true } : {}), output: (failureTail || response || checkLine || '').slice(-4000) }
   }
   return { passed: false, ...(unknown ? { unknown: true } : {}), output: text.slice(-4000) }
 }
@@ -626,7 +633,10 @@ for (let i = 0; i < maxRounds; i++) {
       }
       const notInspected = grade != null && grade.inspected !== true
       if (grade == null || notInspected) {
-        const graderUnavailableOutput = notInspected ? 'Independent rubric grader could not locate the candidate diff; rubric not attested.' : 'Independent rubric grader was unavailable; rubric not attested.'
+        // Only inspected:false says the diff could not be found; a missing or null
+        // flag means the grader never attested that it read the diff at all.
+        const graderProblem = grade == null ? 'was unavailable' : grade.inspected === false ? 'could not locate the candidate diff' : 'did not attest that it read the candidate diff'
+        const graderUnavailableOutput = `Independent rubric grader ${graderProblem}; rubric not attested.`
         rounds.push({
           round: i + 1,
           agent: agentForRound,
@@ -641,7 +651,7 @@ for (let i = 0; i < maxRounds; i++) {
           ci_parity: parityCheck !== null && checkVerified,
           passed: false,
         })
-        log(`fix-until-green round ${i + 1}: ${notInspected ? 'grader could not locate the candidate diff' : 'grader was unavailable'}; rubric not attested on ${r.branch}`)
+        log(`fix-until-green round ${i + 1}: grader ${graderProblem}; rubric not attested on ${r.branch}`)
         prevOutput = graderUnavailableOutput
         break
       }

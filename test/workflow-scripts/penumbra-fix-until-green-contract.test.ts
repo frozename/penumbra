@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 
 import { readRuntimeBody, runWorkflowCapturingPrompts } from "./harness.js";
 
@@ -1758,5 +1759,139 @@ describe("penumbra-fix-until-green fails closed on an unattested grade or unmark
     const lastOutput = String(result?.last_output ?? "");
     expect(lastOutput).toContain("no CHECK_RESULT marker");
     expect(lastOutput).not.toContain("worker's PASS");
+  });
+});
+
+describe("penumbra-fix-until-green verdict-aware verifier logs and grader text", () => {
+  function fanoutWithCheckLine(checkLine: string) {
+    return async () => ({
+      results: [
+        {
+          ok: true,
+          status: "completed",
+          branch: "test/x_h-777",
+          conversation_id: "c",
+          handoff_id: "h-777",
+          reliability_trustworthy: true,
+          check_line: checkLine,
+        },
+      ],
+    });
+  }
+
+  const verdictCases = [
+    {
+      name: "a worker PASS",
+      checkLine: "CHECK_RESULT: PASS",
+      unavailableLog:
+        "fix-until-green round 1: independent CHECK verifier unavailable; worker PASS not attested on test/x_h-777",
+      measuredLog:
+        "fix-until-green round 1: worker claimed PASS but the independent CHECK verifier measured check_exit=1; treating as FAIL",
+    },
+    {
+      name: "an unmarked round",
+      checkLine: "I committed the change.",
+      unavailableLog:
+        "fix-until-green round 1: independent CHECK verifier unavailable; unmarked round not attested on test/x_h-777",
+      measuredLog:
+        "fix-until-green round 1: round had no CHECK_RESULT marker and the independent CHECK verifier measured check_exit=1; treating as FAIL",
+    },
+  ];
+
+  for (const verdictCase of verdictCases) {
+    test(`an unavailable verifier logs the verdict of ${verdictCase.name}`, async () => {
+      const { logs, error } = await runFixUntilGreen(
+        { task: { message: "m" }, check: "true", maxRounds: 1, defaults: { caller_cwd: "/abs" } },
+        { workflow: fanoutWithCheckLine(verdictCase.checkLine), agent: async () => null },
+      );
+
+      expect(error).toBeUndefined();
+      expect(logs).toContain(verdictCase.unavailableLog);
+    });
+
+    test(`a verifier-measured FAIL logs the verdict of ${verdictCase.name}`, async () => {
+      const { logs, error } = await runFixUntilGreen(
+        { task: { message: "m" }, check: "true", maxRounds: 1, defaults: { caller_cwd: "/abs" } },
+        {
+          workflow: fanoutWithCheckLine(verdictCase.checkLine),
+          agent: async () => ({
+            ran: true,
+            check_exit: 1,
+            failing_segment: "true",
+            output_tail: "boom",
+          }),
+        },
+      );
+
+      expect(error).toBeUndefined();
+      expect(logs).toContain(verdictCase.measuredLog);
+    });
+  }
+
+  const passingCriterion = { index: 1, criterion: "criterion one", pass: true, evidence: "d" };
+  const graderCases = [
+    {
+      name: "inspected:false",
+      grade: { inspected: false, criteria: [], notes: "branch not found" },
+      problem: "could not locate the candidate diff",
+    },
+    {
+      name: "no inspected key",
+      grade: { overall_pass: true, criteria: [passingCriterion] },
+      problem: "did not attest that it read the candidate diff",
+    },
+    {
+      name: "inspected:null",
+      grade: { inspected: null, overall_pass: true, criteria: [passingCriterion] },
+      problem: "did not attest that it read the candidate diff",
+    },
+    {
+      name: "a null result",
+      grade: null,
+      problem: "was unavailable",
+    },
+  ];
+
+  for (const graderCase of graderCases) {
+    test(`a grade with ${graderCase.name} says the grader ${graderCase.problem}`, async () => {
+      const { result, logs, error } = await runFixUntilGreen(
+        {
+          task: { message: "m" },
+          check: "true",
+          maxRounds: 2,
+          rubric: ["criterion one"],
+          defaults: { caller_cwd: "/abs" },
+        },
+        {
+          workflow: fanoutWithCheckLine("CHECK_RESULT: PASS"),
+          agent: async (_prompt, options) => {
+            const label = String(options?.label ?? "");
+            if (label.startsWith("verify-check")) return { ran: true, check_exit: 0 };
+            if (label.startsWith("rubric")) return graderCase.grade;
+            return {};
+          },
+        },
+      );
+
+      expect(error).toBeUndefined();
+      expect(result?.green).toBe(false);
+      expect(result?.last_output).toBe(
+        `Independent rubric grader ${graderCase.problem}; rubric not attested.`,
+      );
+      expect(logs).toContain(
+        `fix-until-green round 1: grader ${graderCase.problem}; rubric not attested on test/x_h-777`,
+      );
+    });
+  }
+});
+
+describe("penumbra-fix-until-green AGENTS.md workflow table", () => {
+  test("the fix-until-green row lists the agentType? arg the script accepts", () => {
+    const row = readFileSync("AGENTS.md", "utf8")
+      .split("\n")
+      .find((line) => line.startsWith("| `penumbra-fix-until-green`"));
+
+    expect(row).toBeDefined();
+    expect(row).toContain("agentType?");
   });
 });
