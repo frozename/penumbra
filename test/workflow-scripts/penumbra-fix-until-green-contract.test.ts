@@ -1887,13 +1887,14 @@ describe("penumbra-fix-until-green verdict-aware verifier logs and grader text",
 });
 
 describe("penumbra-fix-until-green AGENTS.md workflow table", () => {
-  test("the fix-until-green row lists the agentType? arg the script accepts", () => {
+  test("the fix-until-green row lists the agentType? and verifyCheck? args the script accepts", () => {
     const row = readFileSync("AGENTS.md", "utf8")
       .split("\n")
       .find((line) => line.startsWith("| `penumbra-fix-until-green`"));
 
     expect(row).toBeDefined();
     expect(row).toContain("agentType?");
+    expect(row).toContain("verifyCheck?");
   });
 });
 

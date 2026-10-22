@@ -256,25 +256,33 @@ function parseCheck(result, responseMode = 'first_line') {
     log(`WARNING: fix-until-green: response_mode is ${responseMode}; check parsing will scan the full worker response for CHECK_RESULT rather than only the first line.`)
   }
   // Never stringify the result object itself: it would scan and report "[object Object]".
+  // Without a response, failure_tail and check_line are the only text that can carry an
+  // explicit FAIL. A PASS there is not trusted, as in the first_line failure_tail scan,
+  // because the response this mode asked for never arrived.
+  const responseMissing = !useFirstLine && isObject && response === null
   const text = useFirstLine
     ? checkLine || ''
     : response !== null
       ? response
       : isObject
-        ? ''
+        ? failureTail || checkLine || ''
         : String(result || '')
-  // CommonMark fences open with <=3 leading spaces plus 3+ matching ticks/tildes;
-  // only an equal-or-longer run of the same marker character closes them.
-  const scanText = stripFencedBlocks(text)
+  // check_line and failure_tail are separate fragments; scanning them apart keeps a fence
+  // left open in one from hiding a marker in the other.
+  const scanSources = responseMissing ? [failureTail, checkLine || ''] : [text]
   let sawPass = false
   let sawFail = false
-  for (const line of scanText.split('\n')) {
-    // Marker must be line-initial with <=3 leading spaces, matching the
-    // CommonMark indented-code-block boundary used by fence scanning.
-    const marker = /^ {0,3}CHECK_RESULT:\s*(PASS|FAIL)\b/i.exec(line)
-    if (!marker) continue
-    if (marker[1].toUpperCase() === 'FAIL') sawFail = true
-    if (marker[1].toUpperCase() === 'PASS') sawPass = true
+  for (const scanSource of scanSources) {
+    // CommonMark fences open with <=3 leading spaces plus 3+ matching ticks/tildes;
+    // only an equal-or-longer run of the same marker character closes them.
+    for (const line of stripFencedBlocks(scanSource).split('\n')) {
+      // Marker must be line-initial with <=3 leading spaces, matching the
+      // CommonMark indented-code-block boundary used by fence scanning.
+      const marker = /^ {0,3}CHECK_RESULT:\s*(PASS|FAIL)\b/i.exec(line)
+      if (!marker) continue
+      if (marker[1].toUpperCase() === 'FAIL') sawFail = true
+      if (marker[1].toUpperCase() === 'PASS' && !responseMissing) sawPass = true
+    }
   }
   if (!sawFail && sawPass) return { passed: true, output: '' }
   let fullSawPass = false
