@@ -441,10 +441,12 @@ describe("countProviderInFlight stale-sweep drain hold (#218)", () => {
   });
 });
 
-// The restarted incarnation of W-A boots at BOOT_TS (its claimed_before), after the
-// sweep, and heartbeats under the same worker_id when it reconciles at RECONCILE_MS.
+// The restarted incarnation of W-A boots at BOOT_TS (its claimed_before) and heartbeats
+// under the same worker_id when it reconciles at RECONCILE_MS. The previous incarnation
+// claimed its sessions at PREVIOUS_CLAIM_TS.
 const BOOT_TS = "2026-05-21T10:04:00.000Z";
 const RECONCILE_MS = Date.parse("2026-05-21T10:05:00.000Z");
+const PREVIOUS_CLAIM_TS = "2026-05-21T09:50:00.000Z";
 
 function restartedWorkerServices(): Services {
   const services = tempServices();
@@ -452,6 +454,27 @@ function restartedWorkerServices(): Services {
   heartbeatAt(services, "W-A", RECONCILE_MS);
   heartbeatAt(services, "W-B", RECONCILE_MS);
   return services;
+}
+
+// claimDispatch stamps last_dispatch_started_at with the wall clock, which the release
+// compares against claimed_before.
+function stampClaim(services: Services, handoff_id: string, ts: string | null): void {
+  services.db
+    .query<
+      never,
+      [string | null, string]
+    >("UPDATE handoffs SET last_dispatch_started_at=? WHERE handoff_id=?")
+    .run(ts, handoff_id);
+}
+
+function claimedBeforeBoot(
+  services: Services,
+  handoff_id: string,
+  to = "claude-a",
+  tsOffsetMs = 0,
+): void {
+  claimed(services, handoff_id, to, tsOffsetMs);
+  stampClaim(services, handoff_id, PREVIOUS_CLAIM_TS);
 }
 
 function drainReleases(
@@ -464,9 +487,9 @@ function drainReleases(
 }
 
 describe("releaseSweptDrainHolds at worker boot reconcile (#236)", () => {
-  test("a reconcile with claimed_before after the sweep releases the previous incarnation's hold", () => {
+  test("a reconcile with claimed_before after the claim releases the previous incarnation's hold", () => {
     const services = restartedWorkerServices();
-    claimed(services, "h-swept");
+    claimedBeforeBoot(services, "h-swept");
     sweepLikeStaleSweeper(services, "h-swept");
     expect(count(services)).toBe(1);
 
@@ -485,27 +508,90 @@ describe("releaseSweptDrainHolds at worker boot reconcile (#236)", () => {
     expect(drainReleases(services, "h-swept")).toHaveLength(1);
   });
 
-  test("a reconcile from another worker or with claimed_before not after the sweep keeps the hold", () => {
+  test("a session claimed before claimed_before but swept after it is released", () => {
     const services = restartedWorkerServices();
-    claimed(services, "h-swept");
+    claimedBeforeBoot(services, "h-swept-after-boot");
+    sweepLikeStaleSweeper(services, "h-swept-after-boot", "2026-05-21T10:04:30.000Z");
+    expect(count(services)).toBe(1);
+
+    expect(releaseSweptDrainHolds(services, "W-A", BOOT_TS)).toEqual(["h-swept-after-boot"]);
+
+    expect(count(services)).toBe(0);
+    expect(drainReleases(services, "h-swept-after-boot")).toHaveLength(1);
+  });
+
+  test("a session claimed at or after claimed_before stays held even when swept", () => {
+    const services = restartedWorkerServices();
+    claimed(services, "h-claimed-at-boot");
+    stampClaim(services, "h-claimed-at-boot", BOOT_TS);
+    sweepLikeStaleSweeper(services, "h-claimed-at-boot", "2026-05-21T10:04:20.000Z");
+    claimed(services, "h-claimed-after-boot", "claude-a", 1);
+    stampClaim(services, "h-claimed-after-boot", "2026-05-21T10:04:10.000Z");
+    sweepLikeStaleSweeper(services, "h-claimed-after-boot", "2026-05-21T10:04:30.000Z");
+    expect(count(services)).toBe(2);
+
+    expect(releaseSweptDrainHolds(services, "W-A", BOOT_TS)).toEqual([]);
+
+    expect(count(services)).toBe(2);
+    expect(drainReleases(services, "h-claimed-at-boot")).toEqual([]);
+    expect(drainReleases(services, "h-claimed-after-boot")).toEqual([]);
+  });
+
+  test("a session with no recorded claim time is released, as orphan recovery treats it", () => {
+    const services = restartedWorkerServices();
+    claimed(services, "h-unstamped");
+    stampClaim(services, "h-unstamped", null);
+    sweepLikeStaleSweeper(services, "h-unstamped");
+
+    expect(releaseSweptDrainHolds(services, "W-A", BOOT_TS)).toEqual(["h-unstamped"]);
+
+    expect(count(services)).toBe(0);
+    expect(drainReleases(services, "h-unstamped")).toHaveLength(1);
+  });
+
+  test("a reconcile from another worker or with claimed_before not after the claim keeps the hold", () => {
+    const services = restartedWorkerServices();
+    claimedBeforeBoot(services, "h-swept");
     sweepLikeStaleSweeper(services, "h-swept");
 
     expect(releaseSweptDrainHolds(services, "W-B", BOOT_TS)).toEqual([]);
-    expect(releaseSweptDrainHolds(services, "W-A", SWEEP_TS)).toEqual([]);
-    expect(releaseSweptDrainHolds(services, "W-A", "2026-05-21T09:59:59.999Z")).toEqual([]);
+    expect(releaseSweptDrainHolds(services, "W-A", PREVIOUS_CLAIM_TS)).toEqual([]);
+    expect(releaseSweptDrainHolds(services, "W-A", "2026-05-21T09:49:59.999Z")).toEqual([]);
 
     expect(count(services)).toBe(1);
     expect(drainReleases(services, "h-swept")).toEqual([]);
   });
 
+  test("an offset claimed_before releases the same rows as its Z form and records the Z form", () => {
+    const releaseWith = (claimedBefore: string): { released: string[]; meta: unknown } => {
+      const services = restartedWorkerServices();
+      claimedBeforeBoot(services, "h-swept");
+      sweepLikeStaleSweeper(services, "h-swept");
+      claimed(services, "h-claimed-at-boot", "claude-a", 1);
+      stampClaim(services, "h-claimed-at-boot", BOOT_TS);
+      sweepLikeStaleSweeper(services, "h-claimed-at-boot", "2026-05-21T10:04:20.000Z");
+      const released = releaseSweptDrainHolds(services, "W-A", claimedBefore);
+      return {
+        released,
+        meta: JSON.parse(drainReleases(services, "h-swept")[0]?.meta_json ?? "null"),
+      };
+    };
+
+    const zForm = releaseWith(BOOT_TS);
+
+    expect(zForm).toEqual({ released: ["h-swept"], meta: { claimed_before: BOOT_TS } });
+    expect(releaseWith("2026-05-21T06:04:00-04:00")).toEqual(zForm);
+  });
+
   test("a reconcile keeps live dispatches and other workers' drain holds counted", () => {
     const services = restartedWorkerServices();
-    claimed(services, "h-swept");
+    claimedBeforeBoot(services, "h-swept");
     sweepLikeStaleSweeper(services, "h-swept");
     seedApprovedHandoff(services, "h-peer-swept", { to: "claude-b", tsOffsetMs: 1 });
     expect(services.handoffWriter.claimDispatch("h-peer-swept", "W-B")).toBe(true);
+    stampClaim(services, "h-peer-swept", PREVIOUS_CLAIM_TS);
     sweepLikeStaleSweeper(services, "h-peer-swept");
-    claimed(services, "h-live", "claude-b", 2);
+    claimedBeforeBoot(services, "h-live", "claude-b", 2);
     expect(count(services)).toBe(3);
 
     expect(releaseSweptDrainHolds(services, "W-A", BOOT_TS)).toEqual(["h-swept"]);
@@ -521,10 +607,10 @@ describe("releaseSweptDrainHolds at worker boot reconcile (#236)", () => {
 
   test("a reconcile releases only handoffs the sweeper itself left draining", () => {
     const services = restartedWorkerServices();
-    claimed(services, "h-ended");
+    claimedBeforeBoot(services, "h-ended");
     sweepLikeStaleSweeper(services, "h-ended");
     recordWorkerEvent(services, "h-ended", "dispatch.end");
-    claimed(services, "h-cancel", "claude-a", 1);
+    claimedBeforeBoot(services, "h-cancel", "claude-a", 1);
     expect(
       services.handoffWriter.markFailed("h-cancel", {
         reason: "cancelled",
@@ -533,7 +619,7 @@ describe("releaseSweptDrainHolds at worker boot reconcile (#236)", () => {
       }),
     ).toBe(true);
     insertSweeperDispatchEnd(services, "h-cancel");
-    claimed(services, "h-not-failed", "claude-a", 2);
+    claimedBeforeBoot(services, "h-not-failed", "claude-a", 2);
     services.db
       .query<
         never,
@@ -541,29 +627,35 @@ describe("releaseSweptDrainHolds at worker boot reconcile (#236)", () => {
       >("UPDATE handoffs SET resolved_by='stale-handoff-sweeper' WHERE handoff_id='h-not-failed'")
       .run();
     insertSweeperDispatchEnd(services, "h-not-failed");
-    // Only a daemon-sourced dispatch.end predates the boot; the sweep itself came after it.
-    claimed(services, "h-swept-after-boot", "claude-a", 3);
+    // Force-failed as if by the sweeper, but its only dispatch.end is daemon-sourced.
+    claimedBeforeBoot(services, "h-daemon-end", "claude-a", 3);
     services.dispatchEventLog.record({
-      handoff_id: "h-swept-after-boot",
+      handoff_id: "h-daemon-end",
       worker_id: null,
       source: "daemon",
       kind: "dispatch.end",
       ts: SWEEP_TS,
     });
-    sweepLikeStaleSweeper(services, "h-swept-after-boot", "2026-05-21T10:04:30.000Z");
-    expect(count(services)).toBe(2);
+    expect(
+      services.handoffWriter.markFailed("h-daemon-end", {
+        reason: "stale_force_resolve",
+        resolved_by: "stale-handoff-sweeper",
+        ts: SWEEP_TS,
+      }),
+    ).toBe(true);
+    expect(count(services)).toBe(1);
 
     expect(releaseSweptDrainHolds(services, "W-A", BOOT_TS)).toEqual([]);
 
-    expect(count(services)).toBe(2);
-    for (const handoff_id of ["h-ended", "h-cancel", "h-not-failed", "h-swept-after-boot"]) {
+    expect(count(services)).toBe(1);
+    for (const handoff_id of ["h-ended", "h-cancel", "h-not-failed", "h-daemon-end"]) {
       expect(drainReleases(services, handoff_id)).toEqual([]);
     }
   });
 
   test("a release past the max-hold bound records nothing", () => {
     const services = restartedWorkerServices();
-    claimed(services, "h-swept");
+    claimedBeforeBoot(services, "h-swept");
     sweepLikeStaleSweeper(services, "h-swept");
     services.clock = (): Date => new Date(CLOCK_MS + STALE_SWEEP_DRAIN_MAX_HOLD_MS + 1);
     heartbeatAt(services, "W-A", CLOCK_MS + STALE_SWEEP_DRAIN_MAX_HOLD_MS + 1);

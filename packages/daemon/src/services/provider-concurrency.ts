@@ -14,7 +14,7 @@ type ConcurrencyServices = Pick<Services, "db" | "agentchatConfig" | "providerQu
 
 // Fallback bound only. A stale-swept session releases its slot when its worker posts
 // dispatch.end, when that worker stops heartbeating, or when the worker reconciles orphans
-// with a claimed_before after the sweep. stdio-acp's prompt timeout is an idle timer
+// with a claimed_before after the claim. stdio-acp's prompt timeout is an idle timer
 // (20 min default, re-armed by every session/update), so no wall bound matches a busy
 // session; this caps the slot leak when a live worker neither reports dispatch.end nor
 // reconciles (e.g. a supervisor-managed restart with PENUMBRA_BOOT_RECONCILE=0).
@@ -63,18 +63,23 @@ export function sweeperDrainCutoffIso(now: Date): string {
   return new Date(now.getTime() - STALE_SWEEP_DRAIN_MAX_HOLD_MS).toISOString();
 }
 
-// A worker reconciles with claimed_before = its boot instant, so every session it ran
-// before then died with the previous process. Same driving index and join order as
-// sweeperDrainingCountSql; sweeps older than the max-hold bound no longer hold a slot.
+// A worker reconciles with claimed_before = its boot instant, so every session claimed
+// before then died with the previous process whenever the sweeper force-failed it. Keying
+// on the sweep time instead would keep a slot held until the max-hold bound for a session
+// swept between that boot and a reconcile the worker deferred past it. The claim test is
+// listOrphanedDispatches' own (a NULL claim time predates the column), so recovery and
+// release agree on which sessions the previous incarnation owned. Same driving index and
+// join order as sweeperDrainingCountSql; sweeps older than the max-hold bound no longer hold
+// a slot.
 // Params: max-hold cutoff ISO, claimed_before ISO, worker_id.
 export const SWEPT_DRAIN_RELEASE_CANDIDATES_SQL = `SELECT DISTINCT h.handoff_id AS handoff_id
      FROM dispatch_events s
     CROSS JOIN handoffs h
     WHERE s.kind = 'dispatch.end'
       AND s.ts >= ?
-      AND s.ts < ?
       AND s.source = 'sweeper'
       AND h.handoff_id = s.handoff_id
+      AND (h.last_dispatch_started_at IS NULL OR h.last_dispatch_started_at < ?)
       AND h.worker_id = ?
       AND h.status = 'failed'
       AND h.resolved_by = 'stale-handoff-sweeper'
@@ -91,16 +96,19 @@ export const SWEPT_DRAIN_RELEASE_CANDIDATES_SQL = `SELECT DISTINCT h.handoff_id 
       )`;
 
 // Releases are rows rather than an in-memory flag so they survive a daemon restart and
-// show in the dispatch timeline next to the sweep they end.
+// show in the dispatch timeline next to the sweep they end. claimedBefore is compared as
+// text with the Z-form stamps claimDispatch writes, so an offset form is normalized here
+// rather than trusted to every caller.
 export function releaseSweptDrainHolds(
   services: Pick<Services, "db" | "dispatchEventLog" | "clock">,
   worker_id: string,
   claimedBefore: string,
 ): string[] {
   const now = services.clock();
+  const claimedBeforeIso = new Date(claimedBefore).toISOString();
   const released = services.db
     .query<{ handoff_id: string }, [string, string, string]>(SWEPT_DRAIN_RELEASE_CANDIDATES_SQL)
-    .all(sweeperDrainCutoffIso(now), claimedBefore, worker_id)
+    .all(sweeperDrainCutoffIso(now), claimedBeforeIso, worker_id)
     .map((row) => row.handoff_id);
   services.dispatchEventLog.recordBatch(
     released.map((handoff_id) => ({
@@ -109,7 +117,7 @@ export function releaseSweptDrainHolds(
       source: "daemon" as const,
       kind: "worker.recovery.drain_released" as const,
       ts: now.toISOString(),
-      meta: { claimed_before: claimedBefore },
+      meta: { claimed_before: claimedBeforeIso },
     })),
   );
   return released;

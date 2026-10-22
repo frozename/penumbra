@@ -631,11 +631,13 @@ test("POST /worker/reconcile-orphans with worker token + matching body worker_id
 });
 
 // Mirrors sweepers/stale-handoff.ts: the force-fail and the sweeper dispatch.end row
-// are written in one transaction.
+// are written in one transaction. claimDispatch stamps last_dispatch_started_at with the
+// wall clock, which the release compares against claimed_before, so claimedAt replaces it.
 function seedSweptDispatch(
   services: Services,
   handoff_id: string,
   worker_id: string,
+  claimedAt: string | null,
   sweptAt: string,
 ): void {
   services.handoffWriter.createApproved({
@@ -659,6 +661,12 @@ function seedSweptDispatch(
     workflow_run_id: null,
   });
   expect(services.handoffWriter.claimDispatch(handoff_id, worker_id)).toBe(true);
+  services.db
+    .query<
+      never,
+      [string | null, string]
+    >("UPDATE handoffs SET last_dispatch_started_at=? WHERE handoff_id=?")
+    .run(claimedAt, handoff_id);
   services.db.transaction(() => {
     expect(
       services.handoffWriter.markFailed(handoff_id, {
@@ -674,7 +682,7 @@ function seedSweptDispatch(
   })();
 }
 
-test("POST /worker/reconcile-orphans releases the caller's drain holds swept before claimed_before (#236)", async () => {
+test("POST /worker/reconcile-orphans releases the caller's drain holds claimed before claimed_before (#236)", async () => {
   const services = tempServices();
   const token = "secret-token";
   const fetchHandler = createDaemonFetchHandler({
@@ -704,9 +712,35 @@ test("POST /worker/reconcile-orphans releases the caller's drain holds swept bef
     worker_id: "w-peer",
     fetcher: makeFetcher(fetchHandler),
   });
-  seedSweptDispatch(services, "h-own", "w-restarted", "2026-05-19T23:30:00.000Z");
-  seedSweptDispatch(services, "h-peer", "w-peer", "2026-05-19T23:30:00.000Z");
-  seedSweptDispatch(services, "h-own-after-boot", "w-restarted", "2026-05-19T23:50:00.000Z");
+  seedSweptDispatch(
+    services,
+    "h-own",
+    "w-restarted",
+    "2026-05-19T23:10:00.000Z",
+    "2026-05-19T23:30:00.000Z",
+  );
+  seedSweptDispatch(
+    services,
+    "h-peer",
+    "w-peer",
+    "2026-05-19T23:10:00.000Z",
+    "2026-05-19T23:30:00.000Z",
+  );
+  // Swept after the boot the reconcile reports, but claimed by the previous incarnation.
+  seedSweptDispatch(
+    services,
+    "h-own-swept-after-boot",
+    "w-restarted",
+    "2026-05-19T23:10:00.000Z",
+    "2026-05-19T23:50:00.000Z",
+  );
+  seedSweptDispatch(
+    services,
+    "h-own-after-boot",
+    "w-restarted",
+    "2026-05-19T23:45:00.000Z",
+    "2026-05-19T23:50:00.000Z",
+  );
   const inFlight = (): number => countProviderInFlight(services, ["claude-a"]);
   const releasedBy = (handoff_id: string): (string | null)[] =>
     services.dispatchEventLog
@@ -721,10 +755,10 @@ test("POST /worker/reconcile-orphans releases the caller's drain holds swept bef
         body: JSON.stringify(body),
       }),
     );
-  expect(inFlight()).toBe(3);
+  expect(inFlight()).toBe(4);
 
   expect((await reconcile({ worker_id: "w-restarted" })).status).toBe(200);
-  expect(inFlight()).toBe(3);
+  expect(inFlight()).toBe(4);
 
   const res = await reconcile({
     worker_id: "w-restarted",
@@ -734,6 +768,7 @@ test("POST /worker/reconcile-orphans releases the caller's drain holds swept bef
   expect(res.status).toBe(200);
   expect(inFlight()).toBe(2);
   expect(releasedBy("h-own")).toEqual(["w-restarted"]);
+  expect(releasedBy("h-own-swept-after-boot")).toEqual(["w-restarted"]);
   expect(releasedBy("h-peer")).toEqual([]);
   expect(releasedBy("h-own-after-boot")).toEqual([]);
 });
@@ -761,7 +796,13 @@ test("POST /worker/reconcile-orphans keeps its recovery result when the drain-ho
     worker_id: "w-restarted",
     fetcher: makeFetcher(fetchHandler),
   });
-  seedSweptDispatch(services, "h-own", "w-restarted", "2026-05-19T23:30:00.000Z");
+  seedSweptDispatch(
+    services,
+    "h-own",
+    "w-restarted",
+    "2026-05-19T23:10:00.000Z",
+    "2026-05-19T23:30:00.000Z",
+  );
   const recordBatch = spyOn(services.dispatchEventLog, "recordBatch").mockImplementation(
     (): never => {
       throw new Error("disk I/O error");
