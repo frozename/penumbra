@@ -212,7 +212,7 @@ Each dispatch runs in an isolated git worktree; these inspect and tear them down
 | Tool | Description |
 | --- | --- |
 | `worktree_list` | All currently-tracked worktrees from the manager. |
-| `worktree_inspect` | The diff and branch log for a specific worktree. |
+| `worktree_inspect` | The diff and branch log for a specific worktree, both taken against `base_ref` (the root dispatch base of the handoff's `branch_base` chain, or `main` on fallback). |
 | `worktree_cleanup` | Tear down a worktree by `handoff_id`. |
 
 ### Worktree-scoped filesystem and shell

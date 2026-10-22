@@ -42,6 +42,7 @@ type InspectionMock = {
   logTruncated?: boolean;
   totalTruncated?: boolean;
   projectId?: string;
+  baseRef?: string;
 };
 
 type ReinspectionOverride = {
@@ -71,6 +72,10 @@ function makeInspection(handoffId: string, opts: Partial<InspectionMock> = {}): 
     branch_log: opts.log ?? "abc1234 commit message",
     head_sha: opts.headSha ?? FULL_SHA_40,
     branch_name: opts.branchName ?? `feature/${handoffId}`,
+    base_ref: opts.baseRef ?? "main",
+    base_fallback: false,
+    base_attempted_ref: opts.baseRef ?? "main",
+    base_fallback_reason: null,
     dirty: opts.dirty ?? false,
     truncation: {
       diff_against_main: opts.diffTruncated ?? false,
@@ -882,6 +887,39 @@ test("rejects an inspection whose worktree branch does not bind to the latest br
   }
 });
 
+test("rejects an inspection without base_ref instead of judging a diff against undefined", async () => {
+  const { ctx, db, capturedRequests } = setupTournament({
+    agents: ["agent-a", "agent-b"],
+    branchNames: ["feature/cand-0", "feature/cand-1"],
+    judgeResponse: verdictJsonBlock("feature/cand-1", "agent-b", [
+      { branch: "feature/cand-1", agent: "agent-b", score: 9 },
+    ]),
+  });
+  ctx.worktreeInspect = async (handoffId) => {
+    const inspection = makeInspection(handoffId, {
+      branchName: handoffId === "cand-h-0" ? "feature/cand-0" : "feature/cand-1",
+    });
+    if (handoffId !== "cand-h-0") return inspection;
+    const legacy: Record<string, unknown> = { ...inspection };
+    delete legacy.base_ref;
+    return legacy as WorktreeInspection;
+  };
+
+  try {
+    const result = await runTournament(ctx);
+
+    expect(result.ok).toBe(true);
+    expect(result.winner).toBe("feature/cand-1");
+    expect(result.candidates[0]?.inspection_valid).toBe(false);
+    expect(result.candidates[1]?.inspection_valid).toBe(true);
+    const judgeRequest = capturedRequests.find((request) => request.tool_free === true);
+    expect(judgeRequest?.message).toContain("**Diff against main:**");
+    expect(judgeRequest?.message).not.toContain("undefined");
+  } finally {
+    db.close();
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Inspection dirty — dirty worktree is filtered
 // ---------------------------------------------------------------------------
@@ -1402,6 +1440,7 @@ test("judge prompt contains do NOT modify or land instruction", async () => {
         branchName: "feature/cand-0",
         diff: "diff content",
         log: "log content",
+        baseRef: "feature/stacked-base",
       },
     ],
   });
@@ -1411,6 +1450,7 @@ test("judge prompt contains do NOT modify or land instruction", async () => {
   const judgeRequest = capturedRequests.find((r) => r.tool_free === true);
   expect(judgeRequest?.message).toContain("Do NOT modify or land anything");
   expect(judgeRequest?.message).toContain("diff content");
+  expect(judgeRequest?.message).toContain("**Diff against feature/stacked-base:**\ndiff content");
   expect(judgeRequest?.message).toContain("log content");
   expect(judgeRequest?.message).toContain("feature/cand-0");
   expect(judgeRequest?.message).toContain("agent-a");

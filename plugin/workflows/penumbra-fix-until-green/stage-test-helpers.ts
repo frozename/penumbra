@@ -39,6 +39,10 @@ export function makeInspection(
     branch_log: "",
     head_sha: headSha,
     branch_name: branchName,
+    base_ref: "main",
+    base_fallback: false,
+    base_attempted_ref: "main",
+    base_fallback_reason: null,
     dirty,
     truncation: { diff_against_main: false, branch_log: false, total: false },
   };

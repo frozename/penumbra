@@ -215,6 +215,7 @@ function hasExpectedInspectionShape(
     worktree.storageRoot,
     worktree.createdAt,
     inspection.branch_name,
+    inspection.base_ref,
     headSha,
   ];
   const requiredConditions = [
@@ -416,7 +417,7 @@ function buildJudgePrompt(taskMessage: string, candidates: QualifiedCandidate[])
   const roster = candidates
     .map(
       (c) =>
-        `### Candidate: ${c.branch}\nAgent: ${c.agent}\nHead SHA: ${c.inspection.head_sha}\n\n**Branch log:**\n${c.inspection.branch_log}\n\n**Diff against main:**\n${c.inspection.diff_against_main}`,
+        `### Candidate: ${c.branch}\nAgent: ${c.agent}\nHead SHA: ${c.inspection.head_sha}\n\n**Branch log:**\n${c.inspection.branch_log}\n\n**Diff against ${c.inspection.base_ref}:**\n${c.inspection.diff_against_main}`,
     )
     .join("\n\n---\n\n");
   return [

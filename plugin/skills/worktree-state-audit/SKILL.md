@@ -13,8 +13,11 @@ Agents can report failure even when the intended work landed, usually through a 
    Confirm the handoff reached a terminal state. Capture `worker_id` and any `error_message`.
 2. `mcp__penumbra__worktree_inspect(handoff_id)`  
    Read the worktree path and agent branch name from Penumbra. Penumbra owns the path layout; do not assume any filesystem location.
-3. Inspect the diff and branch log returned by `worktree_inspect`. The diff is against `main`; the branch log shows the commits the agent landed.
-4. If you need to run commands against the worktree, use the returned path: `git -C <path> log --oneline -10`, `git -C <path> diff main...HEAD --stat`, `git -C <path> status`.
+3. Inspect the diff and branch log returned by `worktree_inspect`. Both are taken against `base_ref`, the root dispatch base: Penumbra walks the handoff's `branch_base` through every ref owned by a handoff in the same project and stops at the first ref no such handoff owns, or uses `main` on fallback. `base_ref` may be a feature branch rather than `main`, but it is never a stacked or fix-round parent owned by a handoff in the same project, so for a later fix round or stacked task the diff and log are cumulative over the whole chain, not only this agent's commits. `base_fallback` is `true` when inspection fell back to `main`. `base_attempted_ref` is the ref the walk tried: equal to `base_ref` without fallback; on `chain_limit` it is the still-owned ref where the walk stopped, not a root. `base_fallback_reason` is one of:
+   - `unresolvable`: the attempted ref does not resolve to a commit, for example because its branch was deleted.
+   - `rejected_ref`: the attempted ref is not a plain branch name (`HEAD`, `@`, a `..` range or disallowed characters), so it is never passed to git.
+   - `chain_limit`: the walk hit a cycle or the owned-link limit before reaching a ref no same-project handoff owns.
+4. If you need to run commands against the worktree, use the returned path and `base_ref`: `git -C <path> log --oneline -10`, `git -C <path> diff <base_ref>...HEAD --stat`, `git -C <path> status`.
 5. If the project has a focused test command, run it against that worktree path before merging.
 
 ## Decision Matrix

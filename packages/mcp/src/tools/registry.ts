@@ -1249,7 +1249,8 @@ const RAW_TOOL_REGISTRY: Record<string, ToolDef> = {
   },
   worktree_inspect: {
     descriptor: {
-      description: "Returns the diff and branch log for a specific worktree.",
+      description:
+        "Returns the diff and branch log for a specific worktree. The diff (diff_against_main) and log are taken against base_ref: the root dispatch base found by walking same-project owned branch_base links, or main on fallback (base_fallback true). base_attempted_ref is the ref the walk tried: equal to base_ref without fallback; on chain_limit it is the still-owned ref where the walk stopped, not a root. base_fallback_reason: unresolvable = the attempted ref does not resolve to a commit; rejected_ref = the attempted ref is not a plain branch name (HEAD, @, a .. range or disallowed characters) and is never passed to git; chain_limit = the walk hit a cycle or the owned-link limit.",
       inputSchema: WorktreeInspectInputShape,
     },
     makeHandler: worktreeInspectHandler as unknown as ToolDef["makeHandler"],

@@ -55,6 +55,12 @@ const defaultRunGit: WorktreeInspectionCommandRunner = async (args, opts) => {
   return await execFile("git", [...args], { ...opts, encoding: "utf8" });
 };
 
+class InspectionDeadlineError extends Error {
+  constructor() {
+    super("worktree inspection deadline expired");
+  }
+}
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -69,6 +75,11 @@ function projectMatchesExpected(actual: string | null, expected: string | undefi
 
 const INSPECTION_BASE_REF_RE = /^[\w.][\w./+@-]{0,199}$/;
 const MAX_BASE_CHAIN = 16;
+
+type InspectionGit = {
+  run: (args: readonly string[]) => Promise<string>;
+  budgetSpent: () => boolean;
+};
 
 type InspectionFallbackReason = "unresolvable" | "rejected_ref" | "chain_limit";
 
@@ -85,6 +96,8 @@ type ResolvedInspectionBase = {
 // owner in the same project (findByBranchName is unscoped, so a stray row from
 // another project must not redirect the diff); a cycle or chain-limit exhaustion is
 // reported as exhausted so the caller falls back to main rather than a still-owned ref.
+// MAX_BASE_CHAIN bounds owned links, so the unowned root a full-length chain points at
+// still resolves.
 function rootInspectionBase(
   services: Services,
   branchBase: string | null | undefined,
@@ -93,10 +106,10 @@ function rootInspectionBase(
   let ref = branchBase ?? "main";
   const seen = new Set<string>();
   while (!seen.has(ref)) {
-    if (seen.size >= MAX_BASE_CHAIN) return { ref, exhausted: true };
     seen.add(ref);
     const owner = services.handoffReader.findByBranchName(ref);
     if (owner?.project_id !== projectId) return { ref, exhausted: false };
+    if (seen.size > MAX_BASE_CHAIN) return { ref, exhausted: true };
     ref = owner.branch_base ?? "main";
   }
   return { ref, exhausted: true };
@@ -106,57 +119,70 @@ function isInspectableRef(ref: string): boolean {
   return INSPECTION_BASE_REF_RE.test(ref) && !ref.includes("..") && ref !== "HEAD" && ref !== "@";
 }
 
-async function tryRevParse(
-  git: (args: readonly string[]) => Promise<string>,
-  ref: string,
-): Promise<string | undefined> {
+// execFile marks a child it killed itself with killed: true; that is the command
+// timeout here, except for the maxBuffer overflow kill, which carries its own code.
+function killedByTimeout(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "killed" in err &&
+    err.killed === true &&
+    !("code" in err && err.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
+  );
+}
+
+async function tryRevParse(git: InspectionGit, ref: string): Promise<string | undefined> {
   try {
-    return (await git(["rev-parse", "--verify", `${ref}^{commit}`])).trim();
-  } catch {
+    return (await git.run(["rev-parse", "--verify", `${ref}^{commit}`])).trim();
+  } catch (err) {
+    // A spent budget is not a missing ref; swallowing it would report the deadline
+    // as "no inspection base resolves". The budget can also run out while rev-parse
+    // is running, in which case the timeout kills the child and execFile rejects
+    // with a plain error rather than InspectionDeadlineError.
+    if (err instanceof InspectionDeadlineError) throw err;
+    if (git.budgetSpent() || killedByTimeout(err)) throw new InspectionDeadlineError();
     return undefined;
   }
 }
 
-async function resolveMainSha(
-  git: (args: readonly string[]) => Promise<string>,
-  attemptedRef: string,
-): Promise<string> {
+async function resolveMainSha(git: InspectionGit, triedRefs: readonly string[]): Promise<string> {
   const mainSha = await tryRevParse(git, "main");
   if (mainSha === undefined) {
-    throw new Error(`no inspection base resolves (tried ${attemptedRef}, main)`);
+    throw new Error(`no inspection base resolves (tried ${[...triedRefs, "main"].join(", ")})`);
   }
   return mainSha;
 }
 
 async function fallbackToMain(
-  git: (args: readonly string[]) => Promise<string>,
+  git: InspectionGit,
   attemptedRef: string,
   reason: InspectionFallbackReason,
+  triedRefs: readonly string[],
 ): Promise<ResolvedInspectionBase> {
-  const baseSha = await resolveMainSha(git, attemptedRef);
+  const baseSha = await resolveMainSha(git, triedRefs);
   return { baseRef: "main", baseSha, attemptedRef, fallbackReason: reason };
 }
 
 async function resolveInspectionBase(
-  git: (args: readonly string[]) => Promise<string>,
+  git: InspectionGit,
   root: { ref: string; exhausted: boolean },
 ): Promise<ResolvedInspectionBase> {
   const attemptedRef = root.ref;
   if (root.exhausted) {
-    return await fallbackToMain(git, attemptedRef, "chain_limit");
+    return await fallbackToMain(git, attemptedRef, "chain_limit", []);
   }
   if (root.ref === "main") {
-    const baseSha = await resolveMainSha(git, attemptedRef);
+    const baseSha = await resolveMainSha(git, []);
     return { baseRef: "main", baseSha, attemptedRef, fallbackReason: null };
   }
   if (!isInspectableRef(root.ref)) {
-    return await fallbackToMain(git, attemptedRef, "rejected_ref");
+    return await fallbackToMain(git, attemptedRef, "rejected_ref", []);
   }
   const sha = await tryRevParse(git, root.ref);
   if (sha !== undefined) {
     return { baseRef: root.ref, baseSha: sha, attemptedRef, fallbackReason: null };
   }
-  return await fallbackToMain(git, attemptedRef, "unresolvable");
+  return await fallbackToMain(git, attemptedRef, "unresolvable", [root.ref]);
 }
 
 function truncateUtf8(value: string, maxBytes: number): { value: string; truncated: boolean } {
@@ -296,7 +322,7 @@ export async function inspectWorktreeForHandoff(
 
   const git = async (args: readonly string[]): Promise<string> => {
     const timeout = remainingMs();
-    if (timeout <= 0) throw new Error("worktree inspection deadline expired");
+    if (timeout <= 0) throw new InspectionDeadlineError();
     const result = await runGit(["-c", "core.fsmonitor=false", "-C", canonicalPath, ...args], {
       timeout,
       maxBuffer: COMMAND_MAX_BUFFER_BYTES,
@@ -349,7 +375,7 @@ export async function inspectWorktreeForHandoff(
     if (initialFailure) return inspectionFailure(initialFailure);
 
     const { baseRef, baseSha, attemptedRef, fallbackReason } = await resolveInspectionBase(
-      git,
+      { run: git, budgetSpent: () => remainingMs() <= 0 },
       rootInspectionBase(
         services,
         refreshedHandoff.branch_base,

@@ -84,6 +84,10 @@ export type WorkflowCtx<TArgs = Record<string, unknown>> = {
     branch_log: string;
     head_sha: string;
     branch_name: string;
+    base_ref: string;
+    base_fallback: boolean;
+    base_attempted_ref: string;
+    base_fallback_reason: "unresolvable" | "rejected_ref" | "chain_limit" | null;
     dirty: boolean;
     truncation: {
       diff_against_main: boolean;
