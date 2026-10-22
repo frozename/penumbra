@@ -812,7 +812,7 @@ describe("penumbra-fix-until-green independent check verification", () => {
     );
     expect(verifyCall).toBeDefined();
     expect(verifyCall!.prompt).toContain("/abs-worktrees/h-123");
-    expect(verifyCall!.prompt).toContain("git worktree list");
+    expect(verifyCall!.prompt).toContain("git -C '/abs' worktree list");
     expect(verifyCall!.prompt).toContain("feat/x");
     expect(verifyCall!.prompt).toContain("h-123");
   });
@@ -1353,7 +1353,7 @@ describe("penumbra-fix-until-green rubric grader scope", () => {
     )!.prompt;
     expect(prompt).toContain("Repository root: /srv/other-repo");
     expect(prompt).toContain("/srv/other-repo-worktrees/h-777");
-    expect(prompt).toContain("git -C /srv/other-repo diff --stat feat/base...test/x_h-777");
+    expect(prompt).toContain("git -C '/srv/other-repo' diff --stat 'feat/base...test/x_h-777'");
     expect(prompt).toContain('mcp__penumbra__worktree_inspect({ handoff_id: "h-777" })');
     expect(prompt).not.toMatch(/\bgit (?!-C )/);
   });
@@ -1380,7 +1380,7 @@ describe("penumbra-fix-until-green rubric grader scope", () => {
     const prompt = agentCalls.find((c) =>
       String(c.options?.label ?? "").startsWith("rubric"),
     )!.prompt;
-    expect(prompt).toContain("git -C /abs diff --stat main...test/x_h-777");
+    expect(prompt).toContain("git -C '/abs' diff --stat 'main...test/x_h-777'");
   });
 
   test("grader returning inspected:false yields GRADER_UNAVAILABLE without a second round", async () => {
@@ -1629,7 +1629,7 @@ describe("penumbra-fix-until-green rubric grader schema and range", () => {
     const prompt = agentCalls.find((c) =>
       String(c.options?.label ?? "").startsWith("rubric"),
     )!.prompt;
-    expect(prompt).toContain("git -C /abs diff --stat feat/d...test/x_h-777");
+    expect(prompt).toContain("git -C '/abs' diff --stat 'feat/d...test/x_h-777'");
   });
 });
 
@@ -2098,5 +2098,114 @@ describe("penumbra-fix-until-green rubric verdict from per-criterion grades", ()
 
     expect(readme).toContain("rubric_overall_disagreement: true");
     expect(readme).toContain("still requires `overall_pass === true`");
+  });
+});
+
+describe("penumbra-fix-until-green read-only grader and verifier on the shared clone", () => {
+  const passFanout = async () => ({
+    results: [
+      {
+        ok: true,
+        status: "completed",
+        branch: "test/x_h-777",
+        conversation_id: "c",
+        handoff_id: "h-777",
+        reliability_trustworthy: true,
+        check_line: "CHECK_RESULT: PASS",
+      },
+    ],
+  });
+
+  async function prompts(repo: string) {
+    const { agentCalls, error } = await runFixUntilGreen(
+      { task: { message: "m" }, check: "true", maxRounds: 1, rubric: ["criterion one"], repo },
+      {
+        workflow: passFanout,
+        agent: async (_prompt, options) => {
+          const label = String(options?.label ?? "");
+          if (label.startsWith("verify-check")) return { ran: true, check_exit: 0 };
+          if (label.startsWith("rubric"))
+            return {
+              inspected: true,
+              overall_pass: true,
+              criteria: [{ index: 1, criterion: "criterion one", pass: true, evidence: "d" }],
+            };
+          return {};
+        },
+      },
+    );
+    expect(error).toBeUndefined();
+    const promptFor = (prefix: string) =>
+      agentCalls.find((call) => String(call.options?.label ?? "").startsWith(prefix))!.prompt;
+    return { grader: promptFor("rubric"), verifier: promptFor("verify-check") };
+  }
+
+  const forbidden =
+    "Never run checkout, switch, reset, stash, clean, commit, branch, worktree add or worktree remove, in the repository root or in any other checkout.";
+
+  test("both prompts carry the read-only rule for the repository root", async () => {
+    const { grader, verifier } = await prompts("/abs");
+
+    expect(grader).toContain(
+      "Read-only rule: in the repository root use only git -C '/abs' diff|show|log|rev-parse|ls-tree.",
+    );
+    expect(grader).toContain(forbidden);
+    expect(verifier).toContain(
+      "Read-only rule: in the repository root use only git -C '/abs' diff|show|log|rev-parse|ls-tree and git -C '/abs' worktree list.",
+    );
+    expect(verifier).toContain(forbidden);
+
+    const checkMayUseGit =
+      "Running the CHECK verbatim inside the dispatch worktree is allowed even when the CHECK itself invokes git.";
+    expect(verifier).toContain(checkMayUseGit);
+    expect(grader).not.toContain(checkMayUseGit);
+  });
+
+  test("the grader grades from the diff and never runs the check", async () => {
+    const { grader } = await prompts("/abs");
+
+    expect(grader).toContain(
+      "Grade from the diff alone: do not run the CHECK command, tests, builds or installs.",
+    );
+    expect(grader).not.toContain("command output");
+  });
+
+  test("the verifier runs the check only in the dispatch worktree found through git -C <repo>", async () => {
+    const { verifier } = await prompts("/abs");
+
+    expect(verifier).toContain("Run the CHECK only inside the dispatch worktree");
+    expect(verifier).toContain("`git -C '/abs' worktree list`");
+    expect(verifier).toContain(
+      "If you still cannot locate it, set ran:false, check_exit:-1, and say so in notes; never check the branch out in the repository root or anywhere else to run the CHECK.",
+    );
+  });
+
+  test("a repository root with a space is quoted in every printed command", async () => {
+    const { grader, verifier } = await prompts("/srv/my repo");
+
+    expect(grader).toContain("git -C '/srv/my repo' diff --stat 'main...test/x_h-777'");
+    expect(grader).toContain("git -C '/srv/my repo' diff 'main...test/x_h-777' -- <path>");
+    expect(verifier).toContain("`cd '/srv/my repo-worktrees/h-777'`");
+    expect(verifier).toContain("`git -C '/srv/my repo' worktree list`");
+    for (const prompt of [grader, verifier]) {
+      const commandLines = prompt.split("\n").filter((line) => /\bgit -C |\bcd /.test(line));
+      expect(commandLines.length).toBeGreaterThan(0);
+      for (const line of commandLines) expect(line).not.toMatch(/(?<!')\/srv\/my repo/);
+    }
+  });
+
+  test("without an absolute repository root the verifier takes only the exact worktree and never checks out", async () => {
+    const { verifier } = await prompts("relative/path");
+
+    expect(verifier).toContain(
+      "Read-only rule: in the repository root use only git -C <repo> diff|show|log|rev-parse|ls-tree and git -C <repo> worktree list.",
+    );
+    expect(verifier).not.toContain("relative/path");
+    expect(verifier).toContain(
+      "use an entry only if its branch is exactly test/x_h-777 (or its path names the handoff id h-777), then cd to it.",
+    );
+    expect(verifier).toContain(
+      "If no entry matches, set ran:false, check_exit:-1, and say so in notes; never check the branch out anywhere to run the CHECK.",
+    );
   });
 });

@@ -359,11 +359,23 @@ function hopFields(result) {
   }
 }
 
+// The repository root is a clone that people and other workflows share, so a grader
+// or verifier that moves its HEAD or dirties its tree breaks unrelated work.
+function readOnlyRule(repoRoot, allowWorktreeList) {
+  const git = repoRoot ? `git -C ${shellQuote(repoRoot)}` : 'git -C <repo>'
+  const allowed = `${git} diff|show|log|rev-parse|ls-tree${allowWorktreeList ? ` and ${git} worktree list` : ''}`
+  return `Read-only rule: in the repository root use only ${allowed}. Never run checkout, switch, reset, stash, clean, commit, branch, worktree add or worktree remove, in the repository root or in any other checkout.${allowWorktreeList ? ' Running the CHECK verbatim inside the dispatch worktree is allowed even when the CHECK itself invokes git.' : ''}`
+}
+
 function rubricPrompt(branch, handoffId, repoRoot, worktreePath) {
   const title = task.title || task.task_name || task.label || task.name || 'Untitled task'
   const messagePreview = `${String(task.message || '').slice(0, 400)}…`
+  const git = repoRoot ? `git -C ${shellQuote(repoRoot)}` : null
+  const range = shellQuote(`${rubricBase}...${branch}`)
   return [
     `You are an independent rubric grader. Your job is to REFUTE the work, not confirm it. Do not edit, dispatch, land, push, or alter branches.`,
+    readOnlyRule(repoRoot, false),
+    'Grade from the diff alone: do not run the CHECK command, tests, builds or installs. The independent CHECK verifier measures the CHECK.',
     ``,
     `Original task:`,
     `Title: ${title}`,
@@ -377,12 +389,12 @@ function rubricPrompt(branch, handoffId, repoRoot, worktreePath) {
     ``,
     ...(repoRoot ? [`Repository root: ${repoRoot}`, `Candidate worktree (derived; it may not exist): ${worktreePath}`] : ['Repository root: unknown (args.repo, args.caller_cwd and defaults.caller_cwd are unset or relative).']),
     `Inspect the worktree diff with mcp__penumbra__worktree_inspect({ handoff_id: "${handoffId}" }).`,
-    repoRoot ? `If worktree_inspect fails or returns not_found, read the diff with git -C ${repoRoot} diff --stat ${rubricBase}...${branch} and then git -C ${repoRoot} diff ${rubricBase}...${branch} -- <path>. Run every diff as git -C ${repoRoot}, never from your own working directory, which can be a different repository.` : 'If worktree_inspect fails, return inspected:false: without a repository root the candidate cannot be located safely.',
+    git ? `If worktree_inspect fails or returns not_found, read the diff with ${git} diff --stat ${range} and then ${git} diff ${range} -- <path>. Run every diff as ${git}, never from your own working directory, which can be a different repository.` : 'If worktree_inspect fails, return inspected:false: without a repository root the candidate cannot be located safely.',
     'If you cannot read the candidate diff, return inspected:false with an empty criteria array and say why in notes. Set inspected:true only after you have read the candidate diff.',
     'Read only the hunks needed to grade the rubric-relevant changes. Grade every rubric criterion below against the actual diff and task intent.',
     rubric.map((c, i) => `${i + 1}. ${c}`).join('\n'),
     ``,
-    `For each criterion, pass=true only when the diff clearly satisfies it. Evidence must cite concrete files, hunks, command output, or observed diff facts. Return RUBRIC_RESULT with exactly one item per criterion: index is the criterion's number in the list above, and criterion is its text verbatim.`,
+    `For each criterion, pass=true only when the diff clearly satisfies it. Evidence must cite concrete files, hunks, or observed diff facts. Return RUBRIC_RESULT with exactly one item per criterion: index is the criterion's number in the list above, and criterion is its text verbatim.`,
     `overall_pass must equal "every criterion passed": true when every item has pass=true, false otherwise. Put cautions, nits and reservations in notes, never in overall_pass; the verdict is taken from the per-criterion grades.`,
   ].join('\n')
 }
@@ -561,12 +573,13 @@ for (let i = 0; i < maxRounds; i++) {
   if ((verdict.passed || verifyMissingMarker) && verifyCheck) {
     const verifyPrompt = [
       'You are an independent CHECK verifier. Do not edit, commit, push, or land anything.',
+      readOnlyRule(hasRepoRoot ? repoRoot : null, true),
       '',
       verdict.passed ? 'The worker claimed PASS. Do not trust that claim — measure it.' : 'The worker final message carried no CHECK_RESULT line, so its result is unknown. Measure the CHECK yourself.',
       '',
       worktreePath
-        ? `The worktree is likely at ${worktreePath}; try that directory first. If it does not exist, locate the worktree yourself: run \`git worktree list\` and filter for the branch named ${r.branch} (or the handoff id ${r.handoff_id}). cd to that worktree. Only if you still cannot locate it after that, set ran:false, check_exit:-1, and note this in notes.`
-        : `The worktree path could not be derived from input.repo, input.caller_cwd, or defaults.caller_cwd. Locate the worktree yourself: run \`git worktree list\` and filter for the branch named ${r.branch} (or the handoff id ${r.handoff_id}). cd to that worktree. Only if you cannot locate it after that, set ran:false, check_exit:-1, and note this in notes.`,
+        ? `Run the CHECK only inside the dispatch worktree, which is likely at ${shellQuote(worktreePath)}: try \`cd ${shellQuote(worktreePath)}\` first. If that directory does not exist, locate the worktree with \`git -C ${shellQuote(repoRoot)} worktree list\` and pick the entry for the branch named ${r.branch} (or the handoff id ${r.handoff_id}), then cd to it. If you still cannot locate it, set ran:false, check_exit:-1, and say so in notes; never check the branch out in the repository root or anywhere else to run the CHECK.`
+        : `The repository root could not be derived from input.repo, input.caller_cwd, or defaults.caller_cwd. Run the CHECK only inside the dispatch worktree: run \`git worktree list\` from your own working directory and use an entry only if its branch is exactly ${r.branch} (or its path names the handoff id ${r.handoff_id}), then cd to it. If no entry matches, set ran:false, check_exit:-1, and say so in notes; never check the branch out anywhere to run the CHECK.`,
       '',
       'Run this CHECK command VERBATIM by spawning bash with the command as a single argument:',
       `    ${bashCheckCommand(check)}`,
