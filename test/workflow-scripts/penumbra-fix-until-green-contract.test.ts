@@ -2078,4 +2078,25 @@ describe("penumbra-fix-until-green rubric verdict from per-criterion grades", ()
       'must equal "every criterion passed"',
     );
   });
+
+  test("the grader prompt ties overall_pass to every criterion passing", async () => {
+    const { agentCalls } = await grade({
+      inspected: true,
+      overall_pass: true,
+      criteria: [one, two],
+    });
+
+    const prompt = agentCalls.find((call) =>
+      String(call.options?.label ?? "").startsWith("rubric"),
+    )!.prompt;
+    expect(prompt).toContain('overall_pass must equal "every criterion passed"');
+    expect(prompt).toContain("Put cautions, nits and reservations in notes, never in overall_pass");
+  });
+
+  test("the native README documents that the native workflow still requires overall_pass", () => {
+    const readme = readFileSync("plugin/workflows/penumbra-fix-until-green/README.md", "utf8");
+
+    expect(readme).toContain("rubric_overall_disagreement: true");
+    expect(readme).toContain("still requires `overall_pass === true`");
+  });
 });
