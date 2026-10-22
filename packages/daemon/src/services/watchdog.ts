@@ -2,6 +2,8 @@ import type { HandoffRow, Services, Watchdog } from "@penumbra/core";
 
 import type { OrphanHandoffRecoveryService } from "./orphan-handoff-recovery.js";
 
+import { workerHeartbeatStaleMs } from "../worker-heartbeat-stale.js";
+
 interface WatchdogFailureNotification {
   kind: "watchdog_failure";
   worker_id: string;
@@ -20,7 +22,7 @@ export class WatchdogService implements Watchdog {
     private readonly services: Services,
     timeoutMs?: number,
   ) {
-    this.timeoutMs = timeoutMs ?? (Number(process.env.PENUMBRA_WORKER_HEARTBEAT_STALE_MS) || 90000);
+    this.timeoutMs = timeoutMs ?? workerHeartbeatStaleMs();
   }
 
   recordHeartbeat(worker_id: string): void {

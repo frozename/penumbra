@@ -1,13 +1,14 @@
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { handoffsApproveRoute, handoffsCreateRoute } from "@src/routes/handoffs.js";
 import { WatchdogService } from "@src/services/watchdog.js";
+import { DEFAULT_WORKER_HEARTBEAT_STALE_MS } from "@src/worker-heartbeat-stale.js";
 
 try {
   if (process.platform === "darwin") {
@@ -229,4 +230,49 @@ test("WatchdogService does not fail a reassigned handoff during stale worker rea
   const row = services.handoffReader.get(c1.handoff_id);
   expect(row?.status).toBe("dispatched");
   expect(row?.worker_id).toBe(reassigned_worker_id);
+});
+
+const STALE_MS_KEY = "PENUMBRA_WORKER_HEARTBEAT_STALE_MS";
+const previousStaleMs = process.env[STALE_MS_KEY];
+
+afterEach(() => {
+  if (previousStaleMs === undefined) Reflect.deleteProperty(process.env, STALE_MS_KEY);
+  else process.env[STALE_MS_KEY] = previousStaleMs;
+});
+
+async function reapedAfterTick(
+  watchdog: WatchdogService,
+  heartbeatAgeMs: number,
+): Promise<boolean> {
+  internals(watchdog).lastHeartbeats.set("w-aged", Date.now() - heartbeatAgeMs);
+  await watchdog.tick();
+  return !watchdog.hasWorker("w-aged");
+}
+
+test("WatchdogService built without a timeout falls back to the default for a negative env value", async () => {
+  process.env[STALE_MS_KEY] = "-5000";
+  const services = tempServices();
+
+  expect(
+    await reapedAfterTick(new WatchdogService(services), DEFAULT_WORKER_HEARTBEAT_STALE_MS - 1000),
+  ).toBe(false);
+  expect(
+    await reapedAfterTick(new WatchdogService(services), DEFAULT_WORKER_HEARTBEAT_STALE_MS + 1000),
+  ).toBe(true);
+});
+
+test("WatchdogService built without a timeout honours a positive env value", async () => {
+  process.env[STALE_MS_KEY] = "1500";
+  const services = tempServices();
+
+  expect(await reapedAfterTick(new WatchdogService(services), 500)).toBe(false);
+  expect(await reapedAfterTick(new WatchdogService(services), 2500)).toBe(true);
+});
+
+test("WatchdogService prefers an explicit timeout over the env value", async () => {
+  process.env[STALE_MS_KEY] = "1500";
+  const services = tempServices();
+
+  expect(await reapedAfterTick(new WatchdogService(services, 60_000), 2500)).toBe(false);
+  expect(await reapedAfterTick(new WatchdogService(services, 60_000), 61_000)).toBe(true);
 });

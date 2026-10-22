@@ -45,6 +45,10 @@ describe("dispatch event contract", () => {
     expect(DispatchEventKindSchema.safeParse("claim.provider_cap_refused").success).toBe(true);
   });
 
+  it("DispatchEventKindSchema accepts worker.recovery.drain_released", () => {
+    expect(DispatchEventKindSchema.safeParse("worker.recovery.drain_released").success).toBe(true);
+  });
+
   it("DispatchEventKindSchema accepts dream_p1_promotion_retry_exhausted", () => {
     expect(DispatchEventKindSchema.safeParse("dream_p1_promotion_retry_exhausted").success).toBe(
       true,
