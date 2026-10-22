@@ -16,6 +16,7 @@ export const meta = {
 // graderModel defaults to 'sonnet'; pass graderModel:'inherit' to use the session-default model.
 // Composition: run this as the top-level Workflow. Every round calls workflow('penumbra-fanout'), and workflow() cannot be called from within a child workflow; penumbra-loop-discover-to-green inlines this loop for that reason.
 // Rubric: the grader reads only the candidate diff (worktree_inspect, else git -C <repo> diff <base>...<branch>, with the repo from args.repo or caller_cwd). Write every criterion so the diff alone can prove it. A grader that cannot read the diff reports GRADER_UNAVAILABLE.
+// Rubric verdict: green only when the grade has inspected:true and every criterion is graded exactly once and passes. overall_pass does not decide; when it disagrees with the criteria the round logs it and records rubric_overall_disagreement:true.
 // A reply without a CHECK_RESULT marker is UNKNOWN: with verifyCheck on, the independent verifier's check_exit decides the round; otherwise it is a FAIL.
 // A missing penumbra:penumbra-fanout-proxy agent stops round 1 with reason proxy_not_installed.
 // task-spec-validation:begin
@@ -164,7 +165,7 @@ const RUBRIC_RESULT = {
   properties: {
     overall_pass: {
       type: 'boolean',
-      description: 'explicit verdict for the whole rubric; decide from this field',
+      description: 'must equal "every criterion passed"; cautions belong in notes, and the verdict comes from the per-criterion grades',
     },
     inspected: {
       type: 'boolean',
@@ -381,7 +382,8 @@ function rubricPrompt(branch, handoffId, repoRoot, worktreePath) {
     'Read only the hunks needed to grade the rubric-relevant changes. Grade every rubric criterion below against the actual diff and task intent.',
     rubric.map((c, i) => `${i + 1}. ${c}`).join('\n'),
     ``,
-    `For each criterion, pass=true only when the diff clearly satisfies it. Evidence must cite concrete files, hunks, command output, or observed diff facts. Return RUBRIC_RESULT with an explicit boolean "overall_pass" verdict, plus exactly one item per criterion: index is the criterion's number in the list above, and criterion is its text verbatim.`,
+    `For each criterion, pass=true only when the diff clearly satisfies it. Evidence must cite concrete files, hunks, command output, or observed diff facts. Return RUBRIC_RESULT with exactly one item per criterion: index is the criterion's number in the list above, and criterion is its text verbatim.`,
+    `overall_pass must equal "every criterion passed": true when every item has pass=true, false otherwise. Put cautions, nits and reservations in notes, never in overall_pass; the verdict is taken from the per-criterion grades.`,
   ].join('\n')
 }
 
@@ -401,6 +403,7 @@ function matchRubricGrade(rubric, grade) {
   const buckets = rubric.map(() => [])
   const criteria = Array.isArray(grade && grade.criteria) ? grade.criteria : []
 
+  const extra = []
   for (const item of criteria) {
     const index = item && Number.isInteger(item.index) && item.index >= 1 && item.index <= rubric.length ? item.index - 1 : -1
     let matchIndex = index
@@ -421,6 +424,8 @@ function matchRubricGrade(rubric, grade) {
 
     if (matchIndex >= 0) {
       buckets[matchIndex].push(item)
+    } else {
+      extra.push({ criterion: String((item && item.criterion) || ''), reason: 'unknown' })
     }
   }
 
@@ -430,6 +435,9 @@ function matchRubricGrade(rubric, grade) {
     if (!items.length) {
       missing.push(criterion)
       return { index: rubricIndex + 1, criterion, pass: false, evidence: '' }
+    }
+    if (items.length > 1) {
+      extra.push({ criterion, reason: 'duplicate' })
     }
     return {
       index: rubricIndex + 1,
@@ -442,19 +450,18 @@ function matchRubricGrade(rubric, grade) {
     }
   })
 
-  return { results, missing }
+  return { results, missing, extra }
 }
 // rubric-match:end
 
-// Rubric verdict contract: decide from the explicit `overall_pass` boolean when
-// it is present; otherwise fall back to requiring every `criteria[i].pass` to be
-// `true`. Never infer PASS/FAIL by string-matching `notes` or the exact-text matcher.
+// Rubric verdict contract: the caller has already required inspected:true; the
+// rubric is green only when no grader item is a duplicate or unknown and every
+// rubric criterion passes (a missing criterion never passes). overall_pass does
+// not decide: graders have set it false on fully passing work to flag a caution,
+// and true over empty or failing criteria. Never infer PASS/FAIL from `notes`.
 function rubricVerdict(grade) {
-  if (grade && typeof grade.overall_pass === 'boolean') {
-    return grade.overall_pass
-  }
-  const criteria = Array.isArray(grade && grade.criteria) ? grade.criteria : []
-  return criteria.length > 0 && criteria.every((c) => c && c.pass === true)
+  const matched = matchRubricGrade(rubric, grade)
+  return matched.extra.length === 0 && matched.results.every((c) => c.pass)
 }
 
 function rubricFailureOutput(grade) {
@@ -471,11 +478,11 @@ function rubricFailureOutput(grade) {
   for (const c of missing) {
     lines.push(`- ${c}: grader did not return this criterion`)
   }
-  if (!failed.length && !missing.length) {
-    lines.push('The rubric grader returned overall_pass=false or an incomplete result.')
-    if (grade && grade.notes) {
-      lines.push(`Grader notes: ${grade.notes}`)
-    }
+  for (const item of matched.extra) {
+    lines.push(item.reason === 'duplicate' ? `- ${item.criterion}: grader returned this criterion more than once` : `- ${item.criterion || '(blank)'}: grader returned a criterion that is not in the rubric`)
+  }
+  if (grade && grade.notes) {
+    lines.push(`Grader notes: ${grade.notes}`)
   }
   return lines.join('\n')
 }
@@ -655,9 +662,13 @@ for (let i = 0; i < maxRounds; i++) {
         prevOutput = graderUnavailableOutput
         break
       }
-      // Decide from the grader's explicit overall_pass when present;
-      // fall back to all(criteria.pass). Never infer from the notes string.
       const rubricPassed = rubricVerdict(grade)
+      // overall_pass is only cross-checked: a disagreement is surfaced for the operator
+      // but never turns passing criteria red or feeds a new round.
+      const rubricOverallDisagreement = typeof grade.overall_pass === 'boolean' && grade.overall_pass !== rubricPassed
+      if (rubricOverallDisagreement) {
+        log(`fix-until-green round ${i + 1}: grader overall_pass=${grade.overall_pass} disagrees with its per-criterion grades; the criteria decide (rubric ${rubricPassed ? 'PASS' : 'FAIL'}) on ${r.branch}`)
+      }
       const failedOutput = rubricPassed ? '' : rubricFailureOutput(grade)
       rounds.push({
         round: i + 1,
@@ -669,6 +680,7 @@ for (let i = 0; i < maxRounds; i++) {
         check_passed: verdict.passed,
         check_verify_status: checkVerifyStatus,
         rubric_grade: grade,
+        rubric_overall_disagreement: rubricOverallDisagreement,
         verified: checkVerified,
         ci_parity: parityCheck !== null && checkVerified,
       })

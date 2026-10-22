@@ -17,6 +17,7 @@ interface Round {
   reason?: string;
   rubric_status?: string;
   rubric_grade?: unknown;
+  rubric_overall_disagreement?: boolean;
   passed?: boolean;
   verified?: boolean;
   check_exit?: number;
@@ -1893,5 +1894,188 @@ describe("penumbra-fix-until-green AGENTS.md workflow table", () => {
 
     expect(row).toBeDefined();
     expect(row).toContain("agentType?");
+  });
+});
+
+describe("penumbra-fix-until-green rubric verdict from per-criterion grades", () => {
+  const rubric = ["criterion one", "criterion two"];
+  const one = { index: 1, criterion: "criterion one", pass: true, evidence: "hunk 1" };
+  const two = { index: 2, criterion: "criterion two", pass: true, evidence: "hunk 2" };
+  const passFanout = async () => ({
+    results: [
+      {
+        ok: true,
+        status: "completed",
+        branch: "test/x_h-777",
+        conversation_id: "c",
+        handoff_id: "h-777",
+        reliability_trustworthy: true,
+        check_line: "CHECK_RESULT: PASS",
+      },
+    ],
+  });
+
+  async function grade(value: unknown) {
+    return await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 2,
+        rubric,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: passFanout,
+        agent: async (_prompt, options) => {
+          const label = String(options?.label ?? "");
+          if (label.startsWith("verify-check")) return { ran: true, check_exit: 0 };
+          if (label.startsWith("rubric")) return value;
+          return {};
+        },
+      },
+    );
+  }
+
+  function secondRoundMessage(workflowCalls: Array<{ name: string; args: unknown }>): string {
+    const fanoutCalls = workflowCalls.filter((call) => call.name === "penumbra-fanout");
+    expect(fanoutCalls).toHaveLength(2);
+    return String((fanoutCalls[1]!.args as FanoutArgs).tasks[0]?.message ?? "");
+  }
+
+  const unsupportedPasses = [
+    {
+      name: "an empty criteria list",
+      criteria: [],
+      failure: "- criterion one: grader did not return this criterion",
+    },
+    {
+      name: "a failing criterion",
+      criteria: [one, { ...two, pass: false, evidence: "no test" }],
+      failure: "- criterion two: no test",
+    },
+    {
+      name: "a missing criterion",
+      criteria: [one],
+      failure: "- criterion two: grader did not return this criterion",
+    },
+    {
+      name: "a duplicated criterion",
+      criteria: [one, two, { ...two, evidence: "again" }],
+      failure: "- criterion two: grader returned this criterion more than once",
+    },
+    {
+      name: "an unknown extra criterion",
+      criteria: [one, two, { index: 9, criterion: "style nit", pass: true, evidence: "x" }],
+      failure: "- style nit: grader returned a criterion that is not in the rubric",
+    },
+  ];
+
+  for (const unsupported of unsupportedPasses) {
+    test(`overall_pass:true with ${unsupported.name} is not green`, async () => {
+      const { result, workflowCalls, logs, error } = await grade({
+        inspected: true,
+        overall_pass: true,
+        criteria: unsupported.criteria,
+      });
+
+      expect(error).toBeUndefined();
+      expect(result?.green).toBe(false);
+      const rounds = result?.rounds as Round[];
+      expect(rounds[0]?.passed).toBe(false);
+      expect(rounds[0]?.rubric_overall_disagreement).toBe(true);
+      expect(logs.some((line) => line.includes("overall_pass=true disagrees"))).toBe(true);
+      const message = secondRoundMessage(workflowCalls);
+      expect(message).toContain(unsupported.failure);
+      expect(message).not.toContain("overall_pass=false or an incomplete result");
+    });
+  }
+
+  test("overall_pass:false with every criterion passing is green, logged and not re-dispatched", async () => {
+    const { result, workflowCalls, logs, error } = await grade({
+      inspected: true,
+      overall_pass: false,
+      criteria: [one, two],
+      notes: "a caution about naming",
+    });
+
+    expect(error).toBeUndefined();
+    expect(result?.green).toBe(true);
+    expect(result?.rounds_used).toBe(1);
+    expect(workflowCalls.filter((call) => call.name === "penumbra-fanout")).toHaveLength(1);
+    const rounds = result?.rounds as Round[];
+    expect(rounds[0]?.passed).toBe(true);
+    expect(rounds[0]?.rubric_overall_disagreement).toBe(true);
+    expect(logs).toContain(
+      "fix-until-green round 1: grader overall_pass=false disagrees with its per-criterion grades; the criteria decide (rubric PASS) on test/x_h-777",
+    );
+  });
+
+  test("an agreeing overall_pass records no disagreement", async () => {
+    const { result } = await grade({ inspected: true, overall_pass: true, criteria: [one, two] });
+
+    expect(result?.green).toBe(true);
+    expect((result?.rounds as Round[])[0]?.rubric_overall_disagreement).toBe(false);
+  });
+
+  const agreements = [
+    {
+      name: "no overall_pass over passing criteria",
+      value: { inspected: true, criteria: [one, two] },
+      green: true,
+    },
+    {
+      name: "overall_pass:false over a failing criterion",
+      value: { inspected: true, overall_pass: false, criteria: [one, { ...two, pass: false }] },
+      green: false,
+    },
+    {
+      name: "no overall_pass over a failing criterion",
+      value: { inspected: true, criteria: [one, { ...two, pass: false }] },
+      green: false,
+    },
+  ];
+
+  for (const agreement of agreements) {
+    test(`${agreement.name} records and logs no disagreement`, async () => {
+      const { result, logs, error } = await grade(agreement.value);
+
+      expect(error).toBeUndefined();
+      expect(result?.green).toBe(agreement.green);
+      expect((result?.rounds as Round[])[0]?.rubric_overall_disagreement).toBe(false);
+      expect(logs.some((line) => line.includes("disagrees with its per-criterion grades"))).toBe(
+        false,
+      );
+    });
+  }
+
+  test("overall_pass:true over a failing criterion logs rubric FAIL and feeds the notes forward", async () => {
+    const { workflowCalls, logs } = await grade({
+      inspected: true,
+      overall_pass: true,
+      criteria: [one, { ...two, pass: false, evidence: "no test" }],
+      notes: "a caution about naming",
+    });
+
+    expect(logs).toContain(
+      "fix-until-green round 1: grader overall_pass=true disagrees with its per-criterion grades; the criteria decide (rubric FAIL) on test/x_h-777",
+    );
+    const message = secondRoundMessage(workflowCalls);
+    expect(message).toContain("- criterion two: no test");
+    expect(message).toContain("Grader notes: a caution about naming");
+  });
+
+  test("the RUBRIC_RESULT schema ties overall_pass to every criterion passing", async () => {
+    const { agentCalls } = await grade({
+      inspected: true,
+      overall_pass: true,
+      criteria: [one, two],
+    });
+
+    const schema = agentCalls.find((call) =>
+      String(call.options?.label ?? "").startsWith("rubric"),
+    )!.options?.schema as { properties: { overall_pass: { description: string } } };
+    expect(schema.properties.overall_pass.description).toContain(
+      'must equal "every criterion passed"',
+    );
   });
 });

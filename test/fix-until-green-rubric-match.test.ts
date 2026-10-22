@@ -23,6 +23,7 @@ test("matches exact rubric criterion text", () => {
       { index: 2, criterion: rubric[1], pass: true, evidence: "no imports" },
     ],
     missing: [],
+    extra: [],
   });
 });
 
@@ -35,6 +36,7 @@ test("matches rubric criterion text with a numbered prefix", () => {
   expect(matchRubricGrade(rubric, grade)).toEqual({
     results: [{ index: 1, criterion: rubric[0], pass: true, evidence: "line 1" }],
     missing: [],
+    extra: [],
   });
 });
 
@@ -54,6 +56,7 @@ test("uses index for paraphrased criterion text", () => {
   expect(matchRubricGrade(rubric, grade)).toEqual({
     results: [{ index: 1, criterion: rubric[0], pass: true, evidence: "none found" }],
     missing: [],
+    extra: [],
   });
 });
 
@@ -69,6 +72,7 @@ test("reports missing criteria", () => {
       { index: 2, criterion: rubric[1], pass: false, evidence: "" },
     ],
     missing: ["Do not import modules"],
+    extra: [],
   });
 });
 
@@ -91,10 +95,11 @@ test("combines duplicate items for one criterion and fails if any item fails", (
       { index: 1, criterion: rubric[0], pass: false, evidence: "line 1; comment before export" },
     ],
     missing: [],
+    extra: [{ criterion: "Keep meta export first", reason: "duplicate" }],
   });
 });
 
-test("ignores unmatched stray grader items", () => {
+test("reports unmatched stray grader items as extra", () => {
   const rubric = ["Keep meta export first"];
   const grade = {
     criteria: [
@@ -106,6 +111,7 @@ test("ignores unmatched stray grader items", () => {
   expect(matchRubricGrade(rubric, grade)).toEqual({
     results: [{ index: 1, criterion: rubric[0], pass: true, evidence: "line 1" }],
     missing: [],
+    extra: [{ criterion: "Unrelated style concern", reason: "unknown" }],
   });
 });
 
@@ -120,6 +126,7 @@ test("falls back to text matching when index is out of range", () => {
   expect(matchRubricGrade(rubric, grade)).toEqual({
     results: [{ index: 1, criterion: rubric[0], pass: true, evidence: "no imports" }],
     missing: [],
+    extra: [],
   });
 
   const containmentGrade = {
@@ -129,5 +136,6 @@ test("falls back to text matching when index is out of range", () => {
   expect(matchRubricGrade(rubric, containmentGrade)).toEqual({
     results: [{ index: 1, criterion: rubric[0], pass: false, evidence: "found import" }],
     missing: [],
+    extra: [],
   });
 });
