@@ -321,6 +321,7 @@ import { startStaleWorkerTokensSweeper } from "./sweepers/stale-worker-tokens.js
 import { createTaskLeaseSweeper } from "./sweepers/task-leases.js";
 import { readWorkflowLastFired, startWorkflowTriggerSweeper } from "./sweepers/workflow-trigger.js";
 import { startWorktreeGcSweeper } from "./sweepers/worktree-gc.js";
+import { workerHeartbeatStaleMs } from "./worker-heartbeat-stale.js";
 import { type ExtraWorkerConfig, loadExtraWorkersConfig } from "./workers/config.js";
 import { createDispatchEventsRetentionWorker } from "./workers/dispatch-events-retention.js";
 import { createHandoffSweeperWorker } from "./workers/handoff-sweeper.js";
@@ -1915,7 +1916,7 @@ function setupRecoverySweepers(args: {
     db: opts.services.db,
     log: opts.services.log,
   });
-  const workerHeartbeatStaleMs = Number(process.env.PENUMBRA_WORKER_HEARTBEAT_STALE_MS) || 90000;
+  const heartbeatStaleMs = workerHeartbeatStaleMs();
   const staleSweepLivenessCheckEnabled = process.env.PENUMBRA_STALE_SWEEP_LIVENESS_CHECK === "1";
   const staleSweepMaxAliveGraceMs =
     Number(process.env.PENUMBRA_STALE_SWEEP_MAX_ALIVE_GRACE_MS) || 30 * 60_000;
@@ -1926,7 +1927,7 @@ function setupRecoverySweepers(args: {
     maxAliveGraceMs: staleSweepMaxAliveGraceMs,
     isWorkerHeartbeatFresh: (workerId: string): boolean => {
       if (!watchdog.hasWorker(workerId)) return false;
-      const staleWorkers = new Set(watchdog.getStaleWorkers(workerHeartbeatStaleMs));
+      const staleWorkers = new Set(watchdog.getStaleWorkers(heartbeatStaleMs));
       return !staleWorkers.has(workerId);
     },
   });
@@ -1938,7 +1939,7 @@ function setupRecoverySweepers(args: {
     );
   }
   const orphanHandoffRecovery = new OrphanHandoffRecoveryService(opts.services, {
-    staleMs: workerHeartbeatStaleMs,
+    staleMs: heartbeatStaleMs,
     intervalMs:
       process.env.PENUMBRA_ORPHAN_HANDOFF_RECOVERY_INTERVAL_MS !== undefined
         ? Number(process.env.PENUMBRA_ORPHAN_HANDOFF_RECOVERY_INTERVAL_MS)

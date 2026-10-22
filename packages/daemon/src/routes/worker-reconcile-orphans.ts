@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { OrphanHandoffRecoveryService } from "../services/orphan-handoff-recovery.js";
 
 import { requireWorkerPrincipalMatch } from "../auth.js";
+import { releaseSweptDrainHolds } from "../services/provider-concurrency.js";
 import { json } from "./_helpers.js";
 
 /**
@@ -13,7 +14,7 @@ import { json } from "./_helpers.js";
  */
 export async function workerReconcileOrphansRoute(
   req: Request,
-  _services: Services,
+  services: Services,
   recovery: OrphanHandoffRecoveryService,
 ): Promise<Response> {
   const raw = await safeJson(req);
@@ -61,6 +62,9 @@ export async function workerReconcileOrphansRoute(
       workerKnownDead: true,
       claimedBefore,
     });
+    if (claimedBefore !== undefined) {
+      releaseDrainHolds(services, body.data.worker_id, claimedBefore);
+    }
     return json({
       requeued: result.requeued,
       exhausted: result.exhausted,
@@ -68,7 +72,7 @@ export async function workerReconcileOrphansRoute(
       exhaustedRowIds: result.exhaustedRowIds,
     });
   } catch (err) {
-    _services.log.error(
+    services.log.error(
       { err, worker_id: body.data.worker_id },
       "worker reconcile orphan recovery failed",
     );
@@ -78,6 +82,16 @@ export async function workerReconcileOrphansRoute(
       },
       500,
     );
+  }
+}
+
+// The orphan recovery above already ran, so a failed release must not turn the reply into
+// recovery_failed; the hold then ends at STALE_SWEEP_DRAIN_MAX_HOLD_MS instead.
+function releaseDrainHolds(services: Services, worker_id: string, claimedBefore: string): void {
+  try {
+    releaseSweptDrainHolds(services, worker_id, claimedBefore);
+  } catch (err) {
+    services.log.warn({ err, worker_id }, "worker reconcile drain-hold release failed");
   }
 }
 

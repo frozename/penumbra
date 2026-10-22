@@ -323,7 +323,10 @@ test("stale sweeper force-resolve holds the slot until the worker reports dispat
 test("stale sweeper force-resolve re-offers at once when the swept worker is not live", async () => {
   const { services, emitted } = setup(() => new Date("2026-05-04T12:00:00.000Z"));
   seedRunningAndWaiting(services, emitted);
-  new WorkerTokenStore(services.db).issue({ worker_id: "W-A" }, Date.now() - 10 * 60_000);
+  new WorkerTokenStore(services.db).issue(
+    { worker_id: "W-A" },
+    Date.parse("2026-05-04T12:00:00.000Z") - 10 * 60_000,
+  );
   services.db
     .query<never, [string, string]>("UPDATE handoffs SET ts=? WHERE handoff_id=?")
     .run("2026-05-04T11:50:00.000Z", "running");

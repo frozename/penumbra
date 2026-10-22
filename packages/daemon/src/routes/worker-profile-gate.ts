@@ -2,6 +2,7 @@ import type { PermissionProfile, Services } from "@penumbra/core";
 
 import type { ExtraWorkerConfig } from "../workers/config.js";
 
+import { workerHeartbeatStaleMs } from "../worker-heartbeat-stale.js";
 import { json } from "./_helpers.js";
 
 export type WorkerAuthzMap = Map<
@@ -14,11 +15,6 @@ type WorkerGateServices = Services & { workerAuthz?: WorkerAuthzMap };
 interface WorkerTokenMetadataRow {
   worker_id: string;
   metadata_json: string | null;
-}
-
-export function workerHeartbeatStaleMs(): number {
-  const configured = Number(process.env.PENUMBRA_WORKER_HEARTBEAT_STALE_MS);
-  return Number.isFinite(configured) && configured > 0 ? configured : 90_000;
 }
 
 export function workerCanClaimProject(

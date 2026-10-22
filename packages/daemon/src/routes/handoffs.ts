@@ -22,6 +22,7 @@ import {
   recordProviderCapRefusal,
   resolveProviderConcurrencyDecision,
 } from "../services/provider-concurrency.js";
+import { workerHeartbeatStaleMs } from "../worker-heartbeat-stale.js";
 import { json } from "./_helpers.js";
 import { enforceRecursionDepthGuard, getNearestAgents } from "./chains.js";
 import { claimCancelRequestedResponse, completeCancelFallback } from "./handoffs-cancel.js";
@@ -33,7 +34,6 @@ import {
 import {
   profiledLiveWorkerGateResponse,
   workerCanClaimProject,
-  workerHeartbeatStaleMs,
   workerTokenMetadataDeclaresProfile,
   workerTokenMetadataDeclaresScratch,
 } from "./worker-profile-gate.js";

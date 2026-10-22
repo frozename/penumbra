@@ -58,6 +58,7 @@ export const DispatchEventKindSchema = z.enum([
   "plan.quarantined",
   "worker.recovery.requeued",
   "worker.recovery.exhausted",
+  "worker.recovery.drain_released",
   "lane.override",
   "long_lived.action.expired",
   "workflow.cancel.wait_timeout",

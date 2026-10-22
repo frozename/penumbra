@@ -8,11 +8,12 @@ import {
 import { TestEmbedder } from "@penumbra/core/testing";
 import { registerWorkerForTest } from "@penumbra/daemon/test-utils";
 import { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 
 import { workerReconcileOrphansRoute } from "@src/routes/worker-reconcile-orphans.js";
 import { createDaemonFetchHandler } from "@src/serve.js";
 import { OrphanHandoffRecoveryService } from "@src/services/orphan-handoff-recovery.js";
+import { countProviderInFlight } from "@src/services/provider-concurrency.js";
 
 try {
   if (process.platform === "darwin") {
@@ -627,6 +628,171 @@ test("POST /worker/reconcile-orphans with worker token + matching body worker_id
     exhaustedRowIds: ["e1"],
   });
   expect(calledWith).toBe("W-A");
+});
+
+// Mirrors sweepers/stale-handoff.ts: the force-fail and the sweeper dispatch.end row
+// are written in one transaction.
+function seedSweptDispatch(
+  services: Services,
+  handoff_id: string,
+  worker_id: string,
+  sweptAt: string,
+): void {
+  services.handoffWriter.createApproved({
+    handoff_id,
+    ts: "2026-05-19T23:00:00.000Z",
+    project_id: null,
+    conversation_id: `conv-${handoff_id}`,
+    from: "planner",
+    to: "claude-a",
+    to_role: null,
+    message: "go",
+    triggered_by_event_id: null,
+    resolved_by: "machine-test",
+    resolved_at: "2026-05-19T23:00:00.000Z",
+    chain_max_hops: null,
+    chain_trust_mode: null,
+    chain_task_type: null,
+    use_worktree: null,
+    parent_handoff_id: null,
+    dispatch_kind: null,
+    workflow_run_id: null,
+  });
+  expect(services.handoffWriter.claimDispatch(handoff_id, worker_id)).toBe(true);
+  services.db.transaction(() => {
+    expect(
+      services.handoffWriter.markFailed(handoff_id, {
+        reason: "stale_force_resolve",
+        resolved_by: "stale-handoff-sweeper",
+        ts: sweptAt,
+      }),
+    ).toBe(true);
+    services.db.run(
+      `INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json) VALUES (?, NULL, 'sweeper', 'dispatch.end', ?, NULL)`,
+      [handoff_id, sweptAt],
+    );
+  })();
+}
+
+test("POST /worker/reconcile-orphans releases the caller's drain holds swept before claimed_before (#236)", async () => {
+  const services = tempServices();
+  const token = "secret-token";
+  const fetchHandler = createDaemonFetchHandler({
+    services,
+    token,
+    orphanHandoffRecovery: asRecoveryService({
+      runOnce: (): RecoveryResult => ({
+        requeued: 0,
+        exhausted: 0,
+        requeuedRowIds: [],
+        exhaustedRowIds: [],
+        _requeuedRows: [],
+        _exhaustedRows: [],
+      }),
+    }),
+  });
+  // Both workers heartbeat, so only a reconcile can release their holds early.
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: token,
+    worker_id: "w-restarted",
+    fetcher: makeFetcher(fetchHandler),
+  });
+  await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: token,
+    worker_id: "w-peer",
+    fetcher: makeFetcher(fetchHandler),
+  });
+  seedSweptDispatch(services, "h-own", "w-restarted", "2026-05-19T23:30:00.000Z");
+  seedSweptDispatch(services, "h-peer", "w-peer", "2026-05-19T23:30:00.000Z");
+  seedSweptDispatch(services, "h-own-after-boot", "w-restarted", "2026-05-19T23:50:00.000Z");
+  const inFlight = (): number => countProviderInFlight(services, ["claude-a"]);
+  const releasedBy = (handoff_id: string): (string | null)[] =>
+    services.dispatchEventLog
+      .listByHandoff(handoff_id)
+      .filter((event) => event.kind === "worker.recovery.drain_released")
+      .map((event) => event.worker_id);
+  const reconcile = (body: Record<string, string>): Promise<Response> =>
+    fetchHandler(
+      new Request("http://x/worker/reconcile-orphans", {
+        method: "POST",
+        headers: { authorization: `Bearer ${worker_token}` },
+        body: JSON.stringify(body),
+      }),
+    );
+  expect(inFlight()).toBe(3);
+
+  expect((await reconcile({ worker_id: "w-restarted" })).status).toBe(200);
+  expect(inFlight()).toBe(3);
+
+  const res = await reconcile({
+    worker_id: "w-restarted",
+    claimed_before: "2026-05-19T19:40:00.000-04:00",
+  });
+
+  expect(res.status).toBe(200);
+  expect(inFlight()).toBe(2);
+  expect(releasedBy("h-own")).toEqual(["w-restarted"]);
+  expect(releasedBy("h-peer")).toEqual([]);
+  expect(releasedBy("h-own-after-boot")).toEqual([]);
+});
+
+test("POST /worker/reconcile-orphans keeps its recovery result when the drain-hold release fails (#236)", async () => {
+  const services = tempServices();
+  const token = "secret-token";
+  const fetchHandler = createDaemonFetchHandler({
+    services,
+    token,
+    orphanHandoffRecovery: asRecoveryService({
+      runOnce: (): RecoveryResult => ({
+        requeued: 1,
+        exhausted: 0,
+        requeuedRowIds: ["h-orphan"],
+        exhaustedRowIds: [],
+        _requeuedRows: [],
+        _exhaustedRows: [],
+      }),
+    }),
+  });
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: token,
+    worker_id: "w-restarted",
+    fetcher: makeFetcher(fetchHandler),
+  });
+  seedSweptDispatch(services, "h-own", "w-restarted", "2026-05-19T23:30:00.000Z");
+  const recordBatch = spyOn(services.dispatchEventLog, "recordBatch").mockImplementation(
+    (): never => {
+      throw new Error("disk I/O error");
+    },
+  );
+  const warn = spyOn(services.log, "warn").mockImplementation((): void => undefined);
+
+  const res = await fetchHandler(
+    new Request("http://x/worker/reconcile-orphans", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({
+        worker_id: "w-restarted",
+        claimed_before: "2026-05-19T23:40:00.000Z",
+      }),
+    }),
+  );
+
+  expect(res.status).toBe(200);
+  expect(await readJson<ReconcileResultBody>(res)).toEqual({
+    requeued: 1,
+    exhausted: 0,
+    requeuedRowIds: ["h-orphan"],
+    exhaustedRowIds: [],
+  });
+  expect(recordBatch).toHaveBeenCalledTimes(1);
+  expect(warn).toHaveBeenCalledWith(
+    expect.objectContaining({ worker_id: "w-restarted" }),
+    "worker reconcile drain-hold release failed",
+  );
+  expect(countProviderInFlight(services, ["claude-a"])).toBe(1);
 });
 
 test("POST /worker/reconcile-orphans without Authorization returns 401", async () => {
