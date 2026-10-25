@@ -136,6 +136,8 @@ export async function createUpdateContext(
     managerReason: selection.reason,
     heavyLock,
     bunPath,
+    env: deps.env,
+    home: deps.home,
     onSignal: deps.onSignal,
     exit: deps.exit,
     say,

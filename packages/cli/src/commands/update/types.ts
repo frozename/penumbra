@@ -40,6 +40,13 @@ export interface Clock {
   sleep(ms: number): Promise<void>;
 }
 
+export interface HostChild {
+  pid: number;
+  /** Process age in seconds; null when it cannot be determined. */
+  ageS: number | null;
+  argv: string[];
+}
+
 export interface HostPort {
   platform: NodeJS.Platform;
   uid: number;
@@ -48,6 +55,8 @@ export interface HostPort {
   parentPid(pid: number): Promise<number | null>;
   /** Direct children of `pid` as "pid name" strings. */
   children(pid: number): Promise<string[]>;
+  /** Direct children of `pid` with age and full command line. */
+  childProcesses(pid: number): Promise<HostChild[]>;
 }
 
 export interface GitPort {
@@ -206,6 +215,9 @@ export interface UpdateContext {
   heavyLock: HeavyLockInfo;
   /** The services' bun (ExecStart), else the one running this CLI. */
   bunPath: string;
+  /** Environment and home of the CLI process; resolves the seat config path. */
+  env: NodeJS.ProcessEnv;
+  home: string;
   onSignal: OnSignal;
   exit: (code: number) => void;
   /** Progress line (stderr under --json). */

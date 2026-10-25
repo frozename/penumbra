@@ -7,6 +7,7 @@ import type {
   ExecOptions,
   ExecResult,
   FsPort,
+  HostChild,
   HostPort,
   Http,
   OnSignal,
@@ -104,6 +105,32 @@ export const defaultClock: Clock = {
     }),
 };
 
+export function parseEtime(raw: string): number | null {
+  const match = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/.exec(raw.trim());
+  if (match === null) return null;
+  const days = match[1] === undefined ? 0 : Number(match[1]);
+  const hours = match[2] === undefined ? 0 : Number(match[2]);
+  const minutes = match[3];
+  const seconds = match[4];
+  if (minutes === undefined || seconds === undefined) return null;
+  if (Number(minutes) > 59 || Number(seconds) > 59) return null;
+  return days * 86_400 + hours * 3_600 + Number(minutes) * 60 + Number(seconds);
+}
+
+function parsePsRow(line: string): HostChild | null {
+  const match = /^\s*(\d+)\s+(\S+)/.exec(line);
+  if (match === null) return null;
+  const pid = match[1];
+  const etime = match[2];
+  if (pid === undefined || etime === undefined) return null;
+  const command = line.slice(match[0].length).trim();
+  return {
+    pid: Number(pid),
+    ageS: parseEtime(etime),
+    argv: command === "" ? [] : command.split(/\s+/),
+  };
+}
+
 export function createDefaultHost(exec: Exec): HostPort {
   const port: HostPort = {
     platform: process.platform,
@@ -118,6 +145,20 @@ export function createDefaultHost(exec: Exec): HostPort {
     children: async (pid) => {
       const res = await exec(["pgrep", "-l", "-P", String(pid)], { timeoutMs: 5_000 });
       return res.code === 0 ? res.stdout.split("\n").filter((line) => line.trim() !== "") : [];
+    },
+    childProcesses: async (pid) => {
+      const listing = await exec(["pgrep", "-P", String(pid)], { timeoutMs: 5_000 });
+      if (listing.code !== 0) return [];
+      const pids = listing.stdout.split("\n").filter((line) => line.trim() !== "");
+      if (pids.length === 0) return [];
+      const res = await exec(["ps", "-o", "pid=,etime=,command=", "-p", pids.join(",")], {
+        timeoutMs: 5_000,
+      });
+      if (res.code !== 0) return [];
+      return res.stdout
+        .split("\n")
+        .map(parsePsRow)
+        .filter((child): child is HostChild => child !== null);
     },
   };
   return port;

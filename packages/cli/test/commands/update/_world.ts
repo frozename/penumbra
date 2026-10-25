@@ -2,6 +2,7 @@ import type { UpdateDeps } from "@src/commands/update/index.js";
 import type {
   DaemonPort,
   GitPort,
+  HostChild,
   InFlight,
   InstallGate,
   InstallPort,
@@ -53,6 +54,9 @@ export class World {
   inFlight: InFlight[] = [IDLE];
   scopes: string[] = [];
   children: string[] = [];
+  /** When set, childProcesses() answers with this instead of deriving from `children`. */
+  childSessions: HostChild[] | null = null;
+  env: Record<string, string> = {};
   install: InstallResult = { ok: true, ran: true, detail: "installed" };
   gate: InstallGateResult = { ok: true };
   /** Runs during install.run(), e.g. to deliver a signal mid-install. */
@@ -148,7 +152,7 @@ export class World {
     const deps: UpdateDeps = {
       exec: fail,
       http: fail,
-      env: {},
+      env: { ...this.env },
       home: "/home/op",
       cwd: REPO,
       cliDir: `${REPO}/packages/cli/src/commands/update`,
@@ -191,6 +195,14 @@ export class World {
         selfCgroup: () => Promise.resolve(this.cgroup),
         parentPid: (pid) => Promise.resolve(this.parents.get(pid) ?? 1),
         children: () => Promise.resolve([...this.children]),
+        childProcesses: () =>
+          Promise.resolve(
+            this.childSessions ??
+              this.children.map((line) => {
+                const [pid, ...argv] = line.trim().split(/\s+/);
+                return { pid: Number(pid), ageS: null, argv };
+              }),
+          ),
       },
       ports: {
         git: this.gitPort(),
