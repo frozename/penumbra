@@ -9,6 +9,7 @@ import {
   installGlobalCrashHandlers,
   meaningfulOutput,
   profilesEnforcedBySeats,
+  reconcileModeOf,
   resolveSandboxDenyRoots,
   SettingsDefaults,
   systemUuid,
@@ -1093,6 +1094,8 @@ const reconcileWorktree = createMergeReconciler({
   captureResult: (id, result) =>
     client.captureAgentPerformanceFromReconciler({ handoff_id: id, result: { ...result } }),
   reconcilerAutoRebase: config.reconcilerAutoRebase,
+  reconcileModeFor: (projectId) =>
+    reconcileModeOf(projectId === undefined ? undefined : projectRegistry.get(projectId)),
   settings,
   heavyStageGate: jobResources.heavyStageGate,
   emitVerdict: (verdict) =>

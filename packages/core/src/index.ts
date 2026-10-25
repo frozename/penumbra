@@ -166,7 +166,14 @@ export {
   ProjectRegistryDuplicateId,
   ProjectRegistryParseError,
 } from "./projects/registry.js";
-export { getGithubRepo, type ProjectEntry, type ProjectRegistryFile } from "./projects/schema.js";
+export {
+  getGithubRepo,
+  type ProjectEntry,
+  type ProjectRegistryFile,
+  type ReconcileMode,
+  reconcileModeOf,
+  ReconcileModeSchema,
+} from "./projects/schema.js";
 export {
   type AgentResponseEvent,
   ChainReader,

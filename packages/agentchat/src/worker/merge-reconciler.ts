@@ -7,6 +7,7 @@ import {
   isResourceKill,
   isResourceScopeLaunchFailure,
   type Logger,
+  type ReconcileMode,
   type Settings,
   type WorktreeCommandRunner,
   type WorktreeCommandRunnerOptions,
@@ -134,6 +135,8 @@ export interface ReconcilerDeps {
   log: Logger;
   mainRepoDir: string;
   reconcilerAutoRebase?: boolean;
+  /** Per-project merge-reconciler mode; omitted means "full". */
+  reconcileModeFor?: (projectId: string | undefined) => ReconcileMode;
   rebaseScratchRoot?: string;
   getHandoff: (handoffId: string) => Promise<HandoffRow | null>;
   createDispatchPR?: typeof createDispatchPR;
@@ -534,6 +537,7 @@ interface ReconcileCtx {
   deps: ReconcilerDeps;
   handoffId: string;
   handoff: HandoffRow | null;
+  mode: ReconcileMode;
   wt: WorktreeHandle;
   baseRef: string;
   repoDir: string;
@@ -2133,8 +2137,10 @@ async function runPrCreationStage(ctx: ReconcileCtx): Promise<MergeResult> {
     }
     const diffStatsRes = await execGit(ctx, ["diff", snapshot.diffSpec, "--shortstat"], wt.path);
     state.diffStats = parseShortStat(diffStatsRes.stdout);
-    await attemptAutoRebase(ctx);
-    const shouldOpenPr = handoff?.open_pr_on_review === true;
+    if (ctx.mode === "full") {
+      await attemptAutoRebase(ctx);
+    }
+    const shouldOpenPr = ctx.mode === "full" && handoff?.open_pr_on_review === true;
     if (!shouldOpenPr) {
       const result: MergeResult = { status: "verified" };
       deps.log.info(
@@ -2203,6 +2209,12 @@ export function createMergeReconciler(
     deps.log.info({ handoffId, path: wt.path }, "starting worktree reconciliation");
     const startedAtMs = Date.now();
     const handoff = await deps.getHandoff(handoffId);
+    const projectId = handoff?.project_id ?? wt.projectId ?? undefined;
+    const mode = deps.reconcileModeFor?.(projectId) ?? "full";
+    if (mode === "off") {
+      deps.log.info({ handoffId, projectId }, "reconcile disabled for project; skipping");
+      return { status: "merged" };
+    }
     // Compute baseRef up front so the rebase/verdict/no-changes/diffStats stages
     // all share the same value. Validation happens after the ctx is in scope.
     const baseRef =
@@ -2212,6 +2224,7 @@ export function createMergeReconciler(
       deps,
       handoffId,
       handoff,
+      mode,
       wt,
       baseRef,
       repoDir: resolveReconcileRepoDir(deps, handoff, handoffId, wt),
@@ -2248,11 +2261,13 @@ export function createMergeReconciler(
     await resolveReconcileSnapshot(ctx);
     await gatherChangedFiles(ctx);
 
-    const typecheckResult = await runHeavyStage(ctx, "typecheck", () => runTypecheckStage(ctx));
-    if (typecheckResult) return typecheckResult;
+    if (ctx.mode !== "git-only") {
+      const typecheckResult = await runHeavyStage(ctx, "typecheck", () => runTypecheckStage(ctx));
+      if (typecheckResult) return typecheckResult;
 
-    const testResult = await runHeavyStage(ctx, "tests", () => runTestsStage(ctx));
-    if (testResult) return testResult;
+      const testResult = await runHeavyStage(ctx, "tests", () => runTestsStage(ctx));
+      if (testResult) return testResult;
+    }
 
     return await globalMergeLock.withLock(async () => {
       return await runPrCreationStage(ctx);
