@@ -5,11 +5,16 @@ import {
   HeavyJobLock,
   type Logger,
   primeResourceScope,
+  readMemAvailableGiB,
   resolveAdmitMinGiB,
   type ResourceScopeDetection,
   waitForMemory,
   type WaitForMemoryOptions,
 } from "@penumbra/core";
+
+export const ADMISSION_FLOOR_ABOVE_AVAILABLE_MSG =
+  "host MemAvailable is below the derived claim admission floor; claims may never be admitted. Set PENUMBRA_JOB_ADMIT_MIN_GIB to change the floor";
+export const CLAIM_ADMISSION_TIMEOUT_MSG = "host memory admission timeout: claim not admitted";
 
 export interface WorkerJobResources {
   scope: ResourceScopeDetection;
@@ -43,6 +48,20 @@ export async function setupWorkerJobResources(
     },
     "job memory admission floor",
   );
+  if (jobEnv.admitMinGiB === undefined && admitMinGiB > 0) {
+    const availableAtBoot = await readMemAvailableGiB(deps.memory);
+    if (availableAtBoot !== null && availableAtBoot < admitMinGiB) {
+      log.warn(
+        {
+          admit_min_gib: Number(admitMinGiB.toFixed(1)),
+          available_gib: Number(availableAtBoot.toFixed(1)),
+          explicit: false,
+          env_var: "PENUMBRA_JOB_ADMIT_MIN_GIB",
+        },
+        ADMISSION_FLOOR_ABOVE_AVAILABLE_MSG,
+      );
+    }
+  }
   const waitMs = jobEnv.admitWaitS * 1000;
   const heavyStageGate = createHeavyJobGate({
     lock: deps.lock ?? new HeavyJobLock({ path: jobEnv.heavyLockPath, log }),
@@ -70,6 +89,20 @@ export async function setupWorkerJobResources(
         );
       },
     });
+    if (!admission.admitted && admission.reason === "timeout") {
+      log.warn(
+        {
+          handoff_id: handoff.handoff_id,
+          available_gib:
+            admission.availableGiB === null ? null : Number(admission.availableGiB.toFixed(1)),
+          min_gib: Number(admitMinGiB.toFixed(1)),
+          waited_s: Math.round(admission.waitedMs / 1000),
+          explicit: jobEnv.admitMinGiB !== undefined,
+          env_var: "PENUMBRA_JOB_ADMIT_MIN_GIB",
+        },
+        CLAIM_ADMISSION_TIMEOUT_MSG,
+      );
+    }
     return admission.admitted;
   };
   return { scope, heavyStageGate, admitClaim };
