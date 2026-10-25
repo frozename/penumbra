@@ -73,8 +73,8 @@ wins when both are present. Pass both verbatim when the spec includes them.
    non-empty) AND the tree is clean (`dirty` is false), treat the dispatch as COMPLETE:
    set `ok=true`, `status="completed_via_inspection"`, report `branch=<branch_name>`
    with the commit, and put "no terminal dispatch.end event; salvaged via worktree
-   inspection" in `error_summary`. Only if inspection shows no branch, no commits, or an
-   Otherwise (no branch, no commits, or a dirty tree) the chain is still running: return
+   inspection" in `error_summary`. Otherwise (no branch, no commits, or a dirty tree)
+   the chain is still running: return
    `ok=false`, `status="still_running"`, and do NOT call `chain_cancel`.
 5. Response handling depends on `spec.response_mode || "full"`. For `"full"`, call
    `mcp__penumbra__chain_get_response({ conversation_id, which: "final" })` for the

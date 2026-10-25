@@ -31,6 +31,14 @@ test("still_running carries the ids and never cancels", () => {
   expect(doc).toContain("do NOT call `chain_cancel`");
 });
 
+test("the salvage fallback sentence has no leftover fragment", () => {
+  const doc = collapsedDoc();
+  expect(doc).not.toContain("Only if inspection shows");
+  expect(doc).toContain(
+    "in `error_summary`. Otherwise (no branch, no commits, or a dirty tree) the chain is still running",
+  );
+});
+
 test("the wait budget is used in full and its maximum is documented", () => {
   const doc = collapsedDoc();
   expect(doc).toContain("never stop early");
