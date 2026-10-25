@@ -628,6 +628,117 @@ describe("penumbra-fanout dispatch contract", () => {
     expect(result?.ok).toBe(false);
   });
 
+  test("ok is false when the root hop is trustworthy but the latest hop is not", async () => {
+    const { result, error } = await runFanout(
+      { tasks: [{ message: "m", label: "t0" }], defaults: { project_id: "penumbra" } },
+      async () => ({
+        ok: true,
+        status: "completed",
+        conversation_id: "c",
+        handoff_id: "h-root",
+        root_handoff_id: "h-root",
+        latest_handoff_id: "h-latest",
+        reliability_status: "complete",
+        reliability_trustworthy: true,
+        reliability_action: "accept",
+        latest_reliability_status: "commit_identity_mismatch",
+        latest_reliability_trustworthy: false,
+        latest_reliability_action: "review_manually",
+      }),
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.results?.[0]?.ok).toBe(false);
+    expect(result?.results?.[0]?.error_summary).toBe("latest_reliability_untrustworthy");
+    expect(result?.ok).toBe(false);
+    expect(result?.completed).toBe(0);
+    expect(result?.failed).toBe(1);
+  });
+
+  test("a distinct latest hop without a latest audit fails closed", async () => {
+    const { result, error } = await runFanout(
+      { tasks: [{ message: "m", label: "t0" }], defaults: { project_id: "penumbra" } },
+      async () => ({
+        ok: true,
+        status: "completed",
+        conversation_id: "c",
+        handoff_id: "h-root",
+        root_handoff_id: "h-root",
+        latest_handoff_id: "h-latest",
+        reliability_status: "complete",
+        reliability_trustworthy: true,
+        reliability_action: "accept",
+      }),
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.results?.[0]?.ok).toBe(false);
+    expect(result?.results?.[0]?.error_summary).toBe("latest_reliability_unverified");
+  });
+
+  test("root and latest both trustworthy stay ok", async () => {
+    const { result, error } = await runFanout(
+      { tasks: [{ message: "m", label: "t0" }], defaults: { project_id: "penumbra" } },
+      async () => ({
+        ok: true,
+        status: "completed",
+        conversation_id: "c",
+        handoff_id: "h-root",
+        root_handoff_id: "h-root",
+        latest_handoff_id: "h-latest",
+        reliability_status: "complete",
+        reliability_trustworthy: true,
+        reliability_action: "accept",
+        latest_reliability_status: "complete",
+        latest_reliability_trustworthy: true,
+        latest_reliability_action: "accept",
+      }),
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.results?.[0]?.ok).toBe(true);
+    expect(result?.ok).toBe(true);
+    expect(result?.completed).toBe(1);
+  });
+
+  test("a latest hop equal to the root needs no second audit", async () => {
+    const { result, error } = await runFanout(
+      { tasks: [{ message: "m", label: "t0" }], defaults: { project_id: "penumbra" } },
+      async () => ({
+        ok: true,
+        status: "completed",
+        conversation_id: "c",
+        handoff_id: "h-root",
+        root_handoff_id: "h-root",
+        latest_handoff_id: "h-root",
+        reliability_status: "complete",
+        reliability_trustworthy: true,
+        reliability_action: "accept",
+      }),
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.results?.[0]?.ok).toBe(true);
+  });
+
+  test("the schema declares the latest reliability fields and the prompt audits the latest hop", async () => {
+    const { calls, error } = await runFanout(
+      { tasks: [{ message: "m", label: "t0" }], defaults: { project_id: "penumbra" } },
+      async () => null,
+    );
+
+    expect(error).toBeUndefined();
+    const schema = calls[0]?.options?.schema as
+      | { properties?: Record<string, { type?: string }> }
+      | undefined;
+    expect(schema?.properties?.latest_reliability_status?.type).toBe("string");
+    expect(schema?.properties?.latest_reliability_trustworthy?.type).toBe("boolean");
+    expect(schema?.properties?.latest_reliability_action?.type).toBe("string");
+    expect(calls[0]?.prompt).toContain(
+      "mcp__penumbra__dispatch_audit({ handoff_id: latest_handoff_id })",
+    );
+  });
+
   test("a malformed JSON string for args throws a parse error, not a missing-tasks error", async () => {
     const result = await runWorkflow(FANOUT, "{not valid json");
 
