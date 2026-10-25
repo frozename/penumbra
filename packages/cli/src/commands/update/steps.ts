@@ -11,6 +11,8 @@ export interface MoveState extends Progress {
   watch: LogWatch | null;
   lease: InstallLease | null;
   notes: string[];
+  /** Idle agent sessions the last passing idle probe ignored: "<pid> <program>". */
+  ignoredSessions: string[];
 }
 
 export interface StepEnv {
@@ -35,6 +37,7 @@ export function newMoveState(): MoveState {
     watch: null,
     lease: null,
     notes: [],
+    ignoredSessions: [],
   };
 }
 
@@ -48,14 +51,23 @@ function busyDetail(waitIdleS: number, reasons: string[]): string {
   return `still busy after ${String(waitIdleS)}s (${reasons.join("; ")}); retry later or raise --wait-idle`;
 }
 
+/** Sessions ignored by any passing idle probe; later probes (worker already stopped) must not erase them. */
+function recordIgnoredSessions(state: MoveState, sessions: string[]): void {
+  for (const session of sessions) {
+    if (!state.ignoredSessions.includes(session)) state.ignoredSessions.push(session);
+  }
+}
+
 async function runWaitIdle(env: StepEnv, requireDaemon: boolean): Promise<string | null> {
-  const { ctx } = env;
+  const { ctx, state } = env;
   const res = await waitForIdle(ctx, {
     budgetS: ctx.options.waitIdleS,
     requireDaemon,
     signal: env.signal,
   });
-  return res.ok ? null : busyDetail(ctx.options.waitIdleS, res.reasons);
+  if (!res.ok) return busyDetail(ctx.options.waitIdleS, res.reasons);
+  recordIgnoredSessions(state, res.ignoredSessions);
+  return null;
 }
 
 /**
@@ -77,6 +89,7 @@ async function runSettle(
       signal: env.signal,
     });
     if (!idle.ok) return busyDetail(ctx.options.waitIdleS, idle.reasons);
+    recordIgnoredSessions(state, idle.ignoredSessions);
     if (!step.gate) return null;
     ctx.say(`waiting for the heavy-job lock (${ctx.heavyLock.path}) and memory admission`);
     const gate = await ctx.install.acquire();
@@ -84,6 +97,7 @@ async function runSettle(
     const again = await probeIdle(ctx, { requireDaemon: step.requireDaemon });
     if (again.idle) {
       state.lease = gate.lease;
+      recordIgnoredSessions(state, again.ignoredSessions);
       return null;
     }
     await gate.lease.release();

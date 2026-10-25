@@ -98,7 +98,9 @@ export async function probeIdle(
   };
 }
 
-export type IdleWait = { ok: true; waitedS: number } | { ok: false; reasons: string[] };
+export type IdleWait =
+  | { ok: true; waitedS: number; ignoredSessions: string[] }
+  | { ok: false; reasons: string[] };
 
 function ignoredSessionsLine(ignored: string[]): string | null {
   if (ignored.length === 0) return null;
@@ -129,7 +131,13 @@ export async function waitForIdle(
       lastIgnoredSaid = ignoredLine;
     }
     const waitedMs = ctx.clock.now() - start;
-    if (probe.idle) return { ok: true, waitedS: Math.round(waitedMs / 1000) };
+    if (probe.idle) {
+      return {
+        ok: true,
+        waitedS: Math.round(waitedMs / 1000),
+        ignoredSessions: probe.ignoredSessions,
+      };
+    }
     if (waitedMs >= opts.budgetS * 1000) return { ok: false, reasons: probe.reasons };
     const line = probe.reasons.join("; ");
     if (line !== lastSaid) ctx.say(`waiting for idle: ${line}`);

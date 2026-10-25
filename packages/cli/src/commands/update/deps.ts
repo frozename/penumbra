@@ -154,7 +154,11 @@ export function createDefaultHost(exec: Exec): HostPort {
       const res = await exec(["ps", "-o", "pid=,etime=,command=", "-p", pids.join(",")], {
         timeoutMs: 5_000,
       });
-      if (res.code !== 0) return [];
+      if (res.code !== 0) {
+        // Fail closed: pids exist but are unresolvable; block with ageS null and an
+        // argv that can never match a seat so they are never ignored.
+        return pids.map((pid) => ({ pid: Number(pid), ageS: null, argv: [] }));
+      }
       return res.stdout
         .split("\n")
         .map(parsePsRow)

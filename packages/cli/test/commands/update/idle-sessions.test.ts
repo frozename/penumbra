@@ -3,10 +3,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { adapterProgramNames, isAgentSession } from "@src/commands/update/agent-sessions.js";
+import {
+  adapterProgramNames,
+  isAgentSession,
+  loadAdapterProgramNames,
+} from "@src/commands/update/agent-sessions.js";
 import { parseEtime } from "@src/commands/update/deps.js";
-import { probeIdle } from "@src/commands/update/idle.js";
-import { createUpdateContext } from "@src/commands/update/index.js";
+import { probeIdle, waitForIdle } from "@src/commands/update/idle.js";
+import { createUpdateContext, runUpdateCommand } from "@src/commands/update/index.js";
 import { parseUpdateArgs } from "@src/commands/update/options.js";
 import type { HostChild, UpdateContext } from "@src/commands/update/types.js";
 
@@ -50,7 +54,7 @@ function brokenSeatConfig(): string {
   const dir = mkdtempSync(join(tmpdir(), "penumbra-update-seats-"));
   dirs.push(dir);
   const path = join(dir, "agentchat.yaml");
-  writeFileSync(path, "agents: []\n");
+  writeFileSync(path, "agents:\n  - name: [unclosed\n");
   return path;
 }
 
@@ -87,6 +91,17 @@ describe("agent session matcher", () => {
   test("unrelated commands never match", () => {
     expect(isAgentSession(["git", "fetch"], names)).toBe(false);
     expect(isAgentSession(["bun", "test"], names)).toBe(false);
+  });
+
+  test("the match stops at the first argv entry that is not a generic runner", () => {
+    expect(isAgentSession(["git", "fetch", "codex-acp"], names)).toBe(false);
+    expect(isAgentSession(["sh", "-c", "claude-agent-acp"], names)).toBe(false);
+  });
+
+  test("loadAdapterProgramNames returns null when the config does not parse", () => {
+    expect(
+      loadAdapterProgramNames({ AGENTCHAT_CONFIG: brokenSeatConfig() }, "/home/op"),
+    ).toBeNull();
   });
 });
 
@@ -190,6 +205,45 @@ describe("probeIdle with agent sessions under the worker", () => {
     expect(probe.idle).toBe(false);
     expect(probe.reasons.join("; ")).toContain("worker has child processes: 111 node");
     expect(probe.ignoredSessions).toEqual([]);
+  });
+});
+
+describe("waitForIdle with ignored agent sessions", () => {
+  test("says the ignoring line once across polls and reports the sessions in the result", async () => {
+    const world = new World();
+    world.env.AGENTCHAT_CONFIG = seatConfig();
+    world.childSessions = [session(111, 300, CLAUDE), session(222, 300, CODEX)];
+    world.scopes = ["penumbra-job-1"];
+    world.onPoll = (poll): void => {
+      if (poll >= 3) world.scopes = [];
+    };
+
+    const res = await waitForIdle(await contextFor(world), {
+      budgetS: 120,
+      requireDaemon: false,
+      pollMs: 10,
+    });
+
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect([...res.ignoredSessions].sort()).toEqual(["111 claude-agent-acp", "222 codex-acp"]);
+    }
+    const said = world.out.filter((line) => line.includes("ignoring 2 idle agent session(s)"));
+    expect(said.length).toBe(1);
+  });
+
+  test("--apply --json carries the ignored sessions", async () => {
+    const world = new World();
+    world.env.AGENTCHAT_CONFIG = seatConfig();
+    world.childSessions = [session(111, 300, CLAUDE), session(222, 300, CODEX)];
+
+    expect(await runUpdateCommand(["--apply", "--json"], STORAGE, world.deps())).toBe(0);
+
+    expect(world.json()).toMatchObject({
+      mode: "apply",
+      outcome: "updated",
+      ignored_sessions: ["111 claude-agent-acp", "222 codex-acp"],
+    });
   });
 });
 

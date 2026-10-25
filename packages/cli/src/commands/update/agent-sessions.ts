@@ -38,7 +38,12 @@ export function adapterProgramNames(seats: Iterable<SeatExec>): Set<string> {
   return names;
 }
 
-/** The adapter program an argv identifies, or null when it is not an agent session. */
+/**
+ * The adapter program an argv identifies, or null when it is not an agent session.
+ * Skips leading generic runners only; the first real program decides, so
+ * `git fetch codex-acp` or `sh -c claude-agent-acp` cannot match by mentioning
+ * the program later.
+ */
 export function matchedAgentProgram(
   argv: readonly string[],
   programNames: ReadonlySet<string>,
@@ -46,7 +51,7 @@ export function matchedAgentProgram(
   for (const entry of argv.slice(0, 3)) {
     const base = basename(entry);
     if (GENERIC_RUNNERS.has(base)) continue;
-    if (programNames.has(base)) return base;
+    return programNames.has(base) ? base : null;
   }
   return null;
 }

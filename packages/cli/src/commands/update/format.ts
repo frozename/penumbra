@@ -29,6 +29,11 @@ function runtimeLines(runtime: RuntimeReport): string[] {
   const queued =
     idle.approved === null ? "" : `, ${String(idle.approved)} approved handoff(s) queued`;
   lines.push(`  activity: ${activity}${queued}`);
+  if (idle.ignoredSessions.length > 0) {
+    lines.push(
+      `  ignoring ${String(idle.ignoredSessions.length)} idle agent session(s): ${idle.ignoredSessions.join(", ")}`,
+    );
+  }
   if (idle.daemonError) lines.push(`  in-flight handoffs unknown: ${idle.daemonError}`);
   return lines;
 }
