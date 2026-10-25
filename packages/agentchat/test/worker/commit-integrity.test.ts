@@ -1,4 +1,10 @@
-import { DISPATCH_BASE_CONFIG_KEY, type WorktreeCommandRunner } from "@penumbra/core";
+import {
+  classifyDispatchReliability,
+  DISPATCH_BASE_CONFIG_KEY,
+  type DispatchReliabilityInput,
+  type WorktreeCommandRunner,
+  type WorktreeCommandRunnerOptions,
+} from "@penumbra/core";
 import { afterEach, describe, expect, it } from "bun:test";
 import { execFile as execFileCb } from "node:child_process";
 import * as fs from "node:fs";
@@ -8,6 +14,7 @@ import { promisify } from "node:util";
 
 import {
   IDENTITY_FIELD_MAX,
+  LOG_MAX_BUFFER_BYTES,
   LOG_SCAN_LIMIT,
   MISMATCHED_COMMITS_CAP,
   probeCommitIntegrity,
@@ -318,6 +325,70 @@ describe("probeCommitIntegrity", () => {
     expect(baseSha).toHaveLength(64);
     expect(evidence?.base_sha).toBe(baseSha);
     expect(evidence?.mismatched_commits).toEqual([foreignSha]);
+  });
+
+  it("flags oversized identities that overflow the log scan", async () => {
+    const { wtPath } = await setupFixture();
+    // Under Linux's 128 KiB per-environment-string limit.
+    const NAME_LEN = 120_000;
+    const count = Math.ceil(LOG_MAX_BUFFER_BYTES / (2 * NAME_LEN)) + 1;
+    for (let i = 0; i < count; i += 1) {
+      await commitIn(wtPath, {
+        env: { GIT_AUTHOR_NAME: "x".repeat(NAME_LEN), GIT_COMMITTER_NAME: "y".repeat(NAME_LEN) },
+      });
+    }
+
+    const evidence = await probe(wtPath);
+    expect(evidence).not.toBeNull();
+    expect(evidence?.base_is_ancestor).toBe(true);
+    expect(evidence?.mismatched_total).toBeNull();
+
+    const input: DispatchReliabilityInput = {
+      handoff: {
+        handoff_id: "h-1",
+        status: "completed",
+        ts: "2026-05-01T00:00:00.000Z",
+        resolved_at: "2026-05-01T00:00:10.000Z",
+        cancel_requested_at: null,
+        chain_task_type: "implement_small",
+        use_worktree: 1,
+      },
+      events: [
+        { kind: "dispatch.start", ts: "2026-05-01T00:00:01.000Z" },
+        { kind: "proc.spawn", ts: "2026-05-01T00:00:02.000Z" },
+        { kind: "proc.exited.resolved", ts: "2026-05-01T00:00:08.000Z" },
+        { kind: "dispatch.end", ts: "2026-05-01T00:00:09.000Z", meta: { status: "ok" } },
+      ],
+      responseCount: 1,
+      finalResponseText: "DONE",
+      worktreeChanged: true,
+      dispatchEndCommitted: true,
+      reconciled: true,
+      adapterStreaming: true,
+      now: new Date("2026-05-01T00:00:20.000Z"),
+      staleAfterMs: 120_000,
+      commitIntegrity: evidence,
+    };
+
+    const report = classifyDispatchReliability(input);
+    expect(report.trustworthy).toBe(false);
+    expect(report.recommended_action).toBe("review_manually");
+    expect(report.status).toBe("commit_identity_mismatch");
+  });
+
+  it("passes an explicit maxBuffer to the git log scan", async () => {
+    const { wtPath } = await setupFixture();
+    await commitIn(wtPath);
+    const logOpts: WorktreeCommandRunnerOptions[] = [];
+    const spy: WorktreeCommandRunner = async (cmd, args, opts) => {
+      if (args[0] === "log") logOpts.push(opts ?? {});
+      const res = await execFile(cmd, args, { ...opts, encoding: "utf8" });
+      return { stdout: res.stdout, stderr: res.stderr };
+    };
+
+    await probe(wtPath, BRANCH, spy);
+    expect(logOpts).toHaveLength(1);
+    expect(logOpts[0]?.maxBuffer).toBe(LOG_MAX_BUFFER_BYTES);
   });
 
   it("bounds the git log scan with --max-count", async () => {

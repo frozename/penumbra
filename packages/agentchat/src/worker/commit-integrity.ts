@@ -16,8 +16,12 @@ const SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 // throws past it), so only the first few mismatched SHAs are listed and
 // mismatched_total carries the full count.
 export const MISMATCHED_COMMITS_CAP = 10;
-// Bounds `git log` output well under execFile's default 1 MiB maxBuffer.
+// Bounds the number of commits the identity scan reads.
 export const LOG_SCAN_LIMIT = 1000;
+// Explicit so the bound does not depend on the runtime's execFile default.
+// A scan that overflows it fails, which the classifier treats as
+// untrustworthy when the branch has commits past the base.
+export const LOG_MAX_BUFFER_BYTES = 1024 * 1024;
 // Worktree config is agent-writable; cap what an oversized identity can add.
 export const IDENTITY_FIELD_MAX = 128;
 
@@ -139,7 +143,10 @@ async function listMismatchedCommits(
   range: { baseSha: string; branchName: string },
   expected: ExpectedIdents,
 ): Promise<string[] | null> {
-  const log = await gitOutput(runner, branchOnlyLogArgs(range.baseSha, range.branchName), opts);
+  const log = await gitOutput(runner, branchOnlyLogArgs(range.baseSha, range.branchName), {
+    ...opts,
+    maxBuffer: LOG_MAX_BUFFER_BYTES,
+  });
   if (log === null) return null;
   return log
     .split("\n")
