@@ -433,11 +433,11 @@ test("a deadline that expires during base resolution fails as a deadline, not a 
     });
 
     expect(expired).toBe(true);
-    expect(result).toEqual({
-      ok: false,
-      code: "inspection_failed",
-      message: "worktree inspection deadline expired",
-    });
+    expect(result).toMatchObject({ ok: false, code: "inspection_failed" });
+    if (result.ok) throw new Error("expected deadline failure");
+    expect(result.message).toMatch(
+      /^worktree inspection deadline expired during base \(git rev-parse\) after \d+ ms \(budget 5000 ms\)$/,
+    );
   } finally {
     harness.cleanup();
   }
@@ -486,14 +486,14 @@ test("a deadline that expires while base rev-parse runs fails as a deadline, not
         scenario: scenario.name,
         verifyCalls: 1,
       });
-      expect({ scenario: scenario.name, result }).toEqual({
+      expect({ scenario: scenario.name, result }).toMatchObject({
         scenario: scenario.name,
-        result: {
-          ok: false,
-          code: "inspection_failed",
-          message: "worktree inspection deadline expired",
-        },
+        result: { ok: false, code: "inspection_failed" },
       });
+      if (result.ok) throw new Error(`expected deadline failure: ${scenario.name}`);
+      expect(result.message, `scenario: ${scenario.name}`).toMatch(
+        /^worktree inspection deadline expired during base \(git rev-parse\) after \d+ ms \(budget 5000 ms\)$/,
+      );
     }
   } finally {
     harness.cleanup();

@@ -56,9 +56,31 @@ const defaultRunGit: WorktreeInspectionCommandRunner = async (args, opts) => {
 };
 
 class InspectionDeadlineError extends Error {
-  constructor() {
+  readonly step: string | undefined;
+
+  constructor(step?: string) {
     super("worktree inspection deadline expired");
+    this.step = step;
   }
+}
+
+type InspectionPhase = "snapshot" | "base" | "diff" | "log" | "recheck";
+
+function deadlineMessage(step: string, elapsedMs: number, budgetMs: number): string {
+  return `worktree inspection deadline expired during ${step} after ${String(elapsedMs)} ms (budget ${String(budgetMs)} ms)`;
+}
+
+function inspectionErrorMessage(
+  err: unknown,
+  lastStep: string | undefined,
+  phase: InspectionPhase,
+  elapsedMs: number,
+  budgetMs: number,
+): string {
+  if (err instanceof InspectionDeadlineError) {
+    return deadlineMessage(err.step ?? lastStep ?? phase, elapsedMs, budgetMs);
+  }
+  return errorMessage(err);
 }
 
 function errorMessage(err: unknown): string {
@@ -129,6 +151,27 @@ function killedByTimeout(err: unknown): boolean {
     err.killed === true &&
     !("code" in err && err.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
   );
+}
+
+async function runInspectionGit(
+  runGit: WorktreeInspectionCommandRunner,
+  canonicalPath: string,
+  args: readonly string[],
+  step: string,
+  remainingMs: () => number,
+): Promise<string> {
+  const timeout = remainingMs();
+  if (timeout <= 0) throw new InspectionDeadlineError(step);
+  try {
+    const result = await runGit(["-c", "core.fsmonitor=false", "-C", canonicalPath, ...args], {
+      timeout,
+      maxBuffer: COMMAND_MAX_BUFFER_BYTES,
+    });
+    return result.stdout;
+  } catch (err) {
+    if (killedByTimeout(err)) throw new InspectionDeadlineError(step);
+    throw err;
+  }
 }
 
 async function tryRevParse(git: InspectionGit, ref: string): Promise<string | undefined> {
@@ -280,7 +323,9 @@ export async function inspectWorktreeForHandoff(
     return { ok: false, code: "not_found", message: `worktree for handoff ${handoffId} not found` };
   }
   const initialDeadline = options.deadline?.();
-  if (initialDeadline?.expired) return inspectionFailure("worktree inspection deadline expired");
+  if (initialDeadline?.expired) {
+    return inspectionFailure("worktree inspection deadline expired before inspection started");
+  }
   const worktree = services.worktreeManager.getWorktree(handoffId, handoff.project_id ?? undefined);
   if (!worktree) {
     return { ok: false, code: "not_found", message: `worktree for handoff ${handoffId} not found` };
@@ -307,6 +352,8 @@ export async function inspectWorktreeForHandoff(
       ? INSPECTION_TIMEOUT_MS
       : Math.min(INSPECTION_TIMEOUT_MS, initialRemaining);
   let canonicalPath: string;
+  let phase: InspectionPhase = "snapshot";
+  let lastStep: string | undefined;
 
   const remainingMs = (): number => {
     const localRemaining = inspectionBudgetMs - (Date.now() - startedAt);
@@ -321,13 +368,9 @@ export async function inspectWorktreeForHandoff(
   };
 
   const git = async (args: readonly string[]): Promise<string> => {
-    const timeout = remainingMs();
-    if (timeout <= 0) throw new InspectionDeadlineError();
-    const result = await runGit(["-c", "core.fsmonitor=false", "-C", canonicalPath, ...args], {
-      timeout,
-      maxBuffer: COMMAND_MAX_BUFFER_BYTES,
-    });
-    return result.stdout;
+    const step = `${phase} (git ${args[0] ?? "?"})`;
+    lastStep = step;
+    return await runInspectionGit(runGit, canonicalPath, args, step, remainingMs);
   };
 
   const captureGitOutput = async (
@@ -374,6 +417,7 @@ export async function inspectWorktreeForHandoff(
     const initialFailure = initialSnapshotFailure(before, canonicalPath, worktree);
     if (initialFailure) return inspectionFailure(initialFailure);
 
+    phase = "base";
     const { baseRef, baseSha, attemptedRef, fallbackReason } = await resolveInspectionBase(
       { run: git, budgetSpent: () => remainingMs() <= 0 },
       rootInspectionBase(
@@ -386,13 +430,16 @@ export async function inspectWorktreeForHandoff(
       return inspectionFailure(`${baseRef} is not a full Git object id`);
     }
     const comparisonRange = `${baseSha}..${before.headSha}`;
+    phase = "diff";
     const diff = await captureGitOutput([
       "diff",
       "--no-ext-diff",
       "--no-textconv",
       `${baseSha}...${before.headSha}`,
     ]);
+    phase = "log";
     const log = await captureGitOutput(["log", "--oneline", comparisonRange]);
+    phase = "recheck";
     const after = await readSnapshot();
     const finalCanonicalPath = await realpath(worktree.path);
     if (snapshotChanged(before, after, canonicalPath, finalCanonicalPath)) {
@@ -437,6 +484,8 @@ export async function inspectWorktreeForHandoff(
       },
     };
   } catch (err) {
-    return { ok: false, code: "inspection_failed", message: errorMessage(err) };
+    return inspectionFailure(
+      inspectionErrorMessage(err, lastStep, phase, Date.now() - startedAt, inspectionBudgetMs),
+    );
   }
 }
