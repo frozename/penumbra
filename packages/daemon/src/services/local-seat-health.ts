@@ -3,11 +3,20 @@ import {
   type LocalSeatHealthLike,
   type ServedModelsFetch,
 } from "@penumbra/core";
+import { readFile as fsReadFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 export interface LocalSeatHealthAgent {
   name: string;
   adapter?: string;
   options?: Record<string, unknown>;
+  health?: {
+    url: string;
+    bearer_file?: string;
+    ca_file?: string;
+    expect_model?: string;
+  };
 }
 
 export interface LocalSeatHealthService extends LocalSeatHealthLike {
@@ -22,12 +31,15 @@ export interface CreateLocalSeatHealthServiceOpts {
   ttlMs?: number;
   probeTimeoutMs?: number;
   localHostnames?: ReadonlySet<string>;
+  readFile?: (path: string) => Promise<string>;
 }
 
-type LocalOpenAiCompatSeat = {
+type ProbeTarget = {
   name: string;
   baseUrl: string;
-  model: string;
+  model: string | null;
+  bearerFile: string | null;
+  caFile: string | null;
 };
 
 type HealthCacheEntry = {
@@ -62,7 +74,7 @@ export function isLocalModelHost(
 function localOpenAiCompatSeat(
   agent: LocalSeatHealthAgent,
   configuredLocalHostnames: ReadonlySet<string>,
-): LocalOpenAiCompatSeat | null {
+): ProbeTarget | null {
   if (agent.adapter !== "openai-compat-http") return null;
   const options = agent.options ?? {};
   const baseUrl = typeof options.baseUrl === "string" ? options.baseUrl : null;
@@ -73,7 +85,33 @@ function localOpenAiCompatSeat(
   } catch {
     return null;
   }
-  return { name: agent.name, baseUrl, model };
+  return { name: agent.name, baseUrl, model, bearerFile: null, caFile: null };
+}
+
+// A seat that declares a `health` target is probed regardless of adapter or host:
+// the declaration is the opt-in, and role_routing.local_seat_health_gate still
+// decides whether the results affect routing.
+function probeTargetFor(
+  agent: LocalSeatHealthAgent,
+  configuredLocalHostnames: ReadonlySet<string>,
+): ProbeTarget | null {
+  const health = agent.health;
+  if (typeof health?.url === "string" && health.url.length > 0) {
+    const options = agent.options ?? {};
+    const model =
+      health.expect_model ??
+      (agent.adapter === "openai-compat-http" && typeof options.model === "string"
+        ? options.model
+        : null);
+    return {
+      name: agent.name,
+      baseUrl: health.url,
+      model,
+      bearerFile: health.bearer_file ?? null,
+      caFile: health.ca_file ?? null,
+    };
+  }
+  return localOpenAiCompatSeat(agent, configuredLocalHostnames);
 }
 
 export function createLocalSeatHealthService(
@@ -84,26 +122,40 @@ export function createLocalSeatHealthService(
   const ttlMs = opts.ttlMs ?? LOCAL_SEAT_HEALTH_TTL_MS;
   const probeTimeoutMs = opts.probeTimeoutMs ?? 5_000;
   const localHostnames = opts.localHostnames ?? localHostnamesFromEnv();
-  const localSeats = (): LocalOpenAiCompatSeat[] =>
+  const readFileImpl =
+    opts.readFile ?? ((path: string): Promise<string> => fsReadFile(path, "utf8"));
+  const localSeats = (): ProbeTarget[] =>
     opts
       .agents()
-      .map((agent) => localOpenAiCompatSeat(agent, localHostnames))
-      .filter((seat): seat is LocalOpenAiCompatSeat => seat !== null);
+      .map((agent) => probeTargetFor(agent, localHostnames))
+      .filter((seat): seat is ProbeTarget => seat !== null);
 
   const hasFreshHealthyProbe = (agentName: string): boolean => {
     const cached = cache.get(agentName);
     return cached?.healthy === true && now() - cached.checkedAtMs < ttlMs;
   };
 
-  const refreshSeat = async (seat: LocalOpenAiCompatSeat, checkedAtMs: number): Promise<void> => {
+  const readSecretFile = async (path: string): Promise<string> => {
+    const expanded = path.startsWith("~/") ? join(homedir(), path.slice(2)) : path;
+    return await readFileImpl(expanded);
+  };
+
+  const refreshSeat = async (seat: ProbeTarget, checkedAtMs: number): Promise<void> => {
     try {
+      const bearerToken = seat.bearerFile ? (await readSecretFile(seat.bearerFile)).trim() : "";
+      if (seat.bearerFile && bearerToken.length === 0) {
+        throw new Error("bearer file resolved to an empty token");
+      }
+      const caPem = seat.caFile ? await readSecretFile(seat.caFile) : "";
       const servedModels = await fetchServedModels(seat.baseUrl, {
         fetch: opts.fetch,
         timeoutMs: probeTimeoutMs,
+        ...(bearerToken.length > 0 ? { bearerToken } : {}),
+        ...(caPem.length > 0 ? { caPem } : {}),
       });
       cache.set(seat.name, {
         checkedAtMs,
-        healthy: servedModels.has(seat.model),
+        healthy: seat.model === null ? true : servedModels.has(seat.model),
       });
     } catch {
       cache.set(seat.name, { checkedAtMs, healthy: false });

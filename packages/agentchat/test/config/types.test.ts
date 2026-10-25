@@ -36,6 +36,17 @@ describe("AgentOptionsSchema — config single source of truth", () => {
       }),
     ).toThrow(/warm_pool.*opencode-acp/);
   });
+
+  test("agentchat keeps the declared health target on parsed agents", () => {
+    const health = {
+      url: "https://gw.example.invalid:7843/v1",
+      bearer_file: "/etc/penumbra/token",
+      ca_file: "~/certs/gw-ca.pem",
+      expect_model: "qwen",
+    };
+    const parsed = AgentConfigSchema.parse({ name: "a", adapter: "stdio-acp", health });
+    expect(parsed.health).toEqual(health);
+  });
 });
 
 describe("AgentOptionsSchema — Phase 1d boolean opt-ins", () => {

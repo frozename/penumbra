@@ -65,4 +65,31 @@ describe("served models client", () => {
     if (!(caught instanceof Error)) throw new Error("expected fetchServedModels to reject");
     expect(caught.message).toContain("served models probe failed");
   });
+
+  test("sends bearer authorization and custom CA when provided", async () => {
+    let seenInit: { headers?: Record<string, string>; tls?: { ca: string } } | undefined;
+    await fetchServedModels("https://gw.example.invalid:7843/v1", {
+      bearerToken: "tok",
+      caPem: "PEM",
+      fetch: (_url, init) => {
+        seenInit = init;
+        return Promise.resolve(new Response(JSON.stringify({ data: [{ id: "qwen" }] })));
+      },
+    });
+
+    expect(seenInit?.headers?.authorization).toBe("Bearer tok");
+    expect(seenInit?.tls?.ca).toBe("PEM");
+  });
+
+  test("omits headers and tls entirely when no bearer token or CA is provided", async () => {
+    let seenKeys: string[] = [];
+    await fetchServedModels("http://127.0.0.1:7944", {
+      fetch: (_url, init) => {
+        seenKeys = Object.keys(init ?? {});
+        return Promise.resolve(new Response(JSON.stringify({ data: [{ id: "bge-m3" }] })));
+      },
+    });
+
+    expect(seenKeys).toEqual(["signal"]);
+  });
 });

@@ -25,6 +25,8 @@ export {
   ADAPTER_SPECIFIC_OPTION_KEYS,
   type AgentConfig,
   AgentConfigSchema,
+  type AgentHealthTarget,
+  AgentHealthTargetSchema,
   type AgentOptions,
   AgentOptionsSchema,
   type AgentProvenance,
