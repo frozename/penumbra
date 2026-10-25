@@ -623,12 +623,47 @@ function resolveReconcileRepoDir(
   return deps.mainRepoDir;
 }
 
-async function resolveReconcileSnapshot(ctx: ReconcileCtx): Promise<void> {
+async function resolveBaseTip(ctx: ReconcileCtx): Promise<{ sha: string | null; tried: string[] }> {
+  const { baseRef, handoffId } = ctx;
+  const tried: string[] = [baseRef];
+  try {
+    const baseTipRes = await execGit(ctx, ["rev-parse", baseRef], ctx.repoDir);
+    const sha = baseTipRes.stdout.trim();
+    if (sha) return { sha, tried };
+  } catch {
+    // fall through to the origin lookup below
+  }
+  if (!baseRef.startsWith("origin/") && !baseRef.startsWith("refs/")) {
+    const remoteRef = `origin/${baseRef}`;
+    tried.push(remoteRef);
+    try {
+      const remoteRes = await execGit(ctx, ["rev-parse", remoteRef], ctx.repoDir);
+      const sha = remoteRes.stdout.trim();
+      if (sha) {
+        ctx.deps.log.info(
+          { handoffId, baseRef, repoDir: ctx.repoDir },
+          "reconcile branch_base resolved from origin",
+        );
+        return { sha, tried };
+      }
+    } catch {
+      // neither the local ref nor origin/<base> resolves
+    }
+  }
+  return { sha: null, tried };
+}
+
+// Resolves the reconcile snapshot. Returns the list of refs attempted when the
+// branch_base resolves nowhere, and null on success.
+async function resolveReconcileSnapshot(ctx: ReconcileCtx): Promise<string[] | null> {
   const { baseRef, wt } = ctx;
   const branchHeadRes = await execGit(ctx, ["rev-parse", "HEAD"], wt.path);
   const branchHeadSha = branchHeadRes.stdout.trim();
-  const baseTipRes = await execGit(ctx, ["rev-parse", baseRef], ctx.repoDir);
-  const baseTipSha = baseTipRes.stdout.trim();
+  const baseTip = await resolveBaseTip(ctx);
+  if (baseTip.sha === null) {
+    return baseTip.tried;
+  }
+  const baseTipSha = baseTip.sha;
   const mergeBaseRes = await execGit(ctx, ["merge-base", baseTipSha, branchHeadSha], ctx.repoDir);
   const mergeBaseSha = mergeBaseRes.stdout.trim();
 
@@ -642,6 +677,7 @@ async function resolveReconcileSnapshot(ctx: ReconcileCtx): Promise<void> {
     mergeBaseSha,
     diffSpec: `${mergeBaseSha}...${branchHeadSha}`,
   };
+  return null;
 }
 
 async function refreshSnapshotFromDurableBranch(ctx: ReconcileCtx): Promise<void> {
@@ -1268,12 +1304,14 @@ async function emitInvalidInputResult(
   ctx: ReconcileCtx,
   code: NonNullable<MergeResult["error_code"]>,
   details: Record<string, string>,
+  extra: Pick<MergeResult, "verification_environment_error"> = {},
 ): Promise<MergeResult> {
   const { deps, handoffId } = ctx;
   const result: MergeResult = {
     status: "test_failed",
     error_code: code,
     regression_summary: JSON.stringify({ code, ...details }),
+    ...extra,
   };
   await deps.postProgress(handoffId, {
     type: "merge-result",
@@ -2245,7 +2283,24 @@ export function createMergeReconciler(
       });
     }
 
-    await resolveReconcileSnapshot(ctx);
+    const unresolvedBase = await resolveReconcileSnapshot(ctx);
+    if (unresolvedBase) {
+      deps.log.warn(
+        { handoffId, baseRef, repoDir: ctx.repoDir, tried: unresolvedBase },
+        "reconcile branch_base does not resolve in the project repo",
+      );
+      return await emitInvalidInputResult(
+        ctx,
+        "invalid_branch_base",
+        {
+          field: "branch_base",
+          value: baseRef,
+          reason: "unresolvable",
+          tried: unresolvedBase.join(", "),
+        },
+        { verification_environment_error: true },
+      );
+    }
     await gatherChangedFiles(ctx);
 
     const typecheckResult = await runHeavyStage(ctx, "typecheck", () => runTypecheckStage(ctx));

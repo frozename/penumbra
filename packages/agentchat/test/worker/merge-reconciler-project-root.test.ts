@@ -461,4 +461,65 @@ describe("merge reconciler project repo resolution (#219)", () => {
 
     expect(baselineRuns).toHaveLength(2);
   });
+
+  test("resolves a branch_base that exists only as origin/<base> in the project repo", async () => {
+    git(repoB, ["branch", "feature/remote-only", "feature/only-in-b"]);
+    git(repoB, ["update-ref", "refs/remotes/origin/feature/remote-only", "feature/remote-only"]);
+    const reconciler = await setup("feature/remote-only");
+    git(repoB, ["branch", "-D", "feature/remote-only"]);
+
+    const outcome = await reconciler(handoffId).then(
+      (result) => ({ ok: true as const, result }),
+      (err: unknown) => ({ ok: false as const, error: String(err) }),
+    );
+
+    expect(outcome).toMatchObject({ ok: true, result: { status: "verified" } });
+    expect(verdicts[0]?.base_sha).toBe(
+      git(repoB, ["rev-parse", "origin/feature/remote-only"]).trim(),
+    );
+  });
+
+  test("prefers the local branch_base over origin/<base>", async () => {
+    git(repoB, ["update-ref", "refs/remotes/origin/feature/only-in-b", "main"]);
+    const reconciler = await setup("feature/only-in-b");
+
+    const outcome = await reconciler(handoffId).then(
+      (result) => ({ ok: true as const, result }),
+      (err: unknown) => ({ ok: false as const, error: String(err) }),
+    );
+
+    expect(outcome).toMatchObject({ ok: true, result: { status: "verified" } });
+    const repoBMain = git(repoB, ["rev-parse", "main"]).trim();
+    const expected = git(repoB, ["rev-parse", "feature/only-in-b"]).trim();
+    expect(verdicts[0]?.base_sha).toBe(expected);
+    expect(verdicts[0]?.base_sha).not.toBe(repoBMain);
+  });
+
+  test("returns a typed invalid_branch_base when branch_base resolves neither locally nor on origin", async () => {
+    git(repoB, ["branch", "feature/gone", "main"]);
+    const reconciler = await setup("feature/gone");
+    git(repoB, ["branch", "-D", "feature/gone"]);
+
+    const outcome = await reconciler(handoffId).then(
+      (result) => ({ ok: true as const, result }),
+      (err: unknown) => ({ ok: false as const, error: String(err) }),
+    );
+
+    expect(outcome).toMatchObject({
+      ok: true,
+      result: {
+        status: "test_failed",
+        error_code: "invalid_branch_base",
+        verification_environment_error: true,
+      },
+    });
+    if (!outcome.ok) throw new Error(`expected a typed result, got throw: ${outcome.error}`);
+    expect(JSON.parse(outcome.result.regression_summary ?? "{}")).toMatchObject({
+      code: "invalid_branch_base",
+      field: "branch_base",
+      value: "feature/gone",
+      reason: "unresolvable",
+    });
+    expect(verdicts).toEqual([]);
+  });
 });
