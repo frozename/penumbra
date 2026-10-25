@@ -252,6 +252,18 @@ function classifyCommitIntegrity(ctx: ClassificationContext): DispatchReliabilit
       [],
     );
   }
+  // Fail closed: an identity scan that could not run (null total) on commits
+  // past the base leaves those commits unverified, which is not "accept".
+  if (ci.mismatched_total === null && ci.head_sha !== ci.base_sha) {
+    return makeReport(
+      ctx,
+      "commit_identity_mismatch",
+      false,
+      `identity check could not run on commits between dispatch base ${ci.base_sha.slice(0, 12)} and branch head ${ci.head_sha.slice(0, 12)}; their author and committer are unverified`,
+      "review_manually",
+      [],
+    );
+  }
   return null;
 }
 
