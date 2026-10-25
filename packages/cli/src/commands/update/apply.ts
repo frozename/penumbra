@@ -35,7 +35,11 @@ export interface MoveOutcome {
   failure: Failure;
   recovery: { completed: string[]; failure: Failure } | null;
   notes: string[];
+  /** Idle agent sessions the last passing idle probe let through: "<pid> <program>". */
+  ignored_sessions: string[];
 }
+
+type MoveOutcomeWithoutSessions = Omit<MoveOutcome, "ignored_sessions">;
 
 function short(sha: string): string {
   return sha.slice(0, 12);
@@ -126,7 +130,11 @@ function recoveryPlan(env: StepEnv, req: MoveRequest, head: string): RecoveryPla
   return planRecovery({ from: req.from, head, progress, canFreeze: env.manager.canFreeze });
 }
 
-async function recover(env: StepEnv, req: MoveRequest, failed: StepsResult): Promise<MoveOutcome> {
+async function recover(
+  env: StepEnv,
+  req: MoveRequest,
+  failed: StepsResult,
+): Promise<MoveOutcomeWithoutSessions> {
   const { ctx, state } = env;
   const head = await headOr(ctx, req.to);
   const base = {
@@ -182,7 +190,7 @@ export async function runMove(
   try {
     const steps = planMove({ ...req, canFreeze: manager.canFreeze });
     const forward = await runSteps({ ...env, signal: controller.signal }, steps);
-    let outcome: MoveOutcome;
+    let outcome: MoveOutcomeWithoutSessions;
     if (forward.ok) {
       await closeHistory(ctx, env.state, `ok ${req.to}`);
       outcome = {
@@ -200,7 +208,7 @@ export async function runMove(
       outcome = await recover(env, req, forward);
     }
     await ensureWorkerRunning(env);
-    return { ...outcome, notes: env.state.notes };
+    return { ...outcome, notes: env.state.notes, ignored_sessions: env.state.ignoredSessions };
   } finally {
     unwatch();
     await releaseLease(env.state).catch(() => undefined);
