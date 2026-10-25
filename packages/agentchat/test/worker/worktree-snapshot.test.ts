@@ -117,6 +117,37 @@ describe("getWorktreeSnapshot against a WorktreeManager worktree", () => {
     expect(result.commitIntegrity?.mismatched_total).toBe(1);
   });
 
+  it("probes the branch HEAD is attached to after the agent switches branches", async () => {
+    const handle = await manager.createWorktree(HANDOFF_ID);
+    await git(handle.path, ["checkout", "-q", "-b", "agent/renamed"]);
+    await git(handle.path, [
+      "commit",
+      "--allow-empty",
+      "--author=Human Operator <human@example.com>",
+      "-m",
+      "foreign on renamed",
+    ]);
+    const foreignSha = await git(handle.path, ["rev-parse", "HEAD"]);
+
+    const result = await snapshot();
+    expect(result.commitIntegrity?.head_sha).toBe(foreignSha);
+    expect(result.commitIntegrity?.mismatched_commits).toEqual([foreignSha]);
+    expect(result.commitIntegrity?.mismatched_total).toBe(1);
+    expect(result.committed).toBe(true);
+  });
+
+  it("keeps the stored dispatch branch when HEAD is detached", async () => {
+    const handle = await manager.createWorktree(HANDOFF_ID);
+    fs.writeFileSync(path.join(handle.path, "work.txt"), "work\n");
+    await git(handle.path, ["add", "work.txt"]);
+    await git(handle.path, ["commit", "-m", "work"]);
+    const headSha = await git(handle.path, ["rev-parse", `refs/heads/${handle.branchName}`]);
+    await git(handle.path, ["checkout", "-q", "--detach", "HEAD~1"]);
+
+    const result = await snapshot();
+    expect(result.commitIntegrity?.head_sha).toBe(headSha);
+  });
+
   it("probes commit integrity with the caller's env", async () => {
     await manager.createWorktree(HANDOFF_ID);
 
