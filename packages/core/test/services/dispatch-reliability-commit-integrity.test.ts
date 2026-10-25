@@ -112,13 +112,36 @@ describe("classifyDispatchReliability commit integrity", () => {
     expect(report.summary).not.toContain("more)");
   });
 
-  test("accepts a dispatch whose identity check could not run", () => {
+  test("flags a dispatch whose identity check could not run on commits past the base", () => {
     const report = classifyDispatchReliability(
       baseInput({ commitIntegrity: { ...CLEAN, mismatched_total: null } }),
     );
 
+    expect(report.status).toBe("commit_identity_mismatch");
+    expect(report.trustworthy).toBe(false);
+    expect(report.recommended_action).toBe("review_manually");
+    expect(report.summary).toContain("could not run");
+  });
+
+  test("accepts a failed identity check when the branch head is the base", () => {
+    const report = classifyDispatchReliability(
+      baseInput({
+        commitIntegrity: { ...CLEAN, head_sha: CLEAN.base_sha, mismatched_total: null },
+      }),
+    );
+
     expect(report.status).toBe("complete");
     expect(report.recommended_action).toBe("accept");
+  });
+
+  test("reports base_not_ancestor before an unverified identity check", () => {
+    const report = classifyDispatchReliability(
+      baseInput({
+        commitIntegrity: { ...CLEAN, base_is_ancestor: false, mismatched_total: null },
+      }),
+    );
+
+    expect(report.status).toBe("base_not_ancestor");
   });
 
   test("reports base_not_ancestor when both the branch and identity are wrong", () => {

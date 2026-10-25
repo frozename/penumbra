@@ -27,6 +27,7 @@ Use this skill any time a `chain_start` dispatch returns failure, hangs past the
 - **chat-only agent silent fail** -- agent has no fs/grep/glob tools and the prompt asked it to read files. -- Re-dispatch with all needed context inlined, or pick a CLI/OpenCode agent. -- Memory: `feedback_chat_only_agents_inline_context.md`
 - **post-test ONNX teardown panic** -- cosmetic C++ teardown crash from bun + fastembed; shell exit code is 0. -- Ignore. -- Memory: `bun_onnx_teardown_panic.md`
 - **HTTP 400 from daemon after a schema-touching commit** -- daemon caches zod schemas at boot; HTTP 400s usually mean the daemon is older than the change. -- `launchctl kickstart -k gui/$(id -u)/dev.penumbra.daemon`. -- Memory: `feedback_daemon_restart_on_schema_change.md`
+- **`base_not_ancestor` / `commit_identity_mismatch` from the dispatch.end commit-integrity probe** -- the branch no longer descends from its dispatch base; or commits are not authored and committed as the worktree identity; or the identity scan could not run on commits past the base (for example an oversized identity overflowing the 1 MiB scan buffer). -- review `git log --format='%H %an <%ae> %cn <%ce>' <base_sha>..<head_sha>` in the worktree before landing. Still open in #237: the base SHA and the expected identity are read from agent-writable worktree config, and a local branch created at a foreign commit hides that commit from the scan.
 
 ## Classify Before Retrying
 
