@@ -50,6 +50,28 @@ function seatConfig(): string {
   return path;
 }
 
+function mixedSeatConfig(): string {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-update-seats-"));
+  dirs.push(dir);
+  const path = join(dir, "agentchat.yaml");
+  writeFileSync(
+    path,
+    [
+      "agents:",
+      "  - name: claude-acp",
+      "    adapter: stdio-acp",
+      "    options:",
+      "      binary: claude-agent-acp",
+      "  - name: claude-cli-seat",
+      "    adapter: claude-cli",
+      "    options:",
+      "      command: /Users/u/.local/bin/claude",
+      "",
+    ].join("\n"),
+  );
+  return path;
+}
+
 function brokenSeatConfig(): string {
   const dir = mkdtempSync(join(tmpdir(), "penumbra-update-seats-"));
   dirs.push(dir);
@@ -102,6 +124,13 @@ describe("agent session matcher", () => {
     expect(
       loadAdapterProgramNames({ AGENTCHAT_CONFIG: brokenSeatConfig() }, "/home/op"),
     ).toBeNull();
+  });
+
+  test("CLI-spawn seat commands never contribute exempt program names", () => {
+    const names = loadAdapterProgramNames({ AGENTCHAT_CONFIG: mixedSeatConfig() }, "/home/op");
+    expect(names).not.toBeNull();
+    expect(names?.has("claude")).toBe(false);
+    expect(names?.has("claude-agent-acp")).toBe(true);
   });
 });
 
@@ -193,6 +222,21 @@ describe("probeIdle with agent sessions under the worker", () => {
     expect(probe.idle).toBe(false);
     expect(probe.reasons.join("; ")).toContain("worker has child processes: 111 node");
     expect(probe.ignoredSessions).toEqual([]);
+  });
+
+  test("a CLI-spawn claude child blocks while the warm ACP session is ignored", async () => {
+    const world = new World();
+    world.env.AGENTCHAT_CONFIG = mixedSeatConfig();
+    world.childSessions = [
+      session(111, 300, CLAUDE),
+      session(444, 300, ["/Users/u/.local/bin/claude", "-p"]),
+    ];
+
+    const probe = await probeIdle(await contextFor(world), { requireDaemon: false });
+
+    expect(probe.idle).toBe(false);
+    expect(probe.reasons.join("; ")).toContain("worker has child processes: 444");
+    expect(probe.ignoredSessions).toEqual(["111 claude-agent-acp"]);
   });
 
   test("unknown age keeps an agent-session child blocking", async () => {

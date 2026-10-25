@@ -64,18 +64,29 @@ export function isAgentSession(
 }
 
 /**
+ * Adapter kinds that keep warm ACP sessions alive between dispatches, so their
+ * child processes outlive the handoff. CLI-spawn seats (claude-cli, codex-cli,
+ * gemini-cli, agy-cli, opencode-cli) exit with the dispatch and their `command`
+ * binaries must never be exempted.
+ */
+const ACP_ADAPTER_KINDS: ReadonlySet<string> = new Set(["stdio-acp", "opencode-acp"]);
+
+/**
  * Adapter program names from the same seat config the worker loads
  * (AGENTCHAT_CONFIG or ~/.config/penumbra); null when it cannot be read.
+ * Only ACP seats that keep warm sessions contribute, via `options.binary`.
  */
 export function loadAdapterProgramNames(env: NodeJS.ProcessEnv, home: string): Set<string> | null {
   try {
     const pathOrDir = env.AGENTCHAT_CONFIG ?? join(home, ".config", "penumbra");
     const config = loadConfigPathOrDir(pathOrDir);
     return adapterProgramNames(
-      config.agents.map((agent) => ({
-        executable: agent.options.binary ?? agent.options.command,
-        args: agent.options.args,
-      })),
+      config.agents
+        .filter((agent) => ACP_ADAPTER_KINDS.has(agent.adapter))
+        .map((agent) => ({
+          executable: agent.options.binary,
+          args: agent.options.args,
+        })),
     );
   } catch {
     return null;
