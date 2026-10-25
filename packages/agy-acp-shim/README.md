@@ -75,7 +75,7 @@ The shim is a TypeScript binary that:
 
 1. Listens on stdin for JSON-RPC requests (newline-delimited).
 2. Implements four RPC methods: `initialize`, `session/new`, `session/prompt`, `session/cancel`.
-3. Spawns `agy --print "<prompt>"` per session/prompt request, streaming stdout as ACP deltas.
+3. Spawns `agy --print="<prompt>"` per session/prompt request (prompt attached to the flag — agy >= 1.4 otherwise swallows the next argv token), streaming stdout as ACP deltas.
 4. Kills agy via SIGTERM → grace period → SIGKILL on `session/cancel`.
 
 For implementation details, see `src/handlers.ts` and `src/rpc.ts`.
