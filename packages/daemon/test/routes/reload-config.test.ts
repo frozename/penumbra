@@ -95,6 +95,7 @@ interface ReloadBody {
     errors?: { worker_id: string; message: string }[];
     error?: string;
   };
+  provider_quotas?: { provider: string; max_in_flight: number; in_flight: number }[];
   error?: string;
 }
 
@@ -419,6 +420,36 @@ providers:
   } finally {
     rmSync(yamlPath, { recursive: true, force: true });
   }
+});
+
+test("POST /agentchat/reload reports effective provider in-flight quotas", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "reload-quotas-"));
+  tempDirs.push(dir);
+  writeAgentchat(
+    dir,
+    `
+agents:
+  - name: claude-a
+    adapter: mock
+    pricing_mode: subscription
+    subscription_provider: anthropic
+providers:
+  - name: anthropic
+    max_in_flight: 2
+  - name: gemini
+    model: gemini-2.5-pro
+`,
+  );
+  process.env.PENUMBRA_CONFIG_DIR = dir;
+
+  const services = tempServices() as unknown as Parameters<typeof reloadConfigRoute>[1];
+  const res = await reloadConfigRoute(
+    new Request("http://x/agentchat/reload", { method: "POST" }),
+    services,
+  );
+  expect(res.status).toBe(200);
+  const body = await readJson<ReloadBody>(res);
+  expect(body.provider_quotas).toEqual([{ provider: "anthropic", max_in_flight: 2, in_flight: 0 }]);
 });
 
 test("provider quota mapper preserves seven-day token ceilings for boot/reload parity", () => {

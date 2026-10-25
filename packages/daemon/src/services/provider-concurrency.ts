@@ -203,6 +203,20 @@ export function resolveProviderSeatNames(
   return agents.filter((agent) => resolveProvider(agent) === provider).map((agent) => agent.name);
 }
 
+export interface ProviderQuotaStatus {
+  provider: string;
+  max_in_flight: number;
+  in_flight: number;
+}
+
+export function listProviderQuotaStatus(services: ConcurrencyServices): ProviderQuotaStatus[] {
+  return listCappedProviders(services).map(({ provider, max_in_flight }) => ({
+    provider,
+    max_in_flight,
+    in_flight: countProviderInFlight(services, resolveProviderSeatNames(services, provider)),
+  }));
+}
+
 export function recordProviderCapRefusal(
   services: Pick<Services, "db" | "log" | "clock" | "dispatchEventLog">,
   args: {

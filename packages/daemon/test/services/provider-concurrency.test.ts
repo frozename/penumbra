@@ -12,6 +12,7 @@ import { describe, expect, mock, test } from "bun:test";
 import {
   countProviderInFlight,
   listCappedProviders,
+  listProviderQuotaStatus,
   type ProviderConcurrencyDecision,
   recordProviderCapRefusal,
   releaseSweptDrainHolds,
@@ -100,6 +101,18 @@ test("listCappedProviders returns only provider-wide max_in_flight rows", () => 
       "providerQuotas"
     >),
   ).toEqual([]);
+});
+
+test("listProviderQuotaStatus reports provider-wide caps with live in-flight counts", () => {
+  const services = tempServices();
+  configureProviderCap(services, 2);
+  services.providerQuotas = [...services.providerQuotas, { provider: "openai" }];
+  seedApprovedHandoff(services, "h-quota-1", { to: "claude-a" });
+  expect(services.handoffWriter.claimDispatch("h-quota-1", "W-A")).toBe(true);
+
+  expect(listProviderQuotaStatus(services)).toEqual([
+    { provider: "anthropic", max_in_flight: 2, in_flight: 1 },
+  ]);
 });
 
 test("resolveProviderSeatNames returns every seat resolving to the provider", () => {
