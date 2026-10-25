@@ -7,6 +7,9 @@ export const GithubRemoteSchema = z.object({
 
 export const RemoteSchema = z.discriminatedUnion("kind", [GithubRemoteSchema]);
 
+export const ReconcileModeSchema = z.enum(["off", "git-only", "full"]);
+export type ReconcileMode = z.infer<typeof ReconcileModeSchema>;
+
 export const ProjectEntrySchema = z.object({
   project_id: z
     .string()
@@ -25,6 +28,7 @@ export const ProjectEntrySchema = z.object({
       research_provider: z.enum(["firecrawl", "webfetch", "off"]).optional(),
     })
     .optional(),
+  reconcile: ReconcileModeSchema.optional(),
 });
 
 export const ProjectRegistryFileSchema = z.object({
@@ -39,4 +43,9 @@ export function getGithubRepo(entry: ProjectEntry | undefined): string | undefin
   if (!entry) return undefined;
   if (entry.remote?.kind === "github") return entry.remote.repo;
   return entry.gh_repo;
+}
+
+// Unset means "full": the pre-#233 reconcile behaviour.
+export function reconcileModeOf(entry: Pick<ProjectEntry, "reconcile"> | undefined): ReconcileMode {
+  return entry?.reconcile ?? "full";
 }

@@ -10,6 +10,7 @@ import {
   ProjectRegistryDuplicateId,
   ProjectRegistryParseError,
 } from "@src/projects/registry.js";
+import { reconcileModeOf } from "@src/projects/schema.js";
 
 import { writeBootstrapRegistry } from "./registry-fixtures.js";
 
@@ -594,6 +595,45 @@ test("allowed_domains inline comments are stripped", () => {
 
   const registry = loadProjectRegistry(path);
   expect(registry.get("penumbra")?.dreaming?.allowed_domains).toEqual(["example.com"]);
+});
+
+test("accepts a reconcile mode on a project entry", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
+  dirs.push(dir);
+  const path = join(dir, "projects.yaml");
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+    reconcile: git-only
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(registry.get("penumbra")?.reconcile).toBe("git-only");
+});
+
+test("rejects an unknown reconcile mode", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
+  dirs.push(dir);
+  const path = join(dir, "projects.yaml");
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+    reconcile: sometimes
+`,
+  );
+
+  expect(() => loadProjectRegistry(path)).toThrow(ProjectRegistryParseError);
+});
+
+test("reconcileModeOf defaults to full", () => {
+  expect(reconcileModeOf(undefined)).toBe("full");
+  expect(reconcileModeOf({})).toBe("full");
+  expect(reconcileModeOf({ reconcile: "off" })).toBe("off");
 });
 
 test("quoted inline # is preserved", () => {

@@ -207,6 +207,7 @@ const ENTRY_RE = /^\s*-\s+project_id:[ \t]*(\S.*)$/;
 const PROJECT_ID_RE = /^\s*project_id:[ \t]*(\S.*)$/;
 const ROOT_PATH_RE = /^\s*root_path:[ \t]*(\S.*)$/;
 const GH_REPO_RE = /^\s*gh_repo:[ \t]*(\S.*)$/;
+const RECONCILE_RE = /^\s*reconcile:[ \t]*(\S.*)$/;
 const REMOTE_BLOCK_RE = /^\s*remote:\s*$/;
 const DREAMING_BLOCK_RE = /^\s*dreaming:\s*$/;
 const REMOTE_KIND_RE = /^\s+kind:[ \t]*(\S.*)$/;
@@ -283,6 +284,13 @@ function tryApplyScalarLine(line: string, state: ParserState): boolean {
   if (ghRepoMatch) {
     state.current ??= {};
     state.current.gh_repo = unquote(ghRepoMatch[1] ?? "");
+    return true;
+  }
+
+  const reconcileMatch = RECONCILE_RE.exec(line);
+  if (reconcileMatch) {
+    state.current ??= {};
+    state.current.reconcile = unquote(reconcileMatch[1] ?? "") as ProjectEntry["reconcile"];
     return true;
   }
 

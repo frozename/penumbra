@@ -1947,3 +1947,85 @@ describe("reconciler test step is diff-scoped", () => {
     expect(execCalls.some((cmd) => cmd.startsWith("bun test"))).toBe(false);
   });
 });
+
+describe("per-project reconcile mode (#233)", () => {
+  test("git-only emits a verdict without typecheck, tests, rebase or PR", async () => {
+    execFailures.set(
+      `git merge-base --is-ancestor ${defaultBaseTipSha} ${defaultBranchHeadSha}`,
+      new ExecCommandError({ stderr: "not-ancestor", code: 1 }),
+    );
+    handoffRows.set(
+      "h1",
+      makeHandoffRow({ handoff_id: "h1", project_id: "proj-x", open_pr_on_review: true }),
+    );
+    const modeFor = mock((_id: string | undefined) => "git-only" as const);
+    const reconciler = createMergeReconciler({ ...mockDeps, reconcileModeFor: modeFor });
+
+    const result = await reconciler("h1");
+
+    expect(modeFor).toHaveBeenCalledWith("proj-x");
+    expect(result.status).toBe("verified");
+    expect(prCalls).toHaveLength(0);
+    expect(execHistory.every((cmd) => cmd.startsWith("git "))).toBe(true);
+    for (const forbidden of ["tsc", "bun test", "install", "worktree add", " rebase", "push"]) {
+      expect(execHistory.some((cmd) => cmd.includes(forbidden))).toBe(false);
+    }
+    expect(verdictCalls).toHaveLength(1);
+    expect(verdictCalls[0]).toMatchObject({
+      typecheck: "skipped",
+      tests: "skipped",
+      base_sha: defaultBaseTipSha,
+      head_sha: defaultBranchHeadSha,
+      ff_mergeable: false,
+      rebase_required: true,
+      rebase_attempted: false,
+      rebase_result: "skipped",
+      files_changed: 1,
+      lines_added: 2,
+      lines_deleted: 1,
+      pr_url: null,
+    });
+  });
+
+  test("off skips reconcile entirely", async () => {
+    handoffRows.set(
+      "h1",
+      makeHandoffRow({ handoff_id: "h1", project_id: "proj-x", open_pr_on_review: true }),
+    );
+    const reconciler = createMergeReconciler({ ...mockDeps, reconcileModeFor: () => "off" });
+
+    const result = await reconciler("h1");
+
+    expect(result.status).toBe("merged");
+    expect(execHistory).toHaveLength(0);
+    expect(progressCalls).toHaveLength(0);
+    expect(verdictCalls).toHaveLength(0);
+    expect(prCalls).toHaveLength(0);
+    expect(captureResultMock).not.toHaveBeenCalled();
+    expect(notifyResultMock).not.toHaveBeenCalled();
+  });
+
+  test("full keeps the current pipeline", async () => {
+    handoffRows.set(
+      "h1",
+      makeHandoffRow({ handoff_id: "h1", project_id: "proj-x", open_pr_on_review: true }),
+    );
+
+    const withExplicitFull = createMergeReconciler({ ...mockDeps, reconcileModeFor: () => "full" });
+    const explicitResult = await withExplicitFull("h1");
+    expect(explicitResult.status).toBe("pr_opened");
+    expect(prCalls).toHaveLength(1);
+    expect(execHistory).toContain("bun tsc -b packages/core packages/daemon");
+    expect(execHistory).toContain("bun test packages/daemon/test/");
+
+    execHistory.length = 0;
+    prCalls.length = 0;
+    verdictCalls.length = 0;
+
+    const omittedResult = await reconcile("h1");
+    expect(omittedResult.status).toBe("pr_opened");
+    expect(prCalls).toHaveLength(1);
+    expect(execHistory).toContain("bun tsc -b packages/core packages/daemon");
+    expect(execHistory).toContain("bun test packages/daemon/test/");
+  });
+});
