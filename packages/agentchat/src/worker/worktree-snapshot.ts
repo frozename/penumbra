@@ -48,6 +48,15 @@ async function stdoutOrEmpty(
   }
 }
 
+async function attachedBranchName(
+  runner: WorktreeCommandRunner,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): Promise<string | null> {
+  const out = (await stdoutOrEmpty(runner, ["symbolic-ref", "--quiet", "HEAD"], cwd, env)).trim();
+  return out.startsWith("refs/heads/") ? out.slice("refs/heads/".length) : null;
+}
+
 function countLines(text: string): number {
   return text.split("\n").filter((line) => line.trim().length > 0).length;
 }
@@ -66,6 +75,11 @@ export async function getWorktreeSnapshot(
   if (!wt) return { worktreeChanged: null, dirty: null, committed: null };
   const runner = deps.runner ?? defaultRunner;
   const env = deps.env ?? process.env;
+  // Mirrors WorktreeManager.branchNameForWorktree's drift rule: the branch HEAD
+  // is attached to wins, detached HEAD keeps the stored name. The daemon's
+  // onBranchNameDrift rewrites handoffs.branch_name to the attached branch, and
+  // that is the branch dispatch_land lands, so the evidence must describe it.
+  const branchName = (await attachedBranchName(runner, wt.path, env)) ?? wt.branchName;
   const [status, reflog] = await Promise.all([
     stdoutOrEmpty(
       runner,
@@ -75,13 +89,13 @@ export async function getWorktreeSnapshot(
     ),
     stdoutOrEmpty(
       runner,
-      ["reflog", "show", "--no-decorate", "--max-count=2", `refs/heads/${wt.branchName}`],
+      ["reflog", "show", "--no-decorate", "--max-count=2", `refs/heads/${branchName}`],
       wt.path,
       env,
     ),
   ]);
   const dirty = status.trim().length > 0;
   const committed = countLines(reflog) > 1;
-  const commitIntegrity = await probeCommitIntegrity(wt.path, wt.branchName, { runner, env });
+  const commitIntegrity = await probeCommitIntegrity(wt.path, branchName, { runner, env });
   return { worktreeChanged: dirty || committed, dirty, committed, commitIntegrity };
 }
