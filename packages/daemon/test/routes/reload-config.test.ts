@@ -442,9 +442,10 @@ providers:
   );
   process.env.PENUMBRA_CONFIG_DIR = dir;
 
+  const services = tempServices() as unknown as Parameters<typeof reloadConfigRoute>[1];
   const res = await reloadConfigRoute(
     new Request("http://x/agentchat/reload", { method: "POST" }),
-    tempServices(),
+    services,
   );
   expect(res.status).toBe(200);
   const body = await readJson<ReloadBody>(res);
