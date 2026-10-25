@@ -10,7 +10,6 @@ export function spawnAgy(opts: {
   binary: string;
   args: string[];
   onLine: (line: string) => void;
-  prompt?: string;
   signal?: AbortSignal;
 }): AgyHandle {
   const child = spawn(opts.binary, opts.args, {
@@ -18,11 +17,7 @@ export function spawnAgy(opts: {
     detached: process.platform !== "win32",
   });
 
-  if (opts.prompt !== undefined) {
-    child.stdin.end(opts.prompt);
-  } else {
-    child.stdin.end();
-  }
+  child.stdin.end();
 
   const rl = createInterface({
     input: child.stdout,

@@ -21,7 +21,6 @@ export type SpawnAgyFn = (opts: {
   binary: string;
   args: string[];
   onLine: (line: string) => void;
-  prompt?: string;
   signal?: AbortSignal;
 }) => AgyHandle;
 
@@ -55,20 +54,22 @@ export function makeHandlers(opts: HandlersOptions): Handlers {
   async function handleSessionPrompt(params: SessionPromptParams): Promise<SessionPromptResult> {
     const promptText = params.prompt.map((p) => p.text).join("\n");
 
+    // agy >= 1.4 greedily consumes the next argv token as the --print value,
+    // so a bare "--print" followed by a flag makes the flag the prompt. The
+    // prompt must stay attached to the flag.
     const argv = [
-      "--print",
       "--dangerously-skip-permissions",
       "--sandbox",
       "--print-timeout",
       "10m",
       "--conversation",
       params.sessionId,
+      `--print=${promptText}`,
     ];
 
     const handle = opts.spawnAgy({
       binary: AGY_BINARY,
       args: argv,
-      prompt: promptText,
       onLine: (line) => {
         opts.notify("session/update", {
           sessionId: params.sessionId,

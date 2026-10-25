@@ -43,19 +43,6 @@ describe("spawnAgy", () => {
     expect(lines.join(" ").trim()).toContain("hello world");
   });
 
-  it("writes the prompt to stdin when provided", async () => {
-    const lines: string[] = [];
-    const proc = spawnAgy({
-      binary: "cat",
-      args: [],
-      prompt: "first line\nsecond line",
-      onLine: (l) => lines.push(l),
-    });
-    await proc.exited;
-    expect(lines.join("\n")).toContain("first line");
-    expect(lines.join("\n")).toContain("second line");
-  });
-
   it("kill() terminates the subprocess before natural exit", async () => {
     const proc = spawnAgy({ binary: "sleep", args: ["60"], onLine: noop });
     proc.kill();

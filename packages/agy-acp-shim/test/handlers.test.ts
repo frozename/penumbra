@@ -6,17 +6,8 @@ import { makeHandlers } from "../src/handlers.js";
 
 const noop = (): void => undefined;
 
-interface MockSpawnOpts {
-  binary: string;
-  args: string[];
-  onLine: (line: string) => void;
-  prompt?: string;
-  signal?: AbortSignal;
-}
-
 function mockSpawnAgy(lines: string[], exitCode = 0): SpawnAgyFn {
-  return (opts: MockSpawnOpts): AgyHandle => {
-    expect(typeof opts.prompt).toBe("string");
+  return (opts): AgyHandle => {
     const exited = new Promise<number>((res) => {
       void Promise.resolve().then(() => {
         for (const l of lines) opts.onLine(l);
@@ -28,7 +19,7 @@ function mockSpawnAgy(lines: string[], exitCode = 0): SpawnAgyFn {
 }
 
 function mockSlowSpawnAgy(onKill: () => void): SpawnAgyFn {
-  return (_opts: MockSpawnOpts): AgyHandle => {
+  return (_opts): AgyHandle => {
     let killed = false;
     const exited = new Promise<number>((res) => {
       const timeout = setTimeout(() => {
@@ -122,6 +113,26 @@ describe("session/prompt (mocked agy)", () => {
     });
 
     expect(result).toEqual({ stopReason: "failed" });
+  });
+
+  it("attaches the prompt to --print so a following flag is not swallowed as the prompt", async () => {
+    let capturedArgs: string[] | undefined;
+    const handlers = makeHandlers({
+      spawnAgy: (opts) => {
+        capturedArgs = opts.args;
+        return { exited: Promise.resolve(0), kill: noop };
+      },
+      notify: noop,
+    });
+
+    await handlers.handleSessionPrompt({
+      sessionId: "s-argv",
+      prompt: [{ type: "text", text: "respond with exactly the word: pong" }],
+    });
+
+    expect(capturedArgs).toContain("--print=respond with exactly the word: pong");
+    expect(capturedArgs).not.toContain("--print");
+    expect(capturedArgs).toContain("--dangerously-skip-permissions");
   });
 
   it("emits a done notification after agy exits", async () => {
