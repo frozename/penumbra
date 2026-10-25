@@ -179,7 +179,7 @@ Every wrapper step execs in place, so pids, process-group kills, timeouts and ca
 
 - Changes take effect when the worker and daemon restart.
 - At startup, each process runs the exact scope argv once against `true`. It then logs either `job resource scopes enabled` or a single warning, and falls back to unscoped jobs. A probe can fail on an old systemd or an unreachable user bus.
-- Set `PENUMBRA_JOB_SCOPE=off` to stop scoping, and `PENUMBRA_JOB_ADMIT_MIN_GIB=0` to stop admission. At startup the worker logs the floor it settled on (`job memory admission floor`).
+- Set `PENUMBRA_JOB_SCOPE=off` to stop scoping, and `PENUMBRA_JOB_ADMIT_MIN_GIB=0` to stop admission. At startup the worker logs the floor it settled on (`job memory admission floor`). When the floor is derived and MemAvailable is already below it, the worker also logs a warning naming `PENUMBRA_JOB_ADMIT_MIN_GIB`, and a claim whose wait expires logs `host memory admission timeout: claim not admitted` at warn with the available memory and the floor.
 - To see live job scopes, run `systemctl --user list-units 'penumbra-*.scope'`. In-scope OOM kills are logged by `journalctl --user` against the `penumbra-<label>-<id>.scope` unit.
 - Tests force `PENUMBRA_JOB_SCOPE=off` (`test/setup.ts`). Scoping tests inject their own config.
 
