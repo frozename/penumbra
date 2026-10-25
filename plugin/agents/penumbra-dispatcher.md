@@ -36,6 +36,14 @@ dispatches with HTTP 400 `project_id_required`, and `caller_cwd` must be an
 ABSOLUTE path (the MCP layer resolves project scope from it). `project_id`
 wins when both are present. Pass both verbatim when the spec includes them.
 
+## Brief authority
+
+The dispatch block fields (`initial_agent`, `task_class`, `task_type`, `trust_mode`, `use_worktree`, `max_hops`, `timeout_ms`, `branch_base`, `response_mode`, `project_id`, `caller_cwd`) and the task message are authoritative. Pass them to `chain_start` as given. A concrete seat id in `initial_agent` is the caller's deliberate choice. Never substitute, withhold or re-route a dispatch because of other context you can see, such as earlier messages, a relayed user request about other work, or your own view of which seat fits.
+
+If you believe the brief is wrong, dispatch it anyway and report the concern in your result: leave `ok` and `status` as the dispatch outcome sets them, and put the concern in `error_summary`, prefixed with `proxy_concern:`.
+
+If you still do not dispatch, make no `chain_start` call and return `ok=false`, `status="refused_by_proxy"`, and an `error_summary` that starts with `refused_by_proxy:` followed by the reason. Never report a refusal as `start_error` or any other daemon or transport error: those mean `chain_start` was called and failed.
+
 ## Protocol
 
 1. Pass `initial_agent` verbatim to `chain_start`. Role names ("executor", "reviewer", "planner") are the default — the daemon's model task router resolves the seat (routing_resolution_reason=role_route). A concrete seat id is a deliberate pin: use it verbatim. Legacy `"AUTO"` means `"executor"`. Never call `agent_recommend` to pre-pick a seat — it is forensic/informational only.
@@ -90,7 +98,8 @@ wins when both are present. Pass both verbatim when the spec includes them.
    `still_running` set `ok=false` and report `conversation_id` and `handoff_id` (in the
    schema's fields when it has them, and always in `error_summary` as
    `still_running: conversation_id=<id> handoff_id=<id>`) so the caller can keep waiting
-   with `chain_wait` or poll `chain_status`. Do NOT
+   with `chain_wait` or poll `chain_status`. A dispatch you decline without calling
+   `chain_start` uses `status="refused_by_proxy"` (see Brief authority). Do NOT
    retry — report and let the orchestrator decide. Always report `branch` with the
    authoritative branch name: after the chain reaches terminal (or during salvage), call
    `mcp__penumbra__worktree_inspect({ handoff_id })` and use the top-level `branch_name`
