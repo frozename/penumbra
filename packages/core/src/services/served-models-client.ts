@@ -6,6 +6,8 @@ export type ServedModelsFetch = (
 export interface FetchServedModelsOpts {
   fetch?: ServedModelsFetch;
   timeoutMs?: number;
+  bearerToken?: string;
+  caPem?: string;
 }
 
 export interface ServedModelEntry {
@@ -19,15 +21,27 @@ export function servedModelsUrl(baseUrl: string): string {
   return base.endsWith("/v1") ? `${base}/models` : `${base}/v1/models`;
 }
 
+function buildProbeInit(
+  opts: FetchServedModelsOpts,
+  signal: AbortSignal,
+): { signal: AbortSignal; headers?: { authorization: string }; tls?: { ca: string } } {
+  return {
+    signal,
+    ...(opts.bearerToken ? { headers: { authorization: `Bearer ${opts.bearerToken}` } } : {}),
+    ...(opts.caPem ? { tls: { ca: opts.caPem } } : {}),
+  };
+}
+
 export async function fetchServedModelEntries(
   baseUrl: string,
   opts: FetchServedModelsOpts = {},
 ): Promise<ServedModelEntry[]> {
   const fetchImpl = opts.fetch ?? globalThis.fetch;
   const timeoutMs = opts.timeoutMs ?? 5_000;
-  const response = await fetchImpl(servedModelsUrl(baseUrl), {
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+  const response = await fetchImpl(
+    servedModelsUrl(baseUrl),
+    buildProbeInit(opts, AbortSignal.timeout(timeoutMs)),
+  );
   if (!response.ok) {
     throw new Error(`served models probe failed: ${String(response.status)}`);
   }

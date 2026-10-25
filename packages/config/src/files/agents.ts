@@ -335,6 +335,37 @@ export const AgentProvenanceSchema = z
   .strict();
 export type AgentProvenance = z.infer<typeof AgentProvenanceSchema>;
 
+function isHttpUrl(value: string): boolean {
+  try {
+    const protocol = new URL(value).protocol;
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function isAbsoluteOrHomePath(value: string): boolean {
+  return value.startsWith("/") || value.startsWith("~/");
+}
+
+export const AgentHealthTargetSchema = z
+  .object({
+    url: z.string().min(1).refine(isHttpUrl, { message: "health.url must be an http(s) URL" }),
+    bearer_file: z
+      .string()
+      .min(1)
+      .refine(isAbsoluteOrHomePath, { message: "must be an absolute path or start with ~/" })
+      .optional(),
+    ca_file: z
+      .string()
+      .min(1)
+      .refine(isAbsoluteOrHomePath, { message: "must be an absolute path or start with ~/" })
+      .optional(),
+    expect_model: z.string().min(1).optional(),
+  })
+  .strict();
+export type AgentHealthTarget = z.infer<typeof AgentHealthTargetSchema>;
+
 export const AgentConfigSchema = z
   .object({
     name: z.string().min(1),
@@ -364,6 +395,7 @@ export const AgentConfigSchema = z
     tags: z.array(z.string().min(1)).optional(),
     quirks: z.array(z.string().min(1)).optional(),
     provenance: AgentProvenanceSchema.optional(),
+    health: AgentHealthTargetSchema.optional(),
     long_lived: z.boolean().optional(),
     long_lived_config: LongLivedConfigSchema.optional(),
     enforces_permission_profiles: EnforcesPermissionProfilesSchema,

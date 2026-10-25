@@ -1,5 +1,6 @@
 // packages/agentchat/src/config/types.ts
 import {
+  AgentHealthTargetSchema,
   type AgentOptions,
   AgentOptionsSchema,
   AgentPinSchema,
@@ -186,6 +187,8 @@ export const AgentConfigSchema = z
     /** Empirical observations from past use — pitfalls, strengths, quant-specific notes. Each entry is one short bullet. */
     quirks: z.array(z.string().min(1)).optional(),
     provenance: AgentProvenanceSchema.optional(),
+    /** Optional health-probe target consumed by the daemon's local-seat health service. */
+    health: AgentHealthTargetSchema.optional(),
     long_lived: z.boolean().optional(),
     long_lived_config: LongLivedConfigSchema.optional(),
     enforces_permission_profiles: EnforcesPermissionProfilesSchema,
