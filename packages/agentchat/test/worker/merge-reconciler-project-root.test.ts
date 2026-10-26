@@ -1,9 +1,4 @@
-import {
-  createLogger,
-  type HandoffRow,
-  type WorktreeHandle,
-  WorktreeManager,
-} from "@penumbra/core";
+import { type HandoffRow, type Logger, type WorktreeHandle, WorktreeManager } from "@penumbra/core";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { execFile, execFileSync } from "node:child_process";
 import {
@@ -95,6 +90,35 @@ function commandFailure(stdout: string, code: number): Error {
   });
 }
 
+const COMMON_DIR_PROBE = "git rev-parse --path-format=absolute --git-common-dir";
+const COMMON_DIR_LOG = "reconcile project root resolved from the worktree's common git dir";
+const WORKER_CHECKOUT_LOG = "reconcile project root unresolved; using the worker checkout";
+
+type CommonDirProbe = { fail: true } | { stdout: string };
+
+interface LogLine {
+  level: "debug" | "info" | "warn" | "error";
+  msg: string;
+}
+
+// The reconciler only calls debug/info/warn/error. ONE documented cast keeps
+// setup Logger-typed without re-implementing the pino surface.
+function captureLogger(lines: LogLine[]): Logger {
+  const record =
+    (level: LogLine["level"]) =>
+    (first: unknown, msg?: unknown): void => {
+      const text = typeof msg === "string" ? msg : typeof first === "string" ? first : "";
+      lines.push({ level, msg: text });
+    };
+  const logger = {
+    debug: record("debug"),
+    info: record("info"),
+    warn: record("warn"),
+    error: record("error"),
+  };
+  return logger as unknown as Logger;
+}
+
 const FOO_TYPE_ERROR =
   "packages/foo/src/index.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.\n";
 
@@ -141,6 +165,8 @@ describe("merge reconciler project repo resolution (#219)", () => {
   let repoC: string;
   let worktree: WorktreeHandle;
   let verdicts: ReconcilerVerdict[];
+  let logs: LogLine[];
+  let gitCalls: { command: string; cwd: string }[];
   const handoffId = "h-pr-219";
 
   beforeEach(() => {
@@ -164,6 +190,8 @@ describe("merge reconciler project repo resolution (#219)", () => {
     git(repoB, ["checkout", "main"]);
 
     verdicts = [];
+    logs = [];
+    gitCalls = [];
   });
 
   afterEach(() => {
@@ -236,6 +264,8 @@ describe("merge reconciler project repo resolution (#219)", () => {
       handoffId?: string;
       projectId?: string;
       runCommand?: CommandStub;
+      forgetProjectRoot?: boolean;
+      commonDirProbe?: CommonDirProbe;
     } = {},
   ): Promise<ReturnType<typeof createMergeReconciler>> {
     const id = opts.handoffId ?? handoffId;
@@ -255,6 +285,7 @@ describe("merge reconciler project repo resolution (#219)", () => {
       baseRef: branchBase ?? undefined,
     });
     commitWorktreeChange(handle.path, opts.change ?? "docs");
+    if (opts.forgetProjectRoot) projectRoots.delete(projectId);
     worktree = handle;
 
     const reconciler = createMergeReconciler({
@@ -262,7 +293,7 @@ describe("merge reconciler project repo resolution (#219)", () => {
       mainRepoDir: repoA,
       reconcilerAutoRebase: opts.autoRebase ?? false,
       rebaseScratchRoot: join(tmp, "scratch"),
-      log: createLogger({ component: "test", level: "silent" }),
+      log: captureLogger(logs),
       postProgress: mock(() => Promise.resolve()),
       emitVerdict: (v: ReconcilerVerdict) => {
         verdicts.push(v);
@@ -280,6 +311,12 @@ describe("merge reconciler project repo resolution (#219)", () => {
       ),
       exec: async (argv: string[], execOpts: { cwd: string }) => {
         if (argv[0] === "git") {
+          const command = argv.join(" ");
+          gitCalls.push({ command, cwd: execOpts.cwd });
+          if (command === COMMON_DIR_PROBE && opts.commonDirProbe) {
+            if ("fail" in opts.commonDirProbe) throw commandFailure("", 128);
+            return { stdout: opts.commonDirProbe.stdout, stderr: "" };
+          }
           const { stdout, stderr } = await execFileAsync("git", argv.slice(1), {
             cwd: execOpts.cwd,
             encoding: "utf8",
@@ -521,5 +558,104 @@ describe("merge reconciler project repo resolution (#219)", () => {
       reason: "unresolvable",
     });
     expect(verdicts).toEqual([]);
+  });
+
+  test("falls back to the worktree's common git dir when the project root is not registered", async () => {
+    const reconciler = await setup("feature/only-in-b", { forgetProjectRoot: true });
+
+    const outcome = await reconciler(handoffId).then(
+      (result) => ({ ok: true as const, result }),
+      (err: unknown) => ({ ok: false as const, error: String(err) }),
+    );
+
+    expect(outcome).toMatchObject({ ok: true, result: { status: "verified" } });
+    expect(verdicts[0]?.base_sha).toBe(git(repoB, ["rev-parse", "feature/only-in-b"]).trim());
+    expect(gitCalls).toContainEqual({ command: COMMON_DIR_PROBE, cwd: worktree.path });
+    expect(logs).toContainEqual({ level: "info", msg: COMMON_DIR_LOG });
+    expect(logs).not.toContainEqual({ level: "warn", msg: WORKER_CHECKOUT_LOG });
+  });
+
+  test("default branch_base uses the project main from the worktree's common git dir", async () => {
+    const reconciler = await setup(null, { forgetProjectRoot: true });
+
+    const outcome = await reconciler(handoffId).then(
+      (result) => ({ ok: true as const, result }),
+      (err: unknown) => ({ ok: false as const, error: String(err) }),
+    );
+
+    expect(outcome).toMatchObject({ ok: true, result: { status: "verified" } });
+    const repoBMain = git(repoB, ["rev-parse", "main"]).trim();
+    const repoAMain = git(repoA, ["rev-parse", "main"]).trim();
+    expect(verdicts[0]?.base_sha).toBe(repoBMain);
+    expect(verdicts[0]?.base_sha).not.toBe(repoAMain);
+  });
+
+  test("does not probe the worktree when the project root is registered", async () => {
+    const reconciler = await setup("feature/only-in-b");
+
+    const outcome = await reconciler(handoffId).then(
+      (result) => ({ ok: true as const, result }),
+      (err: unknown) => ({ ok: false as const, error: String(err) }),
+    );
+
+    expect(outcome).toMatchObject({ ok: true, result: { status: "verified" } });
+    expect(gitCalls.some((call) => call.command === COMMON_DIR_PROBE)).toBe(false);
+    expect(
+      logs.some((line) => line.msg === COMMON_DIR_LOG || line.msg === WORKER_CHECKOUT_LOG),
+    ).toBe(false);
+  });
+
+  async function expectWorkerCheckoutFallback(commonDirProbe: CommonDirProbe): Promise<void> {
+    const reconciler = await setup("feature/only-in-b", {
+      forgetProjectRoot: true,
+      commonDirProbe,
+    });
+
+    const outcome = await reconciler(handoffId).then(
+      (result) => ({ ok: true as const, result }),
+      (err: unknown) => ({ ok: false as const, error: String(err) }),
+    );
+
+    expect(gitCalls.some((call) => call.command === COMMON_DIR_PROBE)).toBe(true);
+    expect(outcome).toMatchObject({
+      ok: true,
+      result: {
+        status: "test_failed",
+        error_code: "invalid_branch_base",
+        verification_environment_error: true,
+      },
+    });
+    if (!outcome.ok) throw new Error(`expected a typed result, got throw: ${outcome.error}`);
+    expect(JSON.parse(outcome.result.regression_summary ?? "{}")).toMatchObject({
+      value: "feature/only-in-b",
+      reason: "unresolvable",
+    });
+    expect(logs).toContainEqual({ level: "warn", msg: WORKER_CHECKOUT_LOG });
+    expect(logs.some((line) => line.msg === COMMON_DIR_LOG)).toBe(false);
+  }
+
+  test("keeps the worker checkout when the common-dir probe fails", async () => {
+    await expectWorkerCheckoutFallback({ fail: true });
+  });
+
+  test("keeps the worker checkout when the common dir is relative", async () => {
+    await expectWorkerCheckoutFallback({ stdout: ".git\n" });
+  });
+
+  test("keeps the worker checkout when the common dir is not a .git directory", async () => {
+    await expectWorkerCheckoutFallback({ stdout: `${repoB}.git\n` });
+  });
+
+  test("keeps the worker checkout without probing when the worktree path is gone", async () => {
+    const reconciler = await setup("feature/only-in-b", { forgetProjectRoot: true });
+    rmSync(worktree.path, { recursive: true, force: true });
+
+    await reconciler(handoffId).then(
+      () => undefined,
+      () => undefined,
+    );
+
+    expect(gitCalls.some((call) => call.command === COMMON_DIR_PROBE)).toBe(false);
+    expect(logs).toContainEqual({ level: "warn", msg: WORKER_CHECKOUT_LOG });
   });
 });
