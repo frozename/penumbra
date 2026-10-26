@@ -34,7 +34,8 @@ function toDispatched(row: NonNullable<HandoffListBody["handoffs"]>[number]): Di
   };
 }
 
-function parseInFlight(text: string): InFlight {
+/** Parses a GET /handoffs?status=dispatched,approved body. Also used by `penumbra status` (#259). */
+export function parseInFlight(text: string): InFlight {
   let body: HandoffListBody;
   try {
     body = JSON.parse(text) as HandoffListBody;
