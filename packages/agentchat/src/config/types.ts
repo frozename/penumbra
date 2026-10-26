@@ -374,7 +374,8 @@ export const ThoughtDigestConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
     agent: AgentPoolSchema.optional(),
-    max_input_chars: z.number().int().positive().default(50000),
+    // #295: keep in step with thought-config.ts and @penumbra/config agents.ts.
+    max_input_chars: z.number().int().positive().default(20000),
     timeout_ms: z.number().int().positive().default(60000),
   })
   .optional();

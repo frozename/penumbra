@@ -4,6 +4,10 @@ export interface AgentchatReloadDeps<TConfig extends { agents: readonly unknown[
   // Loads the new agentchat config and swaps it in; returns both sides so the
   // warm-pool invalidator can diff them.
   loadConfig: () => { previous: TConfig; next: TConfig };
+  // Rebuilds values derived from the config (the worker's thoughts config,
+  // #296). Runs synchronously right after the swap, before anything else
+  // reads the new config.
+  rebuildDerivedConfig: (next: TConfig) => void;
   invalidateWarmPools: (previous: TConfig, next: TConfig) => void;
   refreshPrewarm: () => void;
   projectRegistry: { reload: () => Promise<RegistryReloadResult> };
@@ -22,6 +26,7 @@ export function handleAgentchatReload<TConfig extends { agents: readonly unknown
   deps: AgentchatReloadDeps<TConfig>,
 ): void {
   const { previous, next } = deps.loadConfig();
+  deps.rebuildDerivedConfig(next);
   deps.invalidateWarmPools(previous, next);
   void deps.projectRegistry
     .reload()
