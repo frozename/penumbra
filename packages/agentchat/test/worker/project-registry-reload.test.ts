@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
+import { AgentChatConfigSchema, type ParsedAgentChatConfig } from "@src/config/types.js";
 import { handleAgentchatReload } from "@src/worker/config-reload.js";
 import {
   type ControlListenerClient,
@@ -11,6 +12,7 @@ import {
 } from "@src/worker/control-listener.js";
 import { resolveDispatchCwd, UnknownProjectError } from "@src/worker/project-cwd.js";
 import { type RegistryReloadResult, WorkerProjectRegistry } from "@src/worker/project-registry.js";
+import { loadThoughtsConfig, type RuntimeThoughtsConfig } from "@src/worker/thought-config.js";
 import { createWorkerWorktreeManager } from "@src/worker/worktree-manager.js";
 
 interface RecordedLogCall {
@@ -104,6 +106,9 @@ function makeReloadDeps(input: {
       input.events.push("load-config");
       return { previous: config, next: config };
     },
+    rebuildDerivedConfig: (): void => {
+      input.events.push("rebuild-derived-config");
+    },
     invalidateWarmPools: (): void => {
       input.events.push("invalidate-warm-pools");
     },
@@ -123,6 +128,29 @@ function makeReloadDeps(input: {
     log: input.log,
   };
   return { deps, settled: () => lastReload };
+}
+
+function makeThoughtsAgentchatConfig(poolAgents: string[]): ParsedAgentChatConfig {
+  const pool = { members: poolAgents.map((agent) => ({ agent })), select: "order" as const };
+  return AgentChatConfigSchema.parse({
+    agents: [
+      { name: "local-granite", adapter: "codex-cli" },
+      { name: "gemini-flash", adapter: "codex-cli" },
+    ],
+    thoughts: {
+      enabled: true,
+      analyze: {
+        enabled: true,
+        only_when: ["pr_opened"],
+        digest: { enabled: true, agent: pool },
+        signals: {
+          enabled: true,
+          agent: pool,
+          definitions: [{ name: "uncertainty", prompt: "list doubts" }],
+        },
+      },
+    },
+  });
 }
 
 test("agentchat_reload swaps the worker project registry for dispatch cwd and worktree roots", async () => {
@@ -161,6 +189,7 @@ test("agentchat_reload swaps the worker project registry for dispatch cwd and wo
     // Prewarm refresh is deferred until the registry reload resolves.
     expect(events).toEqual([
       "load-config",
+      "rebuild-derived-config",
       "invalidate-warm-pools",
       "registry:ok",
       "refresh-prewarm",
@@ -211,6 +240,7 @@ test("missing projects.yaml fails the reload, keeps the old registry, and still 
     expect(warns.length).toBe(1);
     expect(events).toEqual([
       "load-config",
+      "rebuild-derived-config",
       "invalidate-warm-pools",
       "registry:failed",
       "refresh-prewarm",
@@ -218,6 +248,64 @@ test("missing projects.yaml fails the reload, keeps the old registry, and still 
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("agentchat_reload rebuilds the thoughts config so analyzer pools drop a removed member (#296)", () => {
+  const bootConfig = makeThoughtsAgentchatConfig(["local-granite", "gemini-flash"]);
+  const reducedConfig = makeThoughtsAgentchatConfig(["local-granite"]);
+  let config: ParsedAgentChatConfig = bootConfig;
+  let thoughtsConfig: RuntimeThoughtsConfig = loadThoughtsConfig({ agentchat: config });
+  // Same wiring as agentchat-worker.ts: the reconciler deps read the holder through a getter.
+  const reconcilerDeps = {
+    get thoughtsConfig(): RuntimeThoughtsConfig {
+      return thoughtsConfig;
+    },
+  };
+  const bootSnapshot = { thoughtsConfig };
+  const twoMembers = {
+    members: [{ agent: "local-granite" }, { agent: "gemini-flash" }],
+    select: "order" as const,
+    fallback_to_cloud: true,
+  };
+  const oneMember = {
+    members: [{ agent: "local-granite" }],
+    select: "order" as const,
+    fallback_to_cloud: true,
+  };
+  expect(reconcilerDeps.thoughtsConfig.analyze.digest.pool).toEqual(twoMembers);
+
+  const events: string[] = [];
+  const rebuiltWith: ParsedAgentChatConfig[] = [];
+  handleAgentchatReload({
+    loadConfig: (): { previous: ParsedAgentChatConfig; next: ParsedAgentChatConfig } => {
+      events.push("load-config");
+      const previous = config;
+      config = reducedConfig;
+      return { previous, next: config };
+    },
+    rebuildDerivedConfig: (next: ParsedAgentChatConfig): void => {
+      events.push("rebuild-derived-config");
+      rebuiltWith.push(next);
+      thoughtsConfig = loadThoughtsConfig({ agentchat: next });
+    },
+    invalidateWarmPools: (): void => {
+      events.push("invalidate-warm-pools");
+    },
+    refreshPrewarm: (): void => undefined,
+    projectRegistry: {
+      reload: (): Promise<RegistryReloadResult> => Promise.resolve({ ok: true, count: 0 }),
+    },
+    log: silentLog,
+  });
+
+  // No await: the rebuild is part of the synchronous config swap.
+  expect(reconcilerDeps.thoughtsConfig.analyze.digest.pool).toEqual(oneMember);
+  expect(reconcilerDeps.thoughtsConfig.analyze.signals.pool).toEqual(oneMember);
+  expect(rebuiltWith).toHaveLength(1);
+  expect(rebuiltWith[0]).toBe(reducedConfig);
+  expect(events).toEqual(["load-config", "rebuild-derived-config", "invalidate-warm-pools"]);
+  // A value captured at boot keeps the stale pool, which is why the worker passes a getter.
+  expect(bootSnapshot.thoughtsConfig.analyze.digest.pool).toEqual(twoMembers);
 });
 
 test("reload reports failure and keeps the previous registry when the file goes missing", async () => {

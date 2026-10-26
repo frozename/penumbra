@@ -262,7 +262,8 @@ const projectRegistry = new WorkerProjectRegistry(undefined, (msg) => {
   log.warn({ worker_id: workerId }, msg);
 });
 const notificationConfig = loadNotificationConfig({ agentchat: config, env: process.env });
-const thoughtsConfig = loadThoughtsConfig({ agentchat: config });
+// Rebuilt on agentchat_reload (#296). ThoughtCapture below keeps the boot value.
+let thoughtsConfig = loadThoughtsConfig({ agentchat: config });
 const thoughtCapture = thoughtsConfig.enabled
   ? new ThoughtCapture({
       config: thoughtsConfig,
@@ -1124,7 +1125,10 @@ const reconcileWorktree = createMergeReconciler({
   notifyResult: (id, result) => maybePostDiscordMergeResult(id, result),
   log,
   mainRepoDir: process.cwd(),
-  thoughtsConfig,
+  // Getter, not a value: each reconcile reads the config rebuilt on reload.
+  get thoughtsConfig() {
+    return thoughtsConfig;
+  },
   thoughtAnalyzerDeps,
   runThoughtAnalyzer,
   listThoughtEvents: async (handoffId) => {
@@ -1823,6 +1827,18 @@ void runWorkerControlListener({
         const previous = config;
         config = loadConfigPathOrDir(configPath);
         return { previous, next: config };
+      },
+      // #296: analyzer pools and analyze.* take effect on reload; capture
+      // (thoughts.enabled, thoughts.capture.*) is wired at boot.
+      rebuildDerivedConfig: (next) => {
+        thoughtsConfig = loadThoughtsConfig({ agentchat: next });
+        log.info(
+          {
+            thoughts_enabled: thoughtsConfig.enabled,
+            thought_capture_active: thoughtCapture !== null,
+          },
+          "thoughts-config-rebuilt-from-control-bus; thoughts.enabled and thoughts.capture.* still need a worker restart",
+        );
       },
       // Recompute pre-warm targets against the new config: start the loop if
       // an agent just opted in, stop it if the last one opted out, else
