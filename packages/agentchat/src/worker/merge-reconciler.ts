@@ -1758,6 +1758,14 @@ async function assertOwnedTestNodeModules(envRoot: string, label: string): Promi
   }
 
   const penumbraScopePath = join(nodeModulesPath, "@penumbra");
+  // #310: a repo with no @penumbra packages (e.g. llamactl) has no scope to check.
+  // Only a missing scope skips; any other lstat error, or a scope without core, fails closed.
+  try {
+    await lstat(penumbraScopePath);
+  } catch (err) {
+    if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw err;
+  }
   const corePath = join(penumbraScopePath, "core");
   const coreRealpath = await realpath(corePath);
   if (!isPathInsideOrEqual(rootRealpath, coreRealpath)) {

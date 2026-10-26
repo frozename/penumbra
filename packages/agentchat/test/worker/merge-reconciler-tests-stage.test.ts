@@ -850,6 +850,67 @@ test("passing branch run with symlinked node_modules fails closed before tests e
   });
 });
 
+test("branch environment without an @penumbra scope runs the scoped tests", async () => {
+  rmSync(join(branchWorktreeRoot, "node_modules", "@penumbra"), { recursive: true, force: true });
+  expect(lstatSync(join(branchWorktreeRoot, "node_modules")).isDirectory()).toBe(true);
+
+  const result = await makeReconciler()("h-branch-no-penumbra-scope");
+
+  expect(result.status).toBe("verified");
+  expect(result.regression_summary ?? "").not.toContain("ENOENT");
+  expect(execHistory).toContainEqual({
+    cmd: "bun test packages/daemon/test/",
+    cwd: branchWorktreeRoot,
+  });
+  expect(verdicts[0]).toMatchObject({
+    handoff_id: "h-branch-no-penumbra-scope",
+    tests: "pass",
+  });
+});
+
+test("full-suite branch run without an @penumbra scope still runs bun test", async () => {
+  diffOutput = "bun.lock\n";
+  rmSync(join(branchWorktreeRoot, "node_modules", "@penumbra"), { recursive: true, force: true });
+
+  const result = await makeReconciler()("h-branch-no-penumbra-scope-full");
+
+  expect(execHistory).toContainEqual({ cmd: "bun test", cwd: branchWorktreeRoot });
+  expect(result.regression_summary ?? "").not.toContain("@penumbra/core");
+});
+
+test("branch @penumbra scope without core still fails closed", async () => {
+  rmSync(join(branchWorktreeRoot, "node_modules", "@penumbra", "core"), {
+    recursive: true,
+    force: true,
+  });
+
+  const result = await makeReconciler()("h-branch-scope-missing-core");
+
+  expect(result.status).toBe("test_failed");
+  expect(result.verification_environment_error).toBe(true);
+  expect(result.regression_summary).toContain("verification environment error (tests)");
+  expect(result.regression_summary).toContain("ENOENT");
+  expect(result.regression_summary).toContain("@penumbra/core");
+  expect(execHistory.some(({ cmd }) => cmd.startsWith("bun test"))).toBe(false);
+  expect(verdicts[0]).toMatchObject({
+    handoff_id: "h-branch-scope-missing-core",
+    tests: "error",
+  });
+});
+
+test("branch @penumbra/core resolving outside the environment still fails closed", async () => {
+  const coreLink = join(branchWorktreeRoot, "node_modules", "@penumbra", "core");
+  rmSync(coreLink, { recursive: true, force: true });
+  symlinkSync(join(mainRepoDir, "packages", "core"), coreLink, "dir");
+
+  const result = await makeReconciler()("h-branch-core-outside");
+
+  expect(result.status).toBe("test_failed");
+  expect(result.verification_environment_error).toBe(true);
+  expect(result.regression_summary).toContain("@penumbra/core resolves outside env");
+  expect(execHistory.some(({ cmd }) => cmd.startsWith("bun test"))).toBe(false);
+});
+
 test("branch local cache provisioning environment failure is not attributed to dispatched code", async () => {
   deps.mainRepoDir = branchWorktreeRoot;
 
