@@ -9,6 +9,6 @@
   },
   "dependencies": {
     "@penumbra/core": "workspace:*",
-    "zod": "^4.3.0"
+    "zod": "^4.6.7"
   }
 }

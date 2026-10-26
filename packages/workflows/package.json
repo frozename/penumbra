@@ -12,7 +12,7 @@
     "@penumbra/config": "workspace:*",
     "@penumbra/core": "*",
     "yaml": "^2.5.0",
-    "zod": "^4.3.0"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/bun": "^1.1.0",

@@ -20,7 +20,7 @@
   "dependencies": {
     "@penumbra/api-contract": "workspace:*",
     "@penumbra/config": "workspace:*",
-    "zod": "^4.3.0",
+    "zod": "^4.6.7",
     "fastembed": "1.14.4",
     "pino": "^9.0.0",
     "sqlite-vec": "^0.1.6",

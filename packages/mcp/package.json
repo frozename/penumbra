@@ -27,13 +27,13 @@
     "penumbra-mcp": "./bin/penumbra-mcp.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@penumbra/api-contract": "workspace:*",
     "@penumbra/config": "workspace:*",
     "@penumbra/core": "workspace:*",
     "@penumbra/daemon": "workspace:*",
     "@novaproto/mcp-shared": "^0.1.0",
-    "zod": "^4.3.0"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^25.6.0"
