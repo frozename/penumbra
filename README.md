@@ -158,6 +158,9 @@ git clone https://github.com/frozename/penumbra
 cd penumbra
 bun install
 
+# Fetch the checksum-verified model and its license notices
+bun scripts/fetch-embedder-model.ts
+
 # One-time: create the storage root + auth token at ~/.penumbra
 bun packages/cli/bin/penumbra.ts init
 
@@ -174,6 +177,10 @@ bun packages/cli/bin/penumbra.ts stop
 ```
 
 > The `@novaproto/*` packages penumbra depends on come from the npm registry — no sibling checkout is required. `bun install` runs `bun run deps-check` afterwards, which fails loudly if any external dependency did not actually get linked (`bun install` alone can exit 0 when it silently fails).
+
+The model fetch uses the GitHub CLI (`gh`) and requires `gh auth login` or
+`GH_TOKEN` while the repository is private. See [prerequisites](./CONTRIBUTING.md#prerequisites)
+and [third-party notices](./THIRD_PARTY_NOTICES.md).
 
 For Gemini CLI: edit `~/.gemini/settings.json` → `mcpServers.penumbra`.
 For Codex CLI: edit `~/.codex/config.toml` → `[mcp_servers.penumbra]`.
@@ -192,6 +199,9 @@ Steps:
    via the official one-liner from bun.sh. The install's postinstall step runs
    `bun run deps-check`, which fails loudly when a dependency did not link —
    if it reports anything, fix that before continuing.
+   Fetch the checksum-verified model and its license notices with
+   `bun scripts/fetch-embedder-model.ts`. This requires GitHub CLI (`gh`)
+   authentication while the repository is private.
 3. Create the storage root + token (one-time):
    `bun packages/cli/bin/penumbra.ts init`
 4. Start the daemon detached: `bun packages/cli/bin/penumbra.ts start --detach`

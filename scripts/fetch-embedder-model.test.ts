@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -39,6 +39,17 @@ async function writeModel(model: string): Promise<void> {
   );
 }
 
+async function expectModelNotices(model: string): Promise<void> {
+  for (const name of ["LICENSE", "NOTICE"]) {
+    expect(await Bun.file(join(model, name)).exists(), `${name} must accompany the model`).toBe(
+      true,
+    );
+    expect(await readFile(join(model, name), "utf8")).toBe(
+      await readFile(new URL(`../licenses/all-MiniLM-L6-v2.${name}.txt`, import.meta.url), "utf8"),
+    );
+  }
+}
+
 function noDownload(): Promise<void> {
   throw new Error("download must not be attempted");
 }
@@ -50,6 +61,7 @@ test("matching existing model is verified without downloading", async () => {
   const result = await fetchEmbedderModel({ dest, manifest, download: noDownload });
   expect(result.exitCode).toBe(0);
   expect(result.message).toContain("already present and verified");
+  await expectModelNotices(model);
 });
 
 test("altered existing file fails closed and stays untouched", async () => {
@@ -63,6 +75,20 @@ test("altered existing file fails closed and stays untouched", async () => {
   expect(result.message).toContain("sha256 mismatch");
   expect(result.message).toContain("remove it and re-run");
   expect(await readFile(join(model, "model.onnx"), "utf8")).toBe("altered");
+  expect(await Bun.file(join(model, "LICENSE")).exists()).toBe(false);
+});
+
+test("installing notices replaces a notice symlink without writing its target", async () => {
+  const { fetchEmbedderModel } = await implementation();
+  const { root, dest, model } = await fixture();
+  await writeModel(model);
+  const outside = join(root, "outside.txt");
+  await writeFile(outside, "leave untouched");
+  await symlink(outside, join(model, "LICENSE"));
+  const result = await fetchEmbedderModel({ dest, manifest, download: noDownload });
+  expect(result.exitCode).toBe(0);
+  expect(await readFile(outside, "utf8")).toBe("leave untouched");
+  await expectModelNotices(model);
 });
 
 test("missing existing file is named without writing or downloading", async () => {
@@ -146,6 +172,7 @@ test("tiny tarball is extracted, verified, and removed from the temporary direct
     expect(await readFile(join(model, name), "utf8")).toBe(value);
   }
   expect(await Bun.file(downloadedArchive).exists()).toBe(false);
+  await expectModelNotices(model);
 });
 
 test("extracted model manifest mismatch fails after extraction", async () => {
@@ -195,6 +222,7 @@ test("--from copies a verified local model without downloading", async () => {
   for (const [name, value] of Object.entries(contents)) {
     expect(await readFile(join(model, name), "utf8")).toBe(value);
   }
+  await expectModelNotices(model);
 });
 
 test("--from refuses a source file that fails the manifest and leaves the destination empty", async () => {

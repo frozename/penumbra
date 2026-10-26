@@ -44,8 +44,14 @@ bun run deps-check
 git clone https://github.com/frozename/penumbra
 cd penumbra
 bun install            # installs the workspace + verifies external deps linked
+bun scripts/fetch-embedder-model.ts # verifies the model and installs its license notices
 bun run typecheck      # confirm the tree builds
 ```
+
+The model fetch requires GitHub CLI (`gh`) authentication while the repository is
+private. Preserve the notices documented in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)
+when redistributing the plugin or model. The [security checks](./SECURITY.md#repository-credential-and-dependency-checks)
+cover Git history and dependency advisories before a contribution is merged.
 
 ### Running the daemon
 

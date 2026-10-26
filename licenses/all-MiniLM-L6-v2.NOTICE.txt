@@ -1,0 +1,36 @@
+all-MiniLM-L6-v2 embedding model
+
+This provenance notice was prepared for Penumbra's redistribution.
+
+Original model:
+  https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2
+
+ONNX export:
+  https://huggingface.co/Qdrant/all-MiniLM-L6-v2-onnx
+
+All six redistributed model files match this upstream revision:
+  cb27c1f221563ca44e58ad2a694965db39c8153d
+  https://huggingface.co/Qdrant/all-MiniLM-L6-v2-onnx/tree/cb27c1f221563ca44e58ad2a694965db39c8153d
+
+License: Apache License 2.0. A complete copy accompanies this notice as LICENSE
+in the model archive and as all-MiniLM-L6-v2.LICENSE.txt in the source repository.
+The upstream model card declares Apache-2.0 at:
+  https://huggingface.co/Qdrant/all-MiniLM-L6-v2-onnx/blob/5f1b8cd78bc4fb444dd171e59b18f3a3af89a079/README.md
+No upstream NOTICE file is present in that model revision.
+
+Redistribution changes: repackaged the existing fastembed 1.14.4 model files
+and added LICENSE and this NOTICE. The six model files are unmodified.
+Preserving these bytes preserves compatibility with stored embeddings.
+
+The original Penumbra archive, without these accompanying notices, was published at:
+  https://github.com/frozename/penumbra/releases/tag/embedder-model-minilm-l6-v2-v1
+Original archive SHA-256:
+  d74a0baa6a0f5ac9bb2892cfa9aa49520d97a16dd64cdae2fce4df4868b80db1
+
+SHA-256 of the unchanged model files:
+1b4d8e2a3988377ed8b519a31d8d31025a25f1c5f8606998e8014111438efcd7  config.json
+bbd7b466f6d58e646fdc2bd5fd67b2f5e93c0b687011bd4548c420f7bd46f0c5  model.onnx
+5d5b662e421ea9fac075174bb0688ee0d9431699900b90662acd44b2a350503a  special_tokens_map.json
+da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0  tokenizer.json
+bd2e06a5b20fd1b13ca988bedc8763d332d242381b4fbc98f8fead4524158f79  tokenizer_config.json
+07eced375cec144d27c900241f3e339478dec958f92fddbc551f295c992038a3  vocab.txt
