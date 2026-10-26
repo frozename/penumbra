@@ -73,6 +73,36 @@ Because penumbra records LLM activity (prompts, tool calls, outcomes) to a local
 
 This behavior is covered by tests under `packages/core/test/redaction/`. Redaction is best-effort and pattern-based: it reduces the chance that a credential pasted into a prompt lands verbatim in your memory store, but it is not a guarantee that no sensitive data is ever persisted. Treat the local SQLite database (`~/.penumbra/db.sqlite`) as sensitive at rest, and do not paste secrets you would not want recorded.
 
+## Repository credential and dependency checks
+
+The `security` GitHub workflow scans the complete fetched Git history with
+Gitleaks 8.30.1 and audits all locked dependencies with `bun audit`. The scanner
+binary is checksum-pinned and findings are fully redacted in logs.
+
+To run the credential checks locally, install Gitleaks 8.30.1 and run:
+
+```bash
+bash scripts/test-secret-scan.sh
+gitleaks git . --log-opts=--all --config=.gitleaks.toml --redact=100 \
+  --ignore-gitleaks-allow --gitleaks-ignore-path=/dev/null --no-banner
+bun audit
+```
+
+The exceptions in `.gitleaks.toml` pair exact known checksums or synthetic test
+credentials with their specific file paths and detector rules. They do not
+exclude whole files, commits, or test directories. The self-test checks that new
+credentials in those same files and credentials deleted from the current tree
+are still detected. Inline suppression comments are disabled.
+
+These checks do not inspect GitHub issue bodies, comments, release assets, or
+Actions logs. Review those surfaces separately before changing visibility.
+Expired logs cannot be cleared by a source scan. If a real credential is found,
+revoke or rotate it before removing the published copy; deleting a file or
+adding it to `.gitignore` does not remove earlier copies from Git history.
+
+Redistributed third-party material is documented in
+[THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
+
 ## Scope and non-goals
 
 - **Single-user, local trust boundary.** Penumbra assumes a single trusted user on the local machine. It does not implement multi-tenant isolation, user accounts, or role-based access control. Anyone with access to your user account, your `~/.penumbra` directory, or the loopback port (with the token) is inside the trust boundary.
