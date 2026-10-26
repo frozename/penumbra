@@ -1,0 +1,35 @@
+diff --git a/lib/cjs/fastembed.js b/lib/cjs/fastembed.js
+index af7d05497052123d99ebfcc514aac11e34dabda0..4a74bd1b2decaa2e58481195527f897a46a32916 100644
+--- a/lib/cjs/fastembed.js
++++ b/lib/cjs/fastembed.js
+@@ -31,7 +31,7 @@ const fs_1 = __importDefault(require("fs"));
+ const https_1 = __importDefault(require("https"));
+ const path_1 = __importDefault(require("path"));
+ const progress_1 = __importDefault(require("progress"));
+-const tar_1 = __importDefault(require("tar"));
++const tar_1 = __importStar(require("tar"));
+ const tokenizers_1 = require("@anush008/tokenizers");
+ const ort = __importStar(require("onnxruntime-node"));
+ var ExecutionProvider;
+@@ -208,7 +208,7 @@ class FlagEmbedding extends Embedding {
+     static async decompressToCache(targzPath, cacheDir) {
+         // Implementation for decompressing a .tar.gz file to a cache directory
+         if (path_1.default.extname(targzPath.toString()) === ".gz") {
+-            await tar_1.default.x({
++            await tar_1.x({
+                 file: targzPath,
+                 // @ts-ignore
+                 cwd: cacheDir,
+diff --git a/lib/esm/fastembed.js b/lib/esm/fastembed.js
+index f9e14ab684709fa484d743f2f4bdd9281b7066b5..28877b070153113a11b32fa2a71e8350f9c98c2d 100644
+--- a/lib/esm/fastembed.js
++++ b/lib/esm/fastembed.js
+@@ -2,7 +2,7 @@ import fs from "fs";
+ import https from "https";
+ import path from "path";
+ import Progress from "progress";
+-import tar from "tar";
++import * as tar from "tar";
+ import { AddedToken, Tokenizer } from "@anush008/tokenizers";
+ import * as ort from "onnxruntime-node";
+ export var ExecutionProvider;

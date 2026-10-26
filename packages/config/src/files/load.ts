@@ -26,7 +26,10 @@ function deepFreeze<T>(value: T): T {
 
 function formatZodIssue(error: ZodError): string {
   return error.issues
-    .map((issue) => {
+    .flatMap((issue) => {
+      if (issue.code === "unrecognized_keys") {
+        return issue.keys.map((key) => `${[...issue.path, key].join(".")}: ${issue.message}`);
+      }
       const path = issue.path.length > 0 ? issue.path.join(".") : "(root)";
       return `${path}: ${issue.message}`;
     })

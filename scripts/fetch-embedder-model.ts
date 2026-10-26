@@ -1,14 +1,14 @@
 #!/usr/bin/env bun
 import { createHash } from "node:crypto";
-import { cp, lstat, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 export const MODEL_NAME = "fast-all-MiniLM-L6-v2";
 export const MODEL_REPO = "frozename/penumbra";
-export const MODEL_TAG = "embedder-model-minilm-l6-v2-v1";
+export const MODEL_TAG = "embedder-model-minilm-l6-v2-v2";
 export const MODEL_ASSET = `${MODEL_NAME}.tar.gz`;
-export const ARCHIVE_SHA256 = "d74a0baa6a0f5ac9bb2892cfa9aa49520d97a16dd64cdae2fce4df4868b80db1";
+export const ARCHIVE_SHA256 = "e28fde323d9b381fa674dc21d2bc0e310c11b31dddc1e765737fafd32c9c25ac";
 export const MODEL_MANIFEST: Readonly<Record<string, string>> = {
   "config.json": "1b4d8e2a3988377ed8b519a31d8d31025a25f1c5f8606998e8014111438efcd7",
   "model.onnx": "bbd7b466f6d58e646fdc2bd5fd67b2f5e93c0b687011bd4548c420f7bd46f0c5",
@@ -88,6 +88,21 @@ async function copyModelDir(source: string, destination: string): Promise<void> 
   await cp(source, destination, { recursive: true, force: false, errorOnExist: true });
 }
 
+async function installModelNotices(directory: string): Promise<void> {
+  const temporary = await mkdtemp(join(directory, ".notices-"));
+  try {
+    for (const name of ["LICENSE", "NOTICE"]) {
+      const source = new URL(`../licenses/all-MiniLM-L6-v2.${name}.txt`, import.meta.url);
+      const staged = join(temporary, name);
+      await cp(source, staged);
+      // Replace a destination symlink itself instead of following it outside the cache.
+      await rename(staged, join(directory, name));
+    }
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+}
+
 async function exists(path: string): Promise<boolean> {
   try {
     await lstat(path);
@@ -103,12 +118,14 @@ async function fetchModel(options: FetchOptions): Promise<FetchResult> {
   const directory = join(dest, MODEL_NAME);
   if (await exists(directory)) {
     const failures = await verifyModel(directory, manifest);
-    return failures.length > 0
-      ? {
-          exitCode: 1,
-          message: `Existing model verification failed: ${failures.join("; ")}; remove it and re-run: rm -rf ${directory}`,
-        }
-      : { exitCode: 0, message: `${MODEL_NAME}: already present and verified` };
+    if (failures.length > 0) {
+      return {
+        exitCode: 1,
+        message: `Existing model verification failed: ${failures.join("; ")}; remove it and re-run: rm -rf ${directory}`,
+      };
+    }
+    await installModelNotices(directory);
+    return { exitCode: 0, message: `${MODEL_NAME}: already present and verified` };
   }
 
   if (options.from !== undefined) {
@@ -123,12 +140,14 @@ async function fetchModel(options: FetchOptions): Promise<FetchResult> {
     await mkdir(dest, { recursive: true });
     await (options.copy ?? copyModelDir)(source, directory);
     const failures = await verifyModel(directory, manifest);
-    return failures.length > 0
-      ? {
-          exitCode: 1,
-          message: `Copied model verification failed: ${failures.join("; ")}; remove it and re-run: rm -rf ${directory}`,
-        }
-      : { exitCode: 0, message: `${MODEL_NAME}: copied from ${source} and verified` };
+    if (failures.length > 0) {
+      return {
+        exitCode: 1,
+        message: `Copied model verification failed: ${failures.join("; ")}; remove it and re-run: rm -rf ${directory}`,
+      };
+    }
+    await installModelNotices(directory);
+    return { exitCode: 0, message: `${MODEL_NAME}: copied from ${source} and verified` };
   }
 
   const temporary = await mkdtemp(join(tmpdir(), "penumbra-embedder-model-"));
@@ -150,12 +169,14 @@ async function fetchModel(options: FetchOptions): Promise<FetchResult> {
     await mkdir(directory);
     await (options.extract ?? extractModel)(archive, dest);
     const failures = await verifyModel(directory, manifest);
-    return failures.length > 0
-      ? {
-          exitCode: 1,
-          message: `Extracted model verification failed: ${failures.join("; ")}; remove it and re-run: rm -rf ${directory}`,
-        }
-      : { exitCode: 0, message: `${MODEL_NAME}: downloaded and verified` };
+    if (failures.length > 0) {
+      return {
+        exitCode: 1,
+        message: `Extracted model verification failed: ${failures.join("; ")}; remove it and re-run: rm -rf ${directory}`,
+      };
+    }
+    await installModelNotices(directory);
+    return { exitCode: 0, message: `${MODEL_NAME}: downloaded and verified` };
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }

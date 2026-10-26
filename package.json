@@ -46,14 +46,16 @@
     "reflect-metadata": "^0.2.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.60.0",
-    "zod": "^4.3.0"
+    "zod": "^4.6.7"
   },
   "overrides": {
-    "fastembed": {
-      "tar": "^6.2.1"
-    }
+    "tar": "^7.5.22",
+    "uuid": "^11.1.1"
   },
   "lint-staged": {
     "*.{ts,mjs,json,md}": "prettier --write"
+  },
+  "patchedDependencies": {
+    "fastembed@1.14.4": "patches/fastembed@1.14.4.patch"
   }
 }

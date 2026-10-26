@@ -1,0 +1,27 @@
+title = "Penumbra credential scan"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Verified SHA-256 checksums for the pinned model tokenizer files"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|/)scripts/fetch-embedder-model\.ts$''']
+regexes = [
+  '''^(5d5b662e421ea9fac075174bb0688ee0d9431699900b90662acd44b2a350503a|da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0|bd2e06a5b20fd1b13ca988bedc8763d332d242381b4fbc98f8fead4524158f79)$''',
+]
+
+[[allowlists]]
+description = "Literal inert bearer used to test terminal-error redaction"
+targetRules = ["curl-auth-header"]
+condition = "AND"
+paths = ['''(^|/)packages/agentchat/test/adapters/stdio-acp-write\.test\.ts$''']
+regexes = ['''^sk-FAKE-SECRET-DO-NOT-LOG-12345$''']
+
+[[allowlists]]
+description = "Literal synthetic OAuth credential in a historical patch-test plan"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|/)docs/superpowers/plans/2026-05-24-antigravity-acp-bridge-plan\.md$''']
+regexes = ['''^GOCSPX-AntigravitySecretForTest12345$''']
