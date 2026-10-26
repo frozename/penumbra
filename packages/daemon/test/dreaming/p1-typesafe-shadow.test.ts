@@ -175,6 +175,47 @@ function loaderReturning(judge: JevShadowJudge): JevShadowJudgeLoader {
   return () => Promise.resolve(judge);
 }
 
+// #284: the incumbent dreaming-judge seats never open a socket. Each seat has
+// its own origin, and buildDreamCycleDeps hands this fetch to the judge pool
+// through services.judgeFetch. A seat listed in failSeats rejects the way a
+// refused connection does, so the pool records transport_error for it.
+const INCUMBENT_SEAT_BY_ORIGIN = new Map<string, string>([
+  ["http://127.0.0.1:1", "fake-seat-1"],
+  ["http://127.0.0.1:9", "fake-seat-2"],
+]);
+
+function incumbentAgentsYaml(): string {
+  return (
+    "agents:\n" +
+    "  - name: fake-seat-1\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://127.0.0.1:1/v1\n      model: fake-incumbent\n" +
+    "  - name: fake-seat-2\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://127.0.0.1:9/v1\n      model: fake-incumbent\n"
+  );
+}
+
+function incumbentSeatFetch(opts: {
+  content: string;
+  failSeats: readonly string[];
+  onCall?: (seat: string) => void;
+}): typeof fetch {
+  return ((input: string | URL | Request) => {
+    const url = input instanceof Request ? input.url : String(input);
+    const seat = INCUMBENT_SEAT_BY_ORIGIN.get(new URL(url).origin);
+    if (seat === undefined) {
+      return Promise.resolve(new Response("no route", { status: 599 }));
+    }
+    opts.onCall?.(seat);
+    if (opts.failSeats.includes(seat)) {
+      return Promise.reject(new TypeError("fetch failed"));
+    }
+    return Promise.resolve(
+      new Response(JSON.stringify({ choices: [{ message: { content: opts.content } }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+  }) as unknown as typeof fetch;
+}
+
 function dumpDreamActions(db: Database): Record<string, unknown>[] {
   const rows = db
     .prepare(`SELECT * FROM dream_actions ORDER BY phase, action_type, target_ids`)
@@ -347,40 +388,13 @@ describe("P1 typesafe shadow seat", () => {
 describe("P1 typesafe shadow wiring through buildDreamCycleDeps", () => {
   it("writes one shadow judge_decisions row per rollup and leaves incumbent actions identical", async () => {
     setSystemTime(FROZEN);
-    const server = Bun.serve({
-      port: 0,
-      fetch: () =>
-        Promise.resolve(
-          new Response(
-            JSON.stringify({
-              choices: [
-                {
-                  message: {
-                    content: JSON.stringify({
-                      promote: true,
-                      confidence: 0.8,
-                      rationale: "seat-vote",
-                    }),
-                  },
-                },
-              ],
-            }),
-            { status: 200, headers: { "Content-Type": "application/json" } },
-          ),
-        ),
-    });
     const dir = join(tmpdir(), `p1-shadow-wiring-${crypto.randomUUID()}`);
     const savedConfigDir = process.env.PENUMBRA_CONFIG_DIR;
     const dbA = openTestDb();
     const dbB = openTestDb();
     try {
       mkdirSync(dir, { recursive: true });
-      writeFileSync(
-        join(dir, "agents.yaml"),
-        "agents:\n" +
-          `  - name: fake-seat-1\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://127.0.0.1:${String(server.port)}/v1\n      model: fake-incumbent\n` +
-          `  - name: fake-seat-2\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://127.0.0.1:${String(server.port)}/v1\n      model: fake-incumbent\n`,
-      );
+      writeFileSync(join(dir, "agents.yaml"), incumbentAgentsYaml());
       writeFileSync(join(dir, "routing.yaml"), "default_roles: {}\n");
       writeFileSync(join(dir, "quotas.yaml"), "providers: []\n");
       process.env.PENUMBRA_CONFIG_DIR = dir;
@@ -408,7 +422,13 @@ describe("P1 typesafe shadow wiring through buildDreamCycleDeps", () => {
           }),
           createTypesafeClient: (o) => real.createTypesafeClient({ ...o, fetch: fakeJevFetch }),
         });
-      const services = { loadTypesafeModule };
+      const services = {
+        loadTypesafeModule,
+        judgeFetch: incumbentSeatFetch({
+          content: JSON.stringify({ promote: true, confidence: 0.8, rationale: "seat-vote" }),
+          failSeats: [],
+        }),
+      };
       const config = testConfig();
 
       seedRollups(dbA, ROLLUP_IDS.length);
@@ -445,7 +465,6 @@ describe("P1 typesafe shadow wiring through buildDreamCycleDeps", () => {
         .all();
       expect(stray).toHaveLength(0);
     } finally {
-      void server.stop(true);
       if (savedConfigDir === undefined) {
         delete process.env.PENUMBRA_CONFIG_DIR;
       } else {
@@ -468,6 +487,7 @@ interface VetoRunResult {
   db: Database;
   jevCalls: number;
   embedCalls: number;
+  incumbentCalls: number;
   logCalls: VetoLogCall[];
 }
 
@@ -512,6 +532,7 @@ async function runVetoCycle(opts: {
   rollupCount?: number;
   configOverrides?: Partial<DreamConfig>;
   seedTodayLlmSpendUsd?: number;
+  failSeats?: readonly string[];
 }): Promise<VetoRunResult> {
   setSystemTime(FROZEN);
   const content = JSON.stringify({
@@ -519,29 +540,21 @@ async function runVetoCycle(opts: {
     confidence: opts.seatVote.confidence,
     rationale: "seat-vote",
   });
-  const server = Bun.serve({
-    port: 0,
-    fetch: () =>
-      Promise.resolve(
-        new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-      ),
-  });
   const dir = join(tmpdir(), `p1-veto-${crypto.randomUUID()}`);
   const savedConfigDir = process.env.PENUMBRA_CONFIG_DIR;
   const db = openTestDb();
-  const counters = { jevCalls: 0, embedCalls: 0 };
+  const counters = { jevCalls: 0, embedCalls: 0, incumbentCalls: 0 };
+  const judgeFetch = incumbentSeatFetch({
+    content,
+    failSeats: opts.failSeats ?? [],
+    onCall: () => {
+      counters.incumbentCalls += 1;
+    },
+  });
   const logCalls: VetoLogCall[] = [];
   try {
     mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      join(dir, "agents.yaml"),
-      "agents:\n" +
-        `  - name: fake-seat-1\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://127.0.0.1:${String(server.port)}/v1\n      model: fake-incumbent\n` +
-        `  - name: fake-seat-2\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://127.0.0.1:${String(server.port)}/v1\n      model: fake-incumbent\n`,
-    );
+    writeFileSync(join(dir, "agents.yaml"), incumbentAgentsYaml());
     writeFileSync(join(dir, "routing.yaml"), "default_roles: {}\n");
     writeFileSync(join(dir, "quotas.yaml"), "providers: []\n");
     process.env.PENUMBRA_CONFIG_DIR = dir;
@@ -593,6 +606,7 @@ async function runVetoCycle(opts: {
     };
     const services = {
       loadTypesafeModule,
+      judgeFetch,
       log: captureVetoLog(logCalls),
       embedder: {
         embed: (bodies: string[]): Promise<Float32Array[]> => {
@@ -615,7 +629,6 @@ async function runVetoCycle(opts: {
     await drainShadowJudgements(5_000);
     return { db, ...counters, logCalls };
   } finally {
-    void server.stop(true);
     if (savedConfigDir === undefined) {
       delete process.env.PENUMBRA_CONFIG_DIR;
     } else {
@@ -657,6 +670,38 @@ function rollupPromotionStamps(
     t2_promoted_at: string | null;
   };
 }
+
+interface PromotionDiagnosis {
+  promoted: number;
+  abstentions: { seat: unknown; errorClass: unknown }[];
+  deferrals: { reason: unknown; retryCount: unknown }[];
+  retryCount: number | null;
+}
+
+// #284: the promoted-row count plus the silent routes to zero rows (seat
+// abstentions and P1 deferrals), so a failing equality names its own cause.
+function promotionDiagnosis(db: Database, logCalls: VetoLogCall[]): PromotionDiagnosis {
+  const rollup = db
+    .prepare(`SELECT promotion_retry_count FROM t1_rollups WHERE rollup_id = 'r1'`)
+    .get() as { promotion_retry_count: number } | null;
+  return {
+    promoted: promotedT2Count(db),
+    abstentions: logCalls
+      .filter((c) => c.msg === "dream-cycle P1 judge seat abstained")
+      .map((c) => ({ seat: c.fields["seat"], errorClass: c.fields["errorClass"] })),
+    deferrals: logCalls
+      .filter((c) => c.msg === "dream-cycle P1 promotion deferred")
+      .map((c) => ({ reason: c.fields["reason"], retryCount: c.fields["retryCount"] })),
+    retryCount: rollup?.promotion_retry_count ?? null,
+  };
+}
+
+const PROMOTED_CLEANLY: PromotionDiagnosis = {
+  promoted: 1,
+  abstentions: [],
+  deferrals: [],
+  retryCount: 0,
+};
 
 describe("P1 Jev veto mode", () => {
   it("blocks the auto-promotion onto the queued path when Jev answers below the promote threshold", async () => {
@@ -708,7 +753,7 @@ describe("P1 Jev veto mode", () => {
     });
     try {
       expect(jevCalls).toBe(2);
-      expect(promotedT2Count(db)).toBe(1);
+      expect(promotionDiagnosis(db, logCalls)).toEqual(PROMOTED_CLEANLY);
       const actions = p1PromoteActions(db);
       expect(actions).toHaveLength(1);
       expect(actions[0]?.status).toBe("auto_applied");
@@ -906,14 +951,15 @@ describe("P1 Jev veto mode", () => {
   });
 
   it("shadow mode auto-promotes without a jev_veto payload field", async () => {
-    const { db, jevCalls, logCalls } = await runVetoCycle({
+    const { db, jevCalls, incumbentCalls, logCalls } = await runVetoCycle({
       mode: "shadow",
       seatVote: { promote: true, confidence: 0.9 },
       jev: { kind: "outcome", outcome: { ok: true, judgement: okJudgement() } },
     });
     try {
+      expect(incumbentCalls).toBe(2);
       expect(jevCalls).toBe(1);
-      expect(promotedT2Count(db)).toBe(1);
+      expect(promotionDiagnosis(db, logCalls)).toEqual(PROMOTED_CLEANLY);
       const actions = p1PromoteActions(db);
       expect(actions[0]?.status).toBe("auto_applied");
       expect(actions[0]?.payload).not.toHaveProperty("jev_veto");
@@ -932,13 +978,48 @@ describe("P1 Jev veto mode", () => {
     });
     try {
       expect(jevCalls).toBe(0);
-      expect(promotedT2Count(db)).toBe(1);
+      expect(promotionDiagnosis(db, logCalls)).toEqual(PROMOTED_CLEANLY);
       const actions = p1PromoteActions(db);
       expect(actions[0]?.status).toBe("auto_applied");
       expect(actions[0]?.payload).not.toHaveProperty("jev_veto");
       expect(actions[0]?.payload).not.toHaveProperty("jev_veto_reason");
       expect(readJudgeDecisions(db, {})).toHaveLength(0);
       expect(vetoLogCalls(logCalls)).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("routes both incumbent seats through the injected judge fetch", async () => {
+    const { db, incumbentCalls, logCalls } = await runVetoCycle({
+      mode: "shadow",
+      seatVote: { promote: true, confidence: 0.9 },
+      jev: { kind: "outcome", outcome: { ok: true, judgement: okJudgement() } },
+    });
+    try {
+      expect(incumbentCalls).toBe(2);
+      expect(promotionDiagnosis(db, logCalls)).toEqual(PROMOTED_CLEANLY);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("defers the promotion and names the seat when one incumbent seat has a transport failure", async () => {
+    const { db, incumbentCalls, logCalls } = await runVetoCycle({
+      mode: "shadow",
+      seatVote: { promote: true, confidence: 0.9 },
+      jev: { kind: "outcome", outcome: { ok: true, judgement: okJudgement() } },
+      failSeats: ["fake-seat-2"],
+    });
+    try {
+      expect(incumbentCalls).toBe(2);
+      expect(promotionDiagnosis(db, logCalls)).toEqual({
+        promoted: 0,
+        abstentions: [{ seat: "fake-seat-2", errorClass: "transport_error" }],
+        deferrals: [{ reason: "insufficient_judge_votes", retryCount: 1 }],
+        retryCount: 1,
+      });
+      expect(p1PromoteActions(db)).toHaveLength(0);
     } finally {
       db.close();
     }
