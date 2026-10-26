@@ -445,6 +445,40 @@ function resolveDispatchResponses(
   return { responseSummary, responses, finalResponseText, hasNonEmptyResponse };
 }
 
+const AGY_ERROR_LINE_RE = /^AGY_ERROR:(.*)$/m;
+
+// #298: an agy provider quota exit, read from the handoff row. Mirrors the
+// predicate of agentchat's detectQuotaExhaustion (core cannot import
+// agentchat) but JSON-parses the AGY_ERROR line instead of matching
+// substrings, so a truncated or prose mention never matches.
+export function isAgyQuotaFailure(
+  handoff: Pick<HandoffRow, "resolution_reason" | "status">,
+): boolean {
+  if (handoff.status !== "failed" || typeof handoff.resolution_reason !== "string") return false;
+  const line = AGY_ERROR_LINE_RE.exec(handoff.resolution_reason);
+  if (!line) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line[1] ?? "");
+  } catch {
+    return false;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return false;
+  const record = parsed as Record<string, unknown>;
+  return record.status === "RESOURCE_EXHAUSTED" || record.error_code === 429;
+}
+
+// A provider quota exit is not the seat's fault: class it `quota` and mark
+// it an environment failure so routing stays neutral, like a resource kill.
+function dispatchFailureClassification(
+  classifierDeclined: boolean,
+  quotaExhausted: boolean,
+): Pick<AgentPerformanceRow, "environment_failure" | "failure_class"> {
+  if (classifierDeclined) return { failure_class: "classifier_declined" };
+  if (quotaExhausted) return { environment_failure: "y", failure_class: "quota" };
+  return { failure_class: null };
+}
+
 function buildDispatchNotes(
   reason: string,
   silentFailure: boolean,
@@ -502,6 +536,7 @@ function buildDispatchMetadata(
   signals: ReturnType<typeof computeDispatchSignals>,
   responseSummary: DispatchResponseSummary | null,
   taskTypeMismatch: boolean,
+  quotaExhausted: boolean,
 ): Record<string, unknown> {
   const metadata: Record<string, unknown> = {
     reason: input.reason,
@@ -521,6 +556,7 @@ function buildDispatchMetadata(
     metadata.final_response_chars = responseSummary.finalResponseChars;
     metadata.has_meaningful_output = responseSummary.hasMeaningfulOutput;
   }
+  if (quotaExhausted) metadata.quota_exhausted = true;
   return metadata;
 }
 
@@ -553,6 +589,7 @@ export function captureAgentPerformanceFromDispatch(opts: {
     parsedDispatchEndMeta,
     explicitTaskType,
   );
+  const quotaExhausted = isAgyQuotaFailure(handoff);
 
   const { responseSummary, responses, hasNonEmptyResponse } = resolveDispatchResponses(
     opts.db,
@@ -580,7 +617,7 @@ export function captureAgentPerformanceFromDispatch(opts: {
   );
   const notes = buildDispatchNotes(
     input.reason,
-    signals.silent_failure,
+    signals.silent_failure && !quotaExhausted,
     reliabilityReport.recommended_action,
     recoveryCancel,
   );
@@ -605,6 +642,7 @@ export function captureAgentPerformanceFromDispatch(opts: {
     signals,
     responseSummary,
     taskTypeMismatch,
+    quotaExhausted,
   );
 
   const row: AgentPerformanceRow = {
@@ -629,7 +667,7 @@ export function captureAgentPerformanceFromDispatch(opts: {
     gate_outcome: lookupLatestLaneGateOutcome(opts.db, input.handoff_id),
     notes,
     reliability_status: reliabilityReport.status,
-    failure_class: signals.classifier_declined ? "classifier_declined" : null,
+    ...dispatchFailureClassification(signals.classifier_declined, quotaExhausted),
     maestro_takeover_required: maestroTakeover,
     metadata_json: JSON.stringify(metadata),
   };
