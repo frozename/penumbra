@@ -17,8 +17,9 @@ export async function worktreesInspectRoute(
   _req: Request,
   handoff_id: string,
   services: Services,
+  inspect: typeof inspectWorktreeForHandoff = inspectWorktreeForHandoff,
 ): Promise<Response> {
-  const result = await inspectWorktreeForHandoff(services, handoff_id);
+  const result = await inspect(services, handoff_id);
   if (!result.ok && result.code === "not_found") {
     return json(
       { error: { code: "not_found", message: `worktree for handoff ${handoff_id} not found` } },
@@ -26,7 +27,16 @@ export async function worktreesInspectRoute(
     );
   }
   if (!result.ok) {
-    return json({ error: { code: "inspection_failed", message: result.message } }, 500);
+    return json(
+      {
+        error: {
+          code: "inspection_failed",
+          message: result.message,
+          ...(result.partial === undefined ? {} : { partial: result.partial }),
+        },
+      },
+      500,
+    );
   }
   return json(result.inspection);
 }
