@@ -54,6 +54,9 @@ interface DreamDepsServices {
   log?: Logger;
   // Test seam only: production always resolves the lazy import() itself.
   loadTypesafeModule?: () => Promise<TypesafeModuleLike>;
+  // Test seam only: production leaves this unset and the judge pool uses the
+  // global fetch.
+  judgeFetch?: typeof fetch;
 }
 
 export function createDreamingRewriterCandidates(
@@ -150,7 +153,10 @@ export function buildDreamCycleDeps(
     return Promise.resolve({ memory_id });
   };
 
-  const realJudgePool = createDreamingJudgePoolFromAgentchat({ log: services.log });
+  const realJudgePool = createDreamingJudgePoolFromAgentchat(
+    { log: services.log },
+    services.judgeFetch,
+  );
   const judgePool = realJudgePool ?? new StubJudgePool();
 
   const briefSynthesizer = createBriefSynthesizerFromAgentchat({ log: services.log });
