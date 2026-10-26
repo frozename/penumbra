@@ -7,6 +7,7 @@ import { AgentPerformanceCaptureFromDispatchSchema } from "@src/schemas/agent-pe
 import {
   captureAgentPerformanceFromDispatch,
   captureAgentPerformanceFromReconciler,
+  isAgyQuotaFailure,
   meaningfulOutput,
   MIN_RESPONSE_CHARS,
 } from "@src/services/agent-performance-capture.js";
@@ -19,6 +20,13 @@ if (process.platform === "darwin") {
     // ignore: fall back to bundled SQLite if Homebrew lib is unavailable
   }
 }
+
+const AGY_QUOTA_REASON =
+  "~/.local/bin/agy: exit code 3 — error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 140h52m55s.\n" +
+  'AGY_ERROR: {"short_error":"RESOURCE_EXHAUSTED (code 429): Individual quota reached.","status":"RESOURCE_EXHAUSTED","error_code":429,"code_kind":"http","retryable":true}';
+const AGY_INTERNAL_REASON =
+  "~/.local/bin/agy: exit code 1 — error: internal error\n" +
+  'AGY_ERROR: {"short_error":"INTERNAL (code 500)","status":"INTERNAL","error_code":500,"code_kind":"http","retryable":false}';
 
 describe("captureAgentPerformanceFromReconciler", () => {
   let db: Database;
@@ -1688,5 +1696,178 @@ describe("captureAgentPerformanceFromReconciler", () => {
     });
     expect(row.exec_ms).toBe(5000);
     expect(row.framework_overhead_ms).toBe(100);
+  });
+
+  function seedFailedWorktreeDispatch(resolutionReason: string | null): void {
+    db.prepare(
+      `UPDATE handoffs SET use_worktree=1, status='failed', resolution_reason=?, resolved_at=? WHERE handoff_id=?`,
+    ).run(resolutionReason, "2026-04-30T12:02:00Z", "h1");
+    const insertEvt = db.prepare(
+      `INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json) VALUES (?, ?, 'worker', ?, ?, ?)`,
+    );
+    insertEvt.run("h1", "worker-1", "dispatch.start", "2026-04-30T12:00:05Z", JSON.stringify({}));
+    insertEvt.run(
+      "h1",
+      "worker-1",
+      "proc.spawn",
+      "2026-04-30T12:00:06Z",
+      JSON.stringify({ pid: 80250 }),
+    );
+    insertEvt.run(
+      "h1",
+      "worker-1",
+      "proc.exited.resolved",
+      "2026-04-30T12:00:10Z",
+      JSON.stringify({ code: 3 }),
+    );
+    insertEvt.run(
+      "h1",
+      "worker-1",
+      "dispatch.end",
+      "2026-04-30T12:02:00Z",
+      JSON.stringify({ status: "error", wall_ms: 18247, worktree_changed: false }),
+    );
+  }
+
+  function captureFailedDispatch(
+    performanceId: string,
+  ): ReturnType<typeof captureAgentPerformanceFromDispatch> {
+    return captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => performanceId,
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: {
+        handoff_id: "h1",
+        reason: "error",
+        worktree_changed: false,
+        dispatch_end_emitted: true,
+        final_response_chars: 0,
+        has_meaningful_output: false,
+      },
+    });
+  }
+
+  function persistedClassification(): {
+    notes: string | null;
+    failure_class: string | null;
+    environment_failure: string | null;
+  } | null {
+    return db
+      .query<
+        { notes: string | null; failure_class: string | null; environment_failure: string | null },
+        []
+      >(`SELECT notes, failure_class, environment_failure FROM agent_performance WHERE handoff_id = 'h1'`)
+      .get();
+  }
+
+  it("an agy RESOURCE_EXHAUSTED failure is a neutral quota failure with no silent_failure note (#298)", () => {
+    seedFailedWorktreeDispatch(AGY_QUOTA_REASON);
+    const row = captureFailedDispatch("perf-quota");
+    expect(row.notes).toBe("error");
+    expect(row.failure_class).toBe("quota");
+    expect(row.environment_failure).toBe("y");
+    expect(row.outcome).toBe("failed");
+    expect(isNeutralPerformanceOutcome(row)).toBe(true);
+    expect(row.reliability_status).toBe("no_agent_output");
+    expect(JSON.parse(row.metadata_json)).toEqual({
+      reason: "error",
+      silent_failure: true,
+      tool_failure_count: 0,
+      final_response_chars: 0,
+      has_meaningful_output: false,
+      quota_exhausted: true,
+    });
+    expect(persistedClassification()).toEqual({
+      notes: "error",
+      failure_class: "quota",
+      environment_failure: "y",
+    });
+  });
+
+  it("a non-quota AGY_ERROR failure keeps the silent_failure note and stays charged (#298)", () => {
+    seedFailedWorktreeDispatch(AGY_INTERNAL_REASON);
+    const row = captureFailedDispatch("perf-internal");
+    expect(row.notes).toBe("error (silent_failure: empty worktree)");
+    expect(row.failure_class).toBeNull();
+    expect(row.environment_failure).toBeUndefined();
+    expect(isNeutralPerformanceOutcome(row)).toBe(false);
+    expect(JSON.parse(row.metadata_json)).not.toHaveProperty("quota_exhausted");
+    expect(persistedClassification()).toEqual({
+      notes: "error (silent_failure: empty worktree)",
+      failure_class: null,
+      environment_failure: null,
+    });
+  });
+
+  it("the quota sentence without an AGY_ERROR line is not a quota failure (#298)", () => {
+    seedFailedWorktreeDispatch(
+      "~/.local/bin/agy: exit code 3 — error: Individual quota reached. Resets in 140h52m55s.",
+    );
+    const row = captureFailedDispatch("perf-no-agy-line");
+    expect(row.notes).toBe("error (silent_failure: empty worktree)");
+    expect(row.failure_class).toBeNull();
+    expect(isNeutralPerformanceOutcome(row)).toBe(false);
+  });
+});
+
+describe("isAgyQuotaFailure", () => {
+  it("matches a failed handoff whose AGY_ERROR line has status RESOURCE_EXHAUSTED and code 429", () => {
+    expect(isAgyQuotaFailure({ status: "failed", resolution_reason: AGY_QUOTA_REASON })).toBe(true);
+  });
+
+  it("matches on error_code 429 alone and on status RESOURCE_EXHAUSTED alone", () => {
+    expect(
+      isAgyQuotaFailure({
+        status: "failed",
+        resolution_reason: 'x\nAGY_ERROR: {"status":"UNAVAILABLE","error_code":429}',
+      }),
+    ).toBe(true);
+    expect(
+      isAgyQuotaFailure({
+        status: "failed",
+        resolution_reason: 'x\nAGY_ERROR: {"status":"RESOURCE_EXHAUSTED"}',
+      }),
+    ).toBe(true);
+  });
+
+  it("ignores a handoff that is not failed", () => {
+    expect(isAgyQuotaFailure({ status: "completed", resolution_reason: AGY_QUOTA_REASON })).toBe(
+      false,
+    );
+  });
+
+  it("rejects null, non-quota, truncated and non-object AGY_ERROR payloads", () => {
+    expect(isAgyQuotaFailure({ status: "failed", resolution_reason: null })).toBe(false);
+    expect(isAgyQuotaFailure({ status: "failed", resolution_reason: AGY_INTERNAL_REASON })).toBe(
+      false,
+    );
+    expect(
+      isAgyQuotaFailure({
+        status: "failed",
+        resolution_reason: 'x\nAGY_ERROR: {"status":"RESOURCE_EXHAUSTED","error_code":429',
+      }),
+    ).toBe(false);
+    expect(
+      isAgyQuotaFailure({
+        status: "failed",
+        resolution_reason: 'x\nAGY_ERROR: {"error_code":"429"}',
+      }),
+    ).toBe(false);
+    expect(isAgyQuotaFailure({ status: "failed", resolution_reason: "x\nAGY_ERROR: null" })).toBe(
+      false,
+    );
+    expect(isAgyQuotaFailure({ status: "failed", resolution_reason: "x\nAGY_ERROR: [429]" })).toBe(
+      false,
+    );
+  });
+
+  it("requires the AGY_ERROR marker at a line start", () => {
+    expect(
+      isAgyQuotaFailure({
+        status: "failed",
+        resolution_reason:
+          'upstream said AGY_ERROR: {"status":"RESOURCE_EXHAUSTED","error_code":429}',
+      }),
+    ).toBe(false);
   });
 });
