@@ -1,3 +1,4 @@
+import { AgentsConfigSchema } from "@penumbra/config";
 import { describe, expect, it } from "bun:test";
 
 import { AgentChatConfigSchema } from "@src/config/types.js";
@@ -169,5 +170,70 @@ describe("loadThoughtsConfig", () => {
     });
     expect(cfg.enabled).toBe(false);
     expect(cfg.analyze.enabled).toBe(false);
+  });
+});
+
+describe("thought analyzer input budget default (#295)", () => {
+  const baseAgentchat = {
+    agents: [{ name: "codex", adapter: "codex-cli", options: {}, roles: [], auto_approve_to: [] }],
+    default_roles: {},
+    providers: [],
+  };
+
+  it("loadThoughtsConfig defaults the digest budget to 20000 and leaves signals to inherit it", () => {
+    const cfg = loadThoughtsConfig({
+      agentchat: {
+        ...baseAgentchat,
+        thoughts: {
+          enabled: true,
+          analyze: {
+            enabled: true,
+            digest: { enabled: true, agent: "local-a" },
+            signals: {
+              enabled: true,
+              agent: "local-a",
+              definitions: [{ name: "uncertainty", prompt: "list doubts" }],
+            },
+          },
+        },
+      },
+    });
+    expect(cfg.analyze.digest.maxInputChars).toBe(20000);
+    expect(cfg.analyze.signals.maxInputChars).toBeNull();
+  });
+
+  it("agentchat schema defaults digest max_input_chars to 20000", () => {
+    const parsed = AgentChatConfigSchema.parse({
+      agents: [{ name: "codex", adapter: "codex-cli" }],
+      thoughts: { enabled: true, analyze: { enabled: true, digest: { enabled: true } } },
+    });
+    expect(parsed.thoughts?.analyze?.digest?.max_input_chars).toBe(20000);
+  });
+
+  it("@penumbra/config schema defaults digest max_input_chars to 20000", () => {
+    const parsed = AgentsConfigSchema.parse({
+      agents: [{ name: "claude-acp-sonnet", adapter: "stdio-acp" }],
+      thoughts: { enabled: true, analyze: { enabled: true, digest: { enabled: true } } },
+    });
+    expect(parsed.thoughts?.analyze?.digest?.max_input_chars).toBe(20000);
+  });
+
+  it("an explicit max_input_chars still overrides the default", () => {
+    const thoughts = {
+      enabled: true,
+      analyze: { enabled: true, digest: { enabled: true, max_input_chars: 50000 } },
+    };
+    const cfg = loadThoughtsConfig({ agentchat: { ...baseAgentchat, thoughts } });
+    expect(cfg.analyze.digest.maxInputChars).toBe(50000);
+    const agentchatParsed = AgentChatConfigSchema.parse({
+      agents: [{ name: "codex", adapter: "codex-cli" }],
+      thoughts,
+    });
+    expect(agentchatParsed.thoughts?.analyze?.digest?.max_input_chars).toBe(50000);
+    const configParsed = AgentsConfigSchema.parse({
+      agents: [{ name: "claude-acp-sonnet", adapter: "stdio-acp" }],
+      thoughts,
+    });
+    expect(configParsed.thoughts?.analyze?.digest?.max_input_chars).toBe(50000);
   });
 });
