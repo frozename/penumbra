@@ -228,6 +228,12 @@ function toDecision(status: TaskStatusLike): SyncDecision {
   }
 }
 
+// #287: a closed issue is compatible with a task waiting for review. Never reopen it,
+// and never try to complete the task again from the pull side.
+function isClosedWhileAwaitingReview(status: TaskStatusLike, ghState: GhIssueState): boolean {
+  return status === "done_pending_review" && ghState === "CLOSED";
+}
+
 function isoToMs(iso: string): number {
   const parsed = Date.parse(iso);
   return Number.isNaN(parsed) ? 0 : parsed;
@@ -376,6 +382,7 @@ async function pushToGh(args: {
   ghState: GhIssueState;
   client: GhClient;
 }): Promise<void> {
+  if (isClosedWhileAwaitingReview(args.task.status, args.ghState)) return;
   const decision = toDecision(args.task.status);
   if (decision.desiredGhState === args.ghState) return;
   if (decision.desiredGhState === "OPEN") {
@@ -828,6 +835,8 @@ async function reconcileTaskWithGh(
 ): Promise<Pick<GhTaskSyncResult, "action" | "direction">> {
   const decision = toDecision(task.status);
   if (decision.desiredGhState === gh.state) return { action: "noop", direction: undefined };
+  if (isClosedWhileAwaitingReview(task.status, gh.state))
+    return { action: "noop", direction: undefined };
   if (task.updated_at > isoToMs(gh.updatedAt)) {
     await pushToGh({ task, ghState: gh.state, client: runtime.ghClient });
     return { action: "pushed", direction: "push" };

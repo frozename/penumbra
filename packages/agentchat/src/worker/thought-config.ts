@@ -57,7 +57,8 @@ export function loadThoughtsConfig(input: { agentchat: AgentChatConfig }): Runti
   const digest: RuntimeThoughtDigestConfig = {
     enabled: analyzeRequested && t.analyze?.digest?.enabled === true,
     pool: t.analyze?.digest?.agent ?? null,
-    maxInputChars: t.analyze?.digest?.max_input_chars ?? 50000,
+    // #295: ~4.1 chars/token, so 20000 chars plus the prompt fits an 8192-token local judge slot.
+    maxInputChars: t.analyze?.digest?.max_input_chars ?? 20000,
     timeoutMs: t.analyze?.digest?.timeout_ms ?? 60000,
   };
   const signals: RuntimeThoughtSignalsConfig = {

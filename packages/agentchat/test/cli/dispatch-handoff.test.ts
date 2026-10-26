@@ -45,6 +45,10 @@ const baseHandoff = {
 
 const stubExecutor = { id: "exec-stub" } as unknown as WriteToolsExecutor;
 
+const AGY_QUOTA_MESSAGE =
+  "/Users/x/.local/bin/agy: exit code 3 — error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 140h52m55s.\n" +
+  'AGY_ERROR: {"short_error":"RESOURCE_EXHAUSTED (code 429): Individual quota reached.","status":"RESOURCE_EXHAUSTED","error_code":429,"code_kind":"http","retryable":true}\n';
+
 test("chain-start handoff (from=user) sends raw message, no transcript wrap", async () => {
   const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
     text: "done",
@@ -618,6 +622,108 @@ test("runChatTurn error exhausts retries → markFailed then throws", async () =
   expect(delay.mock.calls.map((c) => c[0])).toEqual([200, 400, 800]);
   expect(markFailed).toHaveBeenCalledTimes(1);
   expect(markFailed).toHaveBeenCalledWith("h0", "adapter blew up");
+});
+
+test("quota-exhausted turn error stops after one attempt (#298)", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
+    text: "",
+    prompt_event_id: "p",
+    response_event_id: "r",
+    next_mention: null,
+    mentions: [],
+    error: { message: AGY_QUOTA_MESSAGE },
+  });
+  const createHandoff = mock();
+  const markFailed = mock().mockResolvedValue({ handoff_id: "h0", status: "failed" });
+  const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    observe: observeStub,
+    createHandoff,
+    approve: mock(),
+    runChatTurn,
+    markFailed,
+    delay,
+  });
+
+  expect(res.terminatedReason).toBe("error");
+  expect(res.adapterError?.message).toBe(AGY_QUOTA_MESSAGE);
+  expect(runChatTurn).toHaveBeenCalledTimes(1);
+  expect(delay).not.toHaveBeenCalled();
+  expect(markFailed).toHaveBeenCalledTimes(1);
+  expect(markFailed).toHaveBeenCalledWith("h0", AGY_QUOTA_MESSAGE);
+});
+
+test("quota-exhausted thrown error stops after one attempt (#298)", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>().mockRejectedValue(new Error(AGY_QUOTA_MESSAGE));
+  const createHandoff = mock();
+  const markFailed = mock().mockResolvedValue({ handoff_id: "h0", status: "failed" });
+  const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    observe: observeStub,
+    createHandoff,
+    approve: mock(),
+    runChatTurn,
+    markFailed,
+    delay,
+  });
+
+  expect(res.terminatedReason).toBe("error");
+  expect(runChatTurn).toHaveBeenCalledTimes(1);
+  expect(delay).not.toHaveBeenCalled();
+  expect(markFailed).toHaveBeenCalledWith("h0", AGY_QUOTA_MESSAGE);
+});
+
+test("a non-quota AGY_ERROR still retries four times (#298)", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue({
+    text: "",
+    prompt_event_id: "p",
+    response_event_id: "r",
+    next_mention: null,
+    mentions: [],
+    error: { message: 'agy: exit code 3 — AGY_ERROR: {"status":"INTERNAL","error_code":500}' },
+  });
+  const createHandoff = mock();
+  const markFailed = mock().mockResolvedValue({ handoff_id: "h0", status: "failed" });
+  const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    observe: observeStub,
+    createHandoff,
+    approve: mock(),
+    runChatTurn,
+    markFailed,
+    delay,
+  });
+
+  expect(res.terminatedReason).toBe("error");
+  expect(runChatTurn).toHaveBeenCalledTimes(4);
+  expect(delay.mock.calls.map((c) => c[0])).toEqual([200, 400, 800]);
 });
 
 test("pre-aborted signal returns cancelled without calling runChatTurn", async () => {

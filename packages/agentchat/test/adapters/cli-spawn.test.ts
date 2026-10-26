@@ -9,6 +9,8 @@ import { join } from "node:path";
 import {
   type CapacityError,
   detectCapacityError,
+  detectQuotaExhaustion,
+  QuotaExhaustedError,
   spawnCliAdapter,
   spawnCliAdapterStream,
 } from "@src/adapters/cli-spawn.js";
@@ -487,6 +489,128 @@ describe("detectCapacityError", () => {
   test("returns null when no capacity error is present", () => {
     expect(detectCapacityError("some normal error\n")).toBeNull();
     expect(detectCapacityError("")).toBeNull();
+  });
+});
+
+const AGY_QUOTA_LINE =
+  'AGY_ERROR: {"short_error":"RESOURCE_EXHAUSTED (code 429): Individual quota reached.","status":"RESOURCE_EXHAUSTED","error_code":429,"code_kind":"http","retryable":true}';
+const AGY_QUOTA_STDERR = `error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 140h52m55s.\n${AGY_QUOTA_LINE}\n`;
+const AGY_RESET_MS = (140 * 3600 + 52 * 60 + 55) * 1000;
+
+describe("detectQuotaExhaustion (#298)", () => {
+  const NOW = new Date("2026-10-25T22:13:40.000Z");
+
+  test("parses the agy quota stderr into provider and an absolute reset", () => {
+    expect(detectQuotaExhaustion(AGY_QUOTA_STDERR, NOW)).toEqual({
+      provider: "google",
+      model: null,
+      resetsAt: "2026-10-31T19:06:35.000Z",
+      raw: AGY_QUOTA_LINE,
+    });
+  });
+
+  test("detects the quota inside a full adapter error message", () => {
+    const text = `/Users/x/.local/bin/agy: exit code 3 — ${AGY_QUOTA_STDERR}`;
+    const quota = detectQuotaExhaustion(text, NOW);
+    expect(quota?.resetsAt).toBe("2026-10-31T19:06:35.000Z");
+    expect(quota?.provider).toBe("google");
+  });
+
+  test("error_code 429 alone counts and a missing reset gives null", () => {
+    expect(
+      detectQuotaExhaustion('AGY_ERROR: {"status":"UNAVAILABLE","error_code":429}', NOW),
+    ).toEqual({
+      provider: "google",
+      model: null,
+      resetsAt: null,
+      raw: 'AGY_ERROR: {"status":"UNAVAILABLE","error_code":429}',
+    });
+  });
+
+  test("an unparseable or absurd reset gives resetsAt null without throwing", () => {
+    for (const text of [
+      `${AGY_QUOTA_LINE}\nResets in soon.`,
+      `${AGY_QUOTA_LINE}\nResets in 99999999999999999999h.`,
+    ]) {
+      const quota = detectQuotaExhaustion(text, NOW);
+      expect(quota).not.toBeNull();
+      expect(quota?.resetsAt).toBeNull();
+    }
+  });
+
+  test("returns null for capacity text, unrelated errors and non-quota AGY_ERROR", () => {
+    expect(
+      detectQuotaExhaustion(
+        "gemini: RetryableQuotaError: No capacity available for model gemini-3.1-pro-preview\n",
+        NOW,
+      ),
+    ).toBeNull();
+    expect(detectQuotaExhaustion("some normal error\n", NOW)).toBeNull();
+    expect(detectQuotaExhaustion("", NOW)).toBeNull();
+    expect(
+      detectQuotaExhaustion('AGY_ERROR: {"status":"INTERNAL","error_code":500}', NOW),
+    ).toBeNull();
+    expect(
+      detectQuotaExhaustion("error: Individual quota reached. Resets in 1h0m0s.\n", NOW),
+    ).toBeNull();
+  });
+});
+
+describe("quota exit throws QuotaExhaustedError (#298)", () => {
+  test("spawnCliAdapter throws QuotaExhaustedError with a reset from now", async () => {
+    const before = Date.now();
+    const err = await expectRejection(
+      spawnCliAdapter({
+        command: "sh",
+        args: ["-c", 'printf "%s" "$1" 1>&2; exit 3', "--", AGY_QUOTA_STDERR],
+        prompt: "",
+        signal: new AbortController().signal,
+      }),
+      /exit code 3/,
+    );
+    const after = Date.now();
+
+    expect(err).toBeInstanceOf(QuotaExhaustedError);
+    expect(err.message).toContain("Resets in 140h52m55s.");
+    const quota = (err as QuotaExhaustedError).quota;
+    expect(quota.provider).toBe("google");
+    const resetMs = Date.parse(quota.resetsAt ?? "");
+    expect(resetMs).toBeGreaterThanOrEqual(before + AGY_RESET_MS);
+    expect(resetMs).toBeLessThanOrEqual(after + AGY_RESET_MS);
+  });
+
+  test("spawnCliAdapterStream throws QuotaExhaustedError on the same exit", async () => {
+    let thrown: unknown;
+    const events: DispatchEventInput[] = [];
+    try {
+      for await (const ev of spawnCliAdapterStream({
+        command: "sh",
+        args: ["-c", 'printf "%s" "$1" 1>&2; exit 3', "--", AGY_QUOTA_STDERR],
+        prompt: "",
+        signal: new AbortController().signal,
+        onEvent: (event) => events.push(event),
+      })) {
+        void ev;
+      }
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(thrown).toBeInstanceOf(QuotaExhaustedError);
+    expect((thrown as QuotaExhaustedError).quota.provider).toBe("google");
+  });
+
+  test("a non-quota exit stays a plain Error", async () => {
+    const err = await expectRejection(
+      spawnCliAdapter({
+        command: "sh",
+        args: ["-c", "echo boom 1>&2; exit 3"],
+        prompt: "",
+        signal: new AbortController().signal,
+      }),
+      /exit code 3/,
+    );
+    expect(err instanceof QuotaExhaustedError).toBe(false);
   });
 });
 
