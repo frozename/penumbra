@@ -609,16 +609,47 @@ function requireSnapshot(ctx: ReconcileCtx): ReconcileSnapshot {
   return ctx.snapshot;
 }
 
-function resolveReconcileRepoDir(
+// #219: a worktree's common git dir names the repo it was created from, so it
+// still finds the project when the worker's registry does not know it. Returns
+// null unless git prints an absolute path ending in /.git whose parent exists.
+async function worktreeCommonRepoDir(deps: ReconcilerDeps, wtPath: string): Promise<string | null> {
+  if (!existsSync(wtPath)) return null;
+  let stdout: string;
+  try {
+    const res = await runCommand(
+      toCommandArgs("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"]),
+      wtPath,
+      deps.log,
+      deps.exec,
+    );
+    stdout = res.stdout;
+  } catch {
+    return null;
+  }
+  const commonDir = stdout.trim();
+  if (!isAbsolute(commonDir) || !commonDir.endsWith("/.git")) return null;
+  const repoDir = dirname(commonDir);
+  return existsSync(repoDir) ? repoDir : null;
+}
+
+async function resolveReconcileRepoDir(
   deps: ReconcilerDeps,
   handoff: HandoffRow | null,
   handoffId: string,
   wt: WorktreeHandle,
-): string {
+): Promise<string> {
   const projectId = handoff?.project_id ?? wt.projectId ?? undefined;
   const root = deps.worktreeManager.projectRootFor(projectId);
   if (root !== undefined) return root;
   if (projectId) {
+    const fromWorktree = await worktreeCommonRepoDir(deps, wt.path);
+    if (fromWorktree !== null) {
+      deps.log.info(
+        { handoffId, projectId, repoDir: fromWorktree },
+        "reconcile project root resolved from the worktree's common git dir",
+      );
+      return fromWorktree;
+    }
     deps.log.warn(
       { handoffId, projectId, mainRepoDir: deps.mainRepoDir },
       "reconcile project root unresolved; using the worker checkout",
@@ -2257,6 +2288,7 @@ export function createMergeReconciler(
     // all share the same value. Validation happens after the ctx is in scope.
     const baseRef =
       handoff?.branch_base && handoff.branch_base !== "main" ? handoff.branch_base : "main";
+    const repoDir = await resolveReconcileRepoDir(deps, handoff, handoffId, wt);
 
     const ctx: ReconcileCtx = {
       deps,
@@ -2265,7 +2297,7 @@ export function createMergeReconciler(
       mode,
       wt,
       baseRef,
-      repoDir: resolveReconcileRepoDir(deps, handoff, handoffId, wt),
+      repoDir,
       startedAtMs,
       snapshot: null,
       packageJsonCache: new Map<string, WorkspacePackageJson | null>(),
