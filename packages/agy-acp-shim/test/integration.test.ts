@@ -2,7 +2,12 @@ import { describe, expect, it } from "bun:test";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
-const AGY_BINARY = process.env["AGY_BINARY"] ?? Bun.which("agy") ?? undefined;
+// These round-trips need a host agy with a working account: a binary on PATH
+// is not enough (a quota-exhausted one answers with no model text). The CI
+// runner has no agy at all, so CI-parity contexts must not pick one up from
+// PATH; only an explicit AGY_BINARY enables them there.
+const AGY_BINARY =
+  process.env["AGY_BINARY"] ?? (process.env.CI ? undefined : Bun.which("agy")) ?? undefined;
 const SHIM_ENTRY = new URL("../bin/agy-acp-shim.ts", import.meta.url).pathname;
 const AGY_PRESENT = AGY_BINARY !== undefined && (await Bun.file(AGY_BINARY).exists());
 

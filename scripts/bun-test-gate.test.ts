@@ -3,15 +3,19 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { AGY_SENTINEL } from "./check-ci.js";
+
 const repoRoot = process.cwd();
 const gatePath = join(repoRoot, "scripts/bun-test-gate.ts");
 
 async function runGate(
   testPath: string,
   whileRunning?: () => Promise<void>,
+  env: Record<string, string | undefined> = process.env,
 ): Promise<{ exitCode: number; output: string }> {
   const proc = Bun.spawn(["bun", gatePath, testPath], {
     cwd: repoRoot,
+    env,
     stderr: "pipe",
     stdout: "pipe",
   });
@@ -23,6 +27,26 @@ async function runGate(
   ]);
 
   return { exitCode, output: stdout + stderr };
+}
+
+function envWithoutAgyBinary(): Record<string, string | undefined> {
+  return Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== "AGY_BINARY"));
+}
+
+// The shard records the AGY_BINARY it was spawned with and always passes, so the
+// gate's exit code says nothing about AGY_BINARY; the recorded value does.
+function writeAgyBinaryProbe(testPath: string, reportPath: string): void {
+  writeFileSync(
+    testPath,
+    `
+import { test } from "bun:test";
+import { writeFileSync } from "node:fs";
+
+test("records the AGY_BINARY it was spawned with", () => {
+  writeFileSync(${JSON.stringify(reportPath)}, process.env["AGY_BINARY"] ?? "<unset>");
+});
+`,
+  );
 }
 
 async function poll<T>(read: () => T | undefined, what: string): Promise<T> {
@@ -251,3 +275,40 @@ test("never runs", () => {});
     rmSync(dir, { force: true, recursive: true });
   }
 });
+
+test("bun-test-gate points AGY_BINARY at the check-ci sentinel when the caller leaves it unset", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bun-test-gate-agy-sentinel-"));
+  try {
+    const testPath = join(dir, "agy-probe.test.ts");
+    const reportPath = join(dir, "agy-binary.txt");
+    writeAgyBinaryProbe(testPath, reportPath);
+
+    const result = await runGate(testPath, undefined, envWithoutAgyBinary());
+
+    if (result.exitCode !== 0) console.error(result.output.slice(-4000).toUpperCase());
+    expect(readFileSync(reportPath, "utf8")).toBe(AGY_SENTINEL);
+    expect(result.exitCode).toBe(0);
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+}, 30_000);
+
+test("bun-test-gate keeps an explicit AGY_BINARY", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "bun-test-gate-agy-explicit-"));
+  try {
+    const testPath = join(dir, "agy-probe.test.ts");
+    const reportPath = join(dir, "agy-binary.txt");
+    writeAgyBinaryProbe(testPath, reportPath);
+
+    const result = await runGate(testPath, undefined, {
+      ...process.env,
+      AGY_BINARY: "/explicit/agy/path",
+    });
+
+    if (result.exitCode !== 0) console.error(result.output.slice(-4000).toUpperCase());
+    expect(readFileSync(reportPath, "utf8")).toBe("/explicit/agy/path");
+    expect(result.exitCode).toBe(0);
+  } finally {
+    rmSync(dir, { force: true, recursive: true });
+  }
+}, 30_000);

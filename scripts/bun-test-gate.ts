@@ -42,6 +42,7 @@ import {
   isKnownBunTeardownPanicPass,
   parseBunTestReport,
 } from "../packages/agentchat/src/worker/bun-test-output.js";
+import { AGY_SENTINEL } from "./check-ci.js";
 
 const POLL_MS = 50;
 
@@ -65,11 +66,17 @@ rmSync(captureDir, { force: true, recursive: true });
 // noEmit, so any packages/*/dist/test/*.test.js are leftover artifacts that bun
 // would otherwise glob (failing on relative imports and inflating the count).
 // bun accepts multiple --path-ignore-patterns flags, so caller-supplied patterns still apply.
+// The gate is the CI-parity shard runner (check.yml, check:ci). CI runners
+// have no agy binary, so the agy-acp-shim "requires local agy binary" tests
+// skip there by detection. Apply the same AGY_SENTINEL check-ci.ts uses so a
+// host gate run cannot execute those live-LLM tests just because an agy (or a
+// quota-exhausted one) is on PATH. A direct AGY_BINARY still wins.
 const child = spawn(
   "bun",
   ["test", "--path-ignore-patterns=**/dist/**", ...process.argv.slice(2)],
   {
     stdio: ["inherit", stdoutCapture.childFd, stderrCapture.childFd],
+    env: { ...process.env, AGY_BINARY: process.env["AGY_BINARY"] ?? AGY_SENTINEL },
   },
 );
 closeSync(stdoutCapture.childFd);
