@@ -17,6 +17,15 @@ import { join } from "node:path";
 import { createCodexPluginHost } from "@src/commands/codex-plugin-host.js";
 import type { CodexSetupHost } from "@src/commands/codex-setup.js";
 
+// #285: each scenario below spawns the fake codex (a bun script) about 11 times. That ran
+// close to bun's 5 s per-test default under load, and the 1 s per-invoke bound that every
+// install and rollback call shares could run out mid-rollback.
+const SCENARIO_TEST_TIMEOUT_MS = 20_000;
+// Per-invoke bound for the install-and-rollback scenarios (the host caps it at 15 s).
+const ROLLBACK_INVOKE_TIMEOUT_MS = 10_000;
+// Per-call delay in the slow-codex pin: 8 calls take at least 1.6 s, past the old 1 s bound.
+const SLOW_CODEX_DELAY_MS = 200;
+
 interface Fixture {
   root: string;
   codexDir: string;
@@ -99,6 +108,8 @@ if (args.join(" ") === "plugin marketplace --help") {
   process.stdout.write("Usage: codex plugin marketplace <add|list|remove>\\n"); emitQualificationWarning(); process.exit(0);
 }
 if (args[0] !== "plugin") process.exit(92);
+const delayMs = Number(process.env.FAKE_CODEX_DELAY_MS ?? "0");
+if (delayMs > 0) await Bun.sleep(delayMs);
 if (args[1] === "marketplace" && args[2] === "list") {
   if (!existsSync(codexHome)) process.exit(6);
   if (scenario === "marketplace-list-hang") await new Promise(() => {});
@@ -188,13 +199,14 @@ async function host(
   fixture: Fixture,
   scenario = "normal",
   timeoutMs = 1_000,
+  extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<CodexSetupHost> {
   return await createCodexPluginHost({
     codexDir: fixture.codexDir,
     marketplaceRoot: fixture.marketplaceRoot,
     pluginRoot: fixture.pluginRoot,
     executable: fixture.executable,
-    env: { ...fixture.env, FAKE_CODEX_SCENARIO: scenario },
+    env: { ...fixture.env, FAKE_CODEX_SCENARIO: scenario, ...extraEnv },
     timeoutMs,
     maxOutputBytes: 1_024,
   });
@@ -382,51 +394,92 @@ test("unknown builds, output floods, and hanging children stay bounded and never
   }
 });
 
-test("ambiguous installed entries never confirm usable state", async () => {
-  for (const scenario of [
-    "disabled",
-    "foreign-source",
-    "wrong-id",
-    "missing-installed-field",
-    "duplicate",
-    "list-missing-after-add",
-    "malformed-list",
-    "malformed-add",
-  ]) {
+test.each([
+  "disabled",
+  "foreign-source",
+  "wrong-id",
+  "missing-installed-field",
+  "duplicate",
+  "list-missing-after-add",
+  "malformed-list",
+  "malformed-add",
+])(
+  "ambiguous installed entries never confirm usable state (%s)",
+  async (scenario) => {
     const fixture = makeFixture(`codex-host-${scenario}-`);
     try {
-      const adapter = await host(fixture, scenario);
+      const adapter = await host(fixture, scenario, ROLLBACK_INVOKE_TIMEOUT_MS);
       const result = await adapter.invoke(adapter.plugin.installArgv ?? []);
       expect(result.ok).toBe(false);
       expect(result.installed).not.toBe(true);
     } finally {
       rmSync(fixture.root, { recursive: true, force: true });
     }
-  }
-});
+  },
+  SCENARIO_TEST_TIMEOUT_MS,
+);
 
-test("rollback removes only newly owned exact state and preserves ambiguous or preexisting state", async () => {
-  for (const [scenario, expected] of [
-    ["disabled", { marketplace: false, installed: false }],
-    ["missing-installed-field", { marketplace: false, installed: false }],
-    ["list-missing-after-add", { marketplace: false, installed: true }],
-    ["malformed-add", { marketplace: false, installed: false }],
-    ["foreign-source", { marketplace: true, installed: true }],
-    ["wrong-id", { marketplace: true, installed: true }],
-    ["duplicate", { marketplace: true, installed: true }],
-    ["preexisting-plugin", { marketplace: true, installed: true }],
-  ] as const) {
+test.each([
+  ["disabled", { marketplace: false, installed: false }],
+  ["missing-installed-field", { marketplace: false, installed: false }],
+  ["list-missing-after-add", { marketplace: false, installed: true }],
+  ["malformed-add", { marketplace: false, installed: false }],
+  ["foreign-source", { marketplace: true, installed: true }],
+  ["wrong-id", { marketplace: true, installed: true }],
+  ["duplicate", { marketplace: true, installed: true }],
+  ["preexisting-plugin", { marketplace: true, installed: true }],
+] as const)(
+  "rollback removes only newly owned exact state and preserves ambiguous or preexisting state (%s)",
+  async (scenario, expected) => {
     const fixture = makeFixture(`codex-host-rollback-${scenario}-`);
     try {
-      const adapter = await host(fixture, scenario);
+      const adapter = await host(fixture, scenario, ROLLBACK_INVOKE_TIMEOUT_MS);
       const result = await adapter.invoke(adapter.plugin.installArgv ?? []);
       expect(result.ok).toBe(false);
       expect(JSON.parse(readFileSync(fixture.statePath, "utf8")), scenario).toEqual(expected);
     } finally {
       rmSync(fixture.root, { recursive: true, force: true });
     }
-  }
-});
+  },
+  SCENARIO_TEST_TIMEOUT_MS,
+);
+
+test(
+  "rollback under a slow codex still finishes inside the per-invoke bound",
+  async () => {
+    const fixture = makeFixture("codex-host-rollback-slow-");
+    try {
+      const adapter = await host(fixture, "disabled", ROLLBACK_INVOKE_TIMEOUT_MS, {
+        FAKE_CODEX_DELAY_MS: String(SLOW_CODEX_DELAY_MS),
+      });
+      expect(adapter.plugin.state, adapter.plugin.detail).toBe("supported");
+      const result = await adapter.invoke(adapter.plugin.installArgv ?? []);
+      expect(result.ok).toBe(false);
+      const state: unknown = existsSync(fixture.statePath)
+        ? JSON.parse(readFileSync(fixture.statePath, "utf8"))
+        : null;
+      expect(state).toEqual({ marketplace: false, installed: false });
+      expect(result.ownership).toBeUndefined();
+      expect(
+        calls(fixture)
+          .map(({ args }) => args)
+          .slice(3),
+      ).toEqual([
+        ["plugin", "marketplace", "list", "--json"],
+        ["plugin", "marketplace", "add", fixture.marketplaceRoot, "--json"],
+        ["plugin", "list", "--marketplace", "penumbra-local", "--json"],
+        ["plugin", "add", "penumbra@penumbra-local", "--json"],
+        ["plugin", "list", "--marketplace", "penumbra-local", "--json"],
+        ["plugin", "remove", "penumbra@penumbra-local", "--json"],
+        ["plugin", "list", "--marketplace", "penumbra-local", "--json"],
+        ["plugin", "marketplace", "remove", "penumbra-local", "--json"],
+      ]);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  },
+  SCENARIO_TEST_TIMEOUT_MS,
+);
 
 test("uninstall keeps the owned marketplace when plugin absence is not confirmed", async () => {
   const fixture = makeFixture("codex-host-remove-unconfirmed-");
