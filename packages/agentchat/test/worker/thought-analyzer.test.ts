@@ -2,7 +2,12 @@ import type { DispatchEventInput } from "@penumbra/core";
 
 import { describe, expect, it, mock } from "bun:test";
 
-import { runThoughtAnalyzer, type ThoughtAnalyzerDeps } from "@src/worker/thought-analyzer.js";
+import {
+  joinThoughtsForPrompt,
+  runThoughtAnalyzer,
+  type ThoughtAnalyzerDeps,
+  type ThoughtRow,
+} from "@src/worker/thought-analyzer.js";
 import type { RuntimeThoughtsConfig } from "@src/worker/thought-config.js";
 
 type ChainStartInput = Parameters<ThoughtAnalyzerDeps["chainStart"]>[0];
@@ -482,5 +487,57 @@ describe("runThoughtAnalyzer", () => {
     const digestPrompt = captured.find((m) => m.includes("list")) ?? firstCapture;
     expect(digestPrompt.length).toBeLessThan(2000);
     expect(digestPrompt).toContain("truncated");
+  });
+});
+
+describe("joinThoughtsForPrompt", () => {
+  const mixedRows: ThoughtRow[] = [
+    { sequence_n: 0, adapter: "stdio-acp", agent_name: "claude", text: "Let" },
+    { sequence_n: 1, adapter: "stdio-acp", agent_name: "claude", text: " me" },
+    { sequence_n: 2, adapter: "stdio-acp", agent_name: "claude", text: " check" },
+    { sequence_n: 3, adapter: "cli-spawn", agent_name: "gemini", text: "first block" },
+    { sequence_n: 4, adapter: "cli-spawn", agent_name: "gemini", text: "second block" },
+    { sequence_n: 5, adapter: "stdio-acp", agent_name: "claude", text: "ok" },
+  ];
+
+  it("merges consecutive same-adapter/agent rows under one header", () => {
+    const result = joinThoughtsForPrompt(mixedRows, 10_000);
+    expect(result.body).toBe(
+      "[#0-2 stdio-acp/claude] Let me check\n[#3-4 cli-spawn/gemini] first block\nsecond block\n[#5 stdio-acp/claude] ok",
+    );
+    expect(result.truncated).toBe(false);
+  });
+
+  it("a token-per-row stdio-acp stream fits the limit under one header (#288)", () => {
+    const rows: ThoughtRow[] = Array.from({ length: 600 }, (_, i) => ({
+      sequence_n: i,
+      adapter: "stdio-acp",
+      agent_name: "claude-acp-sonnet",
+      text: "tok ",
+    }));
+    const result = joinThoughtsForPrompt(rows, 8_000);
+    expect(result.truncated).toBe(false);
+    expect(result.body).toBe(`[#0-599 stdio-acp/claude-acp-sonnet] ${"tok ".repeat(600)}`);
+  });
+
+  it("keeps the most recent rows when the merged text exceeds the limit", () => {
+    const rows: ThoughtRow[] = Array.from({ length: 10 }, (_, i) => ({
+      sequence_n: i,
+      adapter: "stdio-acp",
+      agent_name: "a",
+      text: String(i).padStart(10, "-"),
+    }));
+    const result = joinThoughtsForPrompt(rows, 50);
+    expect(result.body).toBe("[#7-9 stdio-acp/a] ---------7---------8---------9");
+    expect(result.truncated).toBe(true);
+  });
+
+  it("never returns a body longer than the limit", () => {
+    for (const limit of [0, 1, 20, 37, 64, 200]) {
+      expect(joinThoughtsForPrompt(mixedRows, limit).body.length).toBeLessThanOrEqual(limit);
+    }
+    expect(joinThoughtsForPrompt(mixedRows, 64).body).toBe(
+      "[#4 cli-spawn/gemini] second block\n[#5 stdio-acp/claude] ok",
+    );
   });
 });

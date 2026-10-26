@@ -144,6 +144,32 @@ describe("shouldRetryHandoffForSilentFailure", () => {
     ).toBe(false);
   });
 
+  test("returns false for thought_analyzer even when underlying policy would retry", () => {
+    expect(
+      shouldRetryHandoffForSilentFailure({ dispatch_kind: "thought_analyzer" }, perfThatRetries),
+    ).toBe(false);
+  });
+
+  test("returns false for a thought_analyzer sub-handoff shaped like the #288 failures", () => {
+    const handoff = {
+      dispatch_kind: "thought_analyzer",
+      chain_task_type: "unknown",
+      branch_base: null,
+      chain_max_hops: null,
+      permission_profile: null,
+    } as const;
+    const perf = { outcome: "failed", notes: "silent_failure: empty worktree" } as const;
+    expect(shouldRetryForSilentFailure(perf)).toBe(true);
+    expect(shouldRetryHandoffForSilentFailure(handoff, perf)).toBe(false);
+  });
+
+  test.each(["workflow", "orchestrate"] as const)(
+    "still delegates for %s dispatches",
+    (dispatch_kind) => {
+      expect(shouldRetryHandoffForSilentFailure({ dispatch_kind }, perfThatRetries)).toBe(true);
+    },
+  );
+
   test("does not retry review_adversarial when an untouched worktree is expected", () => {
     const handoff = { dispatch_kind: null, chain_task_type: "review_adversarial" };
     expect(shouldRetryHandoffForSilentFailure(handoff, noWorktreeActivityPerf)).toBe(false);

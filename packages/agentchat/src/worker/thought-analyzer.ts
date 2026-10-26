@@ -51,26 +51,76 @@ export interface ThoughtAnalyzerInput {
   deps: ThoughtAnalyzerDeps;
 }
 
-function joinThoughtsForPrompt(
+// #288: one header per run of consecutive rows from the same adapter and agent.
+// stdio-acp records one row per streamed chunk, so its texts are joined as-is;
+// other adapters record whole thoughts, which are joined one per line.
+interface ThoughtSegment {
+  adapter: string;
+  agent_name: string;
+  first: number;
+  last: number;
+  texts: string[]; // newest first while collecting
+}
+
+function rowJoiner(adapter: string): string {
+  return adapter === "stdio-acp" ? "" : "\n";
+}
+
+function continuesSegment(
+  segment: ThoughtSegment | undefined,
+  row: ThoughtRow,
+): segment is ThoughtSegment {
+  return segment?.adapter === row.adapter && segment.agent_name === row.agent_name;
+}
+
+function rowCost(row: ThoughtRow, continues: boolean, hasSegments: boolean): number {
+  if (continues) return rowJoiner(row.adapter).length + row.text.length;
+  // A new segment pays for its "\n" separator and its widest header; the rendered header is never longer.
+  const n = String(row.sequence_n);
+  const header = `[#${n}-${n} ${row.adapter}/${row.agent_name}] `;
+  return (hasSegments ? 1 : 0) + header.length + row.text.length;
+}
+
+function renderSegment(segment: ThoughtSegment): string {
+  const range =
+    segment.first === segment.last
+      ? String(segment.first)
+      : `${String(segment.first)}-${String(segment.last)}`;
+  const text = [...segment.texts].reverse().join(rowJoiner(segment.adapter));
+  return `[#${range} ${segment.adapter}/${segment.agent_name}] ${text}`;
+}
+
+export function joinThoughtsForPrompt(
   rows: ThoughtRow[],
   limit: number,
 ): { body: string; truncated: boolean } {
-  const reversed = [...rows].reverse();
-  const kept: ThoughtRow[] = [];
+  // Walk newest-first so the limit keeps the most recent thoughts.
+  const segments: ThoughtSegment[] = [];
   let used = 0;
-  for (const row of reversed) {
-    const piece = `[#${String(row.sequence_n)} ${row.adapter}/${row.agent_name}] ${row.text}\n`;
-    if (used + piece.length > limit) break;
-    kept.push(row);
-    used += piece.length;
+  let keptRows = 0;
+  for (const row of [...rows].reverse()) {
+    const current = segments[segments.length - 1];
+    const continues = continuesSegment(current, row);
+    const cost = rowCost(row, continues, segments.length > 0);
+    if (used + cost > limit) break;
+    used += cost;
+    keptRows += 1;
+    if (continues) {
+      current.first = row.sequence_n;
+      current.texts.push(row.text);
+    } else {
+      segments.push({
+        adapter: row.adapter,
+        agent_name: row.agent_name,
+        first: row.sequence_n,
+        last: row.sequence_n,
+        texts: [row.text],
+      });
+    }
   }
-  const truncated = kept.length < rows.length;
-  const ordered = kept.reverse();
   return {
-    body: ordered
-      .map((r) => `[#${String(r.sequence_n)} ${r.adapter}/${r.agent_name}] ${r.text}`)
-      .join("\n"),
-    truncated,
+    body: segments.reverse().map(renderSegment).join("\n"),
+    truncated: keptRows < rows.length,
   };
 }
 
