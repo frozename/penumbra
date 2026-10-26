@@ -1065,3 +1065,153 @@ describe("gh-task-sync sweeper/service", () => {
     expect(callCount).toBe(1);
   });
 });
+
+describe("gh-task-sync: review-pending task with a closed issue (#287)", () => {
+  function fileReviewPendingTask(h: SetupHandle, issue: number, updatedAtIso: string): string {
+    const { task_id } = h.writer.file({
+      prompt: "needs review",
+      created_by_kind: "human",
+      created_by_id: "cli",
+      requires_review: true,
+    });
+    h.writer.linkGhIssue(task_id, { repo: "frozename/penumbra", issue_number: issue });
+    h.db.run(`UPDATE tasks SET status = 'done_pending_review', updated_at = ? WHERE id = ?`, [
+      Date.parse(updatedAtIso),
+      task_id,
+    ]);
+    h.db.run(`DELETE FROM gh_outbox`);
+    return task_id;
+  }
+
+  function recordingClient(view: GhIssueView): { client: GhClient; reopened: number[] } {
+    const reopened: number[] = [];
+    const client = makeGhClient({
+      viewIssue: () => Promise.resolve(view),
+      reopenIssue: (_repo, issue) => {
+        reopened.push(issue);
+        return Promise.resolve();
+      },
+    });
+    return { client, reopened };
+  }
+
+  function makeSync(
+    h: SetupHandle,
+    client: GhClient,
+    nowIso: string,
+    warns: unknown[],
+  ): GhTaskSyncService {
+    return createGhTaskSyncService({
+      taskWriter: h.writer,
+      ghClient: client,
+      t0Writer: new T0Writer(h.db),
+      now: () => new Date(nowIso),
+      uuid: () => crypto.randomUUID(),
+      userId: "test-user",
+      machineId: "test-machine",
+      log: {
+        warn: (obj) => {
+          warns.push(obj);
+        },
+      },
+    });
+  }
+
+  test("push side: a review-pending task newer than its closed issue does not reopen it", async () => {
+    const h = setup();
+    const task_id = fileReviewPendingTask(h, 40, "2026-05-08T02:00:00.000Z");
+    const warns: unknown[] = [];
+    const { client, reopened } = recordingClient(
+      viewClosed(40, "COMPLETED", "2026-05-08T01:00:00.000Z"),
+    );
+    const sync = makeSync(h, client, "2026-05-08T02:05:00.000Z", warns);
+
+    const summary = await sync.syncAllLinkedTasks();
+
+    expect(reopened).toEqual([]);
+    expect(summary.results.map((r) => r.action)).toEqual(["noop"]);
+    expect(summary.errored).toBe(0);
+    expect(warns).toEqual([]);
+    expect(h.writer.get(task_id).status).toBe("done_pending_review");
+  });
+
+  test("pull side: a closed issue newer than a review-pending task is a noop, not an error", async () => {
+    const h = setup();
+    const task_id = fileReviewPendingTask(h, 41, "2026-05-08T02:00:00.000Z");
+    const warns: unknown[] = [];
+    const { client, reopened } = recordingClient(
+      viewClosed(41, "COMPLETED", "2026-05-08T03:00:00.000Z"),
+    );
+    const sync = makeSync(h, client, "2026-05-08T03:05:00.000Z", warns);
+
+    const summary = await sync.syncAllLinkedTasks();
+
+    expect(summary.results.map((r) => r.action)).toEqual(["noop"]);
+    expect(summary.errored).toBe(0);
+    expect(warns).toEqual([]);
+    expect(reopened).toEqual([]);
+    expect(h.writer.get(task_id).status).toBe("done_pending_review");
+    expect(
+      h.db
+        .query<
+          { n: number },
+          []
+        >(`SELECT COUNT(*) AS n FROM t0_events WHERE event_type = 'task.gh_state_pulled'`)
+        .get()?.n,
+    ).toBe(0);
+  });
+
+  test("outbox push after a pulled completion does not reopen the closed issue", async () => {
+    const h = setup();
+    const { task_id } = h.writer.file({
+      prompt: "needs review",
+      created_by_kind: "human",
+      created_by_id: "cli",
+      requires_review: true,
+    });
+    h.writer.linkGhIssue(task_id, { repo: "frozename/penumbra", issue_number: 42 });
+    h.setNow(Date.parse("2026-05-08T01:30:00.000Z"));
+
+    const warns: unknown[] = [];
+    const { client, reopened } = recordingClient(
+      viewClosed(42, "COMPLETED", "2026-05-08T01:00:00.000Z"),
+    );
+    const sync = makeSync(h, client, "2026-05-08T01:30:00.000Z", warns);
+
+    const first = await sync.syncAllLinkedTasks();
+
+    expect(first.results.map((r) => r.action)).toEqual(["pulled"]);
+    expect(h.writer.get(task_id).status).toBe("done_pending_review");
+    expect(
+      h.db
+        .query<
+          { op: string; status: string },
+          [string]
+        >(`SELECT op, status FROM gh_outbox WHERE task_id = ? ORDER BY id`)
+        .all(task_id),
+    ).toEqual([
+      { op: "gh_push_status", status: "pending" },
+      { op: "gh_post_status_comment", status: "pending" },
+    ]);
+    expect(reopened).toEqual([]);
+
+    const second = await sync.syncAllLinkedTasks();
+
+    expect(reopened).toEqual([]);
+    expect(second.results.map((r) => r.action)).toEqual(["noop"]);
+    expect(second.errored).toBe(0);
+    expect(warns).toEqual([]);
+    expect(
+      h.db
+        .query<
+          { op: string; status: string },
+          [string]
+        >(`SELECT op, status FROM gh_outbox WHERE task_id = ? ORDER BY id`)
+        .all(task_id),
+    ).toEqual([
+      { op: "gh_push_status", status: "done" },
+      { op: "gh_post_status_comment", status: "done" },
+    ]);
+    expect(h.writer.get(task_id).status).toBe("done_pending_review");
+  });
+});
