@@ -21,10 +21,17 @@ import type { CodexSetupHost } from "@src/commands/codex-setup.js";
 // close to bun's 5 s per-test default under load, and the 1 s per-invoke bound that every
 // install and rollback call shares could run out mid-rollback.
 const SCENARIO_TEST_TIMEOUT_MS = 20_000;
-// Per-invoke bound for the install-and-rollback scenarios (the host caps it at 15 s).
+// Per-invoke bound for the scenarios that do not hang (the host caps it at 15 s).
 const ROLLBACK_INVOKE_TIMEOUT_MS = 10_000;
 // Per-call delay in the slow-codex pin: 8 calls take at least 1.6 s, past the old 1 s bound.
 const SLOW_CODEX_DELAY_MS = 200;
+// Per-invoke bound for the *-hang scenarios. A hanging child holds its case for the whole
+// bound, so it stays short, but the same bound also covers the 3 qualification spawns and
+// every spawn before the hang. The old 300 ms ran out under load.
+const HANG_INVOKE_TIMEOUT_MS = 2_000;
+// Per-start delay in the slow-start pin: 3 qualification starts take at least 360 ms, past
+// the old 300 ms hang bound.
+const SLOW_START_DELAY_MS = 120;
 
 interface Fixture {
   root: string;
@@ -79,6 +86,8 @@ const logPath = process.env.FAKE_CODEX_LOG;
 const root = process.env.FAKE_MARKETPLACE_ROOT;
 const codexHome = process.env.CODEX_HOME;
 if (!statePath || !logPath || !root || !codexHome) process.exit(91);
+const startDelayMs = Number(process.env.FAKE_CODEX_START_DELAY_MS ?? "0");
+if (startDelayMs > 0) await Bun.sleep(startDelayMs);
 appendFileSync(logPath, JSON.stringify({ args, codexHome }) + "\\n");
 const state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : { marketplace: false, installed: false };
 const save = () => writeFileSync(statePath, JSON.stringify(state));
@@ -272,15 +281,16 @@ test("first install qualifies with the exact missing-profile warning on every he
   }
 });
 
-test("qualification rejects malformed, extra, and foreign-profile warnings", async () => {
-  for (const scenario of [
-    "qualification-warning-malformed",
-    "qualification-warning-extra",
-    "qualification-warning-foreign",
-  ]) {
+test.each([
+  "qualification-warning-malformed",
+  "qualification-warning-extra",
+  "qualification-warning-foreign",
+])(
+  "qualification rejects malformed, extra, and foreign-profile warnings (%s)",
+  async (scenario) => {
     const fixture = makeFixture(`codex-host-${scenario}-`);
     try {
-      const adapter = await host(fixture, scenario);
+      const adapter = await host(fixture, scenario, ROLLBACK_INVOKE_TIMEOUT_MS);
       expect(adapter.plugin.state, scenario).not.toBe("supported");
       expect(
         calls(fixture).map(({ args }) => args),
@@ -291,8 +301,9 @@ test("qualification rejects malformed, extra, and foreign-profile warnings", asy
     } finally {
       rmSync(fixture.root, { recursive: true, force: true });
     }
-  }
-});
+  },
+  SCENARIO_TEST_TIMEOUT_MS,
+);
 
 test("operational plugin-list failure on a missing profile remains unknown", async () => {
   const fixture = makeFixture("codex-host-missing-profile-status-");
@@ -588,23 +599,29 @@ test("a complete unrelated local marketplace inventory does not block installati
   }
 });
 
-test("unknown, malformed, duplicate, and foreign marketplace inventory never mutates", async () => {
-  for (const scenario of [
-    "marketplace-list-failed",
-    "marketplace-list-hang",
-    "marketplace-list-malformed",
-    "marketplace-list-duplicate",
-    "marketplace-list-foreign",
-  ]) {
+test.each([
+  "marketplace-list-failed",
+  "marketplace-list-hang",
+  "marketplace-list-malformed",
+  "marketplace-list-duplicate",
+  "marketplace-list-foreign",
+])(
+  "unknown, malformed, duplicate, and foreign marketplace inventory never mutates (%s)",
+  async (scenario) => {
+    const hangs = scenario === "marketplace-list-hang";
     const fixture = makeFixture(`codex-host-inventory-${scenario}-`);
     try {
       const adapter = await host(
         fixture,
         scenario,
-        scenario === "marketplace-list-hang" ? 300 : 1_000,
+        hangs ? HANG_INVOKE_TIMEOUT_MS : ROLLBACK_INVOKE_TIMEOUT_MS,
       );
+      expect(adapter.plugin.state, adapter.plugin.detail).toBe("supported");
       const result = await adapter.invoke(adapter.plugin.installArgv ?? []);
       expect(result.ok, scenario).toBe(false);
+      if (hangs) {
+        expect(result.detail, scenario).toBe("Codex plugin operation failed or exceeded its bound");
+      }
       expect(
         calls(fixture)
           .map(({ args }) => args)
@@ -616,27 +633,60 @@ test("unknown, malformed, duplicate, and foreign marketplace inventory never mut
     } finally {
       rmSync(fixture.root, { recursive: true, force: true });
     }
-  }
-});
+  },
+  SCENARIO_TEST_TIMEOUT_MS,
+);
 
-test("ambiguous post-add status never grants full plugin ownership", async () => {
-  for (const scenario of [
-    "post-add-list-hang",
-    "post-add-malformed-list",
-    "disabled",
-    "foreign-source",
-  ]) {
+test(
+  "a hanging marketplace list under a slow codex start is still qualified, reached, and bounded",
+  async () => {
+    const fixture = makeFixture("codex-host-inventory-slow-start-hang-");
+    try {
+      const adapter = await host(fixture, "marketplace-list-hang", HANG_INVOKE_TIMEOUT_MS, {
+        FAKE_CODEX_START_DELAY_MS: String(SLOW_START_DELAY_MS),
+      });
+      expect(adapter.plugin.state, adapter.plugin.detail).toBe("supported");
+      const result = await adapter.invoke(adapter.plugin.installArgv ?? []);
+      expect(result).toEqual({
+        ok: false,
+        detail: "Codex plugin operation failed or exceeded its bound",
+      });
+      expect(calls(fixture).map(({ args }) => args)).toEqual([
+        ["--version"],
+        ["plugin", "--help"],
+        ["plugin", "marketplace", "--help"],
+        ["plugin", "marketplace", "list", "--json"],
+      ]);
+      expect(existsSync(fixture.statePath)).toBe(false);
+      expect(existsSync(fixture.codexDir)).toBe(false);
+    } finally {
+      rmSync(fixture.root, { recursive: true, force: true });
+    }
+  },
+  SCENARIO_TEST_TIMEOUT_MS,
+);
+
+test.each(["post-add-list-hang", "post-add-malformed-list", "disabled", "foreign-source"])(
+  "ambiguous post-add status never grants full plugin ownership (%s)",
+  async (scenario) => {
+    const hangs = scenario === "post-add-list-hang";
     const fixture = makeFixture(`codex-host-post-add-${scenario}-`);
     try {
       const adapter = await host(
         fixture,
         scenario,
-        scenario === "post-add-list-hang" ? 300 : 1_000,
+        hangs ? HANG_INVOKE_TIMEOUT_MS : ROLLBACK_INVOKE_TIMEOUT_MS,
       );
+      expect(adapter.plugin.state, adapter.plugin.detail).toBe("supported");
       const result = await adapter.invoke(adapter.plugin.installArgv ?? []);
       expect(result.ok, scenario).toBe(false);
       expect(result.installed, scenario).not.toBe(true);
       expect(result.ownership?.pluginOwned, scenario).not.toBe(true);
+      if (hangs) {
+        expect(result.detail, scenario).toBe(
+          "plugin add confirmation failed or exceeded its bound",
+        );
+      }
       if (["post-add-list-hang", "post-add-malformed-list", "foreign-source"].includes(scenario)) {
         expect(
           calls(fixture).map(({ args }) => args),
@@ -646,5 +696,6 @@ test("ambiguous post-add status never grants full plugin ownership", async () =>
     } finally {
       rmSync(fixture.root, { recursive: true, force: true });
     }
-  }
-});
+  },
+  SCENARIO_TEST_TIMEOUT_MS,
+);
