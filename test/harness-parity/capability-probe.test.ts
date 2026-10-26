@@ -99,23 +99,37 @@ async function waitForCaptureReservation(path: string): Promise<boolean> {
   return false;
 }
 
-function isProcessTerminated(pid: number): boolean {
+// The /proc reader is injectable so tests can force the reap race (#283) without timing.
+interface ProcStatReader {
+  platform: NodeJS.Platform;
+  readStat: (path: string) => string;
+}
+
+const liveProcStat: ProcStatReader = {
+  platform: process.platform,
+  readStat: (path) => readFileSync(path, "utf8"),
+};
+
+function isProcessTerminated(pid: number, proc: ProcStatReader = liveProcStat): boolean {
   try {
     process.kill(pid, 0);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ESRCH") return true;
     throw error;
   }
-  if (process.platform !== "linux") return false;
+  if (proc.platform !== "linux") return false;
   try {
-    const stat = readFileSync(`/proc/${pid.toString()}/stat`, "utf8");
+    const stat = proc.readStat(`/proc/${pid.toString()}/stat`);
     const commandEnd = stat.lastIndexOf(") ");
     if (commandEnd === -1 || stat.length <= commandEnd + 2) {
       throw new Error(`invalid process stat for pid ${pid.toString()}`);
     }
     return stat[commandEnd + 2] === "Z";
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
+    // ENOENT: the /proc entry was already gone at open(). ESRCH: init reaped the
+    // process between open() and read() (#283). Both mean it has terminated.
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ESRCH") return true;
     throw error;
   }
 }
@@ -829,6 +843,56 @@ test("the process termination wait rejects a live process and accepts its exit",
     await exited;
   }
   await expect(waitForProcessTermination(pid, 50)).resolves.toBeUndefined();
+});
+
+function errnoError(code: string, syscall: string): NodeJS.ErrnoException {
+  return Object.assign(new Error(`${code}: simulated, ${syscall}`), { code, syscall });
+}
+
+test("the process termination probe treats ESRCH from the /proc stat read as terminated", () => {
+  const reads: string[] = [];
+  const reapedDuringRead = errnoError("ESRCH", "read");
+  let outcome: unknown;
+  try {
+    outcome = isProcessTerminated(process.pid, {
+      platform: "linux",
+      readStat: (path) => {
+        reads.push(path);
+        throw reapedDuringRead;
+      },
+    });
+  } catch (error) {
+    outcome = error;
+  }
+  expect(outcome).toBe(true);
+  expect(reads).toEqual([`/proc/${process.pid.toString()}/stat`]);
+});
+
+test("the process termination probe still reads zombie state and rethrows other /proc errors", () => {
+  const linuxStat = (stat: string): ProcStatReader => ({ platform: "linux", readStat: () => stat });
+  const linuxThrow = (error: Error): ProcStatReader => ({
+    platform: "linux",
+    readStat: () => {
+      throw error;
+    },
+  });
+  expect(isProcessTerminated(process.pid, linuxStat("4242 (holder) Z 1 4242 4242"))).toBe(true);
+  expect(isProcessTerminated(process.pid, linuxStat("4242 (holder) S 1 4242 4242"))).toBe(false);
+  expect(isProcessTerminated(process.pid, linuxThrow(errnoError("ENOENT", "open")))).toBe(true);
+  expect(() => isProcessTerminated(process.pid, linuxThrow(errnoError("EACCES", "open")))).toThrow(
+    "EACCES",
+  );
+  const darwinReads: string[] = [];
+  expect(
+    isProcessTerminated(process.pid, {
+      platform: "darwin",
+      readStat: (path) => {
+        darwinReads.push(path);
+        return "";
+      },
+    }),
+  ).toBe(false);
+  expect(darwinReads).toEqual([]);
 });
 
 test("the real adapter drains heavy output and bounds owned process shutdown", async () => {
