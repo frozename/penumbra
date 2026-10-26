@@ -106,6 +106,62 @@ export function detectCapacityError(stderr: string): CapacityError | null {
   return null;
 }
 
+/** #298: an agy quota exit (AGY_ERROR status RESOURCE_EXHAUSTED or error_code 429). */
+export interface QuotaExhaustion {
+  provider: string;
+  model: string | null;
+  /** Absolute ISO time from "Resets in <h>h<m>m<s>s", or null when absent or unparseable. */
+  resetsAt: string | null;
+  raw: string;
+}
+
+export class QuotaExhaustedError extends Error {
+  readonly quota: QuotaExhaustion;
+
+  constructor(message: string, quota: QuotaExhaustion) {
+    super(message);
+    this.name = "QuotaExhaustedError";
+    this.quota = quota;
+  }
+}
+
+const AGY_ERROR_RE = /AGY_ERROR:[^\n]*/;
+const AGY_QUOTA_STATUS_RE = /"status"\s*:\s*"RESOURCE_EXHAUSTED"/;
+const AGY_QUOTA_CODE_RE = /"error_code"\s*:\s*429(?!\d)/;
+const AGY_MODEL_RE = /"model"\s*:\s*"([^"]+)"/;
+const RESETS_IN_RE = /Resets in ((?:\d+[hms])+)/;
+const DURATION_PART_RE = /(\d+)([hms])/g;
+const DURATION_UNIT_MS: Record<string, number> = { h: 3_600_000, m: 60_000, s: 1000 };
+
+function parseResetsAt(text: string, now: Date): string | null {
+  const spec = RESETS_IN_RE.exec(text)?.[1];
+  if (!spec) return null;
+  let ms = 0;
+  for (const part of spec.matchAll(DURATION_PART_RE)) {
+    ms += Number(part[1]) * (DURATION_UNIT_MS[part[2] ?? ""] ?? 0);
+  }
+  const at = new Date(now.getTime() + ms);
+  return Number.isFinite(at.getTime()) ? at.toISOString() : null;
+}
+
+/** Classify agy quota exhaustion from raw stderr or from a full adapter error message. Never throws. */
+export function detectQuotaExhaustion(
+  text: string,
+  now: Date = new Date(),
+): QuotaExhaustion | null {
+  if (!text) return null;
+  const line = AGY_ERROR_RE.exec(text);
+  if (!line) return null;
+  const raw = line[0].trimEnd();
+  if (!AGY_QUOTA_STATUS_RE.test(raw) && !AGY_QUOTA_CODE_RE.test(raw)) return null;
+  return {
+    provider: "google",
+    model: AGY_MODEL_RE.exec(raw)?.[1] ?? null,
+    resetsAt: parseResetsAt(text, now),
+    raw,
+  };
+}
+
 const DEFAULT_CANCEL_GRACE_S = 10;
 // CLI-adapter watchdog: SIGKILLs the spawned CLI if a single dispatch runs past
 // this. 900s (15m) was too tight for substantial work — CLI agents (gemini/agy,
@@ -501,7 +557,10 @@ function validateExitSuccess(
 function ensureExitCodeOk(opts: SpawnOpts, exit: ProcessExit, stderr: string): void {
   if (exit.code === 0) return;
   const codeText = exit.code === null ? "null" : exit.code.toString();
-  throw new Error(`${opts.command}: exit code ${codeText}${stderr ? ` — ${stderr}` : ""}`);
+  const message = `${opts.command}: exit code ${codeText}${stderr ? ` — ${stderr}` : ""}`;
+  const quota = detectQuotaExhaustion(stderr);
+  if (quota) throw new QuotaExhaustedError(message, quota);
+  throw new Error(message);
 }
 
 async function* runStreamStdout(
@@ -653,7 +712,9 @@ function buildSpawnError(opts: SpawnOpts, exit: ProcessExit, stderr: string): Er
     return new Error(`${opts.command}: signal ${exit.signal}${stderr ? ` — ${stderr}` : ""}`);
   }
   const codeText = exit.code === null ? "null" : exit.code.toString();
-  return new Error(`${opts.command}: exit code ${codeText}${stderr ? ` — ${stderr}` : ""}`);
+  const message = `${opts.command}: exit code ${codeText}${stderr ? ` — ${stderr}` : ""}`;
+  const quota = detectQuotaExhaustion(stderr);
+  return quota ? new QuotaExhaustedError(message, quota) : new Error(message);
 }
 
 export async function spawnCliAdapter(opts: SpawnOpts): Promise<{ text: string; stderr: string }> {

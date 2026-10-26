@@ -2,6 +2,7 @@ import type { AgentChatConfig } from "../config/types.js";
 import type { WriteToolsExecutor } from "../worker/write-tools-executor.js";
 import type { ChatTurnInput, ChatTurnResult } from "./loop.js";
 
+import { detectQuotaExhaustion } from "../adapters/cli-spawn.js";
 import { classifierDeclineMetaFromUnknown } from "../classifier-decline.js";
 import { isTerminalHttpStatus, PenumbraHttpError } from "../penumbra-client.js";
 import { runChatTurn as realRunChatTurn } from "./loop.js";
@@ -296,6 +297,12 @@ function foldAttempt(
   return { ok: true, turn: result.turn };
 }
 
+/** #298: no further attempt once an attempt failed on a provider quota; the seat stays exhausted until its reset. */
+function nextBackoffMs(attempt: number, result: TurnAttempt): number | undefined {
+  if (result.errMsg !== null && detectQuotaExhaustion(result.errMsg) !== null) return undefined;
+  return RETRY_BACKOFF_MS[attempt];
+}
+
 async function runTurnWithRetry(
   opts: DispatchHandoffOpts,
   targetAgent: string,
@@ -312,11 +319,12 @@ async function runTurnWithRetry(
   for (let attempt = 0; attempt <= RETRY_BACKOFF_MS.length; attempt++) {
     if (opts.signal?.aborted)
       return { ok: false, result: cancelledRetryResult(targetAgent, state.lastErrMeta) };
-    const done = foldAttempt(state, pending, await runTurnOnce(opts, targetAgent, promptText));
+    const result = await runTurnOnce(opts, targetAgent, promptText);
+    const done = foldAttempt(state, pending, result);
     if (done) return done;
     if (opts.signal?.aborted)
       return { ok: false, result: cancelledRetryResult(targetAgent, state.lastErrMeta) };
-    const backoff = RETRY_BACKOFF_MS[attempt];
+    const backoff = nextBackoffMs(attempt, result);
     if (backoff === undefined) break;
     await delay(backoff);
   }
