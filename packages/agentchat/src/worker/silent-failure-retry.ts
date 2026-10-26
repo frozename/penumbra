@@ -175,6 +175,8 @@ export function shouldRetryHandoffForSilentFailure(
   perf: PerformanceForRetry | null | undefined,
 ): boolean {
   if (handoff.dispatch_kind === "long_lived_tick") return false;
+  // The analyzer pool owns its own fallback, and runThoughtAnalyzer never reads a retried result (#288).
+  if (handoff.dispatch_kind === "thought_analyzer") return false;
   // Non-mutating dispatches leave worktrees untouched by design; retrying their prompts on
   // role-routed seats can fabricate a replacement result (observed 2026-08-26).
   if (isNonMutatingTaskType(handoff.chain_task_type)) return false;
