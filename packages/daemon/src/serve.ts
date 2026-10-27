@@ -246,6 +246,7 @@ import {
   tasksUnlinkGhRoute,
 } from "./routes/tasks.js";
 import {
+  usageProviderQuotasRoute,
   usageQuotaStatusRoute,
   usageRecentRoute,
   usageSubscriptionPressureRoute,
@@ -776,6 +777,9 @@ const ROUTES: Route[] = [
   // usage + routing
   staticRoute("GET", "/usage/recent", (req, ctx) => usageRecentRoute(req, ctx.services)),
   staticRoute("GET", "/usage/quota_status", (req, ctx) => usageQuotaStatusRoute(req, ctx.services)),
+  staticRoute("GET", "/usage/provider_quotas", (_req, ctx) =>
+    usageProviderQuotasRoute(ctx.services),
+  ),
   staticRoute("GET", "/usage/subscription_pressure", (req, ctx) =>
     usageSubscriptionPressureRoute(req, ctx.services),
   ),
