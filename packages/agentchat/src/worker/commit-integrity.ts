@@ -110,7 +110,16 @@ async function readExpectedIdents(
 // another local branch or any remote-tracking ref (a newer main the agent
 // rebased onto, or the parent branch of a stacked dispatch) was not created
 // by this dispatch. The branch's own remote-tracking copies stay counted.
-function branchOnlyLogArgs(baseSha: string, branchName: string): string[] {
+// #238: the same holds for the worktree's FETCH_HEAD after
+// `git fetch <url> main && git rebase FETCH_HEAD`, which creates no
+// remote-tracking ref. It is passed as a resolved SHA, never by name:
+// `--not FETCH_HEAD` is fatal when FETCH_HEAD is missing, and a failed scan
+// is treated as untrustworthy.
+function branchOnlyLogArgs(
+  baseSha: string,
+  branchName: string,
+  fetchHeadSha: string | null,
+): string[] {
   return [
     "log",
     "--first-parent",
@@ -123,6 +132,7 @@ function branchOnlyLogArgs(baseSha: string, branchName: string): string[] {
     "--branches",
     `--exclude=*/${branchName}`,
     "--remotes",
+    ...(fetchHeadSha === null ? [] : [fetchHeadSha]),
     "--",
   ];
 }
@@ -143,10 +153,17 @@ async function listMismatchedCommits(
   range: { baseSha: string; branchName: string },
   expected: ExpectedIdents,
 ): Promise<string[] | null> {
-  const log = await gitOutput(runner, branchOnlyLogArgs(range.baseSha, range.branchName), {
-    ...opts,
-    maxBuffer: LOG_MAX_BUFFER_BYTES,
-  });
+  // FETCH_HEAD is per-worktree, and opts.cwd is the dispatch worktree.
+  const fetchHeadSha = await readSha(
+    runner,
+    ["rev-parse", "--verify", "--quiet", "FETCH_HEAD^{commit}"],
+    opts,
+  );
+  const log = await gitOutput(
+    runner,
+    branchOnlyLogArgs(range.baseSha, range.branchName, fetchHeadSha),
+    { ...opts, maxBuffer: LOG_MAX_BUFFER_BYTES },
+  );
   if (log === null) return null;
   return log
     .split("\n")
