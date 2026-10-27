@@ -2,7 +2,7 @@ import type { DispatchEventInput } from "@penumbra/core";
 
 import { describe, expect, it } from "bun:test";
 
-import { ThoughtCapture } from "@src/worker/thought-capture.js";
+import { heldTailLength, ThoughtCapture } from "@src/worker/thought-capture.js";
 import type { RuntimeThoughtsConfig } from "@src/worker/thought-config.js";
 
 function makeConfig(overrides: Partial<RuntimeThoughtsConfig> = {}): RuntimeThoughtsConfig {
@@ -33,6 +33,89 @@ function makeConfig(overrides: Partial<RuntimeThoughtsConfig> = {}): RuntimeThou
 
 function metaOf(event: DispatchEventInput): Record<string, unknown> {
   return event.meta ?? {};
+}
+
+function makeCoalescingCapture(maxTextBytes = 16384): {
+  cap: ThoughtCapture;
+  enqueued: DispatchEventInput[];
+  tsOf: (chunkIndex: number) => string;
+} {
+  const enqueued: DispatchEventInput[] = [];
+  const base = Date.UTC(2026, 9, 26, 10, 0, 0);
+  let calls = 0;
+  const cap = new ThoughtCapture({
+    config: makeConfig({
+      capture: {
+        maxTextBytes,
+        maxStreamBytes: 1_048_576,
+        adapters: { "stdio-acp": true },
+        perAgentOverrides: {},
+      },
+    }),
+    enqueue: (e: DispatchEventInput): void => {
+      enqueued.push(e);
+    },
+    // One now() call per appended chunk, so chunk i is stamped base + i seconds.
+    now: (): Date => {
+      const at = new Date(base + 1000 * calls);
+      calls += 1;
+      return at;
+    },
+  });
+  return {
+    cap,
+    enqueued,
+    tsOf: (chunkIndex: number): string => new Date(base + 1000 * chunkIndex).toISOString(),
+  };
+}
+
+function appendChunks(cap: ThoughtCapture, chunks: readonly string[]): void {
+  for (const text of chunks) {
+    cap.appendThoughtChunk({ handoffId: "h-1", adapter: "stdio-acp", agentName: "a", text });
+  }
+}
+
+function thoughtTexts(events: DispatchEventInput[]): string[] {
+  return events
+    .filter((e) => e.kind === "agent.thought")
+    .map((e) => {
+      const text = metaOf(e).text;
+      if (typeof text !== "string") throw new Error("expected meta.text to be a string");
+      return text;
+    });
+}
+
+// #297: 50 sentences of 20 one-token chunks; only the last chunk of a sentence ends with ".".
+function sentenceChunks(): string[] {
+  const words = [
+    "The",
+    "worker",
+    "reads",
+    "one",
+    "token",
+    "from",
+    "the",
+    "stream",
+    "and",
+    "checks",
+    "whether",
+    "the",
+    "parser",
+    "state",
+    "is",
+    "ready",
+    "for",
+    "the",
+    "next",
+    "step.",
+  ];
+  const chunks: string[] = [];
+  for (let s = 0; s < 50; s++) {
+    for (const [w, word] of words.entries()) {
+      chunks.push(s === 0 && w === 0 ? word : ` ${word}`);
+    }
+  }
+  return chunks;
 }
 
 describe("ThoughtCapture.recordThought", () => {
@@ -256,5 +339,150 @@ describe("ThoughtCapture.recordThought", () => {
     });
     expect(enqueued).toHaveLength(1);
     expect(metaOf(enqueued[0]!).agent_name).toBe("claude-acp-sonnet");
+  });
+});
+
+describe("ThoughtCapture.appendThoughtChunk (#297)", () => {
+  it("coalesces 1000 one-token chunks into sentence rows with dense sequence_n and first-chunk ts", () => {
+    const chunks = sentenceChunks();
+    expect(chunks).toHaveLength(1000);
+    const { cap, enqueued, tsOf } = makeCoalescingCapture();
+    for (const [i, text] of chunks.entries()) {
+      cap.appendThoughtChunk({ handoffId: "h-1", adapter: "stdio-acp", agentName: "a", text });
+      if (i === 510) cap.flush("h-1");
+    }
+    cap.flush("h-1");
+    for (const e of enqueued) {
+      expect(e.kind).toBe("agent.thought");
+    }
+    const texts = thoughtTexts(enqueued);
+    expect(texts).toHaveLength(50);
+    expect(enqueued.map((e) => metaOf(e).sequence_n)).toEqual(texts.map((_, i) => i));
+    expect(texts.join("")).toBe(chunks.join(""));
+    expect(texts[25]).toBe(chunks.slice(500, 511).join(""));
+    let firstChunk = 0;
+    for (const e of enqueued) {
+      expect(e.ts).toBe(tsOf(firstChunk));
+      const chunkCount = metaOf(e).chunk_count;
+      if (typeof chunkCount !== "number") throw new Error("expected meta.chunk_count");
+      firstChunk += chunkCount;
+    }
+    expect(firstChunk).toBe(1000);
+  });
+
+  it("keeps a credential streamed in 4-char chunks in one row so it is redacted", () => {
+    const { cap, enqueued } = makeCoalescingCapture();
+    const key = "sk-ABCDEFGHJKLMNPQRSTUVWXYZ0123456789ABC";
+    const full = `${"x".repeat(76)}\n${key} is the key, so I will not print it\n`;
+    const chunks: string[] = [];
+    for (let i = 0; i < full.length; i += 4) chunks.push(full.slice(i, i + 4));
+    expect(chunks[19]).toBe("\nsk-");
+    appendChunks(cap, chunks);
+    cap.flush("h-1");
+    const texts = thoughtTexts(enqueued);
+    expect(texts).toHaveLength(2);
+    expect(texts[0]).toBe(`${"x".repeat(76)}\n`);
+    expect(texts.join("")).toContain("[REDACTED]");
+    const windows: string[] = [];
+    for (let i = 0; i + 4 <= key.length; i++) windows.push(key.slice(i, i + 4));
+    const leaks = windows.filter((w) => texts.some((t) => t.includes(w)));
+    expect(leaks).toEqual([]);
+  });
+
+  it("writes an unfinished tail only on flush(), summing token_count", () => {
+    const { cap, enqueued } = makeCoalescingCapture();
+    const pairs: [string, number | undefined][] = [
+      ["Still", 1],
+      [" thinking", 2],
+      [" about", 3],
+      [" it", undefined],
+    ];
+    for (const [text, tokenCount] of pairs) {
+      cap.appendThoughtChunk({
+        handoffId: "h-1",
+        adapter: "stdio-acp",
+        agentName: "a",
+        text,
+        tokenCount,
+      });
+    }
+    expect(enqueued).toHaveLength(0);
+    cap.flush("h-1");
+    expect(enqueued).toHaveLength(1);
+    expect(enqueued[0]).toMatchObject({
+      kind: "agent.thought",
+      handoff_id: "h-1",
+      meta: {
+        sequence_n: 0,
+        adapter: "stdio-acp",
+        agent_name: "a",
+        text: "Still thinking about it",
+        token_count: 6,
+        chunk_count: 4,
+      },
+    });
+    cap.flush("h-1");
+    cap.flush("never-seen");
+    expect(enqueued).toHaveLength(1);
+  });
+
+  it("never writes a row longer than maxTextBytes and truncates nothing", () => {
+    const { cap, enqueued } = makeCoalescingCapture(100);
+    appendChunks(
+      cap,
+      Array.from({ length: 30 }, () => "abcd"),
+    );
+    expect(thoughtTexts(enqueued).map((t) => t.length)).toEqual([100]);
+    cap.flush("h-1");
+    expect(enqueued.map((e) => e.kind)).toEqual(["agent.thought", "agent.thought"]);
+    expect(thoughtTexts(enqueued).map((t) => t.length)).toEqual([100, 20]);
+    expect(enqueued.map((e) => metaOf(e).chunk_count)).toEqual([25, 5]);
+    expect(metaOf(enqueued[0]!).token_count).toBeUndefined();
+  });
+
+  it("heldTailLength holds back only a fragment that may start a credential", () => {
+    expect(heldTailLength("use sk-")).toBe(3);
+    expect(heldTailLength("token: Bearer ab.c")).toBe("Bearer ab.c".length);
+    expect(heldTailLength("call gh")).toBe(2);
+    expect(heldTailLength("use Bearer")).toBe(6);
+    expect(heldTailLength("https://discord.com/api/webhooks/123/ab")).toBe(39);
+    expect(heldTailLength("this")).toBe(1);
+    expect(heldTailLength("done.")).toBe(0);
+    expect(heldTailLength("ends here.")).toBe(0);
+    expect(heldTailLength(`see sk-${"a".repeat(600)}`)).toBe(0);
+  });
+
+  it("recordThought still writes one row per call without chunk_count", () => {
+    const { cap, enqueued } = makeCoalescingCapture();
+    cap.recordThought({
+      handoffId: "h-1",
+      adapter: "stdio-acp",
+      agentName: "a",
+      text: "whole block one",
+    });
+    cap.recordThought({
+      handoffId: "h-1",
+      adapter: "stdio-acp",
+      agentName: "a",
+      text: "whole block two",
+    });
+    expect(thoughtTexts(enqueued)).toEqual(["whole block one", "whole block two"]);
+    expect(enqueued.map((e) => "chunk_count" in metaOf(e))).toEqual([false, false]);
+  });
+
+  it("caps a coalesced row at 2048 chars so its meta stays under the 4096-char event limit", () => {
+    const { cap, enqueued } = makeCoalescingCapture();
+    appendChunks(
+      cap,
+      Array.from({ length: 600 }, () => "abcd"),
+    );
+    expect(thoughtTexts(enqueued).map((t) => t.length)).toEqual([2048]);
+    cap.flush("h-1");
+    expect(thoughtTexts(enqueued).map((t) => t.length)).toEqual([2048, 352]);
+    expect(enqueued.map((e) => metaOf(e).chunk_count)).toEqual([512, 88]);
+    for (const e of enqueued) {
+      expect(e.kind).toBe("agent.thought");
+      expect(JSON.stringify(metaOf(e)).length).toBeLessThan(4096);
+    }
   });
 });
