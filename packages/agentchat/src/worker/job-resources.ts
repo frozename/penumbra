@@ -15,6 +15,8 @@ import {
 export const ADMISSION_FLOOR_ABOVE_AVAILABLE_MSG =
   "host MemAvailable is below the derived claim admission floor; claims may never be admitted. Set PENUMBRA_JOB_ADMIT_MIN_GIB to change the floor";
 export const CLAIM_ADMISSION_TIMEOUT_MSG = "host memory admission timeout: claim not admitted";
+export const HEAVY_LOCK_IN_PROCESS_ONLY_MSG =
+  "heavy-job lock is in-process only (no flock(1) on PATH, /usr/bin or /bin): heavy stages are serialized only inside this worker process, not across workers or other penumbra processes";
 
 export interface WorkerJobResources {
   scope: ResourceScopeDetection;
@@ -63,8 +65,18 @@ export async function setupWorkerJobResources(
     }
   }
   const waitMs = jobEnv.admitWaitS * 1000;
+  const lock = deps.lock ?? new HeavyJobLock({ path: jobEnv.heavyLockPath, log });
+  if (!lock.crossProcess) {
+    log.warn(
+      {
+        path: lock.path,
+        remedy: "install flock(1) (e.g. Homebrew flock) and restart the daemon",
+      },
+      HEAVY_LOCK_IN_PROCESS_ONLY_MSG,
+    );
+  }
   const heavyStageGate = createHeavyJobGate({
-    lock: deps.lock ?? new HeavyJobLock({ path: jobEnv.heavyLockPath, log }),
+    lock,
     admitMinGiB,
     waitMs,
     log,

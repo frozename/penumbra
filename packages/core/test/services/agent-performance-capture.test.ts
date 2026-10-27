@@ -8,6 +8,7 @@ import {
   captureAgentPerformanceFromDispatch,
   captureAgentPerformanceFromReconciler,
   isAgyQuotaFailure,
+  isContextOverflowFailure,
   meaningfulOutput,
   MIN_RESPONSE_CHARS,
 } from "@src/services/agent-performance-capture.js";
@@ -27,6 +28,7 @@ const AGY_QUOTA_REASON =
 const AGY_INTERNAL_REASON =
   "~/.local/bin/agy: exit code 1 — error: internal error\n" +
   'AGY_ERROR: {"short_error":"INTERNAL (code 500)","status":"INTERNAL","error_code":500,"code_kind":"http","retryable":false}';
+const CONTEXT_OVERFLOW_REASON = "openai-compat-http: HTTP 400 exceed_context_size_error";
 
 describe("captureAgentPerformanceFromReconciler", () => {
   let db: Database;
@@ -1808,6 +1810,29 @@ describe("captureAgentPerformanceFromReconciler", () => {
     expect(row.failure_class).toBeNull();
     expect(isNeutralPerformanceOutcome(row)).toBe(false);
   });
+
+  it("a failed handoff whose reason names exceed_context_size_error is classed context_overflow (#295)", () => {
+    seedFailedWorktreeDispatch(CONTEXT_OVERFLOW_REASON);
+    const row = captureFailedDispatch("perf-overflow");
+    expect(row.failure_class).toBe("context_overflow");
+    expect(row.environment_failure).toBeUndefined();
+    expect(row.outcome).toBe("failed");
+    expect(row.notes).toBe("error (silent_failure: empty worktree)");
+    expect(isNeutralPerformanceOutcome(row)).toBe(false);
+    expect(JSON.parse(row.metadata_json)).not.toHaveProperty("quota_exhausted");
+    expect(persistedClassification()).toEqual({
+      notes: "error (silent_failure: empty worktree)",
+      failure_class: "context_overflow",
+      environment_failure: null,
+    });
+  });
+
+  it("a quota failure that also names exceed_context_size_error stays a quota failure (#295)", () => {
+    seedFailedWorktreeDispatch(`${AGY_QUOTA_REASON}\n${CONTEXT_OVERFLOW_REASON}`);
+    const row = captureFailedDispatch("perf-quota-overflow");
+    expect(row.failure_class).toBe("quota");
+    expect(row.environment_failure).toBe("y");
+  });
 });
 
 describe("isAgyQuotaFailure", () => {
@@ -1867,6 +1892,36 @@ describe("isAgyQuotaFailure", () => {
         status: "failed",
         resolution_reason:
           'upstream said AGY_ERROR: {"status":"RESOURCE_EXHAUSTED","error_code":429}',
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("isContextOverflowFailure", () => {
+  it("matches a failed handoff whose reason names exceed_context_size_error", () => {
+    expect(
+      isContextOverflowFailure({ status: "failed", resolution_reason: CONTEXT_OVERFLOW_REASON }),
+    ).toBe(true);
+  });
+
+  it("ignores a handoff that is not failed", () => {
+    expect(
+      isContextOverflowFailure({ status: "completed", resolution_reason: CONTEXT_OVERFLOW_REASON }),
+    ).toBe(false);
+  });
+
+  it("rejects a null reason and other HTTP errors", () => {
+    expect(isContextOverflowFailure({ status: "failed", resolution_reason: null })).toBe(false);
+    expect(
+      isContextOverflowFailure({
+        status: "failed",
+        resolution_reason: "openai-compat-http: HTTP 400",
+      }),
+    ).toBe(false);
+    expect(
+      isContextOverflowFailure({
+        status: "failed",
+        resolution_reason: "openai-compat-http: HTTP 500",
       }),
     ).toBe(false);
   });

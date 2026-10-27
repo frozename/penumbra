@@ -1,5 +1,9 @@
 # penumbra
 
+<p align="center">
+  <img src="./.github/branding/logo.png" alt="Penumbra logo" width="640" />
+</p>
+
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Runtime: Bun](https://img.shields.io/badge/runtime-Bun-000000.svg)](https://bun.sh)
 [![TypeScript strict](https://img.shields.io/badge/TypeScript-strict-3178C6.svg)](./tsconfig.base.json)
