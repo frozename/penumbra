@@ -329,6 +329,86 @@ const TOOL_CALL_UPDATE = {
   input: { command: "git restore ." },
 };
 
+interface ThoughtCoalescingHarness {
+  adapter: StdioAcpAdapter;
+  rows: DispatchEventInput[];
+  timeline: string[];
+}
+
+/**
+ * #297: `onPrompt` runs inside session/prompt with a synchronous sender for
+ * session/update notifications, and returns the prompt response or throws.
+ * `timeline` records written thought rows and tool_call capture events in order.
+ */
+function createThoughtCoalescingHarness(
+  onPrompt: (send: (update: Record<string, unknown>) => void) => unknown,
+): ThoughtCoalescingHarness {
+  const rows: DispatchEventInput[] = [];
+  const timeline: string[] = [];
+  const thoughtCapture = new ThoughtCapture({
+    config: {
+      enabled: true,
+      capture: {
+        maxTextBytes: 16384,
+        maxStreamBytes: 1048576,
+        adapters: { "stdio-acp": true },
+        perAgentOverrides: {},
+      },
+      analyze: {
+        enabled: false,
+        onlyWhen: [],
+        digest: { enabled: false, pool: "x", maxInputChars: 50000, timeoutMs: 60000 },
+        signals: {
+          enabled: false,
+          pool: "x",
+          timeoutMs: 60000,
+          maxInputChars: null,
+          definitions: [],
+        },
+      },
+    },
+    enqueue: (event: DispatchEventInput): void => {
+      if (event.kind !== "agent.thought") return;
+      rows.push(event);
+      const text = event.meta?.text;
+      if (typeof text === "string") timeline.push(`row:${text}`);
+    },
+  });
+  const capturePort = makeMockCapturePort({
+    emit: (event): void => {
+      if (event.kind === "tool_call") timeline.push("tool_call");
+    },
+  });
+  let updateHandler: ((params: unknown) => void) | undefined;
+  const send = (update: Record<string, unknown>): void => {
+    updateHandler?.({ sessionId: "session-123", update });
+  };
+  const handle = makeMockAcpHandle();
+  const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+  startServer.mockResolvedValue(handle);
+  const request = makeStandardClientRequest({ onSessionPrompt: (): unknown => onPrompt(send) });
+  const adapter = new StdioAcpAdapter(
+    { binary: "mock-acp", model: "qwen-acp", mcpServers: [makePenumbraMcpServer()], capturePort },
+    {
+      startServer,
+      createClient: (): StdioAcpClient =>
+        makeMockAcpClient({
+          request,
+          on: (method: string, handler: (params: unknown) => void): void => {
+            if (method === "session/update") updateHandler = handler;
+          },
+          onRequest: vi.fn<StdioAcpClient["onRequest"]>(),
+        }),
+      thoughtCapture,
+    },
+  );
+  return { adapter, rows, timeline };
+}
+
+function thoughtChunkUpdate(text: string): Record<string, unknown> {
+  return { sessionUpdate: "agent_thought_chunk", content: { type: "text", text } };
+}
+
 describe("StdioAcpAdapter", () => {
   it("kills a silent child when initialize exceeds bootTimeoutMs", async () => {
     const handle = makeMockAcpHandle({
@@ -1151,6 +1231,48 @@ describe("StdioAcpAdapter", () => {
         token_count: 3,
       },
     });
+  });
+
+  it("coalesces streamed thought chunks into one row per segment, split at a tool call (#297)", async () => {
+    const { adapter, rows, timeline } = createThoughtCoalescingHarness((send): unknown => {
+      for (const text of ["Let", "'s", " read", " the", " file"]) {
+        send(thoughtChunkUpdate(text));
+      }
+      send(TOOL_CALL_UPDATE);
+      for (const text of ["Now", " edit", " it"]) {
+        send(thoughtChunkUpdate(text));
+      }
+      return { stopReason: "end_turn" };
+    });
+    await dispatch(adapter, {
+      prompt: "hello",
+      signal: new AbortController().signal,
+      handoff_id: "h-acp-297",
+    });
+    expect(timeline).toEqual(["row:Let's read the file", "tool_call", "row:Now edit it"]);
+    expect(rows.map((row) => row.meta?.sequence_n)).toEqual([0, 1]);
+    expect(rows.map((row) => row.meta?.chunk_count)).toEqual([5, 3]);
+    for (const row of rows) {
+      expect(row.handoff_id).toBe("h-acp-297");
+    }
+  });
+
+  it("flushes buffered thought text when session/prompt rejects (#297)", async () => {
+    const { adapter, timeline } = createThoughtCoalescingHarness((send): unknown => {
+      for (const text of ["Half", " a", " thought"]) {
+        send(thoughtChunkUpdate(text));
+      }
+      throw new Error("prompt-failed");
+    });
+    await expectRejection(
+      dispatch(adapter, {
+        prompt: "hello",
+        signal: new AbortController().signal,
+        handoff_id: "h-acp-297-err",
+      }),
+      "prompt-failed",
+    );
+    expect(timeline).toEqual(["row:Half a thought"]);
   });
 
   it("emits ACP lifecycle events when eventContext is present", async () => {
