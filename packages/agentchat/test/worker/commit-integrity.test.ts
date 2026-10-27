@@ -105,6 +105,25 @@ async function commitIn(
 
 const FOREIGN_AUTHOR = ["--author=Human Operator <human@example.com>"];
 
+const UPSTREAM = { name: "Upstream Dev", email: "upstream@example.com" };
+
+// #238: rebase the dispatch branch onto main fetched by URL from a clone that
+// gained two upstream commits. The fetch writes only the worktree's
+// FETCH_HEAD and creates no remote-tracking ref. Returns the upstream SHAs,
+// oldest first, as a tuple so upstream[1] is a string under
+// noUncheckedIndexedAccess.
+async function rebaseOntoFetchedMain(repoDir: string, wtPath: string): Promise<[string, string]> {
+  const upstreamDir = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-commit-integrity-upstream-"));
+  tempDirs.push(upstreamDir);
+  await git(upstreamDir, ["clone", "-q", repoDir, "."]);
+  await git(upstreamDir, ["config", "user.name", UPSTREAM.name]);
+  await git(upstreamDir, ["config", "user.email", UPSTREAM.email]);
+  const upstream: [string, string] = [await commitIn(upstreamDir), await commitIn(upstreamDir)];
+  await git(wtPath, ["fetch", "-q", upstreamDir, "main"]);
+  await git(wtPath, ["rebase", "-q", "FETCH_HEAD"]);
+  return upstream;
+}
+
 describe("probeCommitIntegrity", () => {
   it("reports clean evidence for a commit made with the worktree identity", async () => {
     const { wtPath, baseSha } = await setupFixture();
@@ -253,6 +272,85 @@ describe("probeCommitIntegrity", () => {
     const evidence = await probe(wtPath);
     expect(evidence?.base_is_ancestor).toBe(true);
     expect(evidence?.mismatched_commits).toEqual([]);
+  });
+
+  it("does not flag upstream commits after a rebase onto FETCH_HEAD", async () => {
+    const { repoDir, wtPath, baseSha } = await setupFixture();
+    await commitIn(wtPath);
+    const upstream = await rebaseOntoFetchedMain(repoDir, wtPath);
+    const headSha = await git(wtPath, ["rev-parse", "HEAD"]);
+    // The scenario: rebased onto the fetched tip, and no remote-tracking ref exists.
+    expect(await git(wtPath, ["rev-parse", "HEAD~1"])).toBe(upstream[1]);
+    expect(await git(wtPath, ["for-each-ref", "refs/remotes"])).toBe("");
+
+    const evidence = await probe(wtPath);
+    expect(evidence?.mismatched_total).toBe(0);
+    expect(evidence?.mismatched_commits).toEqual([]);
+    expect(evidence?.base_sha).toBe(baseSha);
+    expect(evidence?.head_sha).toBe(headSha);
+    expect(evidence?.base_is_ancestor).toBe(true);
+  });
+
+  it("still flags a foreign commit made on the branch after a rebase onto FETCH_HEAD", async () => {
+    const { repoDir, wtPath } = await setupFixture();
+    await commitIn(wtPath);
+    await rebaseOntoFetchedMain(repoDir, wtPath);
+    const foreignSha = await commitIn(wtPath, { args: FOREIGN_AUTHOR });
+
+    const evidence = await probe(wtPath);
+    expect(evidence?.mismatched_commits).toEqual([foreignSha]);
+    expect(evidence?.mismatched_total).toBe(1);
+  });
+
+  it("keeps the log argv unchanged when the worktree has no FETCH_HEAD", async () => {
+    const { wtPath, baseSha } = await setupFixture();
+    const foreignSha = await commitIn(wtPath, { args: FOREIGN_AUTHOR });
+    const logArgs: string[][] = [];
+    const spy: WorktreeCommandRunner = async (cmd, args, opts) => {
+      if (args[0] === "log") logArgs.push(args);
+      const res = await execFile(cmd, args, { ...opts, encoding: "utf8" });
+      return { stdout: res.stdout, stderr: res.stderr };
+    };
+
+    const evidence = await probe(wtPath, BRANCH, spy);
+    expect(logArgs).toEqual([
+      [
+        "log",
+        "--first-parent",
+        `--max-count=${String(LOG_SCAN_LIMIT)}`,
+        "--format=%H%x00%an%x00%ae%x00%cn%x00%ce",
+        `refs/heads/${BRANCH}`,
+        `^${baseSha}`,
+        "--not",
+        `--exclude=${BRANCH}`,
+        "--branches",
+        `--exclude=*/${BRANCH}`,
+        "--remotes",
+        "--",
+      ],
+    ]);
+    expect(evidence?.mismatched_commits).toEqual([foreignSha]);
+    expect(evidence?.mismatched_total).toBe(1);
+  });
+
+  it("excludes the commit the worktree's FETCH_HEAD resolves to, probed in the worktree", async () => {
+    const { repoDir, wtPath } = await setupFixture();
+    await commitIn(wtPath);
+    const upstream = await rebaseOntoFetchedMain(repoDir, wtPath);
+    const calls: { args: string[]; cwd: string | undefined }[] = [];
+    const spy: WorktreeCommandRunner = async (cmd, args, opts) => {
+      calls.push({ args, cwd: opts?.cwd });
+      const res = await execFile(cmd, args, { ...opts, encoding: "utf8" });
+      return { stdout: res.stdout, stderr: res.stderr };
+    };
+
+    await probe(wtPath, BRANCH, spy);
+    expect(calls.filter((call) => call.args.includes("FETCH_HEAD^{commit}"))).toEqual([
+      { args: ["rev-parse", "--verify", "--quiet", "FETCH_HEAD^{commit}"], cwd: wtPath },
+    ]);
+    const logCalls = calls.filter((call) => call.args[0] === "log");
+    expect(logCalls).toHaveLength(1);
+    expect(logCalls[0]?.args.slice(-3)).toEqual(["--remotes", upstream[1], "--"]);
   });
 
   it("still flags a foreign commit pushed to the branch's own remote-tracking ref", async () => {
