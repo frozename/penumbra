@@ -234,6 +234,16 @@ function isClosedWhileAwaitingReview(status: TaskStatusLike, ghState: GhIssueSta
   return status === "done_pending_review" && ghState === "CLOSED";
 }
 
+// #287: a leased task belongs to its lease. A completed close on GitHub must not try a
+// lease-less completion, which throws LeaseConflict on every cycle; the lease finishes it.
+function isCompletedWhileLeased(
+  status: TaskStatusLike,
+  ghState: GhIssueState,
+  stateReason: string | null,
+): boolean {
+  return status === "leased" && ghState === "CLOSED" && stateReason === "COMPLETED";
+}
+
 function isoToMs(iso: string): number {
   const parsed = Date.parse(iso);
   return Number.isNaN(parsed) ? 0 : parsed;
@@ -841,6 +851,8 @@ async function reconcileTaskWithGh(
     await pushToGh({ task, ghState: gh.state, client: runtime.ghClient });
     return { action: "pushed", direction: "push" };
   }
+  if (isCompletedWhileLeased(task.status, gh.state, gh.stateReason))
+    return { action: "noop", direction: undefined };
   pullGhStateIntoTask(runtime, task, gh, nowIso);
   return { action: "pulled", direction: "pull" };
 }

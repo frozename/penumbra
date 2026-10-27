@@ -1215,3 +1215,152 @@ describe("gh-task-sync: review-pending task with a closed issue (#287)", () => {
     expect(h.writer.get(task_id).status).toBe("done_pending_review");
   });
 });
+
+describe("gh-task-sync: leased task with a closed issue (#287)", () => {
+  function fileLeasedTask(h: SetupHandle, issue: number, leasedAtIso: string): string {
+    const { task_id } = h.writer.file({
+      prompt: "in progress",
+      created_by_kind: "human",
+      created_by_id: "cli",
+    });
+    h.writer.linkGhIssue(task_id, { repo: "frozename/penumbra", issue_number: issue });
+    h.setNow(Date.parse(leasedAtIso));
+    h.writer.lease({ task_id, agent_id: "test-agent", ttl_ms: 3_600_000 });
+    h.db.run(`DELETE FROM gh_outbox`);
+    return task_id;
+  }
+
+  function trackingClient(view: GhIssueView): {
+    client: GhClient;
+    reopened: number[];
+    closed: number[];
+  } {
+    const reopened: number[] = [];
+    const closed: number[] = [];
+    const client = makeGhClient({
+      viewIssue: () => Promise.resolve(view),
+      reopenIssue: (_repo, issue) => {
+        reopened.push(issue);
+        return Promise.resolve();
+      },
+      closeIssue: (_repo, issue) => {
+        closed.push(issue);
+        return Promise.resolve();
+      },
+    });
+    return { client, reopened, closed };
+  }
+
+  function makeSync(
+    h: SetupHandle,
+    client: GhClient,
+    nowIso: string,
+    warns: unknown[],
+  ): GhTaskSyncService {
+    return createGhTaskSyncService({
+      taskWriter: h.writer,
+      ghClient: client,
+      t0Writer: new T0Writer(h.db),
+      now: () => new Date(nowIso),
+      uuid: () => crypto.randomUUID(),
+      userId: "test-user",
+      machineId: "test-machine",
+      log: {
+        warn: (obj) => {
+          warns.push(obj);
+        },
+      },
+    });
+  }
+
+  function openLeaseCount(h: SetupHandle, task_id: string): number {
+    return (
+      h.db
+        .query<
+          { n: number },
+          [string]
+        >(`SELECT COUNT(*) AS n FROM task_leases WHERE task_id = ? AND released_at IS NULL`)
+        .get(task_id)?.n ?? -1
+    );
+  }
+
+  function pulledEventCount(h: SetupHandle): number {
+    return (
+      h.db
+        .query<
+          { n: number },
+          []
+        >(`SELECT COUNT(*) AS n FROM t0_events WHERE event_type = 'task.gh_state_pulled'`)
+        .get()?.n ?? -1
+    );
+  }
+
+  test("pull side: a completed issue newer than a leased task is a noop, not a LeaseConflict", async () => {
+    const h = setup();
+    const task_id = fileLeasedTask(h, 50, "2026-05-08T02:00:00.000Z");
+    const warns: unknown[] = [];
+    const { client, reopened, closed } = trackingClient(
+      viewClosed(50, "COMPLETED", "2026-05-08T03:00:00.000Z"),
+    );
+    const sync = makeSync(h, client, "2026-05-08T03:05:00.000Z", warns);
+
+    const first = await sync.syncAllLinkedTasks();
+
+    expect(first.results.map((r) => r.action)).toEqual(["noop"]);
+    expect(first.errored).toBe(0);
+    expect(warns).toEqual([]);
+
+    const second = await sync.syncAllLinkedTasks();
+
+    expect(second.results.map((r) => r.action)).toEqual(["noop"]);
+    expect(second.errored).toBe(0);
+    expect(warns).toEqual([]);
+    expect(reopened).toEqual([]);
+    expect(closed).toEqual([]);
+    expect(h.writer.get(task_id).status).toBe("leased");
+    expect(openLeaseCount(h, task_id)).toBe(1);
+    expect(pulledEventCount(h)).toBe(0);
+  });
+
+  test("pull side: a not-planned issue newer than a leased task still cancels it", async () => {
+    const h = setup();
+    const task_id = fileLeasedTask(h, 51, "2026-05-08T02:00:00.000Z");
+    const warns: unknown[] = [];
+    const { client, reopened, closed } = trackingClient(
+      viewClosed(51, "NOT_PLANNED", "2026-05-08T03:00:00.000Z"),
+    );
+    const sync = makeSync(h, client, "2026-05-08T03:05:00.000Z", warns);
+
+    const summary = await sync.syncAllLinkedTasks();
+
+    expect(summary.results.map((r) => r.action)).toEqual(["pulled"]);
+    expect(summary.errored).toBe(0);
+    expect(warns).toEqual([]);
+    expect(h.writer.get(task_id).status).toBe("cancelled");
+    expect(openLeaseCount(h, task_id)).toBe(0);
+    expect(pulledEventCount(h)).toBe(1);
+    expect(reopened).toEqual([]);
+    expect(closed).toEqual([]);
+  });
+
+  test("push side: a leased task newer than its completed issue still takes the push branch", async () => {
+    const h = setup();
+    const task_id = fileLeasedTask(h, 52, "2026-05-08T02:00:00.000Z");
+    const warns: unknown[] = [];
+    const { client, reopened, closed } = trackingClient(
+      viewClosed(52, "COMPLETED", "2026-05-08T01:00:00.000Z"),
+    );
+    const sync = makeSync(h, client, "2026-05-08T02:05:00.000Z", warns);
+
+    const summary = await sync.syncAllLinkedTasks();
+
+    // Existing push behaviour, deliberately unchanged by #287: the task is newer, so it wins.
+    expect(summary.results.map((r) => r.action)).toEqual(["pushed"]);
+    expect(reopened).toEqual([52]);
+    expect(closed).toEqual([]);
+    expect(summary.errored).toBe(0);
+    expect(warns).toEqual([]);
+    expect(h.writer.get(task_id).status).toBe("leased");
+    expect(openLeaseCount(h, task_id)).toBe(1);
+  });
+});
