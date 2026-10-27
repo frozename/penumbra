@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   ADMISSION_FLOOR_ABOVE_AVAILABLE_MSG,
   CLAIM_ADMISSION_TIMEOUT_MSG,
+  HEAVY_LOCK_IN_PROCESS_ONLY_MSG,
   setupWorkerJobResources,
 } from "@src/worker/job-resources.js";
 
@@ -160,5 +161,41 @@ test("an aborted claim does not log the admission timeout", async () => {
   controller.abort();
   expect(await res.admitClaim({ handoff_id: "h1" }, controller.signal)).toBe(false);
   const calls = warn.mock.calls.filter((c) => c[1] === CLAIM_ADMISSION_TIMEOUT_MSG);
+  expect(calls.length).toBe(0);
+});
+
+test("boot warns once when the heavy-job lock is in-process only (#313)", async () => {
+  const l = createLogger({ component: "job-resources-test", level: "silent" });
+  const warn = spyOn(l, "warn");
+  const inProcess = lock("job-resources-j");
+  await setupWorkerJobResources(l, {
+    env: { PENUMBRA_JOB_ADMIT_MIN_GIB: "20" },
+    prime,
+    lock: inProcess,
+    memory: { platform: "linux", readMeminfo: meminfo(30) },
+  });
+  const calls = warn.mock.calls.filter((c) => c[1] === HEAVY_LOCK_IN_PROCESS_ONLY_MSG);
+  expect(calls.length).toBe(1);
+  expect(calls[0]?.[0]).toEqual({
+    path: inProcess.path,
+    remedy: "install flock(1) (e.g. Homebrew flock) and restart the daemon",
+  });
+  expect(HEAVY_LOCK_IN_PROCESS_ONLY_MSG).toContain("serialized only inside this worker process");
+});
+
+test("no in-process-only warning when a flock(1) binary is configured (#313)", async () => {
+  const l = createLogger({ component: "job-resources-test", level: "silent" });
+  const warn = spyOn(l, "warn");
+  await setupWorkerJobResources(l, {
+    env: { PENUMBRA_JOB_ADMIT_MIN_GIB: "20" },
+    prime,
+    lock: new HeavyJobLock({
+      path: join(tmpdir(), "job-resources-k.lock"),
+      flockBin: "/nonexistent/flock",
+      log,
+    }),
+    memory: { platform: "linux", readMeminfo: meminfo(30) },
+  });
+  const calls = warn.mock.calls.filter((c) => c[1] === HEAVY_LOCK_IN_PROCESS_ONLY_MSG);
   expect(calls.length).toBe(0);
 });
