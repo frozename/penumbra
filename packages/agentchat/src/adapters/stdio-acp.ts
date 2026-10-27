@@ -499,15 +499,21 @@ export interface StdioAcpOptions {
   permissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk" | "auto";
 }
 
+export interface StdioAcpThoughtInput {
+  handoffId: string;
+  adapter: "stdio-acp";
+  agentName: string;
+  text: string;
+  tokenCount?: number;
+  ts?: string;
+}
+
 export interface StdioAcpThoughtCapture {
-  recordThought: (input: {
-    handoffId: string;
-    adapter: "stdio-acp";
-    agentName: string;
-    text: string;
-    tokenCount?: number;
-    ts?: string;
-  }) => void;
+  recordThought: (input: StdioAcpThoughtInput) => void;
+  /** #297: buffer one streamed chunk; the capture writes coalesced rows. */
+  appendThoughtChunk?: (input: StdioAcpThoughtInput) => void;
+  /** #297: write a dispatch's buffered thought text as one row. */
+  flush?: (handoffId: string) => void;
 }
 
 interface StdioAcpAdapterDeps {
@@ -1191,16 +1197,37 @@ function handleAgentThoughtChunk(ctx: DispatchTurnContext, update: AcpSessionUpd
   if (content?.type !== "text" || typeof content.text !== "string") return;
   ctx.capturePort?.emit({ kind: "agent_thought_chunk", content: content.text });
   if (ctx.input.handoff_id === undefined) return;
+  const capture = ctx.thoughtCapture;
+  if (capture === undefined) return;
+  const thought: StdioAcpThoughtInput = {
+    handoffId: ctx.input.handoff_id,
+    adapter: "stdio-acp",
+    agentName: ctx.modelLabel,
+    text: content.text,
+    tokenCount: typeof update.token_count === "number" ? update.token_count : undefined,
+  };
   try {
-    ctx.thoughtCapture?.recordThought({
-      handoffId: ctx.input.handoff_id,
-      adapter: "stdio-acp",
-      agentName: ctx.modelLabel,
-      text: content.text,
-      tokenCount: typeof update.token_count === "number" ? update.token_count : undefined,
-    });
+    // #297: coalesce chunks into sentence-sized rows when the capture supports it.
+    if (capture.appendThoughtChunk !== undefined) {
+      capture.appendThoughtChunk(thought);
+    } else {
+      capture.recordThought(thought);
+    }
   } catch (err) {
     console.warn("stdio-acp: failed to capture agent_thought_chunk", err);
+  }
+}
+
+// #297: write any buffered thought text of this dispatch as one row.
+function flushThoughtCapture(
+  capture: StdioAcpThoughtCapture | undefined,
+  handoffId: string | undefined,
+): void {
+  if (capture === undefined || handoffId === undefined) return;
+  try {
+    capture.flush?.(handoffId);
+  } catch (err) {
+    console.warn("stdio-acp: failed to flush thought capture", err);
   }
 }
 
@@ -1281,6 +1308,10 @@ function handleUsageUpdate(ctx: DispatchTurnContext, update: AcpSessionUpdate): 
 }
 
 function dispatchSessionUpdate(ctx: DispatchTurnContext, update: AcpSessionUpdate): void {
+  // #297: any non-thought update ends the buffered thought row.
+  if (update.sessionUpdate !== "agent_thought_chunk") {
+    flushThoughtCapture(ctx.thoughtCapture, ctx.input.handoff_id);
+  }
   switch (update.sessionUpdate) {
     case "agent_message_chunk":
       handleAgentMessageChunk(ctx, update);
@@ -1749,6 +1780,8 @@ export class StdioAcpAdapter implements Adapter {
     lifecycleHandles: ServerLifecycleHandles;
     adapterKind: string;
   }): Promise<AcpPromptResponse | null> {
+    // #297: write thought text left over from an earlier turn (the model warmup) as its own row.
+    flushThoughtCapture(this.deps.thoughtCapture, args.input.handoff_id);
     const promptPromise = args.client.request(
       "session/prompt",
       this.buildPromptParams(args.sessionId, args.input),
@@ -1778,6 +1811,7 @@ export class StdioAcpAdapter implements Adapter {
       });
       return response;
     } finally {
+      flushThoughtCapture(this.deps.thoughtCapture, args.input.handoff_id);
       args.state.promptTimeoutRejector = null;
       clearPromptTimer(args.state);
       clearInterval(heartbeatTimer);
