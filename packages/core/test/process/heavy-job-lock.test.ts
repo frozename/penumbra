@@ -61,6 +61,16 @@ describe("HeavyJobLock (in-process)", () => {
     expect(next).not.toBeNull();
     await next?.release();
   });
+
+  test("crossProcess is false without a flock(1) binary and true with one (#313)", () => {
+    expect(new HeavyJobLock({ path: join(root, "e.lock"), flockBin: null, log }).crossProcess).toBe(
+      false,
+    );
+    expect(
+      new HeavyJobLock({ path: join(root, "f.lock"), flockBin: "/nonexistent/flock", log })
+        .crossProcess,
+    ).toBe(true);
+  });
 });
 
 describe("HeavyJobLock (flock across processes)", () => {
