@@ -636,6 +636,48 @@ test("reconcileModeOf defaults to full", () => {
   expect(reconcileModeOf({ reconcile: "off" })).toBe("off");
 });
 
+test("accepts a boolean auto_rebase on a project entry", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
+  dirs.push(dir);
+  const path = join(dir, "projects.yaml");
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: off-proj
+    root_path: /tmp/off-proj
+    auto_rebase: false
+  - project_id: on-proj
+    root_path: /tmp/on-proj
+    auto_rebase: true   # inline comment
+  - project_id: unset-proj
+    root_path: /tmp/unset-proj
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(registry.get("off-proj")?.auto_rebase).toBe(false);
+  expect(registry.get("on-proj")?.auto_rebase).toBe(true);
+  expect(registry.get("unset-proj")?.auto_rebase).toBeUndefined();
+});
+
+test("rejects a non-boolean auto_rebase", () => {
+  for (const value of ["no", "'no'", '"false"', "1", "yes"]) {
+    const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
+    dirs.push(dir);
+    const path = join(dir, "projects.yaml");
+    writeFileSync(
+      path,
+      `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+    auto_rebase: ${value}
+`,
+    );
+
+    expect(() => loadProjectRegistry(path)).toThrow(ProjectRegistryParseError);
+  }
+});
+
 test("quoted inline # is preserved", () => {
   const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
   dirs.push(dir);
