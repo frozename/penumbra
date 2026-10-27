@@ -67,6 +67,21 @@ function failOnDiff(harness: WorktreeInspectionHarness): WorktreeInspectionComma
   };
 }
 
+// #263: a worktree whose branch_base names a branch deleted after the worktree was
+// made, so inspection falls back to main with reason "unresolvable".
+async function worktreeOnDeletedBase(
+  harness: WorktreeInspectionHarness,
+): Promise<{ handoffId: string; path: string; branchName: string }> {
+  gitOutput(harness, harness.repoRoot, ["checkout", "-b", "feature/base"]);
+  writeFileSync(join(harness.repoRoot, "feature-only.txt"), "feature only\n");
+  gitOutput(harness, harness.repoRoot, ["add", "feature-only.txt"]);
+  gitOutput(harness, harness.repoRoot, ["commit", "-m", "feature only"]);
+  gitOutput(harness, harness.repoRoot, ["checkout", "main"]);
+  const handle = await createInspectionWorktree(harness, { branchBase: "feature/base" });
+  gitOutput(harness, harness.repoRoot, ["branch", "-D", "feature/base"]);
+  return handle;
+}
+
 test("an already-expired caller deadline reports that inspection never started", async () => {
   const harness = createWorktreeInspectionHarness();
   try {
@@ -200,6 +215,9 @@ test("a deadline during the diff returns the snapshot head, branch and dirty fla
       branch_name: handle.branchName,
       dirty: true,
       base_ref: "main",
+      base_fallback: false,
+      base_attempted_ref: "main",
+      base_fallback_reason: null,
       verified: false,
     });
   } finally {
@@ -215,6 +233,60 @@ test("a deadline during base resolution returns partial data without base_ref", 
     const result = await inspectWorktreeForHandoff(harness.services, handle.handoffId, {
       expectedProjectId: "project-a",
       runGit: killOnMatch(harness, "--verify"),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected inspection failure");
+    expect(result.message).toMatch(
+      /^worktree inspection deadline expired during base \(git rev-parse\) after \d+ ms \(budget 5000 ms\)$/,
+    );
+    expect(result.partial).toStrictEqual({
+      head_sha: head,
+      branch_name: handle.branchName,
+      dirty: false,
+      verified: false,
+    });
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("a deadline during the diff after a base fallback returns the fallback fields as partial data", async () => {
+  const harness = createWorktreeInspectionHarness();
+  try {
+    const handle = await worktreeOnDeletedBase(harness);
+    const head = gitOutput(harness, handle.path, ["rev-parse", "HEAD"]).trim();
+    const result = await inspectWorktreeForHandoff(harness.services, handle.handoffId, {
+      expectedProjectId: "project-a",
+      runGit: killOnMatch(harness, "diff"),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected inspection failure");
+    expect(result.message).toMatch(
+      /^worktree inspection deadline expired during diff \(git diff\) after \d+ ms \(budget 5000 ms\)$/,
+    );
+    expect(result.partial).toStrictEqual({
+      head_sha: head,
+      branch_name: handle.branchName,
+      dirty: false,
+      base_ref: "main",
+      base_fallback: true,
+      base_attempted_ref: "feature/base",
+      base_fallback_reason: "unresolvable",
+      verified: false,
+    });
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("a deadline while falling back to main returns partial data without base fields", async () => {
+  const harness = createWorktreeInspectionHarness();
+  try {
+    const handle = await worktreeOnDeletedBase(harness);
+    const head = gitOutput(harness, handle.path, ["rev-parse", "HEAD"]).trim();
+    const result = await inspectWorktreeForHandoff(harness.services, handle.handoffId, {
+      expectedProjectId: "project-a",
+      runGit: killOnMatch(harness, "--verify", 2),
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected inspection failure");
@@ -251,6 +323,9 @@ test("a deadline during the recheck still returns the first snapshot as partial 
       branch_name: handle.branchName,
       dirty: false,
       base_ref: "main",
+      base_fallback: false,
+      base_attempted_ref: "main",
+      base_fallback_reason: null,
       verified: false,
     });
   } finally {
@@ -323,6 +398,9 @@ test("the inspect route returns the partial data in its 500 error body", async (
       branch_name: handle.branchName,
       dirty: false,
       base_ref: "main",
+      base_fallback: false,
+      base_attempted_ref: "main",
+      base_fallback_reason: null,
       verified: false,
     });
   } finally {

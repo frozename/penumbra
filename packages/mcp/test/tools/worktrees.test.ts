@@ -192,6 +192,42 @@ test("worktree.inspect drops a malformed partial and keeps code and message", as
   }
 });
 
+test("worktree.inspect passes the base fallback fields in the partial through", async () => {
+  for (const partial of [
+    { ...PARTIAL, base_fallback: false, base_attempted_ref: "main", base_fallback_reason: null },
+    {
+      ...PARTIAL,
+      base_fallback: true,
+      base_attempted_ref: "feature/base",
+      base_fallback_reason: "unresolvable",
+    },
+  ]) {
+    const { isError, text } = await inspectRejectedWith(500, {
+      error: { code: "inspection_failed", message: DEADLINE_MESSAGE, partial },
+    });
+    expect(isError).toBe(true);
+    expect(JSON.parse(text) as ParsedInspectError).toStrictEqual({
+      error: { code: "inspection_failed", message: DEADLINE_MESSAGE, partial },
+    });
+  }
+});
+
+test("worktree.inspect drops a partial with an unknown base_fallback_reason", async () => {
+  const partial = {
+    ...PARTIAL,
+    base_fallback: true,
+    base_attempted_ref: "feature/base",
+    base_fallback_reason: "deleted",
+  };
+  const { isError, text } = await inspectRejectedWith(500, {
+    error: { code: "inspection_failed", message: DEADLINE_MESSAGE, partial },
+  });
+  expect(isError).toBe(true);
+  expect(text).toBe(
+    JSON.stringify({ error: { code: "inspection_failed", message: DEADLINE_MESSAGE } }),
+  );
+});
+
 test("worktree.inspect ignores a partial on a 404", async () => {
   const { text } = await inspectRejectedWith(404, {
     error: { code: "not_found", message: "m", partial: PARTIAL },
