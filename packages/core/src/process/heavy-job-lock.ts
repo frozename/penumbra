@@ -114,6 +114,11 @@ export class HeavyJobLock {
     this.log = opts.log ?? createLogger({ component: "heavy-job-lock" });
   }
 
+  /** False when no flock(1) helper is configured: holders serialize in-process only. */
+  get crossProcess(): boolean {
+    return this.flockBin !== null;
+  }
+
   async acquire(opts: AcquireOptions): Promise<HeavyJobLease | null> {
     const start = Date.now();
     if (!(await this.mutex.acquire(opts))) return null;

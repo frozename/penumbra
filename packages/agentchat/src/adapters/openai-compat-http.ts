@@ -98,7 +98,7 @@ export class OpenAiCompatHttpAdapter implements Adapter {
     try {
       const init = this.buildRequestInit(body, requestAbort.signal);
       const res = await fetch(url, init);
-      if (!res.ok) throw new Error(`openai-compat-http: HTTP ${res.status.toString()}`);
+      if (!res.ok) throw new Error(await httpErrorMessage(res));
       const data = (await res.json()) as OpenAiChatCompletionResponse;
       const msg = data.choices?.[0]?.message;
       const text =
@@ -128,7 +128,7 @@ export class OpenAiCompatHttpAdapter implements Adapter {
     try {
       const init = this.buildRequestInit(body, requestAbort.signal);
       const res = await fetch(url, init);
-      if (!res.ok) throw new Error(`openai-compat-http: HTTP ${res.status.toString()}`);
+      if (!res.ok) throw new Error(await httpErrorMessage(res));
       if (!res.body) throw new Error("openai-compat-http: streaming response has no body");
 
       const acc: StreamAccumulator = {
@@ -340,6 +340,41 @@ function stringifyErrorDetail(value: unknown): string {
   }
   const json = JSON.stringify(value);
   return json && json.length > 0 ? json : "provider returned an error payload";
+}
+
+const HTTP_ERROR_BODY_MAX_CHARS = 4096;
+const HTTP_ERROR_TYPE_RE = /^[a-z_]{1,64}$/;
+
+// #295: name the server's error type (for example llama.cpp's
+// exceed_context_size_error) on a non-OK response so the failure can be
+// classed downstream. Only a short [a-z_] token is kept: the raw body is
+// never put in the message, because it can echo the prompt.
+async function httpErrorMessage(res: Response): Promise<string> {
+  const base = `openai-compat-http: HTTP ${res.status.toString()}`;
+  let text: string;
+  try {
+    text = (await res.text()).slice(0, HTTP_ERROR_BODY_MAX_CHARS);
+  } catch {
+    return base;
+  }
+  const type = errorTypeFromBody(text);
+  return type === undefined ? base : `${base} ${type}`;
+}
+
+function errorTypeFromBody(text: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
+    return undefined;
+  }
+  if (!isRecord(parsed)) return undefined;
+  const { error } = parsed;
+  if (!isRecord(error)) return undefined;
+  for (const candidate of [error.type, error.code]) {
+    if (typeof candidate === "string" && HTTP_ERROR_TYPE_RE.test(candidate)) return candidate;
+  }
+  return undefined;
 }
 
 function isOpenAiStreamChunk(value: unknown): value is OpenAiStreamChunk {
