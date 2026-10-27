@@ -137,6 +137,8 @@ export interface ReconcilerDeps {
   reconcilerAutoRebase?: boolean;
   /** Per-project merge-reconciler mode; omitted means "full". */
   reconcileModeFor?: (projectId: string | undefined) => ReconcileMode;
+  /** Per-project auto_rebase override; undefined falls back to reconcilerAutoRebase. */
+  autoRebaseFor?: (projectId: string | undefined) => boolean | undefined;
   rebaseScratchRoot?: string;
   getHandoff: (handoffId: string) => Promise<HandoffRow | null>;
   createDispatchPR?: typeof createDispatchPR;
@@ -538,6 +540,7 @@ interface ReconcileCtx {
   handoffId: string;
   handoff: HandoffRow | null;
   mode: ReconcileMode;
+  projectId: string | undefined;
   wt: WorktreeHandle;
   baseRef: string;
   repoDir: string;
@@ -1077,7 +1080,8 @@ async function rebaseInScratch(ctx: ReconcileCtx, scratchPath: string): Promise<
 async function attemptAutoRebase(ctx: ReconcileCtx): Promise<void> {
   const { deps, wt, handoffId, baseRef, state } = ctx;
   const snapshot = requireSnapshot(ctx);
-  if (deps.reconcilerAutoRebase === false) {
+  const autoRebase = deps.autoRebaseFor?.(ctx.projectId) ?? deps.reconcilerAutoRebase;
+  if (autoRebase === false) {
     state.rebaseOutcome = { attempted: false, result: "skipped" };
     return;
   }
@@ -2303,6 +2307,7 @@ export function createMergeReconciler(
       handoffId,
       handoff,
       mode,
+      projectId,
       wt,
       baseRef,
       repoDir,

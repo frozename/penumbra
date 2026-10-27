@@ -208,6 +208,7 @@ const PROJECT_ID_RE = /^\s*project_id:[ \t]*(\S.*)$/;
 const ROOT_PATH_RE = /^\s*root_path:[ \t]*(\S.*)$/;
 const GH_REPO_RE = /^\s*gh_repo:[ \t]*(\S.*)$/;
 const RECONCILE_RE = /^\s*reconcile:[ \t]*(\S.*)$/;
+const AUTO_REBASE_RE = /^\s*auto_rebase:[ \t]*(\S.*)$/;
 const REMOTE_BLOCK_RE = /^\s*remote:\s*$/;
 const DREAMING_BLOCK_RE = /^\s*dreaming:\s*$/;
 const REMOTE_KIND_RE = /^\s+kind:[ \t]*(\S.*)$/;
@@ -294,7 +295,21 @@ function tryApplyScalarLine(line: string, state: ParserState): boolean {
     return true;
   }
 
-  return false;
+  return tryApplyAutoRebaseLine(line, state);
+}
+
+// #233: only a bare true or false is accepted. Any other value, including a
+// quoted one, fails the registry load instead of being read as a string.
+function tryApplyAutoRebaseLine(line: string, state: ParserState): boolean {
+  const match = AUTO_REBASE_RE.exec(line);
+  if (!match) return false;
+  const value = stripTrailingInlineComment(match[1] ?? "").trim();
+  if (value !== "true" && value !== "false") {
+    throw new Error(`auto_rebase must be true or false, got: ${value}`);
+  }
+  state.current ??= {};
+  state.current.auto_rebase = value === "true";
+  return true;
 }
 
 function flushCurrentEntry(state: ParserState): void {

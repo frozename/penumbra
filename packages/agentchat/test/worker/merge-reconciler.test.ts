@@ -2029,3 +2029,109 @@ describe("per-project reconcile mode (#233)", () => {
     expect(execHistory).toContain("bun test packages/daemon/test/");
   });
 });
+
+describe("per-project auto_rebase override (#233)", () => {
+  test("a project auto_rebase=false skips the rebase while reconcilerAutoRebase is true", async () => {
+    execFailures.set(
+      `git merge-base --is-ancestor ${defaultBaseTipSha} ${defaultBranchHeadSha}`,
+      new ExecCommandError({ stderr: "not-ancestor", code: 1 }),
+    );
+    handoffRows.set("h_ar_off", makeHandoffRow({ handoff_id: "h_ar_off", project_id: "proj-x" }));
+    const autoRebaseFor = mock((_projectId: string | undefined): boolean | undefined => false);
+    const reconciler = createMergeReconciler({
+      ...mockDeps,
+      reconcilerAutoRebase: true,
+      autoRebaseFor,
+    });
+
+    const result = await reconciler("h_ar_off");
+
+    expect(result.status).toBe("verified");
+    expect(verdictCalls).toHaveLength(1);
+    expect(verdictCalls[0]).toMatchObject({
+      handoff_id: "h_ar_off",
+      ff_mergeable: false,
+      rebase_required: true,
+      rebase_attempted: false,
+      rebase_result: "skipped",
+    });
+    expect(execHistory.some((cmd) => cmd.includes("git worktree add --detach"))).toBe(false);
+    expect(execHistory.some((cmd) => cmd.startsWith("git rebase "))).toBe(false);
+    expect(autoRebaseFor).toHaveBeenCalledWith("proj-x");
+  });
+
+  test("a project auto_rebase=true rebases while reconcilerAutoRebase is false", async () => {
+    execFailures.set(
+      `git merge-base --is-ancestor ${defaultBaseTipSha} ${defaultBranchHeadSha}`,
+      new ExecCommandError({ stderr: "not-ancestor", code: 1 }),
+    );
+    handoffRows.set("h_ar_on", makeHandoffRow({ handoff_id: "h_ar_on", project_id: "proj-x" }));
+    const reconciler = createMergeReconciler({
+      ...mockDeps,
+      reconcilerAutoRebase: false,
+      autoRebaseFor: () => true,
+    });
+
+    const result = await reconciler("h_ar_on");
+
+    expect(result.status).toBe("verified");
+    expect(verdictCalls).toHaveLength(1);
+    expect(verdictCalls[0]).toMatchObject({ handoff_id: "h_ar_on", rebase_attempted: true });
+    expect(execHistory).toContain(
+      `git worktree add --detach /tmp/penumbra-rebase-scratch/h_ar_on ${defaultBaseTipSha}`,
+    );
+    expect(execHistory).toContain(`git rebase ${defaultBaseTipSha}`);
+  });
+
+  test("an unset project auto_rebase falls back to reconcilerAutoRebase", async () => {
+    execFailures.set(
+      `git merge-base --is-ancestor ${defaultBaseTipSha} ${defaultBranchHeadSha}`,
+      new ExecCommandError({ stderr: "not-ancestor", code: 1 }),
+    );
+    handoffRows.set(
+      "h_ar_unset",
+      makeHandoffRow({ handoff_id: "h_ar_unset", project_id: "proj-x" }),
+    );
+    const reconciler = createMergeReconciler({
+      ...mockDeps,
+      reconcilerAutoRebase: false,
+      autoRebaseFor: () => undefined,
+    });
+
+    const result = await reconciler("h_ar_unset");
+
+    expect(result.status).toBe("verified");
+    expect(verdictCalls[0]).toMatchObject({
+      handoff_id: "h_ar_unset",
+      rebase_attempted: false,
+      rebase_result: "skipped",
+    });
+    expect(execHistory.some((cmd) => cmd.includes("git worktree add --detach"))).toBe(false);
+  });
+
+  test("git-only never rebases even when the project sets auto_rebase=true", async () => {
+    execFailures.set(
+      `git merge-base --is-ancestor ${defaultBaseTipSha} ${defaultBranchHeadSha}`,
+      new ExecCommandError({ stderr: "not-ancestor", code: 1 }),
+    );
+    handoffRows.set(
+      "h_ar_gitonly",
+      makeHandoffRow({ handoff_id: "h_ar_gitonly", project_id: "proj-x" }),
+    );
+    const reconciler = createMergeReconciler({
+      ...mockDeps,
+      reconcileModeFor: () => "git-only",
+      autoRebaseFor: () => true,
+    });
+
+    const result = await reconciler("h_ar_gitonly");
+
+    expect(result.status).toBe("verified");
+    expect(verdictCalls[0]).toMatchObject({
+      handoff_id: "h_ar_gitonly",
+      rebase_attempted: false,
+      rebase_result: "skipped",
+    });
+    expect(execHistory.some((cmd) => cmd.includes("git worktree add --detach"))).toBe(false);
+  });
+});

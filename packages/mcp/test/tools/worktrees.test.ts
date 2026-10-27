@@ -98,6 +98,107 @@ test("worktree.inspect surfaces the daemon inspection error code and message", a
   });
 });
 
+const DEADLINE_MESSAGE =
+  "worktree inspection deadline expired during diff (git diff) after 5012 ms (budget 5000 ms)";
+const PARTIAL = {
+  head_sha: "0123456789abcdef0123456789abcdef01234567",
+  branch_name: "agent/h1",
+  dirty: false,
+  base_ref: "main",
+  verified: false,
+};
+
+interface ParsedInspectError {
+  error: { code: string; message: string; partial?: Record<string, unknown> };
+}
+
+async function inspectRejectedWith(
+  status: number,
+  body: unknown,
+): Promise<{ isError: boolean | undefined; text: string }> {
+  const { daemon, mocks } = makeMocks();
+  mocks.inspectWorktree.mockRejectedValue(
+    new DaemonHttpError(
+      status === 404 ? "missing worktree" : "daemon /worktrees/h1: HTTP 500",
+      status,
+      body,
+    ),
+  );
+  const res = await worktreeInspectHandler(daemon)({ handoff_id: "h1" });
+  return { isError: res.isError, text: res.content[0]?.text ?? "" };
+}
+
+test("worktree.inspect passes the deadline partial through", async () => {
+  const { isError, text } = await inspectRejectedWith(500, {
+    error: { code: "inspection_failed", message: DEADLINE_MESSAGE, partial: PARTIAL },
+  });
+  expect(isError).toBe(true);
+  expect(JSON.parse(text) as ParsedInspectError).toEqual({
+    error: { code: "inspection_failed", message: DEADLINE_MESSAGE, partial: PARTIAL },
+  });
+});
+
+test("worktree.inspect passes a partial without base_ref through without adding one", async () => {
+  const partial = {
+    head_sha: PARTIAL.head_sha,
+    branch_name: "agent/h1",
+    dirty: true,
+    verified: false,
+  };
+  const { text } = await inspectRejectedWith(500, {
+    error: { code: "inspection_failed", message: DEADLINE_MESSAGE, partial },
+  });
+  const parsed = JSON.parse(text) as ParsedInspectError;
+  expect(parsed.error.partial).toEqual(partial);
+  expect(Object.keys(parsed.error.partial ?? {}).sort()).toEqual([
+    "branch_name",
+    "dirty",
+    "head_sha",
+    "verified",
+  ]);
+});
+
+test("worktree.inspect strips unknown keys from the partial", async () => {
+  const { text } = await inspectRejectedWith(500, {
+    error: {
+      code: "inspection_failed",
+      message: DEADLINE_MESSAGE,
+      partial: { ...PARTIAL, diff_against_main: "unvalidated" },
+    },
+  });
+  const parsed = JSON.parse(text) as ParsedInspectError;
+  expect(Object.keys(parsed.error.partial ?? {}).sort()).toEqual([
+    "base_ref",
+    "branch_name",
+    "dirty",
+    "head_sha",
+    "verified",
+  ]);
+  expect(parsed.error.partial).toEqual(PARTIAL);
+});
+
+test("worktree.inspect drops a malformed partial and keeps code and message", async () => {
+  for (const partial of [
+    { ...PARTIAL, verified: true },
+    { ...PARTIAL, head_sha: 42 },
+  ]) {
+    const { isError, text } = await inspectRejectedWith(500, {
+      error: { code: "inspection_failed", message: DEADLINE_MESSAGE, partial },
+    });
+    expect(isError).toBe(true);
+    expect(text).toBe(
+      JSON.stringify({ error: { code: "inspection_failed", message: DEADLINE_MESSAGE } }),
+    );
+  }
+});
+
+test("worktree.inspect ignores a partial on a 404", async () => {
+  const { text } = await inspectRejectedWith(404, {
+    error: { code: "not_found", message: "m", partial: PARTIAL },
+  });
+  expect(text).toBe(JSON.stringify({ error: { code: "not_found", message: "missing worktree" } }));
+});
+
 test("worktree.inspect preserves not_found for 404 errors", async () => {
   const { daemon, mocks } = makeMocks();
   mocks.inspectWorktree.mockRejectedValue(new DaemonHttpError("missing worktree", 404));

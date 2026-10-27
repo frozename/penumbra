@@ -1097,6 +1097,8 @@ const reconcileWorktree = createMergeReconciler({
   reconcilerAutoRebase: config.reconcilerAutoRebase,
   reconcileModeFor: (projectId) =>
     reconcileModeOf(projectId === undefined ? undefined : projectRegistry.get(projectId)),
+  autoRebaseFor: (projectId) =>
+    projectId === undefined ? undefined : projectRegistry.get(projectId)?.auto_rebase,
   settings,
   heavyStageGate: jobResources.heavyStageGate,
   emitVerdict: (verdict) =>
