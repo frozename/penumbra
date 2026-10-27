@@ -1746,6 +1746,13 @@ function environmentFailureOutcome(err: unknown): BunTestCommandOutcome {
   };
 }
 
+// #312: worktree provisioning creates node_modules/@penumbra even when it links nothing, so a
+// repo with no @penumbra packages has an empty scope. lstat, so a symlinked scope is never "empty".
+async function isEmptyRealDirectory(dirPath: string): Promise<boolean> {
+  const dirStat = await lstat(dirPath);
+  return dirStat.isDirectory() && (await readdir(dirPath)).length === 0;
+}
+
 async function assertOwnedTestNodeModules(envRoot: string, label: string): Promise<void> {
   const rootRealpath = await realpath(envRoot);
   const nodeModulesPath = join(envRoot, "node_modules");
@@ -1762,10 +1769,10 @@ async function assertOwnedTestNodeModules(envRoot: string, label: string): Promi
   }
 
   const penumbraScopePath = join(nodeModulesPath, "@penumbra");
-  // #310: a repo with no @penumbra packages (e.g. llamactl) has no scope to check.
-  // Only a missing scope skips; any other lstat error, or a scope without core, fails closed.
+  // #310/#312: a repo with no @penumbra packages (e.g. llamactl) has no scope, or an empty real one.
+  // Only a missing or empty real scope skips; other errors, symlinks or a scope without core fail closed.
   try {
-    await lstat(penumbraScopePath);
+    if (await isEmptyRealDirectory(penumbraScopePath)) return;
   } catch (err) {
     if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT") return;
     throw err;

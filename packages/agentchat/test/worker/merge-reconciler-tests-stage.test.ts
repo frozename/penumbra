@@ -6,6 +6,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -908,6 +909,81 @@ test("branch @penumbra/core resolving outside the environment still fails closed
   expect(result.status).toBe("test_failed");
   expect(result.verification_environment_error).toBe(true);
   expect(result.regression_summary).toContain("@penumbra/core resolves outside env");
+  expect(execHistory.some(({ cmd }) => cmd.startsWith("bun test"))).toBe(false);
+});
+
+test("branch environment with an empty @penumbra scope runs the scoped tests", async () => {
+  const scopePath = join(branchWorktreeRoot, "node_modules", "@penumbra");
+  rmSync(scopePath, { recursive: true, force: true });
+  mkdirSync(scopePath);
+  expect(lstatSync(scopePath).isDirectory()).toBe(true);
+  expect(readdirSync(scopePath)).toEqual([]);
+
+  const result = await makeReconciler()("h-branch-empty-penumbra-scope");
+
+  expect(result.status).toBe("verified");
+  expect(result.regression_summary ?? "").not.toContain("ENOENT");
+  expect(execHistory).toContainEqual({
+    cmd: "bun test packages/daemon/test/",
+    cwd: branchWorktreeRoot,
+  });
+  expect(verdicts[0]).toMatchObject({
+    handoff_id: "h-branch-empty-penumbra-scope",
+    tests: "pass",
+  });
+});
+
+test("full-suite branch run with an empty @penumbra scope still runs bun test", async () => {
+  diffOutput = "bun.lock\n";
+  const scopePath = join(branchWorktreeRoot, "node_modules", "@penumbra");
+  rmSync(scopePath, { recursive: true, force: true });
+  mkdirSync(scopePath);
+
+  const result = await makeReconciler()("h-branch-empty-penumbra-scope-full");
+
+  expect(execHistory).toContainEqual({ cmd: "bun test", cwd: branchWorktreeRoot });
+  expect(result.regression_summary ?? "").not.toContain("@penumbra/core");
+});
+
+test("branch environment provisioned by materializeWorkspaceLinks without @penumbra dependencies runs the scoped tests", async () => {
+  writeFileSync(
+    join(branchWorktreeRoot, "package.json"),
+    JSON.stringify({ name: "fixture-no-penumbra", workspaces: ["packages/*"] }),
+  );
+  rmSync(join(branchWorktreeRoot, "node_modules"), { recursive: true, force: true });
+  core.materializeWorkspaceLinks(branchWorktreeRoot);
+  const scopePath = join(branchWorktreeRoot, "node_modules", "@penumbra");
+  expect(lstatSync(scopePath).isSymbolicLink()).toBe(false);
+  expect(lstatSync(scopePath).isDirectory()).toBe(true);
+  expect(readdirSync(scopePath)).toEqual([]);
+
+  const result = await makeReconciler()("h-branch-provisioned-empty-scope");
+
+  expect(result.status).toBe("verified");
+  expect(result.regression_summary ?? "").not.toContain("ENOENT");
+  expect(execHistory).toContainEqual({
+    cmd: "bun test packages/daemon/test/",
+    cwd: branchWorktreeRoot,
+  });
+  expect(verdicts[0]).toMatchObject({
+    handoff_id: "h-branch-provisioned-empty-scope",
+    tests: "pass",
+  });
+});
+
+test("branch @penumbra scope symlinked to an empty directory outside the environment still fails closed", async () => {
+  const scopePath = join(branchWorktreeRoot, "node_modules", "@penumbra");
+  const outsideScope = join(tempRoot, "outside-empty-scope");
+  rmSync(scopePath, { recursive: true, force: true });
+  mkdirSync(outsideScope);
+  symlinkSync(outsideScope, scopePath, "dir");
+  expect(readdirSync(scopePath)).toEqual([]);
+
+  const result = await makeReconciler()("h-branch-scope-symlink-empty-outside");
+
+  expect(result.status).toBe("test_failed");
+  expect(result.verification_environment_error).toBe(true);
+  expect(result.regression_summary).toContain("verification environment error (tests)");
   expect(execHistory.some(({ cmd }) => cmd.startsWith("bun test"))).toBe(false);
 });
 
