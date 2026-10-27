@@ -29,6 +29,8 @@ export const ProjectEntrySchema = z.object({
     })
     .optional(),
   reconcile: ReconcileModeSchema.optional(),
+  // #233: per-project override of the worker's reconcilerAutoRebase; unset uses the global flag.
+  auto_rebase: z.boolean().optional(),
 });
 
 export const ProjectRegistryFileSchema = z.object({
