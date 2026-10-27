@@ -41,12 +41,17 @@ export type WorktreeInspection = {
  * deadline error that hit after that snapshot passed its identity checks.
  * `verified` is always false: the post-diff recheck did not complete, so the
  * worktree may have moved since these values were read.
+ * The four base fields are present together and only once the base resolved;
+ * a deadline during base resolution returns none of them.
  */
 export type WorktreeInspectionPartial = {
   head_sha: string;
   branch_name: string;
   dirty: boolean;
   base_ref?: string;
+  base_fallback?: boolean;
+  base_attempted_ref?: string;
+  base_fallback_reason?: "unresolvable" | "rejected_ref" | "chain_limit" | null;
   verified: false;
 };
 
@@ -333,12 +338,13 @@ function snapshotChanged(
 }
 
 // #263: a deadline after the first snapshot passed its checks still returns the
-// cheap fields from that snapshot; any other error stays message-only.
+// cheap fields from that snapshot, plus the base fields once the base resolved;
+// any other error stays message-only.
 function caughtInspectionFailure(
   err: unknown,
   message: string,
   before: GitSnapshot | undefined,
-  baseRef: string | undefined,
+  base: ResolvedInspectionBase | undefined,
 ): WorktreeInspectionResult {
   if (!(err instanceof InspectionDeadlineError) || before === undefined) {
     return inspectionFailure(message);
@@ -347,7 +353,14 @@ function caughtInspectionFailure(
     head_sha: before.headSha,
     branch_name: before.branchName,
     dirty: before.status.trim().length > 0,
-    ...(baseRef === undefined ? {} : { base_ref: baseRef }),
+    ...(base === undefined
+      ? {}
+      : {
+          base_ref: base.baseRef,
+          base_fallback: base.fallbackReason !== null,
+          base_attempted_ref: base.attemptedRef,
+          base_fallback_reason: base.fallbackReason,
+        }),
     verified: false,
   };
   return { ok: false, code: "inspection_failed", message, partial };
@@ -395,7 +408,7 @@ export async function inspectWorktreeForHandoff(
   let phase: InspectionPhase = "snapshot";
   let lastStep: string | undefined;
   let verifiedBefore: GitSnapshot | undefined;
-  let resolvedBaseRef: string | undefined;
+  let resolvedBase: ResolvedInspectionBase | undefined;
 
   const remainingMs = (): number => {
     const localRemaining = inspectionBudgetMs - (Date.now() - startedAt);
@@ -472,7 +485,7 @@ export async function inspectWorktreeForHandoff(
     if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(baseSha)) {
       return inspectionFailure(`${baseRef} is not a full Git object id`);
     }
-    resolvedBaseRef = baseRef;
+    resolvedBase = { baseRef, baseSha, attemptedRef, fallbackReason };
     const comparisonRange = `${baseSha}..${before.headSha}`;
     phase = "diff";
     const diff = await captureGitOutput([
@@ -532,7 +545,7 @@ export async function inspectWorktreeForHandoff(
       err,
       inspectionErrorMessage(err, lastStep, phase, Date.now() - startedAt, inspectionBudgetMs),
       verifiedBefore,
-      resolvedBaseRef,
+      resolvedBase,
     );
   }
 }

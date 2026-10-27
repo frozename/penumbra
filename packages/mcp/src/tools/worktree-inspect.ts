@@ -12,14 +12,21 @@ const InspectionErrorBodySchema = z.object({
   error: z.object({ code: z.string(), message: z.string() }),
 });
 
-// #263: the cheap fields the daemon attaches to an inspection deadline error.
-// They are unverified (verified is always false). A partial that does not match
-// is dropped and unknown keys are stripped, so no unvalidated field is returned.
+// #263: the cheap fields the daemon attaches to an inspection deadline error,
+// with the base fallback fields once the base resolved. They are unverified
+// (verified is always false). A partial that does not match is dropped and
+// unknown keys are stripped, so no unvalidated field is returned.
 const InspectionPartialSchema = z.object({
   head_sha: z.string(),
   branch_name: z.string(),
   dirty: z.boolean(),
   base_ref: z.string().optional(),
+  base_fallback: z.boolean().optional(),
+  base_attempted_ref: z.string().optional(),
+  base_fallback_reason: z
+    .enum(["unresolvable", "rejected_ref", "chain_limit"])
+    .nullable()
+    .optional(),
   verified: z.literal(false),
 });
 
