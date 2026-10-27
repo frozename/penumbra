@@ -906,6 +906,7 @@ test("the real adapter drains heavy output and bounds owned process shutdown", a
       'import { writeFileSync } from "node:fs";',
       "const mode = Bun.argv[2];",
       "if (mode === 'heavy') process.stdout.write('x'.repeat(256 * 1024));",
+      "if (mode === 'slow-heavy') setTimeout(() => process.stdout.write('x'.repeat(256 * 1024)), 1_500);",
       "if (mode === 'ignore-term') { process.on('SIGTERM', () => undefined); setInterval(() => undefined, 20); }",
       "if (mode === 'descendant') { Bun.spawn([process.execPath, import.meta.path, 'holder', Bun.argv[3]], { stdout: 'inherit', stderr: 'inherit' }); process.exit(0); }",
       "if (mode === 'holder') { writeFileSync(Bun.argv[3], String(process.pid)); setInterval(() => undefined, 20); }",
@@ -921,9 +922,10 @@ test("the real adapter drains heavy output and bounds owned process shutdown", a
       timeoutMs,
     });
 
-  const heavyStarted = Date.now();
-  await expect(invoke("heavy")).rejects.toThrow("probe_output_limit");
-  expect(Date.now() - heavyStarted).toBeLessThan(1_000);
+  // Only a stuck child reaches this budget, so a slow start still ends on the output limit (#318).
+  const heavyTimeoutMs = 30_000;
+  await expect(invoke("heavy", heavyTimeoutMs)).rejects.toThrow("probe_output_limit");
+  await expect(invoke("slow-heavy", heavyTimeoutMs)).rejects.toThrow("probe_output_limit");
   await expect(invoke("ignore-term")).rejects.toThrow("probe_timeout");
   await expect(invoke("descendant")).rejects.toThrow("probe_timeout");
   const pid = Number(readFileSync(childPid, "utf8"));
@@ -941,7 +943,7 @@ test("the real adapter drains heavy output and bounds owned process shutdown", a
       }
     }
   }
-});
+}, 60_000);
 
 test("the committed host report contains only parser-valid sanitized fixtures", () => {
   const observed = JSON.parse(
