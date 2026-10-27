@@ -468,14 +468,32 @@ export function isAgyQuotaFailure(
   return record.status === "RESOURCE_EXHAUSTED" || record.error_code === 429;
 }
 
+// #295: a provider context-window overflow, read from the handoff row. The
+// openai-compat-http adapter names the server's error type in its message,
+// and the worker writes that message to resolution_reason. Classed only:
+// whether an overflow is the seat's fault is left open, so it is not an
+// environment failure and routing treats it like any other failure.
+export function isContextOverflowFailure(
+  handoff: Pick<HandoffRow, "resolution_reason" | "status">,
+): boolean {
+  return (
+    handoff.status === "failed" &&
+    typeof handoff.resolution_reason === "string" &&
+    handoff.resolution_reason.includes("exceed_context_size_error")
+  );
+}
+
 // A provider quota exit is not the seat's fault: class it `quota` and mark
 // it an environment failure so routing stays neutral, like a resource kill.
+// A context overflow (#295) is classed but stays charged.
 function dispatchFailureClassification(
   classifierDeclined: boolean,
   quotaExhausted: boolean,
+  contextOverflow: boolean,
 ): Pick<AgentPerformanceRow, "environment_failure" | "failure_class"> {
   if (classifierDeclined) return { failure_class: "classifier_declined" };
   if (quotaExhausted) return { environment_failure: "y", failure_class: "quota" };
+  if (contextOverflow) return { failure_class: "context_overflow" };
   return { failure_class: null };
 }
 
@@ -590,6 +608,7 @@ export function captureAgentPerformanceFromDispatch(opts: {
     explicitTaskType,
   );
   const quotaExhausted = isAgyQuotaFailure(handoff);
+  const contextOverflow = isContextOverflowFailure(handoff);
 
   const { responseSummary, responses, hasNonEmptyResponse } = resolveDispatchResponses(
     opts.db,
@@ -667,7 +686,7 @@ export function captureAgentPerformanceFromDispatch(opts: {
     gate_outcome: lookupLatestLaneGateOutcome(opts.db, input.handoff_id),
     notes,
     reliability_status: reliabilityReport.status,
-    ...dispatchFailureClassification(signals.classifier_declined, quotaExhausted),
+    ...dispatchFailureClassification(signals.classifier_declined, quotaExhausted, contextOverflow),
     maestro_takeover_required: maestroTakeover,
     metadata_json: JSON.stringify(metadata),
   };

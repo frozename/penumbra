@@ -494,6 +494,91 @@ test("dispatch raises on non-2xx", async () => {
   );
 });
 
+async function rejectionOf(p: Promise<unknown>): Promise<Error> {
+  try {
+    await p;
+  } catch (e) {
+    if (e instanceof Error) return e;
+    throw new Error("expected promise to reject with an Error");
+  }
+  throw new Error("expected promise to reject");
+}
+
+const OVERFLOW_BODY = JSON.stringify({
+  error: {
+    code: 400,
+    type: "exceed_context_size_error",
+    message:
+      "request (11950 tokens) exceeds the available context size (8192 tokens) PROMPT-ECHO-SENTINEL",
+    n_ctx: 8192,
+  },
+});
+
+function errorFetch(body: string, status: number): FetchFn {
+  return asFetchFn(mock(() => Promise.resolve(new Response(body, { status }))));
+}
+
+function httpErrorAdapter(): OpenAiCompatHttpAdapter {
+  return new OpenAiCompatHttpAdapter({ baseUrl: "http://example/v1", apiKey: "tk", model: "m" });
+}
+
+function httpErrorInput(): Parameters<OpenAiCompatHttpAdapter["dispatch"]>[0] {
+  return {
+    prompt: "p",
+    conversation: { id: "c", project_id: null },
+    config: {},
+    signal: new AbortController().signal,
+  };
+}
+
+async function bareStatusMessage(body: string, status: number): Promise<string> {
+  global.fetch = errorFetch(body, status);
+  return (await rejectionOf(httpErrorAdapter().dispatch(httpErrorInput()))).message;
+}
+
+test("dispatch names the server error type on a non-2xx JSON error body (#295)", async () => {
+  global.fetch = errorFetch(OVERFLOW_BODY, 400);
+  const err = await rejectionOf(httpErrorAdapter().dispatch(httpErrorInput()));
+  expect(err.message).toBe("openai-compat-http: HTTP 400 exceed_context_size_error");
+  expect(err.message).not.toContain("PROMPT-ECHO-SENTINEL");
+  expect(err.message).not.toContain("exceeds the available context size");
+});
+
+test("dispatchStream names the server error type on a non-2xx JSON error body (#295)", async () => {
+  global.fetch = errorFetch(OVERFLOW_BODY, 400);
+  const err = await rejectionOf(drainStream(httpErrorAdapter().dispatchStream(httpErrorInput())));
+  expect(err.message).toBe("openai-compat-http: HTTP 400 exceed_context_size_error");
+  expect(err.message).not.toContain("PROMPT-ECHO-SENTINEL");
+  expect(err.message).not.toContain("exceeds the available context size");
+});
+
+test("dispatch falls back to a string error.code when error.type is missing (#295)", async () => {
+  global.fetch = errorFetch(
+    JSON.stringify({ error: { code: "rate_limit_exceeded", message: "slow down" } }),
+    429,
+  );
+  const err = await rejectionOf(httpErrorAdapter().dispatch(httpErrorInput()));
+  expect(err.message).toBe("openai-compat-http: HTTP 429 rate_limit_exceeded");
+});
+
+test("dispatch keeps the bare status when the error body has no usable type (#295)", async () => {
+  expect(await bareStatusMessage("boom", 500)).toBe("openai-compat-http: HTTP 500");
+  expect(
+    await bareStatusMessage(
+      JSON.stringify({
+        error: { type: "Not A Token!", code: 400, message: "PROMPT-ECHO-SENTINEL" },
+      }),
+      400,
+    ),
+  ).toBe("openai-compat-http: HTTP 400");
+  expect(await bareStatusMessage(JSON.stringify({ error: { code: 400, message: "x" } }), 400)).toBe(
+    "openai-compat-http: HTTP 400",
+  );
+  expect(await bareStatusMessage(JSON.stringify({ error: { type: "a".repeat(65) } }), 400)).toBe(
+    "openai-compat-http: HTTP 400",
+  );
+});
+
 test("dispatchStream throws when an SSE error payload arrives mid-stream", async () => {
   global.fetch = asFetchFn(
     mock(() =>
