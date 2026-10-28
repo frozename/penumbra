@@ -25,7 +25,12 @@ import { AgentPerformanceWriter } from "../writers/agent-performance.js";
 import {
   classifyDispatchReliability,
   type DispatchReliabilityReport,
+  isAgyQuotaFailure,
 } from "./dispatch-reliability.js";
+
+// #298: isAgyQuotaFailure now lives in dispatch-reliability.ts; re-exported
+// so existing imports from this module keep compiling.
+export { isAgyQuotaFailure };
 
 export const MIN_RESPONSE_CHARS = 40;
 
@@ -383,6 +388,7 @@ function classifyDispatchReliabilityFromDb(
       ts: handoff.ts,
       resolved_at: handoff.resolved_at,
       cancel_requested_at: handoff.cancel_requested_at,
+      resolution_reason: handoff.resolution_reason,
       chain_task_type: handoff.chain_task_type,
       use_worktree: handoff.use_worktree === true || (handoff.use_worktree as unknown) === 1,
     },
@@ -443,29 +449,6 @@ function resolveDispatchResponses(
   const hasNonEmptyResponse =
     responseSummary?.hasMeaningfulOutput ?? meaningfulOutput(finalResponseText).meaningful;
   return { responseSummary, responses, finalResponseText, hasNonEmptyResponse };
-}
-
-const AGY_ERROR_LINE_RE = /^AGY_ERROR:(.*)$/m;
-
-// #298: an agy provider quota exit, read from the handoff row. Mirrors the
-// predicate of agentchat's detectQuotaExhaustion (core cannot import
-// agentchat) but JSON-parses the AGY_ERROR line instead of matching
-// substrings, so a truncated or prose mention never matches.
-export function isAgyQuotaFailure(
-  handoff: Pick<HandoffRow, "resolution_reason" | "status">,
-): boolean {
-  if (handoff.status !== "failed" || typeof handoff.resolution_reason !== "string") return false;
-  const line = AGY_ERROR_LINE_RE.exec(handoff.resolution_reason);
-  if (!line) return false;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(line[1] ?? "");
-  } catch {
-    return false;
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return false;
-  const record = parsed as Record<string, unknown>;
-  return record.status === "RESOURCE_EXHAUSTED" || record.error_code === 429;
 }
 
 // #295: a provider context-window overflow, read from the handoff row. The

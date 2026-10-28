@@ -13,6 +13,10 @@ import {
   MIN_RESPONSE_CHARS,
 } from "@src/services/agent-performance-capture.js";
 import { isNeutralPerformanceOutcome } from "@src/services/agent-routing.js";
+import {
+  buildDispatchAuditReport,
+  dispatchAuditSourcesFromDb,
+} from "@src/services/dispatch-audit-report.js";
 
 if (process.platform === "darwin") {
   try {
@@ -1770,7 +1774,7 @@ describe("captureAgentPerformanceFromReconciler", () => {
     expect(row.environment_failure).toBe("y");
     expect(row.outcome).toBe("failed");
     expect(isNeutralPerformanceOutcome(row)).toBe(true);
-    expect(row.reliability_status).toBe("no_agent_output");
+    expect(row.reliability_status).toBe("provider_quota_exhausted");
     expect(JSON.parse(row.metadata_json)).toEqual({
       reason: "error",
       silent_failure: true,
@@ -1790,6 +1794,7 @@ describe("captureAgentPerformanceFromReconciler", () => {
     seedFailedWorktreeDispatch(AGY_INTERNAL_REASON);
     const row = captureFailedDispatch("perf-internal");
     expect(row.notes).toBe("error (silent_failure: empty worktree)");
+    expect(row.reliability_status).toBe("no_agent_output");
     expect(row.failure_class).toBeNull();
     expect(row.environment_failure).toBeUndefined();
     expect(isNeutralPerformanceOutcome(row)).toBe(false);
@@ -1832,6 +1837,27 @@ describe("captureAgentPerformanceFromReconciler", () => {
     const row = captureFailedDispatch("perf-quota-overflow");
     expect(row.failure_class).toBe("quota");
     expect(row.environment_failure).toBe("y");
+  });
+
+  it("dispatch_audit reports an agy quota failure as provider_quota_exhausted with action wait (#298)", () => {
+    seedFailedWorktreeDispatch(AGY_QUOTA_REASON);
+    const report = buildDispatchAuditReport(
+      dispatchAuditSourcesFromDb(db, () => new Date("2026-04-30T12:03:00Z")),
+      "h1",
+    );
+    expect(report?.status).toBe("provider_quota_exhausted");
+    expect(report?.recommended_action).toBe("wait");
+    expect(report?.trustworthy).toBe(false);
+  });
+
+  it("dispatch_audit keeps a non-quota AGY_ERROR failure as no_agent_output (#298)", () => {
+    seedFailedWorktreeDispatch(AGY_INTERNAL_REASON);
+    const report = buildDispatchAuditReport(
+      dispatchAuditSourcesFromDb(db, () => new Date("2026-04-30T12:03:00Z")),
+      "h1",
+    );
+    expect(report?.status).toBe("no_agent_output");
+    expect(report?.recommended_action).toBe("retry");
   });
 });
 

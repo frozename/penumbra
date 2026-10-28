@@ -189,6 +189,27 @@ const BUILT_IN_FACTORIES: Record<string, AdapterFactory> = {
   },
 };
 
+// #328: stdio-acp never selects options.model for the ACP agent. It only copies it into a
+// non-standard `model` field on session/new, which agents such as OpenCode ignore, so the
+// agent's own configuration decides which model runs. Warn once per (seat, model) pair.
+const warnedStdioAcpModels = new Set<string>();
+
+export function resetStdioAcpModelWarningsForTest(): void {
+  warnedStdioAcpModels.clear();
+}
+
+function warnStdioAcpModelOnce(seat: string, model: string): void {
+  const pair = JSON.stringify([seat, model]);
+  if (warnedStdioAcpModels.has(pair)) return;
+  warnedStdioAcpModels.add(pair);
+  console.warn(
+    `stdio-acp: seat "${seat}" sets options.model "${model}", but stdio-acp does not apply options.model. ` +
+      "It is sent only as a non-standard session/new field, which ACP agents such as OpenCode ignore, " +
+      "so the agent's own configuration (for example OPENCODE_CONFIG_DIR/opencode.json, or ANTHROPIC_MODEL in env) " +
+      "decides which model runs (#328).",
+  );
+}
+
 /**
  * Single construction path for the stdio-acp adapter, shared by the registry
  * builtin and the worker's thought-aware re-registration
@@ -204,6 +225,9 @@ export function createStdioAcpAdapter(
 ): Adapter {
   const opts = o as Partial<StdioAcpOptions>;
   if (!opts.binary) throw new Error("stdio-acp: binary is required");
+  if (typeof opts.model === "string" && opts.model.length > 0) {
+    warnStdioAcpModelOnce(opts.agentName ?? opts.binary, opts.model);
+  }
   return new StdioAcpAdapter(
     {
       binary: opts.binary,
