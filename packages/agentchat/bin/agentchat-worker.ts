@@ -1532,6 +1532,11 @@ const dispatcher = createWorkerDispatcher({
     getWorktreeSnapshot(handoffId, {
       getWorktree: (id) => worktreeManager.getWorktree(id),
     }),
+  // #297: write a dispatch's buffered thought text, then free its capture state.
+  beforeDispatchEnd: (handoffId): void => {
+    thoughtCapture?.flush(handoffId);
+    thoughtCapture?.resetDispatch(handoffId);
+  },
   claim: (id) => client.claimHandoff(id, workerId),
   admitClaim: (handoff, signal) => jobResources.admitClaim(handoff, signal),
   // Cross-project claim affinity. `config` is read lazily (each handoff) so the
