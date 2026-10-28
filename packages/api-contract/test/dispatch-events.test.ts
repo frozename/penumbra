@@ -54,4 +54,8 @@ describe("dispatch event contract", () => {
       true,
     );
   });
+
+  it("DispatchEventKindSchema accepts agent.turn_retry (#322)", () => {
+    expect(DispatchEventKindSchema.safeParse("agent.turn_retry").success).toBe(true);
+  });
 });
