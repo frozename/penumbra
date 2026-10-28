@@ -2481,6 +2481,7 @@ export function serve(opts: ServeOpts): DaemonHandle {
   const localSeatHealth = localSeatHealthEnabled
     ? createLocalSeatHealthService({
         agents: () => opts.services.agentchatConfig?.agents ?? [],
+        log: opts.services.log,
       })
     : undefined;
   if (localSeatHealth) {

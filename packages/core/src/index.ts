@@ -492,14 +492,7 @@ export {
   type ScratchWorktreesOpts,
   ScratchWorktreesService,
 } from "./services/scratch-worktrees.js";
-export {
-  fetchServedModelEntries,
-  fetchServedModels,
-  type FetchServedModelsOpts,
-  type ServedModelEntry,
-  type ServedModelsFetch,
-  servedModelsUrl,
-} from "./services/served-models-client.js";
+export * from "./services/served-models-client.js";
 export {
   type SessionEventInput,
   type SessionEventKind,

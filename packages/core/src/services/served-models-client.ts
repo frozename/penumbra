@@ -32,6 +32,17 @@ function buildProbeInit(
   };
 }
 
+// #256: carries the HTTP status so callers can tell an auth failure from other errors.
+export class ServedModelsProbeError extends Error {
+  readonly status: number;
+
+  constructor(status: number) {
+    super(`served models probe failed: ${String(status)}`);
+    this.name = "ServedModelsProbeError";
+    this.status = status;
+  }
+}
+
 export async function fetchServedModelEntries(
   baseUrl: string,
   opts: FetchServedModelsOpts = {},
@@ -43,7 +54,7 @@ export async function fetchServedModelEntries(
     buildProbeInit(opts, AbortSignal.timeout(timeoutMs)),
   );
   if (!response.ok) {
-    throw new Error(`served models probe failed: ${String(response.status)}`);
+    throw new ServedModelsProbeError(response.status);
   }
   const body = (await response.json()) as {
     data?: { id?: unknown; owned_by?: unknown; created?: unknown }[];
