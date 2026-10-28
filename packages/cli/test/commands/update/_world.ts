@@ -76,6 +76,10 @@ export class World {
   workingDirectory = REPO;
   serviceBun = "/usr/bin/bun";
   workerEnv: Record<string, string> = {};
+  /** What the injected heavy-job lock probe answers (true: a flock(1) helper exists). */
+  lockCrossProcess = true;
+  /** Paths the heavy-job lock probe was asked about, in order. */
+  lockProbes: string[] = [];
 
   state(): RuntimeState {
     const unit = (name: string, active: boolean, pid: number): RuntimeState["daemon"] => ({
@@ -168,6 +172,10 @@ export class World {
       },
       out: (line) => this.out.push(line),
       err: (line) => this.err.push(line),
+      heavyLockCrossProcess: (path) => {
+        this.lockProbes.push(path);
+        return this.lockCrossProcess;
+      },
       clock: {
         now: () => this.now,
         sleep: (ms) => {

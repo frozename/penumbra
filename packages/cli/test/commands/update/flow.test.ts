@@ -60,10 +60,70 @@ describe("penumbra update --check", () => {
     expect(await run(world, ["--json"])).toBe(0);
 
     const report = world.json();
-    expect(report.heavyLock).toEqual({ path: "/ops/.heavy.lock", source: "worker-unit" });
+    expect(report.heavyLock).toEqual({
+      path: "/ops/.heavy.lock",
+      source: "worker-unit",
+      crossProcess: true,
+    });
+    expect(world.lockProbes).toEqual(["/ops/.heavy.lock"]);
     expect(JSON.stringify(report)).not.toContain("sk-secret");
     expect(report.runtime).toMatchObject({
       worker: { environment_keys: ["PENUMBRA_JOB_HEAVY_LOCK", "SOME_API_KEY"] },
+    });
+  });
+
+  test("says when the heavy-job lock is in-process only (#313)", async () => {
+    const world = new World();
+    world.lockCrossProcess = false;
+
+    expect(await run(world, ["--check"])).toBe(0);
+
+    const text = world.out.join("\n");
+    expect(text).toContain(
+      "heavy-job lock: /home/op/.penumbra/locks/heavy-job.lock (default); in-process only (no flock(1) found by this CLI): heavy stages do not serialize across processes; bun: /usr/bin/bun",
+    );
+    expect(world.lockProbes).toEqual(["/home/op/.penumbra/locks/heavy-job.lock"]);
+    expect(world.mutations()).toEqual([]);
+  });
+
+  test("--json reports heavyLock.crossProcess false and keeps the apply gates (#313)", async () => {
+    const world = new World();
+    world.lockCrossProcess = false;
+
+    expect(await run(world, ["--json"])).toBe(0);
+
+    const report = world.json();
+    expect(report.heavyLock).toEqual({
+      path: "/home/op/.penumbra/locks/heavy-job.lock",
+      source: "default",
+      crossProcess: false,
+    });
+    expect(report).toMatchObject({ applyReady: true, blockers: [] });
+  });
+
+  test("no in-process-only note when the heavy-job lock is cross-process (#313)", async () => {
+    const world = new World();
+
+    expect(await run(world, ["--check"])).toBe(0);
+
+    const text = world.out.join("\n");
+    expect(text).toContain(
+      "heavy-job lock: /home/op/.penumbra/locks/heavy-job.lock (default); bun: /usr/bin/bun",
+    );
+    expect(text).not.toContain("in-process only");
+  });
+
+  test("an in-process-only heavy-job lock does not block --apply (#313)", async () => {
+    const world = new World();
+    world.lockCrossProcess = false;
+
+    expect(await run(world, ["--apply", "--json"])).toBe(0);
+
+    expect(world.json()).toMatchObject({
+      mode: "apply",
+      outcome: "updated",
+      from: SHA_A,
+      to: SHA_B,
     });
   });
 

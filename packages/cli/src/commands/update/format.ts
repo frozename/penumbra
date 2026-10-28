@@ -54,6 +54,15 @@ function targetLines(report: CheckReport): string[] {
   return lines;
 }
 
+/** #313: say when this CLI found no flock(1), so heavy stages serialize only inside one process. */
+function heavyLockLine(report: CheckReport): string {
+  const scope =
+    report.heavyLock.crossProcess === false
+      ? "; in-process only (no flock(1) found by this CLI): heavy stages do not serialize across processes"
+      : "";
+  return `  heavy-job lock: ${report.heavyLock.path} (${report.heavyLock.source})${scope}; bun: ${report.bun}`;
+}
+
 export function formatCheckReport(report: CheckReport): string[] {
   const lines = [
     `penumbra update: ${report.repo} (branch ${report.branch ?? "DETACHED"})`,
@@ -62,7 +71,7 @@ export function formatCheckReport(report: CheckReport): string[] {
     ...targetLines(report),
     `  local changes: ${report.trackedChanges.length === 0 ? "none" : String(report.trackedChanges.length)}`,
     ...runtimeLines(report.runtime),
-    `  heavy-job lock: ${report.heavyLock.path} (${report.heavyLock.source}); bun: ${report.bun}`,
+    heavyLockLine(report),
   ];
   if (report.upToDate) return lines;
   if (report.blockers.length === 0) {

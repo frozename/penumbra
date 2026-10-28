@@ -21,7 +21,12 @@ import {
 import { checkReportJson, formatCheckReport } from "./format.js";
 import { createCiPort, createGitPort } from "./git.js";
 import { lastCompletedFrom } from "./history.js";
-import { createInstallPort, resolveBunPath, resolveHeavyLock } from "./install.js";
+import {
+  createInstallPort,
+  probeHeavyLockCrossProcess,
+  resolveBunPath,
+  resolveHeavyLock,
+} from "./install.js";
 import { parseUpdateArgs, UPDATE_USAGE } from "./options.js";
 import { checkSelfSafety } from "./self-safety.js";
 import { type ManagerSelection, selectServiceManager } from "./service-manager.js";
@@ -62,6 +67,8 @@ export interface UpdateDeps {
   exit: (code: number) => void;
   out: (line: string) => void;
   err: (line: string) => void;
+  /** Test seam: whether a heavy-job lock at `path` is cross-process (default: probe for flock(1)). */
+  heavyLockCrossProcess?: (path: string) => boolean;
   /** Test seams: replace a port built from exec/http/fs. */
   ports?: Partial<{
     git: GitPort;
@@ -114,7 +121,9 @@ export async function createUpdateContext(
   ).topLevel();
   const selection = await selectManager(options, deps);
   const state = selection.manager ? await selection.manager.state().catch(() => null) : null;
-  const heavyLock = resolveHeavyLock(deps.env, state, deps.home);
+  const resolvedLock = resolveHeavyLock(deps.env, state, deps.home);
+  const probeCrossProcess = deps.heavyLockCrossProcess ?? probeHeavyLockCrossProcess;
+  const heavyLock = { ...resolvedLock, crossProcess: probeCrossProcess(resolvedLock.path) };
   const bunPath = resolveBunPath(state, deps.bunPath);
   const say = options.json ? deps.err : deps.out;
   return {
