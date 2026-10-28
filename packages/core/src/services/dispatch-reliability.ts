@@ -5,6 +5,8 @@ import {
   type DispatchReliabilityStatus as DispatchReliabilityStatusAlias,
 } from "@penumbra/api-contract";
 
+import type { WorktreeGitHooksStatus } from "../worktree/git-hooks.js";
+
 export type DispatchReliabilityStatus = DispatchReliabilityStatusAlias;
 
 export type DispatchRecommendedAction = DispatchRecommendedActionAlias;
@@ -62,6 +64,7 @@ export interface DispatchReliabilityReport {
     cancel_requested: boolean;
     adapter_streaming: boolean | null;
     commit_integrity?: CommitIntegrityEvidence | null;
+    git_hooks?: WorktreeGitHooksStatus;
   };
   recommended_action: DispatchRecommendedAction;
   classifier_decline?: {
@@ -85,6 +88,27 @@ interface ClassificationContext {
   baseEvidence: DispatchReliabilityReport["evidence"];
 }
 
+// #217: the statuses PR #223 records in dispatch.worktree_ready meta (worktree/git-hooks.ts).
+const GIT_HOOKS_STATUSES: ReadonlySet<string> = new Set<string>([
+  "not_configured",
+  "missing",
+  "empty",
+  "installed",
+] satisfies WorktreeGitHooksStatus[]);
+
+function isGitHooksStatus(value: unknown): value is WorktreeGitHooksStatus {
+  return typeof value === "string" && GIT_HOOKS_STATUSES.has(value);
+}
+
+// #217: the worktree's git hooks status from the last dispatch.worktree_ready event.
+// Anything other than a known status (a path, a number) is dropped, never surfaced.
+function readGitHooksStatus(events: DispatchReliabilityEvent[]): WorktreeGitHooksStatus | null {
+  const meta = events.filter((event) => event.kind === "dispatch.worktree_ready").at(-1)?.meta;
+  if (!meta || typeof meta !== "object") return null;
+  const value = (meta as Record<string, unknown>).git_hooks;
+  return isGitHooksStatus(value) ? value : null;
+}
+
 function buildClassificationContext(input: DispatchReliabilityInput): ClassificationContext {
   const eventKinds = input.events.map((event) => event.kind);
   const toolFailureCount = input.events.filter(
@@ -100,6 +124,7 @@ function buildClassificationContext(input: DispatchReliabilityInput): Classifica
   if (!eventKinds.includes("dispatch.start")) missing.push("dispatch.start");
   if (!hasAdapterLifecycle) missing.push("adapter.lifecycle");
   if (!eventKinds.includes("dispatch.end")) missing.push("dispatch.end");
+  const gitHooks = readGitHooksStatus(input.events);
 
   return {
     input,
@@ -121,6 +146,7 @@ function buildClassificationContext(input: DispatchReliabilityInput): Classifica
       cancel_requested: cancelRequested,
       adapter_streaming: input.adapterStreaming,
       ...(input.commitIntegrity ? { commit_integrity: input.commitIntegrity } : {}),
+      ...(gitHooks ? { git_hooks: gitHooks } : {}),
     },
   };
 }

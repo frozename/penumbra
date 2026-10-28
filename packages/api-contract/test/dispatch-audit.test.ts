@@ -272,3 +272,40 @@ test("CommitIntegrityEvidenceSchema rejects a non-hex base_sha", () => {
     CommitIntegrityEvidenceSchema.safeParse({ ...EVIDENCE, base_sha: "g".repeat(40) }).success,
   ).toBe(false);
 });
+
+function reportWithGitHooks(gitHooks: unknown): unknown {
+  return {
+    handoff_id: "h1",
+    status: "complete",
+    terminal: true,
+    trustworthy: true,
+    summary: "all good",
+    missing_events: [],
+    evidence: {
+      handoff_status: "completed",
+      event_count: 6,
+      response_count: 1,
+      worktree_changed: true,
+      dispatch_end_committed: true,
+      reconciled: null,
+      watchdog_failed: false,
+      cancel_requested: false,
+      adapter_streaming: null,
+      git_hooks: gitHooks,
+    },
+    recommended_action: "accept",
+  };
+}
+
+test("DispatchReliabilityReportSchema accepts each git_hooks status and rejects other values", () => {
+  for (const status of ["not_configured", "missing", "empty", "installed"]) {
+    expect(DispatchReliabilityReportSchema.safeParse(reportWithGitHooks(status)).success).toBe(
+      true,
+    );
+  }
+  for (const value of ["/abs/path/.husky/_", 42, null, "MISSING"]) {
+    expect(DispatchReliabilityReportSchema.safeParse(reportWithGitHooks(value)).success).toBe(
+      false,
+    );
+  }
+});
