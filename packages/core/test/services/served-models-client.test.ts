@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
-import { fetchServedModelEntries, fetchServedModels, servedModelsUrl } from "@src/index.js";
+import {
+  fetchServedModelEntries,
+  fetchServedModels,
+  ServedModelsProbeError,
+  servedModelsUrl,
+} from "@src/index.js";
 
 describe("served models client", () => {
   test("builds the /v1/models URL from base URLs with or without /v1", () => {
@@ -64,6 +69,24 @@ describe("served models client", () => {
     }
     if (!(caught instanceof Error)) throw new Error("expected fetchServedModels to reject");
     expect(caught.message).toContain("served models probe failed");
+  });
+
+  test("a non-2xx response rejects with ServedModelsProbeError carrying the status", async () => {
+    let caught: unknown;
+    try {
+      await fetchServedModels("http://127.0.0.1:7944", {
+        fetch: () => Promise.resolve(new Response("down", { status: 503 })),
+      });
+    } catch (error) {
+      caught = error;
+    }
+    if (!(caught instanceof ServedModelsProbeError)) {
+      throw new Error("expected a ServedModelsProbeError");
+    }
+    expect(caught.status).toBe(503);
+    expect(caught.message).toBe("served models probe failed: 503");
+    expect(caught.name).toBe("ServedModelsProbeError");
+    expect(caught instanceof Error).toBe(true);
   });
 
   test("sends bearer authorization and custom CA when provided", async () => {

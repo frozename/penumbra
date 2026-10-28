@@ -6,6 +6,8 @@ import { join } from "node:path";
 import {
   createLocalSeatHealthService,
   type LocalSeatHealthAgent,
+  type LocalSeatHealthLog,
+  type SeatHealthRecord,
 } from "@src/services/local-seat-health.js";
 
 const localSeat = {
@@ -98,6 +100,22 @@ const declaredAcpSeat = (health: DeclaredHealth): LocalSeatHealthAgent => ({
   options: {},
   health,
 });
+
+type LogCall = { obj: Record<string, unknown>; msg: string };
+
+function recordingLog(): { warns: LogCall[]; infos: LogCall[]; log: LocalSeatHealthLog } {
+  const warns: LogCall[] = [];
+  const infos: LogCall[] = [];
+  const log: LocalSeatHealthLog = {
+    warn: (obj, msg) => {
+      warns.push({ obj, msg });
+    },
+    info: (obj, msg) => {
+      infos.push({ obj, msg });
+    },
+  };
+  return { warns, infos, log };
+}
 
 describe("declared health targets", () => {
   test("probes a declared health target for a stdio-acp seat with bearer and CA", async () => {
@@ -211,5 +229,237 @@ describe("declared health targets", () => {
     });
     await missingSeat.refresh();
     expect(missingSeat.getUnhealthyAgents()).toEqual(new Set(["local-bge"]));
+  });
+});
+
+describe("seat health states and transitions", () => {
+  const fileSentinel = ["zq", "-sentinel", "-7731"].join("");
+
+  test("a 401 records unauthorized, warns once, recovers with one info, and never logs the bearer value", async () => {
+    const { warns, infos, log } = recordingLog();
+    const calls: ProbeCall[] = [];
+    let status = 401;
+    let nowMs = 1_000;
+    const service = createLocalSeatHealthService({
+      agents: () => [
+        declaredAcpSeat({
+          url: "https://gw.example.invalid:7843/v1",
+          bearer_file: "/seat-files/bearer",
+          expect_model: "qwen",
+        }),
+      ],
+      ttlMs: 20_000,
+      now: () => nowMs,
+      readFile: () => Promise.resolve(fileSentinel),
+      fetch: (url, init) => {
+        calls.push({ url, init });
+        return Promise.resolve(
+          status === 200
+            ? new Response(JSON.stringify({ data: [{ id: "qwen" }] }))
+            : new Response("no", { status }),
+        );
+      },
+      log,
+    });
+
+    await service.refresh();
+
+    expect(calls[0]?.init?.headers?.authorization).toBe(`Bearer ${fileSentinel}`);
+    expect(service.getSeatHealth("acp-seat")).toEqual({
+      state: "unauthorized",
+      checkedAtMs: 1_000,
+      httpStatus: 401,
+    });
+    expect(service.getUnhealthyAgents()).toEqual(new Set(["acp-seat"]));
+    expect(warns).toHaveLength(1);
+    expect(warns[0]?.obj).toMatchObject({
+      event: "local_seat_health_failing",
+      agent: "acp-seat",
+      state: "unauthorized",
+      http_status: 401,
+    });
+    expect(infos).toHaveLength(0);
+
+    nowMs = 21_001;
+    await service.refresh();
+    expect(service.getSeatHealth("acp-seat")?.checkedAtMs).toBe(21_001);
+    expect(warns).toHaveLength(1);
+
+    status = 200;
+    nowMs = 42_002;
+    await service.refresh();
+    expect(service.getSeatHealth("acp-seat")).toEqual({ state: "healthy", checkedAtMs: 42_002 });
+    expect(service.getUnhealthyAgents()).toEqual(new Set());
+    expect(infos).toHaveLength(1);
+    expect(infos[0]?.obj).toMatchObject({
+      event: "local_seat_health_recovered",
+      agent: "acp-seat",
+      state: "healthy",
+      previous_state: "unauthorized",
+    });
+    expect(warns).toHaveLength(1);
+
+    expect(JSON.stringify([...warns, ...infos])).not.toContain(fileSentinel);
+  });
+
+  test("classifies 403, 503, a rejected fetch and a missing model", async () => {
+    const rows: { label: string; fetch: () => Promise<Response>; expected: SeatHealthRecord }[] = [
+      {
+        label: "403",
+        fetch: (): Promise<Response> => Promise.resolve(new Response("no", { status: 403 })),
+        expected: { state: "unauthorized", checkedAtMs: 5_000, httpStatus: 403 },
+      },
+      {
+        label: "503",
+        fetch: (): Promise<Response> => Promise.resolve(new Response("down", { status: 503 })),
+        expected: { state: "http_error", checkedAtMs: 5_000, httpStatus: 503 },
+      },
+      {
+        label: "rejected fetch",
+        fetch: (): Promise<Response> => Promise.reject(new TypeError("fetch failed")),
+        expected: { state: "unreachable", checkedAtMs: 5_000 },
+      },
+      {
+        label: "missing model",
+        fetch: (): Promise<Response> =>
+          Promise.resolve(new Response(JSON.stringify({ data: [{ id: "other" }] }))),
+        expected: { state: "model_missing", checkedAtMs: 5_000 },
+      },
+    ];
+
+    for (const row of rows) {
+      const service = createLocalSeatHealthService({
+        agents: () => [
+          declaredAcpSeat({ url: "https://gw.example.invalid:7843/v1", expect_model: "qwen" }),
+        ],
+        ttlMs: 20_000,
+        now: () => 5_000,
+        fetch: row.fetch,
+      });
+
+      await service.refresh();
+
+      expect(service.getSeatHealth("acp-seat")).toEqual(row.expected);
+      expect(service.getUnhealthyAgents()).toEqual(new Set(["acp-seat"]));
+      if (row.label === "rejected fetch") {
+        const record = service.getSeatHealth("acp-seat");
+        if (record === undefined) throw new Error("expected a record");
+        expect("httpStatus" in record).toBe(false);
+      }
+    }
+  });
+
+  test("credential read failures and an empty bearer file are config_error and send no probe", async () => {
+    const cases: {
+      label: string;
+      health: DeclaredHealth;
+      readFile: (path: string) => Promise<string>;
+    }[] = [
+      {
+        label: "unreadable bearer file",
+        health: {
+          url: "https://gw.example.invalid:7843/v1",
+          bearer_file: "/seat-files/bearer",
+          expect_model: "qwen",
+        },
+        readFile: (): Promise<string> => Promise.reject(new Error("ENOENT")),
+      },
+      {
+        label: "empty bearer file",
+        health: {
+          url: "https://gw.example.invalid:7843/v1",
+          bearer_file: "/seat-files/bearer",
+          expect_model: "qwen",
+        },
+        readFile: (): Promise<string> => Promise.resolve("  \n"),
+      },
+      {
+        label: "unreadable ca file",
+        health: {
+          url: "https://gw.example.invalid:7843/v1",
+          bearer_file: "/seat-files/bearer",
+          ca_file: "/seat-files/ca.pem",
+          expect_model: "qwen",
+        },
+        readFile: (path): Promise<string> =>
+          path.endsWith("ca.pem") ? Promise.reject(new Error("ENOENT")) : Promise.resolve("abc"),
+      },
+    ];
+
+    for (const item of cases) {
+      let calls = 0;
+      const service = createLocalSeatHealthService({
+        agents: () => [declaredAcpSeat(item.health)],
+        ttlMs: 20_000,
+        now: () => 1_000,
+        readFile: item.readFile,
+        fetch: () => {
+          calls += 1;
+          return Promise.resolve(new Response(JSON.stringify({ data: [{ id: "qwen" }] })));
+        },
+      });
+
+      await service.refresh();
+
+      expect(service.getSeatHealth("acp-seat")?.state).toBe("config_error");
+      expect(calls).toBe(0);
+      expect(service.getUnhealthyAgents()).toEqual(new Set(["acp-seat"]));
+    }
+  });
+
+  test("warns on a healthy-to-failing transition but not on a failing-to-failing change", async () => {
+    const { warns, infos, log } = recordingLog();
+    let mode: "ok" | "401" | "down" = "ok";
+    let nowMs = 1_000;
+    const service = createLocalSeatHealthService({
+      agents: () => [
+        declaredAcpSeat({ url: "https://gw.example.invalid:7843/v1", expect_model: "qwen" }),
+      ],
+      ttlMs: 20_000,
+      now: () => nowMs,
+      fetch: () => {
+        if (mode === "ok") {
+          return Promise.resolve(new Response(JSON.stringify({ data: [{ id: "qwen" }] })));
+        }
+        if (mode === "401") {
+          return Promise.resolve(new Response("no", { status: 401 }));
+        }
+        return Promise.reject(new TypeError("fetch failed"));
+      },
+      log,
+    });
+
+    await service.refresh();
+    expect(service.getSeatHealth("acp-seat")?.state).toBe("healthy");
+    expect(warns).toHaveLength(0);
+    expect(infos).toHaveLength(0);
+
+    mode = "401";
+    nowMs = 21_001;
+    await service.refresh();
+    expect(service.getSeatHealth("acp-seat")?.state).toBe("unauthorized");
+    expect(warns).toHaveLength(1);
+    expect(warns[0]?.obj).toMatchObject({ agent: "acp-seat", state: "unauthorized" });
+
+    mode = "down";
+    nowMs = 41_002;
+    await service.refresh();
+    expect(service.getSeatHealth("acp-seat")?.state).toBe("unreachable");
+    expect(warns).toHaveLength(1);
+    expect(infos).toHaveLength(0);
+  });
+
+  test("getSeatHealth is undefined for a seat that was never probed", () => {
+    const service = createLocalSeatHealthService({
+      agents: () => [
+        declaredAcpSeat({ url: "https://gw.example.invalid:7843/v1", expect_model: "qwen" }),
+      ],
+      ttlMs: 20_000,
+      now: () => 1_000,
+      fetch: () => Promise.resolve(new Response(JSON.stringify({ data: [{ id: "qwen" }] }))),
+    });
+
+    expect(service.getSeatHealth("acp-seat")).toBeUndefined();
+    expect(service.getSeatHealth("nope")).toBeUndefined();
   });
 });
