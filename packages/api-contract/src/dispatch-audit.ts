@@ -59,6 +59,8 @@ const DispatchReliabilityEvidenceSchema = z
     cancel_requested: z.boolean(),
     adapter_streaming: z.boolean().nullable(),
     commit_integrity: CommitIntegrityEvidenceSchema.nullable().optional(),
+    // #217: the dispatch worktree's git hooks status from dispatch.worktree_ready; absent when unknown.
+    git_hooks: z.enum(["not_configured", "missing", "empty", "installed"]).optional(),
   })
   .loose();
 export type DispatchReliabilityEvidence = z.infer<typeof DispatchReliabilityEvidenceSchema>;

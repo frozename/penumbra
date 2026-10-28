@@ -152,6 +152,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     description:
       "Workflow execution wait deadline after recall composition, in milliseconds. Defaults to and is capped at 240000, so numeric overrides can only lower it; blank, non-finite, or values below 1 fall back to 240000.",
   },
+  PENUMBRA_WORKTREE_INSPECTION_TIMEOUT_MS: {
+    schema: OptStr,
+    description:
+      "Budget for one worktree inspection (worktree_inspect, GET /worktrees/:id), in milliseconds. A whole number from 1000 to 120000 is used; unset, blank or any other value falls back to 5000. A caller deadline, such as a workflow run deadline, still caps it.",
+  },
   PENUMBRA_STORAGE_ROOT: {
     schema: OptStr,
     description: "Root directory for penumbra storage.",

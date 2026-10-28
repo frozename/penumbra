@@ -1400,3 +1400,220 @@ test("handoff permission_profile is forwarded into the chat turn", async () => {
   const call = runChatTurn.mock.calls[0]![0];
   expect(call.permission_profile).toBe("review_readonly");
 });
+
+const STALL_MESSAGE =
+  "stdio-acp: no wire activity (session/update or onRequest) for 900000ms — agent stalled mid-turn";
+type OnEventMockFn = NonNullable<Parameters<typeof dispatchHandoff>[0]["onEvent"]>;
+type RecordedEvent = Parameters<OnEventMockFn>[0];
+
+function failedTurn(message: string): ChatTurnResult {
+  return {
+    text: "",
+    prompt_event_id: "p",
+    response_event_id: "r",
+    next_mention: null,
+    mentions: [],
+    error: { message },
+  };
+}
+
+function okTurn(): ChatTurnResult {
+  return {
+    text: "done",
+    prompt_event_id: "p2",
+    response_event_id: "r2",
+    next_mention: null,
+    mentions: [],
+  };
+}
+
+function turnRetries(onEvent: { mock: { calls: [RecordedEvent][] } }): RecordedEvent[] {
+  return onEvent.mock.calls.map((c) => c[0]).filter((e) => e.kind === "agent.turn_retry");
+}
+
+test("a stalled turn records one agent.turn_retry before its backoff (#322)", async () => {
+  const order: string[] = [];
+  const runChatTurn = mock<ChatTurnMockFn>()
+    .mockRejectedValueOnce(new Error(STALL_MESSAGE))
+    .mockResolvedValueOnce(okTurn());
+  const markFailed = mock();
+  const delay = mock<DelayMockFn>().mockImplementation((ms) => {
+    order.push(`delay:${String(ms)}`);
+    return Promise.resolve();
+  });
+  const onEvent = mock<OnEventMockFn>().mockImplementation((event) => {
+    order.push(`event:${event.kind}`);
+  });
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    observe: observeStub,
+    createHandoff: mock(),
+    approve: mock(),
+    runChatTurn,
+    markFailed,
+    delay,
+    eventContext: { handoffId: "h0", workerId: "w-1" },
+    onEvent,
+  });
+
+  expect(res.terminatedReason).toBe("no_mention");
+  expect(markFailed).not.toHaveBeenCalled();
+  expect(runChatTurn).toHaveBeenCalledTimes(2);
+  const retries = turnRetries(onEvent);
+  expect(retries).toHaveLength(1);
+  expect(retries[0]!.handoff_id).toBe("h0");
+  expect(retries[0]!.worker_id).toBe("w-1");
+  expect(retries[0]!.source).toBe("worker");
+  expect(typeof retries[0]!.ts).toBe("string");
+  expect(retries[0]!.meta).toEqual({
+    attempt: 1,
+    next_attempt: 2,
+    backoff_ms: 200,
+    error_class: "stall",
+  });
+  expect(JSON.stringify(retries[0])).not.toContain("no wire activity");
+  expect(JSON.stringify(retries[0])).not.toContain("stalled");
+  expect(order).toEqual(["event:agent.turn_retry", "delay:200"]);
+});
+
+test("every retry before exhaustion is recorded with its error class (#322)", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>()
+    .mockResolvedValueOnce(failedTurn(STALL_MESSAGE))
+    .mockResolvedValueOnce(failedTurn("stdio-acp-client: transport closed"))
+    .mockResolvedValueOnce(failedTurn("adapter blew up"))
+    .mockResolvedValueOnce(failedTurn("adapter blew up"));
+  const markFailed = mock().mockResolvedValue({ handoff_id: "h0", status: "failed" });
+  const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
+  const onEvent = mock<OnEventMockFn>();
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    observe: observeStub,
+    createHandoff: mock(),
+    approve: mock(),
+    runChatTurn,
+    markFailed,
+    delay,
+    eventContext: { handoffId: "h0", workerId: "w-1" },
+    onEvent,
+  });
+
+  expect(res.terminatedReason).toBe("error");
+  expect(runChatTurn).toHaveBeenCalledTimes(4);
+  expect(markFailed).toHaveBeenCalledWith("h0", "adapter blew up");
+  expect(turnRetries(onEvent).map((e) => e.meta)).toEqual([
+    { attempt: 1, next_attempt: 2, backoff_ms: 200, error_class: "stall" },
+    { attempt: 2, next_attempt: 3, backoff_ms: 400, error_class: "transport_closed" },
+    { attempt: 3, next_attempt: 4, backoff_ms: 800, error_class: "error" },
+  ]);
+});
+
+test("a quota failure records no agent.turn_retry (#322)", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>().mockRejectedValue(new Error(AGY_QUOTA_MESSAGE));
+  const markFailed = mock().mockResolvedValue({ handoff_id: "h0", status: "failed" });
+  const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
+  const onEvent = mock<OnEventMockFn>();
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    observe: observeStub,
+    createHandoff: mock(),
+    approve: mock(),
+    runChatTurn,
+    markFailed,
+    delay,
+    eventContext: { handoffId: "h0", workerId: "w-1" },
+    onEvent,
+  });
+
+  expect(res.terminatedReason).toBe("error");
+  expect(runChatTurn).toHaveBeenCalledTimes(1);
+  expect(delay).not.toHaveBeenCalled();
+  expect(turnRetries(onEvent)).toEqual([]);
+});
+
+test("no agent.turn_retry without a handoff id (#322)", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>()
+    .mockRejectedValueOnce(new Error(STALL_MESSAGE))
+    .mockResolvedValueOnce(okTurn());
+  const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
+  const onEvent = mock<OnEventMockFn>();
+
+  const res = await dispatchHandoff({
+    handoff: { ...baseHandoff, handoff_id: undefined },
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    observe: observeStub,
+    createHandoff: mock(),
+    approve: mock(),
+    runChatTurn,
+    delay,
+    onEvent,
+  });
+
+  expect(res.terminatedReason).toBe("no_mention");
+  expect(runChatTurn).toHaveBeenCalledTimes(2);
+  expect(onEvent).not.toHaveBeenCalled();
+});
+
+test("a throwing onEvent does not stop the retry (#322)", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>()
+    .mockRejectedValueOnce(new Error(STALL_MESSAGE))
+    .mockResolvedValueOnce(okTurn());
+  const markFailed = mock();
+  const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
+  const onEvent = mock<OnEventMockFn>().mockImplementation(() => {
+    throw new Error("sink down");
+  });
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    observe: observeStub,
+    createHandoff: mock(),
+    approve: mock(),
+    runChatTurn,
+    markFailed,
+    delay,
+    eventContext: { handoffId: "h0", workerId: "w-1" },
+    onEvent,
+  });
+
+  expect(res.terminatedReason).toBe("no_mention");
+  expect(runChatTurn).toHaveBeenCalledTimes(2);
+  expect(onEvent).toHaveBeenCalledTimes(1);
+  expect(markFailed).not.toHaveBeenCalled();
+});

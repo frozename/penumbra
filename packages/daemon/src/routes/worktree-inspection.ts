@@ -6,6 +6,8 @@ import { promisify } from "node:util";
 
 const execFile = promisify(execFileCb);
 const INSPECTION_TIMEOUT_MS = 5_000;
+const MIN_INSPECTION_TIMEOUT_MS = 1_000;
+const MAX_INSPECTION_TIMEOUT_MS = 120_000;
 const COMMAND_MAX_BUFFER_BYTES = 64 * 1024;
 const DIFF_MAX_BYTES = 10 * 1024;
 const LOG_MAX_BYTES = 8 * 1024;
@@ -73,7 +75,35 @@ export type WorktreeInspectionOptions = {
   expectedProjectId?: string;
   deadline?: () => { remaining_ms: number | null; expired: boolean };
   runGit?: WorktreeInspectionCommandRunner;
+  /** Inspection budget in ms; defaults to resolveInspectionTimeoutMs(). */
+  inspectionTimeoutMs?: number;
 };
+
+/**
+ * #263: the default inspection budget. PENUMBRA_WORKTREE_INSPECTION_TIMEOUT_MS is
+ * used when it is a whole number of milliseconds from 1000 to 120000; unset,
+ * blank or any other value falls back to 5000.
+ */
+export function resolveInspectionTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.PENUMBRA_WORKTREE_INSPECTION_TIMEOUT_MS?.trim();
+  if (raw === undefined || !/^\d+$/.test(raw)) return INSPECTION_TIMEOUT_MS;
+  const value = Number(raw);
+  return value >= MIN_INSPECTION_TIMEOUT_MS && value <= MAX_INSPECTION_TIMEOUT_MS
+    ? value
+    : INSPECTION_TIMEOUT_MS;
+}
+
+// A caller deadline (options.deadline) still caps the budget, so a larger
+// configured value has no effect where the caller's own deadline is shorter,
+// such as a workflow run close to its end.
+function boundInspectionBudget(
+  configuredMs: number,
+  callerRemainingMs: number | null | undefined,
+): number {
+  return callerRemainingMs === null || callerRemainingMs === undefined
+    ? configuredMs
+    : Math.min(configuredMs, callerRemainingMs);
+}
 
 const defaultRunGit: WorktreeInspectionCommandRunner = async (args, opts) => {
   return await execFile("git", [...args], { ...opts, encoding: "utf8" });
@@ -400,10 +430,10 @@ export async function inspectWorktreeForHandoff(
   const runGit = options.runGit ?? defaultRunGit;
   const startedAt = Date.now();
   const initialRemaining = initialDeadline?.remaining_ms;
-  const inspectionBudgetMs =
-    initialRemaining === null || initialRemaining === undefined
-      ? INSPECTION_TIMEOUT_MS
-      : Math.min(INSPECTION_TIMEOUT_MS, initialRemaining);
+  const inspectionBudgetMs = boundInspectionBudget(
+    options.inspectionTimeoutMs ?? resolveInspectionTimeoutMs(),
+    initialRemaining,
+  );
   let canonicalPath: string;
   let phase: InspectionPhase = "snapshot";
   let lastStep: string | undefined;

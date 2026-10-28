@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 
 import {
   inspectWorktreeForHandoff,
+  resolveInspectionTimeoutMs,
   type WorktreeInspectionCommandRunner,
 } from "@src/routes/worktree-inspection.js";
 import { worktreesInspectRoute } from "@src/routes/worktrees.js";
@@ -19,6 +20,7 @@ import {
 } from "../helpers/worktree-inspection.js";
 
 const execFile = promisify(execFileCb);
+const TIMEOUT_ENV = "PENUMBRA_WORKTREE_INSPECTION_TIMEOUT_MS";
 
 function actualGitRunner(harness: WorktreeInspectionHarness): WorktreeInspectionCommandRunner {
   return async (args, opts) =>
@@ -424,6 +426,90 @@ test("the inspect route keeps a non-deadline failure message-only", async () => 
       error: { code: string; message: string; partial?: unknown };
     };
     expect(body.error).toStrictEqual({ code: "inspection_failed", message: "fatal: bad object" });
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("resolveInspectionTimeoutMs uses a whole-number PENUMBRA_WORKTREE_INSPECTION_TIMEOUT_MS from 1000 to 120000 and falls back to 5000", () => {
+  expect(resolveInspectionTimeoutMs({})).toBe(5_000);
+  expect(resolveInspectionTimeoutMs({ [TIMEOUT_ENV]: "30000" })).toBe(30_000);
+  expect(resolveInspectionTimeoutMs({ [TIMEOUT_ENV]: " 30000 " })).toBe(30_000);
+  expect(resolveInspectionTimeoutMs({ [TIMEOUT_ENV]: "1000" })).toBe(1_000);
+  expect(resolveInspectionTimeoutMs({ [TIMEOUT_ENV]: "120000" })).toBe(120_000);
+  const fallbacks = ["", "abc", "0", "-5", "999", "120001", "1.5", "1e4", "30000ms"];
+  expect(fallbacks.map((raw) => resolveInspectionTimeoutMs({ [TIMEOUT_ENV]: raw }))).toEqual(
+    fallbacks.map(() => 5_000),
+  );
+});
+
+test("an inspectionTimeoutMs option sets the inspection budget and the Git command timeout", async () => {
+  const harness = createWorktreeInspectionHarness();
+  try {
+    const handle = await createInspectionWorktree(harness);
+    const kill = killOnMatch(harness, "diff");
+    const timeouts: number[] = [];
+    const result = await inspectWorktreeForHandoff(harness.services, handle.handoffId, {
+      expectedProjectId: "project-a",
+      inspectionTimeoutMs: 30_000,
+      runGit: async (args, opts) => {
+        timeouts.push(opts.timeout);
+        return await kill(args, opts);
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected deadline failure");
+    expect(result.message).toMatch(
+      /^worktree inspection deadline expired during diff \(git diff\) after \d+ ms \(budget 30000 ms\)$/,
+    );
+    const firstTimeout = timeouts[0] ?? 0;
+    expect(firstTimeout).toBeGreaterThan(5_000);
+    expect(firstTimeout).toBeLessThanOrEqual(30_000);
+  } finally {
+    harness.cleanup();
+  }
+});
+
+test("PENUMBRA_WORKTREE_INSPECTION_TIMEOUT_MS sets the budget when no option is given", async () => {
+  const previous = process.env[TIMEOUT_ENV];
+  const harness = createWorktreeInspectionHarness();
+  try {
+    process.env[TIMEOUT_ENV] = "20000";
+    const handle = await createInspectionWorktree(harness);
+    const result = await inspectWorktreeForHandoff(harness.services, handle.handoffId, {
+      expectedProjectId: "project-a",
+      runGit: killOnMatch(harness, "diff"),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected deadline failure");
+    expect(result.message).toMatch(
+      /^worktree inspection deadline expired during diff \(git diff\) after \d+ ms \(budget 20000 ms\)$/,
+    );
+  } finally {
+    if (previous === undefined) {
+      Reflect.deleteProperty(process.env, TIMEOUT_ENV);
+    } else {
+      process.env[TIMEOUT_ENV] = previous;
+    }
+    harness.cleanup();
+  }
+});
+
+test("a caller deadline shorter than inspectionTimeoutMs still caps the budget", async () => {
+  const harness = createWorktreeInspectionHarness();
+  try {
+    const handle = await createInspectionWorktree(harness);
+    const result = await inspectWorktreeForHandoff(harness.services, handle.handoffId, {
+      expectedProjectId: "project-a",
+      inspectionTimeoutMs: 30_000,
+      deadline: () => ({ remaining_ms: 4_321, expired: false }),
+      runGit: killOnMatch(harness, "diff"),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected deadline failure");
+    expect(result.message).toMatch(
+      /^worktree inspection deadline expired during diff \(git diff\) after \d+ ms \(budget 4321 ms\)$/,
+    );
   } finally {
     harness.cleanup();
   }
