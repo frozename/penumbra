@@ -624,6 +624,7 @@ interface AcpSessionUpdate {
   _meta?: AcpSessionUpdateMeta;
   name?: unknown;
   rawInput?: unknown;
+  rawOutput?: unknown;
   toolCallId?: string;
   title?: string;
   kind?: string;
@@ -1275,6 +1276,28 @@ function narrowToolCallStatus(status: unknown): ToolCallStatus | undefined {
   return TOOL_CALL_STATUSES.find((s) => s === status);
 }
 
+// #341: ACP tool_call / tool_call_update payloads carry the arguments in `rawInput` and the
+// result in `rawOutput` or a `content` array. `input` / `output` are the older non-spec fields.
+export interface AcpToolCallFields {
+  content?: unknown;
+  input?: unknown;
+  output?: unknown;
+  rawInput?: unknown;
+  rawOutput?: unknown;
+}
+
+export function acpToolCallInput(update: AcpToolCallFields): unknown {
+  if (update.rawInput !== undefined) return update.rawInput;
+  return update.input;
+}
+
+export function acpToolCallOutput(update: AcpToolCallFields): unknown {
+  if (update.rawOutput !== undefined) return update.rawOutput;
+  if (update.output !== undefined) return update.output;
+  const content = update.content;
+  return Array.isArray(content) ? (content as unknown[]) : undefined;
+}
+
 function handleToolCall(ctx: DispatchTurnContext, update: AcpSessionUpdate): void {
   if (typeof update.toolCallId === "string" && update.toolCallId.length > 0) {
     const toolName =
@@ -1287,24 +1310,26 @@ function handleToolCall(ctx: DispatchTurnContext, update: AcpSessionUpdate): voi
     kind: "tool_call",
     toolCallId: update.toolCallId,
     status: narrowToolCallStatus(update.status),
-    input: update.input,
+    input: acpToolCallInput(update),
   });
   killOnToolCallWhenNoCapability(ctx);
 }
 
 function handleToolCallUpdate(ctx: DispatchTurnContext, update: AcpSessionUpdate): void {
+  const output = acpToolCallOutput(update);
   ctx.capturePort?.emit({
     kind: "tool_call_update",
     toolCallId: update.toolCallId,
     status: narrowToolCallStatus(update.status),
-    output: update.output,
+    input: acpToolCallInput(update),
+    output,
   });
   if (update.status === "failed") {
     emitLifecycle(ctx.input, "agent.tool_call.failed", {
       adapter: "stdio-acp",
       tool_call_id: update.toolCallId,
       tool_name: resolveToolName(update, ctx.toolNames),
-      output: update.output ?? null,
+      output: output ?? null,
     });
   }
   killOnToolCallWhenNoCapability(ctx);
