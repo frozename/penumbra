@@ -17,6 +17,7 @@ export const DispatchReliabilityStatusSchema = z.enum([
   "reconcile_missing",
   "agent_declared_done_unverified",
   "timeline_inconsistent",
+  "provider_quota_exhausted",
 ]);
 export type DispatchReliabilityStatus = z.infer<typeof DispatchReliabilityStatusSchema>;
 

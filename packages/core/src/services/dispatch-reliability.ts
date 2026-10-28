@@ -27,6 +27,8 @@ export interface DispatchReliabilityHandoff {
   cancel_requested_at: string | null;
   chain_task_type?: string | null;
   use_worktree?: boolean | number | null;
+  // #298: read only to recognise a provider quota exit.
+  resolution_reason?: string | null;
 }
 
 export interface DispatchReliabilityInput {
@@ -293,6 +295,43 @@ function classifyCommitIntegrity(ctx: ClassificationContext): DispatchReliabilit
   return null;
 }
 
+const AGY_ERROR_LINE_RE = /^AGY_ERROR:(.*)$/m;
+
+// #298: an agy provider quota exit, read from the handoff row. Mirrors the
+// predicate of agentchat's detectQuotaExhaustion (core cannot import
+// agentchat) but JSON-parses the AGY_ERROR line instead of matching
+// substrings, so a truncated or prose mention never matches.
+export function isAgyQuotaFailure(
+  handoff: Pick<DispatchReliabilityHandoff, "resolution_reason" | "status">,
+): boolean {
+  if (handoff.status !== "failed" || typeof handoff.resolution_reason !== "string") return false;
+  const line = AGY_ERROR_LINE_RE.exec(handoff.resolution_reason);
+  if (!line) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line[1] ?? "");
+  } catch {
+    return false;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return false;
+  const record = parsed as Record<string, unknown>;
+  return record.status === "RESOURCE_EXHAUSTED" || record.error_code === 429;
+}
+
+// #298: a quota exit leaves no agent output, but a retry cannot succeed
+// before the provider's reset, so it gets its own status and action `wait`.
+function classifyProviderQuota(ctx: ClassificationContext): DispatchReliabilityReport | null {
+  if (!ctx.terminal || !isAgyQuotaFailure(ctx.input.handoff)) return null;
+  return makeReport(
+    ctx,
+    "provider_quota_exhausted",
+    false,
+    "provider quota exhausted; the seat is unavailable until its reset",
+    "wait",
+    [],
+  );
+}
+
 function classifyResultIntegrity(ctx: ClassificationContext): DispatchReliabilityReport | null {
   if (ctx.terminal && ctx.input.responseCount === 0 && !ctx.input.finalResponseText?.trim()) {
     return makeReport(
@@ -407,6 +446,7 @@ export function classifyDispatchReliability(
     classifyStaleAndCancel(ctx) ??
     classifyMissingLifecycle(ctx) ??
     classifyCommitIntegrity(ctx) ??
+    classifyProviderQuota(ctx) ??
     classifyResultIntegrity(ctx) ??
     classifyIncompleteTurn(ctx);
   if (earlyReport) return earlyReport;

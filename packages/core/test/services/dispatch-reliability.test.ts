@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   classifyDispatchReliability,
   type DispatchReliabilityInput,
+  isAgyQuotaFailure,
 } from "@src/services/dispatch-reliability.js";
 
 function baseInput(overrides: Partial<DispatchReliabilityInput> = {}): DispatchReliabilityInput {
@@ -49,6 +50,45 @@ function nonMutatingInput(
       use_worktree: 1,
     },
     ...extra,
+  });
+}
+
+const AGY_QUOTA_REASON =
+  "~/.local/bin/agy: exit code 3 — error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 140h52m55s.\n" +
+  'AGY_ERROR: {"short_error":"RESOURCE_EXHAUSTED (code 429): Individual quota reached.","status":"RESOURCE_EXHAUSTED","error_code":429,"code_kind":"http","retryable":true}';
+
+// #298: a failed worktree dispatch with a full lifecycle and no agent output.
+function failedNoOutputInput(
+  resolutionReason: string | null,
+  overrides: Partial<DispatchReliabilityInput> = {},
+): DispatchReliabilityInput {
+  return baseInput({
+    handoff: {
+      handoff_id: "h-1",
+      status: "failed",
+      ts: "2026-05-01T00:00:00.000Z",
+      resolved_at: "2026-05-01T00:00:10.000Z",
+      cancel_requested_at: null,
+      chain_task_type: "unknown",
+      use_worktree: 1,
+      resolution_reason: resolutionReason,
+    },
+    events: [
+      { kind: "dispatch.start", ts: "2026-05-01T00:00:01.000Z" },
+      { kind: "proc.spawn", ts: "2026-05-01T00:00:02.000Z" },
+      { kind: "proc.exited.resolved", ts: "2026-05-01T00:00:05.000Z" },
+      {
+        kind: "dispatch.end",
+        ts: "2026-05-01T00:00:09.000Z",
+        meta: { status: "error", worktree_changed: false },
+      },
+    ],
+    responseCount: 0,
+    finalResponseText: null,
+    worktreeChanged: false,
+    dispatchEndCommitted: null,
+    reconciled: null,
+    ...overrides,
   });
 }
 
@@ -566,5 +606,60 @@ describe("classifyDispatchReliability", () => {
     );
     expect(report.status).toBe("complete");
     expect(report.trustworthy).toBe(true);
+  });
+});
+
+describe("classifyDispatchReliability provider quota (#298)", () => {
+  test("a failed agy quota exit is provider_quota_exhausted with action wait, not retry", () => {
+    const report = classifyDispatchReliability(failedNoOutputInput(AGY_QUOTA_REASON));
+    expect(report.status).toBe("provider_quota_exhausted");
+    expect(report.recommended_action).toBe("wait");
+    expect(report.trustworthy).toBe(false);
+    expect(report.terminal).toBe(true);
+    expect(report.missing_events).toEqual([]);
+  });
+
+  test("the quota sentence without an AGY_ERROR line stays no_agent_output with action retry", () => {
+    const report = classifyDispatchReliability(
+      failedNoOutputInput(
+        "~/.local/bin/agy: exit code 3 — error: Individual quota reached. Resets in 140h52m55s.",
+      ),
+    );
+    expect(report.status).toBe("no_agent_output");
+    expect(report.recommended_action).toBe("retry");
+  });
+
+  test("a failed handoff with no resolution_reason stays no_agent_output", () => {
+    const report = classifyDispatchReliability(failedNoOutputInput(null));
+    expect(report.status).toBe("no_agent_output");
+    expect(report.recommended_action).toBe("retry");
+  });
+
+  test("a completed handoff carrying the quota text is not a quota failure", () => {
+    const report = classifyDispatchReliability(
+      baseInput({
+        handoff: { ...baseInput().handoff, resolution_reason: AGY_QUOTA_REASON },
+      }),
+    );
+    expect(report.status).toBe("complete");
+    expect(report.recommended_action).toBe("accept");
+  });
+
+  test("lifecycle gaps still win over the quota status", () => {
+    const report = classifyDispatchReliability(
+      failedNoOutputInput(AGY_QUOTA_REASON, {
+        events: [
+          { kind: "dispatch.start", ts: "2026-05-01T00:00:01.000Z" },
+          { kind: "proc.spawn", ts: "2026-05-01T00:00:02.000Z" },
+        ],
+      }),
+    );
+    expect(report.status).toBe("missing_dispatch_end");
+    expect(report.recommended_action).toBe("review_manually");
+  });
+
+  test("isAgyQuotaFailure is exported from dispatch-reliability", () => {
+    expect(isAgyQuotaFailure({ status: "failed", resolution_reason: AGY_QUOTA_REASON })).toBe(true);
+    expect(isAgyQuotaFailure({ status: "failed" })).toBe(false);
   });
 });
