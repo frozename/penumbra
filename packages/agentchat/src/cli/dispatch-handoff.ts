@@ -303,6 +303,41 @@ function nextBackoffMs(attempt: number, result: TurnAttempt): number | undefined
   return RETRY_BACKOFF_MS[attempt];
 }
 
+/** #322: coarse, redacted class of a failed turn's error. Never the raw message: it can carry stderr. */
+function classifyTurnRetryError(errMsg: string): "error" | "stall" | "transport_closed" {
+  if (errMsg.includes("no wire activity")) return "stall";
+  if (/transport closed|ECONNRESET|EPIPE/i.test(errMsg)) return "transport_closed";
+  return "error";
+}
+
+/** #322: record an in-worker turn retry before its backoff, so a failed-then-restarted turn leaves a trace. */
+function emitTurnRetry(
+  opts: DispatchHandoffOpts,
+  attempt: number,
+  backoffMs: number,
+  errMsg: string,
+): void {
+  const handoffId = opts.handoff.handoff_id;
+  if (!handoffId || !opts.onEvent) return;
+  try {
+    opts.onEvent({
+      handoff_id: handoffId,
+      worker_id: opts.eventContext?.workerId,
+      source: "worker",
+      kind: "agent.turn_retry",
+      ts: new Date().toISOString(),
+      meta: {
+        attempt: attempt + 1,
+        next_attempt: attempt + 2,
+        backoff_ms: backoffMs,
+        error_class: classifyTurnRetryError(errMsg),
+      },
+    });
+  } catch {
+    // Observability only: a failing event sink must never stop the retry.
+  }
+}
+
 async function runTurnWithRetry(
   opts: DispatchHandoffOpts,
   targetAgent: string,
@@ -326,6 +361,7 @@ async function runTurnWithRetry(
       return { ok: false, result: cancelledRetryResult(targetAgent, state.lastErrMeta) };
     const backoff = nextBackoffMs(attempt, result);
     if (backoff === undefined) break;
+    emitTurnRetry(opts, attempt, backoff, result.errMsg ?? "");
     await delay(backoff);
   }
 

@@ -27,6 +27,7 @@ export const DispatchEventKindSchema = z.enum([
   "cancel.received",
   "cancel.dispatched",
   "agent.heartbeat",
+  "agent.turn_retry",
   "heartbeat.sent",
   "heartbeat.received",
   "terminal.failed",
