@@ -236,6 +236,10 @@ export async function startHarness(): Promise<E2EHarness> {
       }
 
       if (!server.listening) return;
+      // Drop keep-alive sockets first so no pooled client connection outlives this harness.
+      if (typeof server.closeAllConnections === "function") {
+        server.closeAllConnections();
+      }
       await new Promise<void>((resolve) => {
         server.close(() => resolve());
       });

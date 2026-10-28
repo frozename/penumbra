@@ -1,7 +1,7 @@
 import { expect, mock, test } from "bun:test";
 
 import { registerAdapter } from "@src/adapters/registry.js";
-import { dispatchHandoff } from "@src/cli/dispatch-handoff.js";
+import { dispatchHandoff, TURN_RETRY_WORKTREE_NOTE } from "@src/cli/dispatch-handoff.js";
 import type { ChatTurnInput, ChatTurnResult } from "@src/cli/loop.js";
 import { PenumbraHttpError } from "@src/penumbra-client.js";
 import type { WriteToolsExecutor } from "@src/worker/write-tools-executor.js";
@@ -1830,4 +1830,139 @@ test("a throwing log.warn does not stop the retry or the event (#322)", async ()
   expect(warn).toHaveBeenCalledTimes(1);
   expect(turnRetries(onEvent)).toHaveLength(1);
   expect(markFailed).not.toHaveBeenCalled();
+});
+
+test("a retried turn's prompt starts with the worktree note and keeps the original message (#322)", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>()
+    .mockRejectedValueOnce(new Error(STALL_WITH_STDERR))
+    .mockResolvedValueOnce(okTurn());
+  const markFailed = mock();
+  const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    observe: observeStub,
+    createHandoff: mock(),
+    approve: mock(),
+    runChatTurn,
+    markFailed,
+    delay,
+  });
+
+  expect(res.terminatedReason).toBe("no_mention");
+  expect(runChatTurn).toHaveBeenCalledTimes(2);
+  const first = runChatTurn.mock.calls[0]![0];
+  const second = runChatTurn.mock.calls[1]![0];
+  expect(first.prompt).toBeUndefined();
+  expect(first.userMessage).toBe("hi");
+  expect(second.userMessage).toBe("hi");
+  const retried = second.prompt ?? "";
+  expect(retried.startsWith(TURN_RETRY_WORKTREE_NOTE)).toBe(true);
+  expect(retried).toContain(
+    "This is attempt 2 of the same turn (previous attempt error class: stall).",
+  );
+  expect(retried).toContain("run `git status`");
+  expect(retried).toContain("Do not assume a clean base");
+  expect(retried.endsWith("\n\nhi")).toBe(true);
+  expect(retried).not.toContain("no wire activity");
+  expect(retried).not.toContain("stalled");
+  expect(retried).not.toContain("900000ms");
+  expect(retried).not.toContain("boom-7731");
+  expect(markFailed).not.toHaveBeenCalled();
+});
+
+test("a retried continuation turn gets the note before its built transcript prompt (#322)", async () => {
+  const continuation = {
+    ...baseHandoff,
+    handoff_id: "h1",
+    from_agent: "planner",
+    to_agent: "executor",
+    message: "do the thing",
+  };
+  const runChatTurn = mock<ChatTurnMockFn>()
+    .mockRejectedValueOnce(new Error(STALL_MESSAGE))
+    .mockResolvedValueOnce(okTurn());
+  const markFailed = mock();
+  const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
+
+  const res = await dispatchHandoff({
+    handoff: continuation,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [{ agent: "user", text: "hi" }],
+    transcriptBudget: 1000,
+    hopsSoFar: 1,
+    maxHops: 5,
+    trustMode: "all",
+    observe: observeStub,
+    createHandoff: mock(),
+    approve: mock(),
+    runChatTurn,
+    markFailed,
+    delay,
+  });
+
+  expect(res.terminatedReason).toBe("no_mention");
+  expect(runChatTurn).toHaveBeenCalledTimes(2);
+  const built = runChatTurn.mock.calls[0]![0].prompt ?? "";
+  expect(built).toBe("[user]: hi\n\nFrom @planner: do the thing");
+  const retried = runChatTurn.mock.calls[1]![0].prompt ?? "";
+  expect(retried.startsWith(TURN_RETRY_WORKTREE_NOTE)).toBe(true);
+  expect(retried.endsWith(`\n\n${built}`)).toBe(true);
+  expect(retried.split(TURN_RETRY_WORKTREE_NOTE)).toHaveLength(2);
+  expect(runChatTurn.mock.calls[1]![0].userMessage).toBe("do the thing");
+});
+
+test("every retried attempt gets one note with its own attempt number and error class (#322)", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>()
+    .mockResolvedValueOnce(failedTurn(STALL_MESSAGE))
+    .mockResolvedValueOnce(failedTurn("stdio-acp-client: transport closed"))
+    .mockResolvedValueOnce(failedTurn("adapter blew up"))
+    .mockResolvedValueOnce(failedTurn("adapter blew up"));
+  const markFailed = mock().mockResolvedValue({ handoff_id: "h0", status: "failed" });
+  const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    observe: observeStub,
+    createHandoff: mock(),
+    approve: mock(),
+    runChatTurn,
+    markFailed,
+    delay,
+  });
+
+  expect(res.terminatedReason).toBe("error");
+  expect(runChatTurn).toHaveBeenCalledTimes(4);
+  expect(runChatTurn.mock.calls[0]![0].prompt).toBeUndefined();
+  const retried = runChatTurn.mock.calls.slice(1).map((c) => c[0].prompt ?? "");
+  expect(retried.map((p) => p.startsWith(TURN_RETRY_WORKTREE_NOTE))).toEqual([true, true, true]);
+  expect(retried.map((p) => p.split(TURN_RETRY_WORKTREE_NOTE).length - 1)).toEqual([1, 1, 1]);
+  expect(retried[0]).toContain(
+    "This is attempt 2 of the same turn (previous attempt error class: stall).",
+  );
+  expect(retried[1]).toContain(
+    "This is attempt 3 of the same turn (previous attempt error class: transport_closed).",
+  );
+  expect(retried[2]).toContain(
+    "This is attempt 4 of the same turn (previous attempt error class: error).",
+  );
+  expect(retried.map((p) => p.endsWith("\n\nhi"))).toEqual([true, true, true]);
+  const joined = retried.join("\n");
+  expect(joined).not.toContain("transport closed");
+  expect(joined).not.toContain("adapter blew up");
 });
