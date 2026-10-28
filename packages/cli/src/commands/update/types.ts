@@ -195,6 +195,8 @@ export interface UpdateOptions {
 export interface HeavyLockInfo {
   path: string;
   source: "default" | "env" | "worker-unit";
+  /** False when this CLI found no flock(1): the lock serializes heavy stages in-process only. */
+  crossProcess?: boolean;
 }
 
 export interface UpdateContext {
