@@ -873,3 +873,61 @@ test("maestro redactor — tool result bypass emits bypassed event and preserves
   expect(row).toBeDefined();
   expect(row!.payload_json?.output).toEqual(output);
 });
+
+test("15. a later tool_call_update input replaces the empty tool_call input (#341)", async () => {
+  const f = makeFakeObserve();
+  const port = new CapturePort({ ...baseOpts, observe: f.observe });
+  port.emit({ kind: "tool_call", toolCallId: "tc-raw", status: "pending", input: {} });
+  port.emit({
+    kind: "tool_call_update",
+    toolCallId: "tc-raw",
+    status: "in_progress",
+    input: { command: "git stash" },
+  });
+  port.emit({
+    kind: "tool_call_update",
+    toolCallId: "tc-raw",
+    status: "failed",
+    output: { error: "permission denied" },
+  });
+  const closing = port.close();
+  f.resolveAll();
+  await closing;
+  expect(f.calls).toHaveLength(1);
+  const r = observed(f.calls, 0);
+  expect(r.event_type).toBe("agent-tool-use");
+  expect(r.payload_json?.input).toEqual({ command: "git stash" });
+  expect(r.payload_json?.output).toEqual({ error: "permission denied" });
+  expect(r.payload_json?.status).toBe("failed");
+});
+
+test("16. a tool_call_update with a null input keeps the tool_call input (#341)", async () => {
+  const f = makeFakeObserve();
+  const port = new CapturePort({ ...baseOpts, observe: f.observe });
+  port.emit({
+    kind: "tool_call",
+    toolCallId: "tc-keep",
+    status: "pending",
+    input: { path: "a.ts" },
+  });
+  port.emit({
+    kind: "tool_call_update",
+    toolCallId: "tc-keep",
+    status: "in_progress",
+    input: null,
+  });
+  port.emit({
+    kind: "tool_call_update",
+    toolCallId: "tc-keep",
+    status: "completed",
+    output: { ok: true },
+  });
+  const closing = port.close();
+  f.resolveAll();
+  await closing;
+  expect(f.calls).toHaveLength(1);
+  const r = observed(f.calls, 0);
+  expect(r.payload_json?.input).toEqual({ path: "a.ts" });
+  expect(r.payload_json?.output).toEqual({ ok: true });
+  expect(r.payload_json?.status).toBe("completed");
+});

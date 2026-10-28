@@ -218,10 +218,13 @@ export class CapturePort {
 
   private handleToolCallUpdate(ev: RegularNotificationEvent): void {
     if (!ev.toolCallId) return;
+    const held = this.toolCalls.get(ev.toolCallId);
+    // #341: ACP agents often send `rawInput: {}` on tool_call and the full arguments on a
+    // later tool_call_update, so a later non-null update input replaces the held input.
+    if (held !== undefined && ev.input !== undefined && ev.input !== null) held.input = ev.input;
     const terminal =
       ev.status === "completed" || ev.status === "failed" || ev.status === "canceled";
     if (!terminal) return;
-    const held = this.toolCalls.get(ev.toolCallId);
     if (!held) return;
     this.toolCalls.delete(ev.toolCallId);
     if (this.chunkBuffer) {
