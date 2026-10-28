@@ -58,4 +58,10 @@ describe("dispatch event contract", () => {
   it("DispatchEventKindSchema accepts agent.turn_retry (#322)", () => {
     expect(DispatchEventKindSchema.safeParse("agent.turn_retry").success).toBe(true);
   });
+
+  it("DispatchEventKindSchema accepts the stdio-acp model selection kinds (#328)", () => {
+    for (const kind of ["acp.model_selected", "acp.model_unavailable", "acp.model_select_failed"]) {
+      expect(DispatchEventKindSchema.safeParse(kind).success).toBe(true);
+    }
+  });
 });

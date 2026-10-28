@@ -63,6 +63,10 @@ export const DispatchEventKindSchema = z.enum([
   "lane.override",
   "long_lived.action.expired",
   "workflow.cancel.wait_timeout",
+  // #328: stdio-acp options.model selection through ACP session/set_model.
+  "acp.model_selected",
+  "acp.model_unavailable",
+  "acp.model_select_failed",
 ]);
 export type DispatchEventKind = z.infer<typeof DispatchEventKindSchema>;
 

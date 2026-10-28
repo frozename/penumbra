@@ -98,6 +98,8 @@ describe("createStdioAcpAdapter options.model warning (#328)", () => {
       expect(cap.warns[0]).toContain("llamactl-z13/GLM-5.3");
       expect(cap.warns[0]).toContain("options.model");
       expect(cap.warns[0]).toContain("OPENCODE_CONFIG_DIR");
+      expect(cap.warns[0]).toContain("session/set_model");
+      expect(cap.warns[0]).not.toContain("does not apply");
     } finally {
       cap.restore();
     }
