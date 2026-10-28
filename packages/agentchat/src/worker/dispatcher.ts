@@ -109,6 +109,13 @@ export interface WorkerDispatcherDeps<H extends DispatcherHandoff = DispatcherHa
    */
   getWorktreeSnapshot?: (handoffId: string) => Promise<SnapshotResult>;
   /**
+   * #297: optional hook invoked once per dispatch, immediately before its
+   * dispatch.end is emitted or handed to reportTerminal. The worker uses it to
+   * write buffered thought text and free per-dispatch thought-capture state.
+   * A throw is logged and does not stop dispatch.end.
+   */
+  beforeDispatchEnd?: (handoffId: string) => void;
+  /**
    * Optional durable terminal reporter (the terminal outbox). When wired,
    * finalizeDispatch hands it the pending observations, the dispatch.end
    * event, and the complete/fail call as a single report instead of posting
@@ -536,6 +543,19 @@ async function runDispatchStartBarrier(
   }
 }
 
+// #297: run the optional pre-dispatch.end hook; a throw must never stop dispatch.end.
+function runBeforeDispatchEnd(deps: WorkerDispatcherDeps, handoffId: string): void {
+  if (!deps.beforeDispatchEnd) return;
+  try {
+    deps.beforeDispatchEnd(handoffId);
+  } catch (err: unknown) {
+    deps.log.warn(
+      { handoff_id: handoffId, err: String(err) },
+      "beforeDispatchEnd hook threw; emitting dispatch.end anyway",
+    );
+  }
+}
+
 async function finalizeBarrierFailure(
   deps: WorkerDispatcherDeps,
   handoff: DispatcherHandoff,
@@ -550,6 +570,7 @@ async function finalizeBarrierFailure(
   // failed), fall back to onClaimRetryable so the worker forgets dedup state
   // and re-picks the row on the next SSE/poll event.
   const reason = `dispatch_start_barrier_failed: ${errText}`;
+  runBeforeDispatchEnd(deps, handoff.handoff_id);
   deps.onEvent?.({
     handoff_id: handoff.handoff_id,
     worker_id: deps.workerId,
@@ -1037,6 +1058,7 @@ async function finalizeDispatch(
   // now (e.g. paths where the try block threw before reaching the chain-end
   // hook).
   await captureSnapshotOnce(deps, handoff, ctx.snapshot);
+  runBeforeDispatchEnd(deps, handoff.handoff_id);
   const dispatchEnd: DispatchEventInput = {
     handoff_id: handoff.handoff_id,
     worker_id: deps.workerId,
