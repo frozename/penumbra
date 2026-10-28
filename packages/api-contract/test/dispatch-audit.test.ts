@@ -16,7 +16,7 @@ const EVIDENCE = {
   mismatched_commits: ["c".repeat(40)],
 };
 
-test("DispatchReliabilityStatusSchema enumerates exactly 16 statuses in order", () => {
+test("DispatchReliabilityStatusSchema enumerates exactly 17 statuses in order", () => {
   expect(DispatchReliabilityStatusSchema.options).toEqual([
     "complete",
     "missing_dispatch_start",
@@ -34,10 +34,11 @@ test("DispatchReliabilityStatusSchema enumerates exactly 16 statuses in order", 
     "reconcile_missing",
     "agent_declared_done_unverified",
     "timeline_inconsistent",
+    "provider_quota_exhausted",
   ]);
 });
 
-test("DispatchReliabilityStatusSchema rejects a 17th status", () => {
+test("DispatchReliabilityStatusSchema rejects an 18th status", () => {
   expect(DispatchReliabilityStatusSchema.safeParse("unknown_status").success).toBe(false);
 });
 

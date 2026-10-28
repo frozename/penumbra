@@ -86,7 +86,11 @@ export interface DispatchHandoffOpts {
   eventContext?: ChatTurnInput["eventContext"];
   onEvent?: ChatTurnInput["onEvent"];
   onChunk?: (delta: string) => void;
-  log?: { error: (obj: Record<string, unknown>, msg: string) => void };
+  log?: {
+    error: (obj: Record<string, unknown>, msg: string) => void;
+    /** #322: optional, so a caller with an error-only logger still compiles. */
+    warn?: (obj: Record<string, unknown>, msg: string) => void;
+  };
   /** optional: override retry sleep (tests). */
   delay?: (ms: number) => Promise<void>;
   signal?: AbortSignal;
@@ -318,6 +322,17 @@ function emitTurnRetry(
   errMsg: string,
 ): void {
   const handoffId = opts.handoff.handoff_id;
+  const meta = {
+    attempt: attempt + 1,
+    next_attempt: attempt + 2,
+    backoff_ms: backoffMs,
+    error_class: classifyTurnRetryError(errMsg),
+  };
+  try {
+    opts.log?.warn?.({ handoff_id: handoffId, ...meta }, "in-worker turn retry");
+  } catch {
+    // Logging only: a failing logger must never stop the retry.
+  }
   if (!handoffId || !opts.onEvent) return;
   try {
     opts.onEvent({
@@ -326,12 +341,7 @@ function emitTurnRetry(
       source: "worker",
       kind: "agent.turn_retry",
       ts: new Date().toISOString(),
-      meta: {
-        attempt: attempt + 1,
-        next_attempt: attempt + 2,
-        backoff_ms: backoffMs,
-        error_class: classifyTurnRetryError(errMsg),
-      },
+      meta,
     });
   } catch {
     // Observability only: a failing event sink must never stop the retry.

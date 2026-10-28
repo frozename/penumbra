@@ -109,6 +109,7 @@ export function buildDispatchAuditReportForHandoff(
       ts: handoff.ts,
       resolved_at: handoff.resolved_at,
       cancel_requested_at: handoff.cancel_requested_at,
+      resolution_reason: handoff.resolution_reason,
       chain_task_type: handoff.chain_task_type,
       use_worktree: handoff.use_worktree,
     },
