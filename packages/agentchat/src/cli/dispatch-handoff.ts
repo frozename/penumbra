@@ -348,6 +348,32 @@ function emitTurnRetry(
   }
 }
 
+/** #322: first line of the note that every retried attempt's prompt starts with. */
+export const TURN_RETRY_WORKTREE_NOTE =
+  "[penumbra] In-worker turn retry: an earlier attempt of this turn failed, and this attempt runs in the same worktree.";
+
+/**
+ * #322: prompt for a retried attempt: the worktree note, then the original prompt
+ * (`promptText ?? handoff.message`, which is what runChatTurn sends). Only the attempt
+ * number and the redacted error class are interpolated, never the raw error: it can carry stderr.
+ */
+function turnRetryPrompt(
+  opts: DispatchHandoffOpts,
+  promptText: string | undefined,
+  attemptNumber: number,
+  errMsg: string | null,
+): string {
+  const original = promptText ?? opts.handoff.message;
+  const errorClass = classifyTurnRetryError(errMsg ?? "");
+  return [
+    TURN_RETRY_WORKTREE_NOTE,
+    `This is attempt ${String(attemptNumber)} of the same turn (previous attempt error class: ${errorClass}).`,
+    "The worktree may already hold uncommitted changes from the earlier attempt. Before you continue, run `git status` and inspect the diff with `git diff`. Do not assume a clean base: keep correct work, finish incomplete steps, and revert any temporary deliberate break, such as an unfinished mutation check.",
+    "",
+    original,
+  ].join("\n");
+}
+
 async function runTurnWithRetry(
   opts: DispatchHandoffOpts,
   targetAgent: string,
@@ -360,11 +386,13 @@ async function runTurnWithRetry(
     lastErrMeta: undefined,
   };
   const pending: Record<string, unknown>[] = [];
+  // #322: attempt 0 sends promptText unchanged; each later attempt gets the worktree note.
+  let turnPrompt = promptText;
 
   for (let attempt = 0; attempt <= RETRY_BACKOFF_MS.length; attempt++) {
     if (opts.signal?.aborted)
       return { ok: false, result: cancelledRetryResult(targetAgent, state.lastErrMeta) };
-    const result = await runTurnOnce(opts, targetAgent, promptText);
+    const result = await runTurnOnce(opts, targetAgent, turnPrompt);
     const done = foldAttempt(state, pending, result);
     if (done) return done;
     if (opts.signal?.aborted)
@@ -373,6 +401,7 @@ async function runTurnWithRetry(
     if (backoff === undefined) break;
     emitTurnRetry(opts, attempt, backoff, result.errMsg ?? "");
     await delay(backoff);
+    turnPrompt = turnRetryPrompt(opts, promptText, attempt + 2, result.errMsg);
   }
 
   const failed = await handleRetryExhaustion(
