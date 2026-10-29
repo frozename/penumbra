@@ -2569,8 +2569,29 @@ export async function chainSendMessageRoute(
   return json({ ok: true });
 }
 
+// #256: the seat's last local health probe as chain_list_agents shows it, or
+// undefined when the gate is off, the service has no getSeatHealth, or the seat
+// was never probed.
+function chainAgentHealth(
+  services: Services,
+  name: string,
+): { state: string; checked_at: string; http_status?: number } | undefined {
+  const record = services.localSeatHealth?.getSeatHealth?.(name);
+  if (record === undefined) {
+    return undefined;
+  }
+  return {
+    state: record.state,
+    checked_at: new Date(record.checkedAtMs).toISOString(),
+    ...(record.httpStatus === undefined ? {} : { http_status: record.httpStatus }),
+  };
+}
+
 export function chainsListAgentsRoute(_req: Request, services: Services): Response {
-  const agents = (services.agentRegistry ?? []).map((name) => ({ name }));
+  const agents = (services.agentRegistry ?? []).map((name) => {
+    const health = chainAgentHealth(services, name);
+    return health === undefined ? { name } : { name, health };
+  });
   return json({ agents });
 }
 

@@ -3468,6 +3468,45 @@ test("GET /chains/agents preserves registry order and shape", async () => {
   });
 });
 
+test("GET /chains/agents adds each probed seat's local health state", async () => {
+  type SeatHealthRow = { state: string; checkedAtMs: number; httpStatus?: number };
+  const services = tempServices({ agentRegistry: ["a", "b", "c"] });
+  const records = new Map<string, SeatHealthRow>([
+    ["a", { state: "healthy", checkedAtMs: 1_000 }],
+    ["b", { state: "unauthorized", checkedAtMs: 2_000, httpStatus: 401 }],
+  ]);
+  services.localSeatHealth = {
+    getUnhealthyAgents: (): Set<string> => new Set(["b"]),
+    getSeatHealth: (name: string): SeatHealthRow | undefined => records.get(name),
+  };
+  const res = chainsListAgentsRoute(new Request("http://x/chains/agents"), services);
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({
+    agents: [
+      { name: "a", health: { state: "healthy", checked_at: "1970-01-01T00:00:01.000Z" } },
+      {
+        name: "b",
+        health: {
+          state: "unauthorized",
+          checked_at: "1970-01-01T00:00:02.000Z",
+          http_status: 401,
+        },
+      },
+      { name: "c" },
+    ],
+  });
+});
+
+test("GET /chains/agents keeps plain rows when the seat health service has no getSeatHealth", async () => {
+  const services = tempServices({ agentRegistry: ["a", "b"] });
+  services.localSeatHealth = {
+    getUnhealthyAgents: (): Set<string> => new Set(["a"]),
+  };
+  const res = chainsListAgentsRoute(new Request("http://x/chains/agents"), services);
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ agents: [{ name: "a" }, { name: "b" }] });
+});
+
 test("GET /chains/responses returns agent responses for a conversation", async () => {
   const services = tempServices();
   writeAgentResponse(services, {
