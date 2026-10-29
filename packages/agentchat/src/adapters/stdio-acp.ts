@@ -1316,6 +1316,17 @@ function handleToolCall(ctx: DispatchTurnContext, update: AcpSessionUpdate): voi
   killOnToolCallWhenNoCapability(ctx);
 }
 
+// #359: lifecycle meta reaches dispatch_events without redaction, so it carries only the size of
+// a failed tool's output. The output itself stays on the redacted capture-port row.
+function toolOutputChars(output: unknown): number | null {
+  if (output === undefined || output === null) return null;
+  try {
+    return JSON.stringify(output).length;
+  } catch {
+    return null;
+  }
+}
+
 function handleToolCallUpdate(ctx: DispatchTurnContext, update: AcpSessionUpdate): void {
   const output = acpToolCallOutput(update);
   const toolName = resolveToolName(update, ctx.toolNames);
@@ -1332,7 +1343,7 @@ function handleToolCallUpdate(ctx: DispatchTurnContext, update: AcpSessionUpdate
       adapter: "stdio-acp",
       tool_call_id: update.toolCallId,
       tool_name: toolName,
-      output: output ?? null,
+      output_chars: toolOutputChars(output),
     });
   }
   killOnToolCallWhenNoCapability(ctx);
