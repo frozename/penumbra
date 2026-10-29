@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   AgentOptionsSchema,
   loadProviderSourcesFromDir,
+  type ProviderBinding,
   type ProviderSourcesConfig,
   resolveCatalogAuthority,
 } from "@src/index.js";
@@ -171,7 +172,7 @@ anthropic:
     );
     reject(fixture.replace("terminal: true", 'terminal: "yes"'), /terminal/);
 
-    const accept = (mutated: string, carriers: unknown): void => {
+    const accept = (mutated: string, carriers: ProviderBinding["carriers"]): void => {
       writeUtf8(join(dir, "providers.yaml"), mutated);
       expect(loadProviderSourcesFromDir(dir).anthropic?.bindings["claude-acp"]?.carriers).toEqual(
         carriers,
