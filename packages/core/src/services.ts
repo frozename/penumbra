@@ -225,6 +225,10 @@ export interface WorkflowDirsLike {
 
 export interface LocalSeatHealthLike {
   getUnhealthyAgents(): ReadonlySet<string>;
+  // #256: the last probe result for one seat, or undefined when it was never probed.
+  getSeatHealth?(
+    name: string,
+  ): { state: string; checkedAtMs: number; httpStatus?: number } | undefined;
 }
 
 export interface Services {

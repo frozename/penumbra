@@ -31,3 +31,25 @@ test("chainListAgentsHandler calls daemon.listChainAgents and formats output", a
     agents: [{ name: "planner" }, { name: "executor" }],
   });
 });
+
+test("chainListAgentsHandler passes each seat's health through unchanged (#256)", async () => {
+  type ChainAgentsList = Awaited<ReturnType<ListChainAgentsFn>>;
+  const listed: ChainAgentsList = {
+    agents: [
+      {
+        name: "a",
+        health: {
+          state: "unauthorized",
+          checked_at: "1970-01-01T00:00:02.000Z",
+          http_status: 401,
+        },
+      },
+      { name: "b" },
+    ],
+  };
+  const listChainAgents = mock<ListChainAgentsFn>(() => Promise.resolve(listed));
+  const res = await chainListAgentsHandler(fakeDaemon({ listChainAgents }))({});
+  const text = res.content[0]?.text;
+  if (typeof text !== "string") throw new Error("expected text content");
+  expect(JSON.parse(text)).toEqual(listed);
+});
