@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 
+import { isRetiredLongLivedAgent } from "@penumbra/core/long-lived/retired-agents";
 import { randomUUID } from "node:crypto";
 
 export const PENDING_CHAIN_SENTINEL = "pending";
@@ -214,6 +215,7 @@ export function createTickGate(deps: TickGateDeps): TickGate {
 
   return {
     attempt(a): TickGateResult {
+      if (isRetiredLongLivedAgent(a.agent_id)) return { outcome: "skipped_status" };
       const decision = decide(a);
 
       switch (decision.kind) {

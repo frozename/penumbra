@@ -2,6 +2,8 @@ import type { AgentConfig } from "@penumbra/agentchat/config/types";
 import type { WorkingMemory } from "@penumbra/core/long-lived/types";
 import type { Database } from "bun:sqlite";
 
+import { isRetiredLongLivedAgent } from "@penumbra/core/long-lived/retired-agents";
+
 const FORCED_TOOLS = [
   "penumbra:long_lived_self_state_get",
   "penumbra:long_lived_self_state_set",
@@ -38,7 +40,11 @@ function effectiveAllowlist(declared: readonly string[]): string[] {
 }
 
 function isLongLivedAgentConfig(agent: AgentConfig): agent is LongLivedAgentConfig {
-  return agent.long_lived === true && agent.long_lived_config !== undefined;
+  return (
+    agent.long_lived === true &&
+    agent.long_lived_config !== undefined &&
+    !isRetiredLongLivedAgent(agent.name)
+  );
 }
 
 function displayName(agent: AgentConfig): string {

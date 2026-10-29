@@ -436,7 +436,7 @@ export interface StdioAcpOptions {
    *   (Bash, Read/Write/Edit, Grep, Glob, Task, WebFetch, TodoWrite,
    *   NotebookEdit, ...) - ~22K tokens of schema bloat.
    * - When set to `[]`: drops the entire builtin preset. Useful for
-   *   long-lived agents that only need MCP tools (e.g., home-mgmt).
+   *   long-lived agents that only need MCP tools (e.g., task refiners).
    * - When set to a non-empty `string[]`: explicit whitelist of builtin
    *   tool names to expose.
    */

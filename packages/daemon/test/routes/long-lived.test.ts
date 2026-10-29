@@ -73,8 +73,8 @@ function tempServices(): Services {
 
 function seedAgent(services: Services): void {
   const input: SeedAgentInput = {
-    name: "home-mgmt",
-    display_name: "Home Mgmt",
+    name: "operator1",
+    display_name: "Operator",
     long_lived: true,
     long_lived_config: {
       schedule_cron: "*/15 * * * *",
@@ -107,8 +107,8 @@ test("GET /long-lived lists reconciled agents", async () => {
   };
   expect(body.agents).toHaveLength(1);
   expect(body.agents[0]).toMatchObject({
-    id: "home-mgmt",
-    display_name: "Home Mgmt",
+    id: "operator1",
+    display_name: "Operator",
     status: "active",
   });
 });
@@ -126,7 +126,7 @@ test("GET /long-lived/:id returns agent detail with related rows", async () => {
     )
     .run(
       "tick-1",
-      "home-mgmt",
+      "operator1",
       "chain-1",
       "cron",
       JSON.stringify({ scheduled: true }),
@@ -148,7 +148,7 @@ test("GET /long-lived/:id returns agent detail with related rows", async () => {
     )
     .run(
       "action-1",
-      "home-mgmt",
+      "operator1",
       "tick-1",
       "notify",
       "ha:state",
@@ -170,7 +170,7 @@ test("GET /long-lived/:id returns agent detail with related rows", async () => {
     )
     .run(
       "action-2",
-      "home-mgmt",
+      "operator1",
       "tick-1",
       "notify",
       "ha:state",
@@ -190,11 +190,11 @@ test("GET /long-lived/:id returns agent detail with related rows", async () => {
       agent_id, tick_id, pending_action_id, action_kind, action_target, decision, reason, created_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run("home-mgmt", "tick-1", "action-1", "notify", "ha:state", "approved", null, 1600);
+    .run("operator1", "tick-1", "action-1", "notify", "ha:state", "approved", null, 1600);
 
   const res = longLivedGetRoute(
-    new Request("http://x/long-lived/home-mgmt"),
-    "home-mgmt",
+    new Request("http://x/long-lived/operator1"),
+    "operator1",
     services,
   );
   expect(res.status).toBe(200);
@@ -204,8 +204,8 @@ test("GET /long-lived/:id returns agent detail with related rows", async () => {
     pending_actions: { id: string; payload: { message: string } }[];
     recent_audit: { pending_action_id: string | null; decision: string }[];
   };
-  expect(body.agent.id).toBe("home-mgmt");
-  expect(body.agent.display_name).toBe("Home Mgmt");
+  expect(body.agent.id).toBe("operator1");
+  expect(body.agent.display_name).toBe("Operator");
   expect(body.agent.working_memory.version).toBe(1);
   expect(body.recent_ticks).toHaveLength(1);
   expect(body.recent_ticks[0].trigger_payload).toEqual({ scheduled: true });
@@ -224,7 +224,7 @@ test("POST /long-lived/reconcile-orphans reconciles orphaned ticks", async () =>
       id, agent_id, chain_id, trigger_kind, started_at
     ) VALUES (?, ?, ?, ?, ?)`,
     )
-    .run("tick-orphan", "home-mgmt", "conv-abc", "cron", 1000);
+    .run("tick-orphan", "operator1", "conv-abc", "cron", 1000);
 
   const res = longLivedReconcileOrphansRoute(
     new Request("http://x/long-lived/reconcile-orphans"),
@@ -255,7 +255,7 @@ test("POST /long-lived/reconcile-orphans uses the injected clock", async () => {
       id, agent_id, chain_id, trigger_kind, started_at
     ) VALUES (?, ?, ?, ?, ?)`,
     )
-    .run("tick-orphan-clock", "home-mgmt", "conv-clock", "cron", 1000);
+    .run("tick-orphan-clock", "operator1", "conv-clock", "cron", 1000);
 
   const res = longLivedReconcileOrphansRoute(
     new Request("http://x/long-lived/reconcile-orphans"),
@@ -287,7 +287,7 @@ test("serve.ts wires GET /long-lived and GET /long-lived/:id", async () => {
   expect(listRes.status).toBe(200);
 
   const getRes = await handler(
-    new Request("http://x/long-lived/home-mgmt", {
+    new Request("http://x/long-lived/operator1", {
       headers: { authorization: "Bearer tok" },
     }),
   );
@@ -302,7 +302,7 @@ test("serve.ts wires GET /long-lived and GET /long-lived/:id", async () => {
   expect(reconcileRes.status).toBe(200);
 });
 
-test("operator long-lived routes are reachable and respond", async () => {
+test("operator1 long-lived routes are reachable and respond", async () => {
   const services = tempServices();
   seedAgent(services);
 
@@ -315,7 +315,7 @@ test("operator long-lived routes are reachable and respond", async () => {
     )
     .run(
       "tick-1",
-      "home-mgmt",
+      "operator1",
       "chain-1",
       "cron",
       JSON.stringify({ scheduled: true }),
@@ -336,7 +336,7 @@ test("operator long-lived routes are reachable and respond", async () => {
     )
     .run(
       "action-1",
-      "home-mgmt",
+      "operator1",
       "tick-1",
       "notify",
       "ha:state",
@@ -351,43 +351,43 @@ test("operator long-lived routes are reachable and respond", async () => {
     );
 
   const pauseRes = longLivedPauseRoute(
-    new Request("http://x/long-lived/home-mgmt/pause"),
-    "home-mgmt",
+    new Request("http://x/long-lived/operator1/pause"),
+    "operator1",
     services,
   );
   expect(pauseRes.status).toBe(200);
-  expect(await pauseRes.json()).toMatchObject({ id: "home-mgmt", status: "paused" });
+  expect(await pauseRes.json()).toMatchObject({ id: "operator1", status: "paused" });
 
   const resumeRes = longLivedResumeRoute(
-    new Request("http://x/long-lived/home-mgmt/resume"),
-    "home-mgmt",
+    new Request("http://x/long-lived/operator1/resume"),
+    "operator1",
     services,
   );
   expect(resumeRes.status).toBe(200);
-  expect(await resumeRes.json()).toMatchObject({ id: "home-mgmt", status: "active" });
+  expect(await resumeRes.json()).toMatchObject({ id: "operator1", status: "active" });
 
   const stateGetRes = longLivedStateGetRoute(
-    new Request("http://x/long-lived/home-mgmt/state"),
-    "home-mgmt",
+    new Request("http://x/long-lived/operator1/state"),
+    "operator1",
     services,
   );
   expect(stateGetRes.status).toBe(200);
   expect(await stateGetRes.json()).toHaveProperty("working_memory");
 
   const stateSetRes = await longLivedStateSetRoute(
-    new Request("http://x/long-lived/home-mgmt/state", {
+    new Request("http://x/long-lived/operator1/state", {
       method: "POST",
       body: JSON.stringify({ partial: { intent_summary: "updated summary" } }),
     }),
-    "home-mgmt",
+    "operator1",
     services,
   );
   expect(stateSetRes.status).toBe(200);
   expect(await stateSetRes.json()).toEqual({ ok: true });
 
   const pendingActionsRes = longLivedPendingActionsRoute(
-    new Request("http://x/long-lived/home-mgmt/pending-actions?status=pending"),
-    "home-mgmt",
+    new Request("http://x/long-lived/operator1/pending-actions?status=pending"),
+    "operator1",
     services,
   );
   expect(pendingActionsRes.status).toBe(200);
@@ -420,7 +420,7 @@ test("operator long-lived routes are reachable and respond", async () => {
     )
     .run(
       "action-2",
-      "home-mgmt",
+      "operator1",
       "tick-1",
       "notify",
       "ha:state",
@@ -439,7 +439,7 @@ test("operator long-lived routes are reachable and respond", async () => {
       agent_id, tick_id, pending_action_id, action_kind, action_target, decision, reason, created_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run("home-mgmt", "tick-1", "action-1", "notify", "ha:state", "approved", null, 1700);
+    .run("operator1", "tick-1", "action-1", "notify", "ha:state", "approved", null, 1700);
 
   const rejectRes = await longLivedRejectActionRoute(
     new Request("http://x/long-lived/pending-actions/action-2/reject", {
@@ -473,7 +473,7 @@ test("operator long-lived routes are reachable and respond", async () => {
     )
     .run(
       "action-3",
-      "home-mgmt",
+      "operator1",
       "tick-1",
       "notify",
       "ha:state",
@@ -510,59 +510,59 @@ test("operator long-lived routes are reachable and respond", async () => {
   ).toEqual({ reason: "body-only" });
 
   const injectGoalRes = await longLivedInjectGoalRoute(
-    new Request("http://x/long-lived/home-mgmt/inject-goal", {
+    new Request("http://x/long-lived/operator1/inject-goal", {
       method: "POST",
       body: JSON.stringify({ goal: "check the basement" }),
     }),
-    "home-mgmt",
+    "operator1",
     services,
   );
   expect(injectGoalRes.status).toBe(200);
   expect(await injectGoalRes.json()).toEqual({ ok: true });
 
   const retireRes = longLivedRetireRoute(
-    new Request("http://x/long-lived/home-mgmt/retire"),
-    "home-mgmt",
+    new Request("http://x/long-lived/operator1/retire"),
+    "operator1",
     services,
   );
   expect(retireRes.status).toBe(200);
-  expect(await retireRes.json()).toMatchObject({ id: "home-mgmt", status: "retired" });
+  expect(await retireRes.json()).toMatchObject({ id: "operator1", status: "retired" });
 
   const auditRes = longLivedAuditRoute(
-    new Request("http://x/long-lived/home-mgmt/audit"),
-    "home-mgmt",
+    new Request("http://x/long-lived/operator1/audit"),
+    "operator1",
     services,
   );
   expect(auditRes.status).toBe(200);
   expect(((await auditRes.json()) as { audit: { agent_id: string }[] }).audit[0].agent_id).toBe(
-    "home-mgmt",
+    "operator1",
   );
 
   const ticksRes = longLivedTicksRoute(
-    new Request("http://x/long-lived/home-mgmt/ticks"),
-    "home-mgmt",
+    new Request("http://x/long-lived/operator1/ticks"),
+    "operator1",
     services,
   );
   expect(ticksRes.status).toBe(200);
   expect(((await ticksRes.json()) as { ticks: { agent_id: string }[] }).ticks[0].agent_id).toBe(
-    "home-mgmt",
+    "operator1",
   );
 });
 
 test("serve.ts wires long-lived operator routes", async () => {
   const routes = [
-    ["POST", "/long-lived/home-mgmt/pause", 200],
-    ["POST", "/long-lived/home-mgmt/resume", 200],
-    ["POST", "/long-lived/home-mgmt/retire", 200],
-    ["POST", "/long-lived/home-mgmt/tick", 200],
-    ["GET", "/long-lived/home-mgmt/state", 200],
-    ["POST", "/long-lived/home-mgmt/state", 200],
-    ["GET", "/long-lived/home-mgmt/pending-actions", 200],
+    ["POST", "/long-lived/operator1/pause", 200],
+    ["POST", "/long-lived/operator1/resume", 200],
+    ["POST", "/long-lived/operator1/retire", 200],
+    ["POST", "/long-lived/operator1/tick", 200],
+    ["GET", "/long-lived/operator1/state", 200],
+    ["POST", "/long-lived/operator1/state", 200],
+    ["GET", "/long-lived/operator1/pending-actions", 200],
     ["POST", "/long-lived/pending-actions/action-1/approve", 200],
     ["POST", "/long-lived/pending-actions/action-2/reject", 200],
-    ["POST", "/long-lived/home-mgmt/inject-goal", 200],
-    ["GET", "/long-lived/home-mgmt/audit", 200],
-    ["GET", "/long-lived/home-mgmt/ticks", 200],
+    ["POST", "/long-lived/operator1/inject-goal", 200],
+    ["GET", "/long-lived/operator1/audit", 200],
+    ["GET", "/long-lived/operator1/ticks", 200],
   ] as const;
 
   for (const [method, path, status] of routes) {
@@ -578,7 +578,7 @@ test("serve.ts wires long-lived operator routes", async () => {
       )
       .run(
         "tick-1",
-        "home-mgmt",
+        "operator1",
         "chain-1",
         "cron",
         JSON.stringify({ scheduled: true }),
@@ -599,7 +599,7 @@ test("serve.ts wires long-lived operator routes", async () => {
       )
       .run(
         "action-1",
-        "home-mgmt",
+        "operator1",
         "tick-1",
         "notify",
         "ha:state",
@@ -621,7 +621,7 @@ test("serve.ts wires long-lived operator routes", async () => {
       )
       .run(
         "action-2",
-        "home-mgmt",
+        "operator1",
         "tick-1",
         "notify",
         "ha:state",
@@ -635,7 +635,7 @@ test("serve.ts wires long-lived operator routes", async () => {
         1600,
       );
     if (path.endsWith("/resume")) {
-      services.db.query("UPDATE long_lived_agents SET status='paused' WHERE id='home-mgmt'").run();
+      services.db.query("UPDATE long_lived_agents SET status='paused' WHERE id='operator1'").run();
     }
     const handler = createDaemonFetchHandler({ services, token: "tok" });
     const init: RequestInit = { method };
@@ -660,15 +660,15 @@ test("POST /long-lived/:id/tick triggers a manual reactor tick", async () => {
   services.longLivedReactor = makeReactor();
 
   const res = longLivedTickRoute(
-    new Request("http://x/long-lived/home-mgmt/tick", {
+    new Request("http://x/long-lived/operator1/tick", {
       method: "POST",
     }),
-    "home-mgmt",
+    "operator1",
     services,
   );
 
   expect(res.status).toBe(200);
-  expect(await res.json()).toEqual({ outcome: "manual:home-mgmt", tick_id: "tick-1" });
+  expect(await res.json()).toEqual({ outcome: "manual:operator1", tick_id: "tick-1" });
 });
 
 test("POST /long-lived/:id/tick returns not_found and not_active correctly", async () => {
@@ -688,13 +688,13 @@ test("POST /long-lived/:id/tick returns not_found and not_active correctly", asy
   expect(await missingRes.json()).toEqual({ error: { code: "not_found" } });
 
   seedAgent(services);
-  services.db.query("UPDATE long_lived_agents SET status='paused' WHERE id='home-mgmt'").run();
+  services.db.query("UPDATE long_lived_agents SET status='paused' WHERE id='operator1'").run();
 
   const pausedRes = longLivedTickRoute(
-    new Request("http://x/long-lived/home-mgmt/tick", {
+    new Request("http://x/long-lived/operator1/tick", {
       method: "POST",
     }),
-    "home-mgmt",
+    "operator1",
     services,
   );
   expect(pausedRes.status).toBe(409);
@@ -707,19 +707,19 @@ test("POST /long-lived/:id/tick rate-limits consecutive manual ticks", async () 
   services.longLivedReactor = makeReactor();
 
   const first = longLivedTickRoute(
-    new Request("http://x/long-lived/home-mgmt/tick", {
+    new Request("http://x/long-lived/operator1/tick", {
       method: "POST",
     }),
-    "home-mgmt",
+    "operator1",
     services,
   );
   expect(first.status).toBe(200);
 
   const second = longLivedTickRoute(
-    new Request("http://x/long-lived/home-mgmt/tick", {
+    new Request("http://x/long-lived/operator1/tick", {
       method: "POST",
     }),
-    "home-mgmt",
+    "operator1",
     services,
   );
   expect(second.status).toBe(429);
@@ -732,7 +732,7 @@ test("POST /long-lived/:id/tick rate-limits consecutive manual ticks", async () 
 test("POST /long-lived/:id/inject-goal fires an injected_goal tick for cron-less agents", async () => {
   const services = tempServices();
   seedAgent(services);
-  services.db.query("UPDATE long_lived_agents SET schedule_cron = NULL WHERE id='home-mgmt'").run();
+  services.db.query("UPDATE long_lived_agents SET schedule_cron = NULL WHERE id='operator1'").run();
 
   const ticks: string[] = [];
   const now = services.clock().getTime();
@@ -749,19 +749,19 @@ test("POST /long-lived/:id/inject-goal fires an injected_goal tick for cron-less
   });
 
   const injectGoalRes = await longLivedInjectGoalRoute(
-    new Request("http://x/long-lived/home-mgmt/inject-goal", {
+    new Request("http://x/long-lived/operator1/inject-goal", {
       method: "POST",
       body: JSON.stringify({ goal: "check the basement" }),
     }),
-    "home-mgmt",
+    "operator1",
     services,
   );
   expect(injectGoalRes.status).toBe(200);
   expect(await injectGoalRes.json()).toEqual({ ok: true });
-  expect(ticks).toEqual(["home-mgmt"]);
+  expect(ticks).toEqual(["operator1"]);
   const row = services.db
     .query(
-      "SELECT COUNT(*) as c FROM long_lived_ticks WHERE agent_id='home-mgmt' AND trigger_kind='injected_goal'",
+      "SELECT COUNT(*) as c FROM long_lived_ticks WHERE agent_id='operator1' AND trigger_kind='injected_goal'",
     )
     .get() as { c: number };
   expect(row.c).toBe(1);
@@ -850,11 +850,11 @@ test("operator routes return 404 for unknown agent ids", async () => {
 test("operator routes return 409 for invalid state transitions", async () => {
   const services = tempServices();
   seedAgent(services);
-  services.db.query("UPDATE long_lived_agents SET status='paused' WHERE id='home-mgmt'").run();
+  services.db.query("UPDATE long_lived_agents SET status='paused' WHERE id='operator1'").run();
 
   const pauseRes = longLivedPauseRoute(
-    new Request("http://x/long-lived/home-mgmt/pause"),
-    "home-mgmt",
+    new Request("http://x/long-lived/operator1/pause"),
+    "operator1",
     services,
   );
   expect(pauseRes.status).toBe(409);
@@ -862,11 +862,11 @@ test("operator routes return 409 for invalid state transitions", async () => {
     error: { code: "invalid_long_lived_status_transition" },
   });
 
-  services.db.query("UPDATE long_lived_agents SET status='active' WHERE id='home-mgmt'").run();
+  services.db.query("UPDATE long_lived_agents SET status='active' WHERE id='operator1'").run();
 
   const resumeRes = longLivedResumeRoute(
-    new Request("http://x/long-lived/home-mgmt/resume"),
-    "home-mgmt",
+    new Request("http://x/long-lived/operator1/resume"),
+    "operator1",
     services,
   );
   expect(resumeRes.status).toBe(409);
@@ -874,14 +874,14 @@ test("operator routes return 409 for invalid state transitions", async () => {
     error: { code: "invalid_long_lived_status_transition" },
   });
 
-  services.db.query("UPDATE long_lived_agents SET status='paused' WHERE id='home-mgmt'").run();
+  services.db.query("UPDATE long_lived_agents SET status='paused' WHERE id='operator1'").run();
 
   const injectRes = await longLivedInjectGoalRoute(
-    new Request("http://x/long-lived/home-mgmt/inject-goal", {
+    new Request("http://x/long-lived/operator1/inject-goal", {
       method: "POST",
       body: JSON.stringify({ goal: "noop" }),
     }),
-    "home-mgmt",
+    "operator1",
     services,
   );
   expect(injectRes.status).toBe(409);
@@ -897,7 +897,7 @@ test("approve/reject return 409 for already-decided actions", async () => {
       id, agent_id, chain_id, trigger_kind, started_at
     ) VALUES (?, ?, ?, ?, ?)`,
     )
-    .run("tick-decided", "home-mgmt", "chain-decided", "cron", 1000);
+    .run("tick-decided", "operator1", "chain-decided", "cron", 1000);
   services.db
     .query(
       `INSERT INTO long_lived_pending_actions (
@@ -907,7 +907,7 @@ test("approve/reject return 409 for already-decided actions", async () => {
     )
     .run(
       "decided-action",
-      "home-mgmt",
+      "operator1",
       "tick-decided",
       "notify",
       "ha:state",
@@ -948,12 +948,12 @@ test("GET /long-lived/:id/state surfaces corrupt working_memory as 500", async (
   const services = tempServices();
   seedAgent(services);
   services.db
-    .query("UPDATE long_lived_agents SET working_memory_json=? WHERE id='home-mgmt'")
+    .query("UPDATE long_lived_agents SET working_memory_json=? WHERE id='operator1'")
     .run(JSON.stringify({ version: 99, broken: true }));
 
   const res = longLivedStateGetRoute(
-    new Request("http://x/long-lived/home-mgmt/state"),
-    "home-mgmt",
+    new Request("http://x/long-lived/operator1/state"),
+    "operator1",
     services,
   );
   expect(res.status).toBe(500);
@@ -974,7 +974,7 @@ test("POST /long-lived/pending-actions/:id/approve publishes decision event and 
     )
     .run(
       "tick-for-action",
-      "home-mgmt",
+      "operator1",
       "chain-1",
       "manual",
       JSON.stringify({ manual: true }),
@@ -995,7 +995,7 @@ test("POST /long-lived/pending-actions/:id/approve publishes decision event and 
     )
     .run(
       "approve-action",
-      "home-mgmt",
+      "operator1",
       "tick-for-action",
       "notify",
       "ha:state",
@@ -1048,16 +1048,16 @@ test("POST /long-lived/pending-actions/:id/approve publishes decision event and 
   unsubscribe();
   expect(approveRes.status).toBe(200);
   expect(await approveRes.json()).toEqual({ ok: true });
-  expect(fired).toEqual(["home-mgmt"]);
+  expect(fired).toEqual(["operator1"]);
   expect(decidedEvents).toHaveLength(1);
   expect(decidedEvents[0]).toEqual({
     event: "long_lived_action_decided",
-    agent_id: "home-mgmt",
+    agent_id: "operator1",
     payload: { action_id: "approve-action", decision: "approved" },
   });
   const row = services.db
     .query(
-      "SELECT COUNT(*) as c FROM long_lived_ticks WHERE agent_id='home-mgmt' AND trigger_kind='injected_goal'",
+      "SELECT COUNT(*) as c FROM long_lived_ticks WHERE agent_id='operator1' AND trigger_kind='injected_goal'",
     )
     .get() as { c: number };
   expect(row.c).toBe(1);

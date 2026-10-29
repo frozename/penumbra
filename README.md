@@ -131,8 +131,9 @@ Schedule an agent to tick every 10 minutes. It carries persistent working memory
 
 Built-ins:
 
-- `home-mgmt` — Home Assistant monitor. Pulses entity state, flags anomalies, requests config changes via the approval gate.
 - `task-refiner-primary` + `task-refiner-escalation` — promote pending task drafts into the work queue.
+
+The former `home-mgmt` Home Assistant operator is retired. Existing entries are ignored and their stored state remains available. See the [retirement and deployment notes](./docs/deprecations/home-mgmt.md).
 
 Register your own in `~/.config/penumbra/agents.yaml` (with its `long_lived_config` block); per-thread `working_memory.notes` are server-side tail-truncated so the agent never runs out of context.
 

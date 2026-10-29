@@ -929,7 +929,7 @@ test("POST /chains/start exempts workflow dispatches with a valid run id from th
   const workflowRunsMock: WorkflowRunsRegistry = {
     verify: (workflowRunId: string) =>
       workflowRunId === "workflow-42"
-        ? { workflow_name: "home-mgmt", project_id: null, registered_at: 1715385600000 }
+        ? { workflow_name: "operator1", project_id: null, registered_at: 1715385600000 }
         : null,
     register: (): null => null,
     unregister: (): undefined => undefined,
@@ -1535,7 +1535,7 @@ test("chain-start drops unknown project_id for valid internal workflow dispatche
   const workflowRunsMock: WorkflowRunsRegistry = {
     verify: (workflowRunId: string) =>
       workflowRunId === "workflow-42"
-        ? { workflow_name: "home-mgmt", project_id: null, registered_at: 1715385600000 }
+        ? { workflow_name: "operator1", project_id: null, registered_at: 1715385600000 }
         : null,
     register: (): null => null,
     unregister: (): undefined => undefined,
