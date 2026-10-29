@@ -509,16 +509,18 @@ describe("stdio-acp ACP tool payload capture (#341)", () => {
       },
     });
     expect(captured).toEqual([
-      { kind: "tool_call", toolCallId: "tu_raw", status: "pending", input: {} },
+      { kind: "tool_call", toolCallId: "tu_raw", toolName: "bash", status: "pending", input: {} },
       {
         kind: "tool_call_update",
         toolCallId: "tu_raw",
+        toolName: "bash",
         status: "in_progress",
         input: { command: "git stash" },
       },
       {
         kind: "tool_call_update",
         toolCallId: "tu_raw",
+        toolName: "bash",
         status: "failed",
         output: { error: "permission denied" },
       },
@@ -533,6 +535,22 @@ describe("stdio-acp ACP tool payload capture (#341)", () => {
         output: { error: "permission denied" },
       },
     });
+  });
+
+  it("emits the ACP title or kind as toolName, and null when neither is sent", async () => {
+    const { adapter, captured } = createRawToolPayloadHarness([
+      { sessionUpdate: "tool_call", toolCallId: "tu_kind", kind: "execute", status: "pending" },
+      { sessionUpdate: "tool_call_update", toolCallId: "tu_kind", status: "completed" },
+      { sessionUpdate: "tool_call", toolCallId: "tu_anon", status: "pending" },
+      { sessionUpdate: "tool_call_update", toolCallId: "tu_anon", status: "completed" },
+    ]);
+    await dispatch(adapter, { prompt: "hello", signal: new AbortController().signal });
+    expect(captured).toEqual([
+      { kind: "tool_call", toolCallId: "tu_kind", toolName: "execute", status: "pending" },
+      { kind: "tool_call_update", toolCallId: "tu_kind", toolName: "execute", status: "completed" },
+      { kind: "tool_call", toolCallId: "tu_anon", toolName: null, status: "pending" },
+      { kind: "tool_call_update", toolCallId: "tu_anon", toolName: null, status: "completed" },
+    ]);
   });
 });
 
