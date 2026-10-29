@@ -169,6 +169,41 @@ async function createSession(
   return sessionId;
 }
 
+export interface SlowRespondDeps {
+  insertSessionRow: (sessionId: string) => Promise<void>;
+  now: () => number;
+  recordEvent: (kind: string, round: number, sessionId: string, atMs: number) => Promise<void>;
+  sleep: (ms: number) => Promise<void>;
+}
+
+// slow-respond answers 300 ms after it persists the session. The two writes are the
+// instrument, as in createSession: under busy_timeout=0 they can wait on the sibling
+// child's commit, so their duration is subtracted from the responding stamp and the
+// measured latency is the 300 ms delay plus timer overshoot.
+export async function respondSlowly(
+  deps: SlowRespondDeps,
+  round: number,
+  sessionId: string,
+  receivedAtMs: number,
+): Promise<void> {
+  const writesStartedAtMs = deps.now();
+  await deps.recordEvent("session_new_received", round, sessionId, receivedAtMs);
+  await deps.insertSessionRow(sessionId);
+  const writeMs = deps.now() - writesStartedAtMs;
+  await deps.sleep(300);
+  await deps.recordEvent("session_new_responding", round, sessionId, deps.now() - writeMs);
+}
+
+function slowRespondDeps(db: Database): SlowRespondDeps {
+  return {
+    insertSessionRow: (sessionId: string): Promise<void> => insertSessionRow(db, sessionId),
+    now: nowMs,
+    recordEvent: (kind: string, round: number, sessionId: string, atMs: number): Promise<void> =>
+      recordEvent(db, kind, round, sessionId, atMs),
+    sleep,
+  };
+}
+
 function createSessionWithoutEvents(db: Database): string {
   const sessionId = `fake-session-${String(process.pid)}-${crypto.randomUUID()}`;
   db.query("INSERT INTO sessions (id, created_at_ms) VALUES (?, ?)").run(sessionId, nowMs());
@@ -233,16 +268,7 @@ async function handleRequest(
 
   if (options.mode === "slow-respond") {
     const sessionId = `fake-session-${String(process.pid)}-${crypto.randomUUID()}`;
-    await recordEvent(
-      db,
-      "session_new_received",
-      requestRound(req),
-      sessionId,
-      receivedAtMs ?? nowMs(),
-    );
-    await insertSessionRow(db, sessionId);
-    await sleep(300);
-    await recordEvent(db, "session_new_responding", requestRound(req), sessionId);
+    await respondSlowly(slowRespondDeps(db), requestRound(req), sessionId, receivedAtMs ?? nowMs());
     writeResponse(req.id, { sessionId });
     return;
   }
@@ -294,8 +320,10 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err: unknown) => {
-  const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
-  process.stderr.write(`${message}\n`);
-  process.exit(1);
-});
+if (import.meta.main) {
+  main().catch((err: unknown) => {
+    const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    process.stderr.write(`${message}\n`);
+    process.exit(1);
+  });
+}

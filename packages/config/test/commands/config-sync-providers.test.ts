@@ -6,7 +6,7 @@ import { join } from "node:path";
 import YAML from "yaml";
 
 import { AgentsConfigSchema } from "@src/files/agents.js";
-import { loadProviderSourcesFromDir } from "@src/files/providers.js";
+import { loadProviderSourcesFromDir, type ProviderBinding } from "@src/files/providers.js";
 
 import {
   type ProviderDiscoveryAdapter,
@@ -82,21 +82,22 @@ anthropic:
     );
 
     const discoveryAdapters: Record<string, ProviderDiscoveryAdapter> = {
-      fake: () => [
-        {
-          sourceProviderId: "anthropic",
-          modelId: "sonnet-4",
-          displayName: "Sonnet 4",
-          reasoningTier: "high",
-        },
-      ],
+      fake: () =>
+        Promise.resolve([
+          {
+            sourceProviderId: "anthropic",
+            modelId: "sonnet-4",
+            displayName: "Sonnet 4",
+            reasoningTier: "high",
+          },
+        ]),
     };
 
     const result = await runConfigSyncProviders({
       configDir: dir,
       apply: true,
       discoveryAdapters,
-      fetchModelsDevPayload: () => ({}),
+      fetchModelsDevPayload: () => Promise.resolve({}),
     });
 
     expect(result.exitCode).toBe(0);
@@ -118,14 +119,14 @@ anthropic:
       strip_patterns: ["secret", "token", "apikey", "bearer", "credential"],
     });
     expect(generatedSeat?.provenance?.managed_fields).toEqual(
-      expect.arrayContaining(["options.pass_via", "options.strip_patterns"]) as unknown,
+      expect.arrayContaining(["options.pass_via", "options.strip_patterns"]) as string[],
     );
 
     expect(loadProviderSourcesFromDir(dir).anthropic?.bindings["anthropic-cli"]?.carriers).toEqual(
       expect.objectContaining({
         pass_via: "argv",
         strip_patterns: ["secret", "token", "apikey", "bearer", "credential"],
-      }) as unknown,
+      }) as ProviderBinding["carriers"],
     );
   });
 });
