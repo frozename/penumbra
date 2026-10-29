@@ -13,6 +13,7 @@ import {
   roundResponseSpanMs,
   runDevinContentionProbe,
 } from "./devin-contention-probe.js";
+import { respondSlowly, type SlowRespondDeps } from "./fixtures/devin-contention-fake.js";
 
 const FAKE_ACP = join(import.meta.dirname, "fixtures", "devin-contention-fake.ts");
 
@@ -58,6 +59,40 @@ async function expectRejection(promise: Promise<unknown>, pattern: RegExp): Prom
   expect(caught).toBeInstanceOf(Error);
   const message = caught instanceof Error ? caught.message : String(caught);
   expect(message).toMatch(pattern);
+}
+
+interface SlowRespondTrace {
+  calls: string[];
+  events: { atMs: number; kind: string }[];
+}
+
+// Drives the slow-respond handler with a fake clock: each recordEvent write
+// takes 40 ms, the session row insert takes insertMs (a sibling-lock wait when
+// large), and sleep advances the clock by its argument.
+async function traceSlowRespond(receivedAtMs: number, insertMs: number): Promise<SlowRespondTrace> {
+  let clockMs = 1_000;
+  const trace: SlowRespondTrace = { calls: [], events: [] };
+  const deps: SlowRespondDeps = {
+    insertSessionRow: (sessionId: string): Promise<void> => {
+      trace.calls.push(`insert ${sessionId}`);
+      clockMs += insertMs;
+      return Promise.resolve();
+    },
+    now: (): number => clockMs,
+    recordEvent: (kind: string, round: number, sessionId: string, atMs: number): Promise<void> => {
+      trace.calls.push(`${kind} ${String(round)} ${sessionId}`);
+      trace.events.push({ atMs, kind });
+      clockMs += 40;
+      return Promise.resolve();
+    },
+    sleep: (ms: number): Promise<void> => {
+      trace.calls.push(`sleep ${String(ms)}`);
+      clockMs += ms;
+      return Promise.resolve();
+    },
+  };
+  await respondSlowly(deps, 3, "sid-1", receivedAtMs);
+  return trace;
 }
 
 describe("devin-contention-probe", () => {
@@ -334,11 +369,43 @@ describe("devin-contention-probe", () => {
 
     const round = requireRound(result);
     expect(round.classifications).not.toContain("lock_window_unverified");
-    expect(round.classifications).not.toContain("serialized_dispatch");
+    // Name the predicate: a failure prints each one's fired, measurement and threshold.
+    expect(round.serializedDispatch).toMatchObject({
+      intervalOverlap: { fired: false },
+      receivedSkew: { fired: false },
+      respondingSkew: { fired: false },
+      sendSkew: { fired: false },
+    });
     expect(result.ok).toBe(true);
     expect(round.lockWindow.baselineExceededHold).toBe(false);
     expect(round.lockWindow.satisfied).toBe(true);
     expect(round.lockWindow.pairsEvaluated).toBe(2);
+  });
+
+  test("respondSlowly stamps responding 300 ms after receipt and leaves the writes out", async () => {
+    const trace = await traceSlowRespond(1_000, 40);
+
+    expect(trace.calls).toEqual([
+      "session_new_received 3 sid-1",
+      "insert sid-1",
+      "sleep 300",
+      "session_new_responding 3 sid-1",
+    ]);
+    expect(trace.events).toEqual([
+      { atMs: 1_000, kind: "session_new_received" },
+      { atMs: 1_300, kind: "session_new_responding" },
+    ]);
+  });
+
+  test("respondSlowly keeps a slow sibling-lock wait out of the responding stamp", async () => {
+    const trace = await traceSlowRespond(990, 500);
+
+    // 310 ms latency: the 300 ms delay plus the 10 ms between receipt and the
+    // first write; the 540 ms of writes is not counted.
+    expect(trace.events).toEqual([
+      { atMs: 990, kind: "session_new_received" },
+      { atMs: 1_300, kind: "session_new_responding" },
+    ]);
   });
 
   test("classifies absent target instrumentation instead of treating missing events as zero skew", async () => {
