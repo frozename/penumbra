@@ -96,7 +96,7 @@ function parseObservationBody(rawBody: unknown): ObservationBody {
 class ErrorableSseStream extends PassThrough {
   destroyCalled = false;
 
-  override destroy(error?: Error | null): this {
+  override destroy(error?: Error): this {
     this.destroyCalled = true;
     return super.destroy(error);
   }
@@ -791,7 +791,7 @@ describe("penumbraObservePlugin execution", () => {
   test("prompt observe does not block the request path when daemon is slow/hung", async () => {
     const fastify = Fastify();
     let promptFetchStarted = false;
-    let promptFetchResolve: (() => void) | null = null;
+    let promptFetchResolve = null as (() => void) | null;
     const promptFetchPending = new Promise<void>((resolve) => {
       promptFetchResolve = resolve;
     });

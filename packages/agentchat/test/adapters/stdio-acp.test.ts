@@ -9,6 +9,8 @@ import { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
 import type { StartStdioAcpServerOptions, StdioAcpHandle } from "@src/adapters/stdio-acp-server.js";
 import type { HostEnvPolicy, StdioAcpOptions } from "@src/adapters/stdio-acp.js";
 import {
+  acpToolCallInput,
+  acpToolCallOutput,
   detectStdioAcpClassifierDecline,
   isClaudeHostEnvKey,
   resolveHostEnvPolicy,
@@ -16,7 +18,7 @@ import {
   StdioAcpAdapter,
 } from "@src/adapters/stdio-acp.js";
 import type { DispatchInput, DispatchOutput } from "@src/sdk/adapter.js";
-import type { CapturePort } from "@src/worker/capture-port.js";
+import type { CapturePort, NotificationEvent } from "@src/worker/capture-port.js";
 import { ThoughtCapture } from "@src/worker/thought-capture.js";
 import type { WriteToolsExecutor } from "@src/worker/write-tools-executor.js";
 
@@ -408,6 +410,131 @@ function createThoughtCoalescingHarness(
 function thoughtChunkUpdate(text: string): Record<string, unknown> {
   return { sessionUpdate: "agent_thought_chunk", content: { type: "text", text } };
 }
+
+interface RawToolPayloadHarness {
+  adapter: StdioAcpAdapter;
+  captured: NotificationEvent[];
+}
+
+/**
+ * #341: sends the given session/update payloads synchronously inside session/prompt and
+ * records every CapturePort.emit call in order.
+ */
+function createRawToolPayloadHarness(
+  updates: readonly Record<string, unknown>[],
+): RawToolPayloadHarness {
+  const captured: NotificationEvent[] = [];
+  const capturePort = makeMockCapturePort({
+    emit: (event): void => {
+      captured.push(event);
+    },
+  });
+  let updateHandler: ((params: unknown) => void) | undefined;
+  const handle = makeMockAcpHandle();
+  const startServer: AcpStartServerMock = vi.fn(startStdioAcpServerStub);
+  startServer.mockResolvedValue(handle);
+  const request = makeStandardClientRequest({
+    onSessionPrompt: (): unknown => {
+      for (const update of updates) {
+        updateHandler?.({ sessionId: "session-123", update });
+      }
+      return { stopReason: "end_turn" };
+    },
+  });
+  const adapter = new StdioAcpAdapter(
+    { binary: "mock-acp", mcpServers: [makePenumbraMcpServer()], capturePort },
+    {
+      startServer,
+      createClient: (): StdioAcpClient =>
+        makeMockAcpClient({
+          request,
+          on: (method: string, handler: (params: unknown) => void): void => {
+            if (method === "session/update") updateHandler = handler;
+          },
+          onRequest: vi.fn<StdioAcpClient["onRequest"]>(),
+        }),
+    },
+  );
+  return { adapter, captured };
+}
+
+describe("stdio-acp ACP tool payload capture (#341)", () => {
+  it("acpToolCallInput prefers rawInput and falls back to the legacy input", () => {
+    expect(acpToolCallInput({ rawInput: { a: 1 } })).toEqual({ a: 1 });
+    expect(acpToolCallInput({ rawInput: { a: 1 }, input: { b: 2 } })).toEqual({ a: 1 });
+    expect(acpToolCallInput({ input: { b: 2 } })).toEqual({ b: 2 });
+    expect(acpToolCallInput({})).toBeUndefined();
+  });
+
+  it("acpToolCallOutput prefers rawOutput, then the legacy output, then a content array", () => {
+    expect(acpToolCallOutput({ rawOutput: { error: "x" }, output: { y: 1 } })).toEqual({
+      error: "x",
+    });
+    expect(acpToolCallOutput({ output: { y: 1 } })).toEqual({ y: 1 });
+    const content = [{ type: "content", content: { type: "text", text: "boom" } }];
+    expect(acpToolCallOutput({ content })).toEqual(content);
+    expect(acpToolCallOutput({ content: { type: "text", text: "boom" } })).toBeUndefined();
+    expect(acpToolCallOutput({})).toBeUndefined();
+  });
+
+  it("emits rawInput and rawOutput to the capture port and the failed lifecycle event", async () => {
+    const { adapter, captured } = createRawToolPayloadHarness([
+      {
+        sessionUpdate: "tool_call",
+        toolCallId: "tu_raw",
+        title: "bash",
+        status: "pending",
+        rawInput: {},
+      },
+      {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tu_raw",
+        status: "in_progress",
+        rawInput: { command: "git stash" },
+      },
+      {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tu_raw",
+        status: "failed",
+        rawOutput: { error: "permission denied" },
+      },
+    ]);
+    const events: DispatchEventInput[] = [];
+    await dispatch(adapter, {
+      prompt: "hello",
+      signal: new AbortController().signal,
+      eventContext: { handoffId: "h-acp-341", workerId: "w-acp-341" },
+      onEvent: (event: DispatchEventInput): void => {
+        events.push(event);
+      },
+    });
+    expect(captured).toEqual([
+      { kind: "tool_call", toolCallId: "tu_raw", status: "pending", input: {} },
+      {
+        kind: "tool_call_update",
+        toolCallId: "tu_raw",
+        status: "in_progress",
+        input: { command: "git stash" },
+      },
+      {
+        kind: "tool_call_update",
+        toolCallId: "tu_raw",
+        status: "failed",
+        output: { error: "permission denied" },
+      },
+    ]);
+    const failedEvents = events.filter((event) => event.kind === "agent.tool_call.failed");
+    expect(failedEvents).toHaveLength(1);
+    expect(failedEvents[0]).toMatchObject({
+      meta: {
+        adapter: "stdio-acp",
+        tool_call_id: "tu_raw",
+        tool_name: "bash",
+        output: { error: "permission denied" },
+      },
+    });
+  });
+});
 
 describe("StdioAcpAdapter", () => {
   it("kills a silent child when initialize exceeds bootTimeoutMs", async () => {
