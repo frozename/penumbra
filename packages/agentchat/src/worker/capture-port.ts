@@ -33,6 +33,7 @@ interface RegularNotificationEvent {
     | "tool_call_update"
     | "usage_update";
   toolCallId?: string;
+  toolName?: string | null;
   status?: "pending" | "in_progress" | "completed" | "failed" | "canceled";
   content?: string;
   input?: unknown;
@@ -68,12 +69,14 @@ interface ChunkBuffer {
 interface HeldToolCall {
   startedAt: number;
   input: unknown;
+  toolName: string | null;
 }
 
 type RedactionHit = MaestroRedactionResult["hits"][number];
 
 const TRUNCATE_LIMIT = 8 * 1024;
 const MAX_IN_FLIGHT = 256;
+const TOOL_NAME_LIMIT = 256;
 const MAESTRO_RESPONSE_BLOCKED_SENTINEL = "[maestro response withheld by output policy]";
 const MAESTRO_TOOL_USE_BLOCKED_SENTINEL = "[maestro tool-use withheld by output policy]";
 const MAESTRO_TOOL_RESULT_BLOCKED_SENTINEL = "[maestro tool-result withheld by output policy]";
@@ -124,6 +127,23 @@ function usageTokenPayload(ev: RegularNotificationEvent): UsageTokenPayload {
   assignFiniteUsageToken(payload, "tokens_cache_read", ev.tokens_cache_read);
   assignFiniteUsageToken(payload, "tokens_cache_write", ev.tokens_cache_write);
   return payload;
+}
+
+function nonEmptyToolName(name: string | null | undefined): string | null {
+  return typeof name === "string" && name.length > 0 ? name : null;
+}
+
+// #341: an ACP title can carry the full command line, so the stored tool name goes through
+// the maestro redactor like the tool input and is capped. A fail-closed hit drops the name.
+function redactToolName(
+  name: string | null,
+  redactor: MaestroOutputRedactor | undefined,
+): string | null {
+  if (name === null) return null;
+  if (redactor === undefined) return name.slice(0, TOOL_NAME_LIMIT);
+  const result = redactor.checkContent(name);
+  if (result.decision === "blocked") return null;
+  return result.content.slice(0, TOOL_NAME_LIMIT);
 }
 
 export class CapturePort {
@@ -213,6 +233,7 @@ export class CapturePort {
     this.toolCalls.set(ev.toolCallId, {
       startedAt: Date.now(),
       input: ev.input ?? null,
+      toolName: nonEmptyToolName(ev.toolName),
     });
   }
 
@@ -222,6 +243,8 @@ export class CapturePort {
     // #341: ACP agents often send `rawInput: {}` on tool_call and the full arguments on a
     // later tool_call_update, so a later non-null update input replaces the held input.
     if (held !== undefined && ev.input !== undefined && ev.input !== null) held.input = ev.input;
+    // #341: the first non-empty tool name wins; a later update only fills a missing one.
+    if (held?.toolName === null) held.toolName = nonEmptyToolName(ev.toolName);
     const terminal =
       ev.status === "completed" || ev.status === "failed" || ev.status === "canceled";
     if (!terminal) return;
@@ -381,6 +404,7 @@ export class CapturePort {
     const payload: Record<string, unknown> = {
       handoff_id: this.opts.handoffId,
       tool_call_id: toolCallId,
+      tool_name: redactToolName(held.toolName, redactor),
       input: inputResult.value,
       output: outputResult.value,
       status,

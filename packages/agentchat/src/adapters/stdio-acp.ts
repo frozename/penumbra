@@ -1309,6 +1309,7 @@ function handleToolCall(ctx: DispatchTurnContext, update: AcpSessionUpdate): voi
   ctx.capturePort?.emit({
     kind: "tool_call",
     toolCallId: update.toolCallId,
+    toolName: resolveToolName(update, ctx.toolNames),
     status: narrowToolCallStatus(update.status),
     input: acpToolCallInput(update),
   });
@@ -1317,9 +1318,11 @@ function handleToolCall(ctx: DispatchTurnContext, update: AcpSessionUpdate): voi
 
 function handleToolCallUpdate(ctx: DispatchTurnContext, update: AcpSessionUpdate): void {
   const output = acpToolCallOutput(update);
+  const toolName = resolveToolName(update, ctx.toolNames);
   ctx.capturePort?.emit({
     kind: "tool_call_update",
     toolCallId: update.toolCallId,
+    toolName,
     status: narrowToolCallStatus(update.status),
     input: acpToolCallInput(update),
     output,
@@ -1328,7 +1331,7 @@ function handleToolCallUpdate(ctx: DispatchTurnContext, update: AcpSessionUpdate
     emitLifecycle(ctx.input, "agent.tool_call.failed", {
       adapter: "stdio-acp",
       tool_call_id: update.toolCallId,
-      tool_name: resolveToolName(update, ctx.toolNames),
+      tool_name: toolName,
       output: output ?? null,
     });
   }

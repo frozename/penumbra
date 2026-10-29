@@ -11,6 +11,7 @@ interface ObservedPayload {
   agent?: string;
   handoff_id?: string;
   tool_call_id?: string;
+  tool_name?: string | null;
   text?: string;
   input?: Record<string, unknown> | null;
   output?: Record<string, unknown> | null;
@@ -930,4 +931,133 @@ test("16. a tool_call_update with a null input keeps the tool_call input (#341)"
   expect(r.payload_json?.input).toEqual({ path: "a.ts" });
   expect(r.payload_json?.output).toEqual({ ok: true });
   expect(r.payload_json?.status).toBe("completed");
+});
+
+test("17. tool_call toolName is stored as tool_name and kept over a later name (#341)", async () => {
+  const f = makeFakeObserve();
+  const port = new CapturePort({ ...baseOpts, observe: f.observe });
+  port.emit({ kind: "tool_call", toolCallId: "tc-name", toolName: "bash", status: "pending" });
+  port.emit({
+    kind: "tool_call_update",
+    toolCallId: "tc-name",
+    toolName: "Run git stash",
+    status: "in_progress",
+  });
+  port.emit({
+    kind: "tool_call_update",
+    toolCallId: "tc-name",
+    status: "failed",
+    output: { error: "denied" },
+  });
+  const closing = port.close();
+  f.resolveAll();
+  await closing;
+  expect(f.calls).toHaveLength(1);
+  const r = observed(f.calls, 0);
+  expect(r.event_type).toBe("agent-tool-use");
+  expect(r.payload_json?.tool_name).toBe("bash");
+  expect(r.payload_json?.status).toBe("failed");
+  expect(r.payload_summary).toBe("tc-name failed");
+});
+
+test("18. an update toolName fills a missing name; no name gives null (#341)", async () => {
+  const f = makeFakeObserve();
+  const port = new CapturePort({ ...baseOpts, observe: f.observe });
+  port.emit({ kind: "tool_call", toolCallId: "tc-fill", toolName: "", status: "pending" });
+  port.emit({
+    kind: "tool_call_update",
+    toolCallId: "tc-fill",
+    toolName: "edit",
+    status: "completed",
+  });
+  port.emit({ kind: "tool_call", toolCallId: "tc-none", toolName: null, status: "pending" });
+  port.emit({ kind: "tool_call_update", toolCallId: "tc-none", status: "completed" });
+  const closing = port.close();
+  f.resolveAll();
+  await closing;
+  expect(f.calls).toHaveLength(2);
+  expect(observed(f.calls, 0).payload_json?.tool_call_id).toBe("tc-fill");
+  expect(observed(f.calls, 0).payload_json?.tool_name).toBe("edit");
+  expect(observed(f.calls, 1).payload_json?.tool_call_id).toBe("tc-none");
+  expect(observed(f.calls, 1).payload_json?.tool_name).toBeNull();
+});
+
+test("19. an orphaned tool row keeps the tool_call name (#341)", async () => {
+  const f = makeFakeObserve();
+  const port = new CapturePort({ ...baseOpts, observe: f.observe });
+  port.emit({
+    kind: "tool_call",
+    toolCallId: "tc-orphan-name",
+    toolName: "read",
+    status: "pending",
+  });
+  const closing = port.close();
+  f.resolveAll();
+  await closing;
+  expect(f.calls).toHaveLength(1);
+  const r = observed(f.calls, 0);
+  expect(r.payload_json?.lifecycle).toBe("orphaned");
+  expect(r.payload_json?.tool_name).toBe("read");
+});
+
+test("20. maestro redactor rewrites tool_name on a soft rule and drops it on a fail-closed rule (#341)", async () => {
+  const f = makeFakeObserve();
+  const port = new CapturePort({
+    ...baseOpts,
+    observe: f.observe,
+    maestroRedactor: new MaestroOutputRedactor({
+      knownAgents: new Set(["claude-acp-sonnet"]),
+      bypass: false,
+      extraRules: [{ id: "soft_banana", pattern: /banana/g, replacement: "[REDACTED:banana]" }],
+    }),
+  });
+  port.emit({
+    kind: "tool_call",
+    toolCallId: "tc-soft",
+    toolName: "banana peel",
+    status: "pending",
+    input: { query: "safe" },
+  });
+  port.emit({
+    kind: "tool_call_update",
+    toolCallId: "tc-soft",
+    status: "completed",
+    output: { ok: true },
+  });
+  port.emit({
+    kind: "tool_call",
+    toolCallId: "tc-hard",
+    toolName: "rm -rf /Volumes/WorkSSD",
+    status: "pending",
+    input: { query: "safe" },
+  });
+  port.emit({
+    kind: "tool_call_update",
+    toolCallId: "tc-hard",
+    status: "completed",
+    output: { ok: true },
+  });
+  const closing = port.close();
+  f.resolveAll();
+  await closing;
+  const rows = f.calls.filter((c) => c.event_type === "agent-tool-use");
+  expect(rows).toHaveLength(2);
+  const soft = rows.find((c) => c.payload_json?.tool_call_id === "tc-soft");
+  const hard = rows.find((c) => c.payload_json?.tool_call_id === "tc-hard");
+  expect(soft?.payload_json?.tool_name).toBe("[REDACTED:banana] peel");
+  expect(hard?.payload_json?.tool_name).toBeNull();
+  expect(hard?.payload_json?.input).toEqual({ query: "safe" });
+});
+
+test("21. tool_name is capped at 256 characters (#341)", async () => {
+  const f = makeFakeObserve();
+  const port = new CapturePort({ ...baseOpts, observe: f.observe });
+  const longName = "x".repeat(300);
+  port.emit({ kind: "tool_call", toolCallId: "tc-long", toolName: longName, status: "pending" });
+  port.emit({ kind: "tool_call_update", toolCallId: "tc-long", status: "completed" });
+  const closing = port.close();
+  f.resolveAll();
+  await closing;
+  expect(f.calls).toHaveLength(1);
+  expect(observed(f.calls, 0).payload_json?.tool_name).toBe("x".repeat(256));
 });
