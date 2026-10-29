@@ -4,6 +4,8 @@ import { resolveProjectId } from "@penumbra/core";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import type { DaemonFetch } from "./workflow.js";
+
 export interface MapOpts {
   project: string | null;
   sessionId: string | null;
@@ -117,11 +119,15 @@ export function defaultLifecycleForwardFn(
     projectId?: string | null;
     transcriptPath?: string | null;
   },
+  deps: { fetch?: DaemonFetch } = {},
 ): LifecycleForwardFn {
   const daemon = resolveDaemon(storageRoot);
+  // #353: the forwarder takes its fetch as a dependency, so a test can inject a stub
+  // and never depend on whatever globalThis.fetch another test file left installed.
+  const fetchFn: DaemonFetch = deps.fetch ?? globalThis.fetch;
   return async (event) => {
     try {
-      const res = await fetch(`${daemon.baseUrl}/workflows/trigger`, {
+      const res = await fetchFn(`${daemon.baseUrl}/workflows/trigger`, {
         method: "POST",
         headers: { authorization: `Bearer ${daemon.token}`, "content-type": "application/json" },
         body: JSON.stringify({
