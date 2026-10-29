@@ -26,7 +26,7 @@ interface WmSnapshot {
 // AgentConfig requires many Zod-default fields the test seed doesn't supply; one factory cast per gap.
 function mkAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
   return {
-    name: "home-mgmt",
+    name: "operator1",
     long_lived: true,
     long_lived_config: {
       schedule_cron: "*/15 * * * *",
@@ -51,11 +51,11 @@ describe("reconcileLongLivedAgents", () => {
   it("inserts new agents and seeds working memory", () => {
     const db = setup();
     const result = reconcileLongLivedAgents(db, [mkAgent()], { now: 1000 });
-    expect(result.inserted).toEqual(["home-mgmt"]);
+    expect(result.inserted).toEqual(["operator1"]);
     expect(result.updated).toEqual([]);
     expect(result.retired).toEqual([]);
 
-    const row = db.query<AgentRow>("SELECT * FROM long_lived_agents WHERE id='home-mgmt'").get()!;
+    const row = db.query<AgentRow>("SELECT * FROM long_lived_agents WHERE id='operator1'").get()!;
     expect(row.status).toBe("active");
     expect(row.created_at).toBe(1000);
     const wm = JSON.parse(row.working_memory_json) as WmSnapshot;
@@ -68,7 +68,7 @@ describe("reconcileLongLivedAgents", () => {
     const db = setup();
     reconcileLongLivedAgents(db, [mkAgent()], { now: 1000 });
     const row = db
-      .query<AgentRow>("SELECT mcp_allowlist_json FROM long_lived_agents WHERE id='home-mgmt'")
+      .query<AgentRow>("SELECT mcp_allowlist_json FROM long_lived_agents WHERE id='operator1'")
       .get()!;
     const al = JSON.parse(row.mcp_allowlist_json) as string[];
     expect(al).toContain("penumbra:long_lived_self_state_get");
@@ -90,14 +90,14 @@ describe("reconcileLongLivedAgents", () => {
         watches: [],
         recent_decisions: [],
       }),
-      "home-mgmt",
+      "operator1",
     );
 
     const newer = mkAgent({
       long_lived_config: { ...mkAgent().long_lived_config!, schedule_cron: "*/30 * * * *" },
     });
     reconcileLongLivedAgents(db, [newer], { now: 3000 });
-    const row = db.query<AgentRow>("SELECT * FROM long_lived_agents WHERE id='home-mgmt'").get()!;
+    const row = db.query<AgentRow>("SELECT * FROM long_lived_agents WHERE id='operator1'").get()!;
     expect(row.status).toBe("degraded");
     expect(row.consecutive_failures).toBe(3);
     expect(row.schedule_cron).toBe("*/30 * * * *");
@@ -109,15 +109,15 @@ describe("reconcileLongLivedAgents", () => {
     const db = setup();
     reconcileLongLivedAgents(db, [mkAgent()], { now: 1000 });
     db.query(
-      "UPDATE long_lived_agents SET status='retired', consecutive_failures=5, degraded_reason='oops', retired_at=900, updated_at=900 WHERE id='home-mgmt'",
+      "UPDATE long_lived_agents SET status='retired', consecutive_failures=5, degraded_reason='oops', retired_at=900, updated_at=900 WHERE id='operator1'",
     ).run();
 
     const result = reconcileLongLivedAgents(db, [mkAgent()], { now: 2000 });
-    expect(result.updated).toEqual(["home-mgmt"]);
+    expect(result.updated).toEqual(["operator1"]);
 
     const row = db
       .query<AgentRow>(
-        "SELECT status, consecutive_failures, degraded_reason, retired_at FROM long_lived_agents WHERE id='home-mgmt'",
+        "SELECT status, consecutive_failures, degraded_reason, retired_at FROM long_lived_agents WHERE id='operator1'",
       )
       .get()!;
     expect(row).toEqual({
@@ -132,13 +132,13 @@ describe("reconcileLongLivedAgents", () => {
     const db = setup();
     reconcileLongLivedAgents(db, [mkAgent()], { now: 1000 });
     db.query(
-      "UPDATE long_lived_agents SET status='degraded', consecutive_failures=5, degraded_reason='oops', retired_at=NULL, updated_at=900 WHERE id='home-mgmt'",
+      "UPDATE long_lived_agents SET status='degraded', consecutive_failures=5, degraded_reason='oops', retired_at=NULL, updated_at=900 WHERE id='operator1'",
     ).run();
 
     reconcileLongLivedAgents(db, [mkAgent()], { now: 2000 });
     let row = db
       .query<AgentRow>(
-        "SELECT status, consecutive_failures, degraded_reason, retired_at FROM long_lived_agents WHERE id='home-mgmt'",
+        "SELECT status, consecutive_failures, degraded_reason, retired_at FROM long_lived_agents WHERE id='operator1'",
       )
       .get()!;
     expect(row).toEqual({
@@ -149,12 +149,12 @@ describe("reconcileLongLivedAgents", () => {
     });
 
     db.query(
-      "UPDATE long_lived_agents SET status='paused', consecutive_failures=5, degraded_reason='oops', retired_at=NULL, updated_at=900 WHERE id='home-mgmt'",
+      "UPDATE long_lived_agents SET status='paused', consecutive_failures=5, degraded_reason='oops', retired_at=NULL, updated_at=900 WHERE id='operator1'",
     ).run();
     reconcileLongLivedAgents(db, [mkAgent()], { now: 3000 });
     row = db
       .query<AgentRow>(
-        "SELECT status, consecutive_failures, degraded_reason, retired_at FROM long_lived_agents WHERE id='home-mgmt'",
+        "SELECT status, consecutive_failures, degraded_reason, retired_at FROM long_lived_agents WHERE id='operator1'",
       )
       .get()!;
     expect(row).toEqual({
@@ -169,9 +169,9 @@ describe("reconcileLongLivedAgents", () => {
     const db = setup();
     reconcileLongLivedAgents(db, [mkAgent()], { now: 1000 });
     const result = reconcileLongLivedAgents(db, [], { now: 2000 });
-    expect(result.retired).toEqual(["home-mgmt"]);
+    expect(result.retired).toEqual(["operator1"]);
     const row = db
-      .query<AgentRow>("SELECT status, retired_at FROM long_lived_agents WHERE id='home-mgmt'")
+      .query<AgentRow>("SELECT status, retired_at FROM long_lived_agents WHERE id='operator1'")
       .get()!;
     expect(row.status).toBe("retired");
     expect(row.retired_at).toBe(2000);

@@ -13,8 +13,8 @@ const baseTick: StampInputTick = {
   now_iso: "2026-05-18T00:00:00Z",
 };
 const baseAgent: StampInputAgent = {
-  id: "home-mgmt",
-  display_name: "Home Mgmt",
+  id: "task-refiner-primary",
+  display_name: "Task refiner",
   standing_brief: "test",
   working_memory: {
     version: 1,
@@ -24,14 +24,14 @@ const baseAgent: StampInputAgent = {
     watches: [],
     recent_decisions: [],
   },
-  mcp_allowlist: ["ha:ha_pulse"],
+  mcp_allowlist: ["external:status"],
   bounds: { wall_clock_ms: 360000, cost_cents: 50, max_sub_dispatches: 3 },
 };
 
 describe("stampPrompt", () => {
   it("includes display_name and standing brief", () => {
     const out = stampPrompt({ agent: baseAgent, tick: baseTick });
-    expect(out).toContain("Home Mgmt");
+    expect(out).toContain("Task refiner");
     expect(out).toContain("test");
   });
 
@@ -41,25 +41,25 @@ describe("stampPrompt", () => {
       working_memory: {
         version: 1,
         updated_at: 0,
-        pending_goals: [{ kind: "user_goal", text: "check the dryer" }],
+        pending_goals: [{ kind: "user_goal", text: "refine pending drafts" }],
         open_threads: [],
         watches: [],
         recent_decisions: [],
       },
     };
     const out = stampPrompt({ agent, tick: baseTick });
-    expect(out).toContain("check the dryer");
+    expect(out).toContain("refine pending drafts");
   });
 
   it("renders allowlist entries in SDK canonical form", () => {
     const out = stampPrompt({
       agent: {
         ...baseAgent,
-        mcp_allowlist: ["ha:state.list", "penumbra:long_lived_self_state_set"],
+        mcp_allowlist: ["external:state.list", "penumbra:long_lived_self_state_set"],
       },
       tick: baseTick,
     });
-    expect(out).toContain("mcp__ha__state.list");
+    expect(out).toContain("mcp__external__state.list");
     expect(out).toContain("mcp__penumbra__long_lived_self_state_set");
     expect(out).not.toContain("mcp__ha__integration.install");
   });
@@ -75,7 +75,7 @@ describe("stampPrompt", () => {
     expect(out).toContain("Dispatching sub-chains from this tick:");
     expect(out).toContain('dispatch_kind: "long_lived_tick"');
     expect(out).toContain('long_lived_tick_id: "tick-99"');
-    expect(out).toContain('long_lived_agent_id: "home-mgmt"');
+    expect(out).toContain('long_lived_agent_id: "task-refiner-primary"');
   });
 
   it("dispatch-envelope section warns against reusing stale tick IDs from working memory", () => {
@@ -89,29 +89,6 @@ describe("stampPrompt", () => {
     expect(out).toContain("tick IDs are single-use");
     expect(out).toContain("Do NOT copy a tick ID from your working memory notes");
     expect(out).toContain("tick-abc");
-  });
-
-  it("adds anti-confusion warning when both ha and non-ha tools are present", () => {
-    const out = stampPrompt({
-      agent: {
-        ...baseAgent,
-        mcp_allowlist: ["ha:ha_pulse", "penumbra:chain_start"],
-      },
-      tick: baseTick,
-    });
-    expect(out).toContain("NOT Home Assistant services");
-    expect(out).toContain("mcp__ha__ha_call_service");
-  });
-
-  it("omits anti-confusion warning when only ha tools are present", () => {
-    const out = stampPrompt({
-      agent: {
-        ...baseAgent,
-        mcp_allowlist: ["ha:ha_pulse", "ha:ha_get_state"],
-      },
-      tick: baseTick,
-    });
-    expect(out).not.toContain("NOT Home Assistant services");
   });
 
   it("omits dispatch-envelope instructions when chain_start is not allowlisted", () => {
@@ -145,12 +122,12 @@ describe("stampPrompt", () => {
       tick: {
         id: "t2",
         trigger_kind: "event",
-        trigger_payload: { server: "ha", event: "state_changed", entity_id: "light.kitchen" },
+        trigger_payload: { server: "external", event: "status_changed", job_id: "job-1" },
         now_iso: "now",
       },
     });
     expect(out).toContain("event");
-    expect(out).toContain("light.kitchen");
+    expect(out).toContain("job-1");
   });
 
   it("does not render an unavailability section when no servers are unavailable", () => {
@@ -160,19 +137,19 @@ describe("stampPrompt", () => {
 
   it("renders a warning for an unavailable server", () => {
     const out = stampPrompt({
-      agent: { ...baseAgent, unavailable_servers: ["ha"] },
+      agent: { ...baseAgent, unavailable_servers: ["external"] },
       tick: baseTick,
     });
-    expect(out).toContain("MCP server 'ha' is unavailable this tick");
+    expect(out).toContain("MCP server 'external' is unavailable this tick");
     expect(out).toContain("proceed without them");
   });
 
   it("lists multiple unavailable servers", () => {
     const out = stampPrompt({
-      agent: { ...baseAgent, unavailable_servers: ["ha", "other"] },
+      agent: { ...baseAgent, unavailable_servers: ["external", "other"] },
       tick: baseTick,
     });
-    expect(out).toContain("'ha'");
+    expect(out).toContain("'external'");
     expect(out).toContain("'other'");
   });
 
@@ -185,35 +162,18 @@ describe("stampPrompt", () => {
     const out = stampPrompt({
       agent: {
         ...baseAgent,
-        mcp_allowlist: ["ha:ha_pulse", "penumbra:chain_start", "penumbra:memory_search"],
+        mcp_allowlist: ["external:status", "penumbra:chain_start", "penumbra:memory_search"],
       },
       tick: baseTick,
     });
-    expect(out).toContain("mcp__ha__ha_pulse");
+    expect(out).toContain("mcp__external__status");
     expect(out).toContain("mcp__penumbra__chain_start");
     expect(out).toContain("mcp__penumbra__memory_search");
   });
 
-  it("includes ha_call_service anti-pattern warning when ha and non-ha servers coexist", () => {
-    const out = stampPrompt({
-      agent: { ...baseAgent, mcp_allowlist: ["ha:ha_pulse", "penumbra:chain_start"] },
-      tick: baseTick,
-    });
-    expect(out).toMatch(/do not.*ha_call_service|never.*ha_call_service/i);
-  });
-
-  it("omits anti-confusion preamble when allowlist has only one server", () => {
-    const out = stampPrompt({
-      agent: { ...baseAgent, mcp_allowlist: ["ha:ha_pulse", "ha:ha_get_state"] },
-      tick: baseTick,
-    });
-    expect(out).not.toContain("NOT Home Assistant services");
-    expect(out).not.toContain("ha_call_service");
-  });
-
   it("dispatch-envelope section names the mcp__ canonical form, not bare tool name", () => {
     const out = stampPrompt({
-      agent: { ...baseAgent, mcp_allowlist: ["ha:ha_pulse", "penumbra:chain_start"] },
+      agent: { ...baseAgent, mcp_allowlist: ["external:status", "penumbra:chain_start"] },
       tick: { ...baseTick, id: "tick-99" },
     });
     expect(out).toContain("mcp__penumbra__chain_start");
