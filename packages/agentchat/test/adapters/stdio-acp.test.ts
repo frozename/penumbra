@@ -477,7 +477,7 @@ describe("stdio-acp ACP tool payload capture (#341)", () => {
     expect(acpToolCallOutput({})).toBeUndefined();
   });
 
-  it("emits rawInput and rawOutput to the capture port and the failed lifecycle event", async () => {
+  it("emits rawInput and rawOutput to the capture port and the output size to the failed lifecycle event", async () => {
     const { adapter, captured } = createRawToolPayloadHarness([
       {
         sessionUpdate: "tool_call",
@@ -532,9 +532,10 @@ describe("stdio-acp ACP tool payload capture (#341)", () => {
         adapter: "stdio-acp",
         tool_call_id: "tu_raw",
         tool_name: "bash",
-        output: { error: "permission denied" },
+        output_chars: 29,
       },
     });
+    expect(failedEvents[0]?.meta).not.toHaveProperty("output");
   });
 
   it("emits the ACP title or kind as toolName, and null when neither is sent", async () => {
@@ -551,6 +552,48 @@ describe("stdio-acp ACP tool payload capture (#341)", () => {
       { kind: "tool_call", toolCallId: "tu_anon", toolName: null, status: "pending" },
       { kind: "tool_call_update", toolCallId: "tu_anon", toolName: null, status: "completed" },
     ]);
+  });
+
+  it("keeps the raw tool output out of the failed lifecycle meta (#359)", async () => {
+    const marker = "leak-marker-7359";
+    const rawOutput = { error: `denied: ${marker}` };
+    const { adapter, captured } = createRawToolPayloadHarness([
+      { sessionUpdate: "tool_call", toolCallId: "tu_leak", title: "bash", status: "pending" },
+      { sessionUpdate: "tool_call_update", toolCallId: "tu_leak", status: "failed", rawOutput },
+      { sessionUpdate: "tool_call", toolCallId: "tu_none", title: "bash", status: "pending" },
+      { sessionUpdate: "tool_call_update", toolCallId: "tu_none", status: "failed" },
+    ]);
+    const events: DispatchEventInput[] = [];
+    await dispatch(adapter, {
+      prompt: "hello",
+      signal: new AbortController().signal,
+      eventContext: { handoffId: "h-acp-359", workerId: "w-acp-359" },
+      onEvent: (event: DispatchEventInput): void => {
+        events.push(event);
+      },
+    });
+    const failedEvents = events.filter((event) => event.kind === "agent.tool_call.failed");
+    expect(failedEvents).toHaveLength(2);
+    expect(JSON.stringify(failedEvents)).not.toContain(marker);
+    expect(failedEvents[0]?.meta).toEqual({
+      adapter: "stdio-acp",
+      tool_call_id: "tu_leak",
+      tool_name: "bash",
+      output_chars: 36,
+    });
+    expect(failedEvents[1]?.meta).toEqual({
+      adapter: "stdio-acp",
+      tool_call_id: "tu_none",
+      tool_name: "bash",
+      output_chars: null,
+    });
+    expect(captured[1]).toEqual({
+      kind: "tool_call_update",
+      toolCallId: "tu_leak",
+      toolName: "bash",
+      status: "failed",
+      output: rawOutput,
+    });
   });
 });
 
@@ -1558,9 +1601,10 @@ describe("StdioAcpAdapter", () => {
         adapter: "stdio-acp",
         tool_call_id: "tu_123",
         tool_name: "mcp__penumbra__chain_start_simple",
-        output: { is_error: true, content: "..." },
+        output_chars: 33,
       },
     });
+    expect(failedEvents[0]?.meta).not.toHaveProperty("output");
   });
 
   it("rejects tool_call session/update notifications", async () => {
