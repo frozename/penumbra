@@ -42,6 +42,11 @@ import {
   handoffsStatusRoute,
 } from "@src/routes/handoffs.js";
 import type { WorkerAuthzMap } from "@src/routes/worker-profile-gate.js";
+import {
+  createLocalSeatHealthService,
+  LOCAL_SEAT_HEALTH_TTL_MS,
+  type LocalSeatHealthAgent,
+} from "@src/services/local-seat-health.js";
 import { createWorkflowRunsRegistry } from "@src/services/workflow-runs-registry.js";
 
 if (process.platform === "darwin") {
@@ -3490,6 +3495,7 @@ test("GET /chains/agents adds each probed seat's local health state", async () =
           state: "unauthorized",
           checked_at: "1970-01-01T00:00:02.000Z",
           http_status: 401,
+          routable: false,
         },
       },
       { name: "c" },
@@ -3505,6 +3511,70 @@ test("GET /chains/agents keeps plain rows when the seat health service has no ge
   const res = chainsListAgentsRoute(new Request("http://x/chains/agents"), services);
   expect(res.status).toBe(200);
   expect(await res.json()).toEqual({ agents: [{ name: "a" }, { name: "b" }] });
+});
+
+test("GET /chains/agents marks seats that routing excludes as not routable (#360)", async () => {
+  type SeatHealthRow = { state: string; checkedAtMs: number; httpStatus?: number };
+  const services = tempServices({ agentRegistry: ["a", "b", "c", "d"] });
+  const records = new Map<string, SeatHealthRow>([
+    ["a", { state: "healthy", checkedAtMs: 1_000 }],
+    ["b", { state: "healthy", checkedAtMs: 2_000 }],
+  ]);
+  services.localSeatHealth = {
+    getUnhealthyAgents: (): Set<string> => new Set(["a", "c"]),
+    getSeatHealth: (name: string): SeatHealthRow | undefined => records.get(name),
+  };
+  const res = chainsListAgentsRoute(new Request("http://x/chains/agents"), services);
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({
+    agents: [
+      {
+        name: "a",
+        health: { state: "healthy", checked_at: "1970-01-01T00:00:01.000Z", routable: false },
+      },
+      { name: "b", health: { state: "healthy", checked_at: "1970-01-01T00:00:02.000Z" } },
+      { name: "c", health: { state: "unknown", routable: false } },
+      { name: "d" },
+    ],
+  });
+});
+
+test("GET /chains/agents marks a healthy probe older than the routing TTL as not routable (#360)", async () => {
+  let nowMs = 1_000;
+  const seatHealth = createLocalSeatHealthService({
+    agents: (): LocalSeatHealthAgent[] => [
+      {
+        name: "local-a",
+        adapter: "openai-compat-http",
+        options: { baseUrl: "http://127.0.0.1:7944", model: "m1" },
+      },
+    ],
+    now: (): number => nowMs,
+    fetch: (): Promise<Response> =>
+      Promise.resolve(new Response(JSON.stringify({ data: [{ id: "m1" }] }))),
+  });
+  await seatHealth.refresh();
+  const services = tempServices({ agentRegistry: ["local-a"] });
+  services.localSeatHealth = seatHealth;
+
+  nowMs = 1_000 + LOCAL_SEAT_HEALTH_TTL_MS - 1;
+  const fresh = chainsListAgentsRoute(new Request("http://x/chains/agents"), services);
+  expect(await fresh.json()).toEqual({
+    agents: [
+      { name: "local-a", health: { state: "healthy", checked_at: "1970-01-01T00:00:01.000Z" } },
+    ],
+  });
+
+  nowMs = 1_000 + LOCAL_SEAT_HEALTH_TTL_MS + 1;
+  const stale = chainsListAgentsRoute(new Request("http://x/chains/agents"), services);
+  expect(await stale.json()).toEqual({
+    agents: [
+      {
+        name: "local-a",
+        health: { state: "healthy", checked_at: "1970-01-01T00:00:01.000Z", routable: false },
+      },
+    ],
+  });
 });
 
 test("GET /chains/responses returns agent responses for a conversation", async () => {
