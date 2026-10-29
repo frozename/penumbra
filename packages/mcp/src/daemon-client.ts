@@ -967,7 +967,13 @@ export class DaemonClient {
     return await this.get(q ? `/reconciler/verdicts?${q}` : "/reconciler/verdicts");
   }
 
-  async listChainAgents(): Promise<{ agents: { name: string }[] }> {
+  async listChainAgents(): Promise<{
+    agents: {
+      name: string;
+      // #256: the seat's last local health probe, present only when the daemon has one.
+      health?: { state: string; checked_at: string; http_status?: number };
+    }[];
+  }> {
     return await this.get("/chains/agents");
   }
 
