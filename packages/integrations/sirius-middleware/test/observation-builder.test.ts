@@ -2,11 +2,12 @@ import { describe, expect, test } from "bun:test";
 
 import {
   buildPromptEvent,
+  type BuildPromptInput,
   buildResponseEvent,
   extractUserMessageText,
 } from "../src/observation-builder.js";
 
-const baseInput = {
+const baseInput: BuildPromptInput = {
   projectId: "proj-1",
   userId: "u-1",
   machineId: "host-1",
@@ -17,7 +18,7 @@ const baseInput = {
     { role: "user", content: "hi" },
   ],
   captureStartTs: 1_777_000_000_000, // ms
-} as const;
+};
 
 describe("buildPromptEvent", () => {
   test("produces a T0EventInput with agent-prompt event_type and the request shape", () => {

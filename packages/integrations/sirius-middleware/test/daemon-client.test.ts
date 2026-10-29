@@ -111,7 +111,7 @@ test("observe aborts after the configured timeout", async () => {
 });
 
 test("observe strips trailing slash from baseUrl", async () => {
-  let path: string | null = null;
+  let path = null as string | null;
   const server = Bun.serve({
     port: 0,
     fetch(req) {
