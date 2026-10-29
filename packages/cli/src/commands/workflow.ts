@@ -15,16 +15,35 @@ function resolveDaemon(storageRoot?: string): { baseUrl: string; token: string }
   return { baseUrl: `http://127.0.0.1:${port}`, token };
 }
 
-async function daemonGet(path: string, storageRoot: string): Promise<unknown> {
+// #353: the daemon client takes its fetch as a parameter, so a test can inject a stub
+// and never depend on whatever globalThis.fetch another test file left installed.
+export type DaemonFetch = (input: string, init?: RequestInit) => Promise<Response>;
+
+export interface WorkflowDeps {
+  fetch?: DaemonFetch;
+}
+
+async function daemonGet(
+  path: string,
+  storageRoot: string,
+  fetchFn: DaemonFetch = globalThis.fetch,
+): Promise<unknown> {
   const d = resolveDaemon(storageRoot);
-  const r = await fetch(`${d.baseUrl}${path}`, { headers: { authorization: `Bearer ${d.token}` } });
+  const r = await fetchFn(`${d.baseUrl}${path}`, {
+    headers: { authorization: `Bearer ${d.token}` },
+  });
   if (!r.ok) throw new Error(`${path} → ${String(r.status)}`);
   return await r.json();
 }
 
-async function daemonPost(path: string, body: unknown, storageRoot: string): Promise<unknown> {
+async function daemonPost(
+  path: string,
+  body: unknown,
+  storageRoot: string,
+  fetchFn: DaemonFetch = globalThis.fetch,
+): Promise<unknown> {
   const d = resolveDaemon(storageRoot);
-  const r = await fetch(`${d.baseUrl}${path}`, {
+  const r = await fetchFn(`${d.baseUrl}${path}`, {
     method: "POST",
     headers: { authorization: `Bearer ${d.token}`, "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -80,10 +99,12 @@ export async function runWorkflowHistory(opts: {
   out: (s: string) => void;
   storageRoot: string;
   name: string;
+  fetch?: DaemonFetch;
 }): Promise<void> {
   const result = await daemonGet(
     `/workflows/history?name=${encodeURIComponent(opts.name)}`,
     opts.storageRoot,
+    opts.fetch,
   );
   opts.out(JSON.stringify(result, null, 2));
 }
@@ -91,15 +112,18 @@ export async function runWorkflowHistory(opts: {
 export async function runWorkflowSuggest(opts: {
   out: (s: string) => void;
   storageRoot: string;
+  fetch?: DaemonFetch;
 }): Promise<void> {
-  const result = await daemonPost("/workflows/suggest", {}, opts.storageRoot);
+  const result = await daemonPost("/workflows/suggest", {}, opts.storageRoot, opts.fetch);
   opts.out(JSON.stringify(result, null, 2));
 }
 
 export async function dispatchWorkflowSubcommand(
   args: string[],
   storageRoot: string,
+  deps: WorkflowDeps = {},
 ): Promise<number> {
+  const fetchFn: DaemonFetch = deps.fetch ?? globalThis.fetch;
   const sub = args[0];
   const out = (s: string): void => {
     process.stdout.write(`${s}\n`);
@@ -113,7 +137,9 @@ export async function dispatchWorkflowSubcommand(
       await runWorkflowList({
         out,
         fetchList: () =>
-          daemonGet("/workflows/list", storageRoot) as Promise<{ workflows: WorkflowSummary[] }>,
+          daemonGet("/workflows/list", storageRoot, fetchFn) as Promise<{
+            workflows: WorkflowSummary[];
+          }>,
         showTriggers,
       });
       return 0;
@@ -132,6 +158,8 @@ export async function dispatchWorkflowSubcommand(
         name,
         dryRun: args.includes("--dry-run"),
         sessionId,
+        post: (path: string, body: unknown, root: string): Promise<unknown> =>
+          daemonPost(path, body, root, fetchFn),
       });
       return 0;
     }
@@ -141,11 +169,11 @@ export async function dispatchWorkflowSubcommand(
         console.error("usage: penumbra workflow history <name>");
         return 2;
       }
-      await runWorkflowHistory({ out, storageRoot, name });
+      await runWorkflowHistory({ out, storageRoot, name, fetch: fetchFn });
       return 0;
     }
     case "suggest":
-      await runWorkflowSuggest({ out, storageRoot });
+      await runWorkflowSuggest({ out, storageRoot, fetch: fetchFn });
       return 0;
     default:
       console.error("usage: penumbra workflow <list|run|history|suggest>");
