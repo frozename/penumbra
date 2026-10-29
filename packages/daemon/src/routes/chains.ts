@@ -2569,27 +2569,52 @@ export async function chainSendMessageRoute(
   return json({ ok: true });
 }
 
+type ChainAgentHealth = {
+  state: string;
+  checked_at?: string;
+  http_status?: number;
+  routable?: boolean;
+};
+
+// #360: the seats routing excludes right now (getUnhealthyAgents), read once per
+// request. Empty when the gate is off or the service has no getSeatHealth, so
+// those rows stay plain `{ name }`.
+function chainUnroutableSeats(services: Services): ReadonlySet<string> {
+  const seatHealth = services.localSeatHealth;
+  if (seatHealth?.getSeatHealth === undefined) {
+    return new Set<string>();
+  }
+  return seatHealth.getUnhealthyAgents();
+}
+
 // #256: the seat's last local health probe as chain_list_agents shows it, or
 // undefined when the gate is off, the service has no getSeatHealth, or the seat
-// was never probed.
+// was never probed and routing does not exclude it.
+// #360: `routable: false` when routing excludes the seat (a failing probe, or a
+// healthy one older than the routing TTL); a seat routing excludes that was never
+// probed reads `{ state: "unknown", routable: false }`.
 function chainAgentHealth(
   services: Services,
   name: string,
-): { state: string; checked_at: string; http_status?: number } | undefined {
+  unroutable: ReadonlySet<string>,
+): ChainAgentHealth | undefined {
+  const excluded = unroutable.has(name);
   const record = services.localSeatHealth?.getSeatHealth?.(name);
   if (record === undefined) {
-    return undefined;
+    return excluded ? { state: "unknown", routable: false } : undefined;
   }
   return {
     state: record.state,
     checked_at: new Date(record.checkedAtMs).toISOString(),
     ...(record.httpStatus === undefined ? {} : { http_status: record.httpStatus }),
+    ...(excluded ? { routable: false } : {}),
   };
 }
 
 export function chainsListAgentsRoute(_req: Request, services: Services): Response {
+  const unroutable = chainUnroutableSeats(services);
   const agents = (services.agentRegistry ?? []).map((name) => {
-    const health = chainAgentHealth(services, name);
+    const health = chainAgentHealth(services, name, unroutable);
     return health === undefined ? { name } : { name, health };
   });
   return json({ agents });
