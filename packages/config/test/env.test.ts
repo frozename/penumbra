@@ -157,7 +157,7 @@ describe("ENV_REGISTRY", () => {
   });
 
   test("MCP response budget docs mention invalid values fail fast", () => {
-    const description = ENV_REGISTRY.PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS.description;
+    const description = ENV_REGISTRY.PENUMBRA_MCP_RESPONSE_BUDGET_TOKENS?.description;
     expect(description).toContain("Invalid values");
     expect(description).toContain("fail fast");
     expect(description).toContain("positive integer");
