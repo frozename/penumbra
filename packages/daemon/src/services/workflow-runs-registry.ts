@@ -339,7 +339,7 @@ async function hydrateRecord(
   const row = ctx.opts.db.query<DbWorkflowRunRow, [string]>(ROW_SELECT_SQL).get(workflowRunId);
   if (!row) return null;
   if (row.status === "running") return entry;
-  entry.record = {
+  const record: WorkflowRunRecord = {
     status: row.status,
     started_at: row.started_at,
     finished_at: row.completed_at ?? undefined,
@@ -361,7 +361,7 @@ async function hydrateRecord(
           ),
         }),
   };
-  return entry;
+  return { ...entry, record };
 }
 
 function refreshPersistedState(ctx: RegistryCtx, workflowRunId: string, patch: PatchFields): void {
@@ -454,6 +454,11 @@ async function registryRecordResult(
     });
     ctx.persistenceByRunId.set(workflowRunId, "persisted");
     releaseWaiters(ctx, workflowRunId, entry);
+    entry.record = {
+      status: record.status,
+      started_at: record.started_at,
+      finished_at: record.finished_at,
+    };
   } catch (error) {
     const errorJson = safeStringify(error);
     const record: WorkflowRunRecord = {
@@ -509,6 +514,11 @@ async function registryRecordError(
     });
     ctx.persistenceByRunId.set(workflowRunId, "persisted");
     releaseWaiters(ctx, workflowRunId, entry);
+    entry.record = {
+      status: record.status,
+      started_at: record.started_at,
+      finished_at: record.finished_at,
+    };
   } catch (spillError) {
     const errorJson = safeStringify(spillError);
     const record: WorkflowRunRecord = {
