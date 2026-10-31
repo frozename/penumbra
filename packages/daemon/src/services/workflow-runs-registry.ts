@@ -192,6 +192,7 @@ const ROW_SELECT_SQL = `SELECT id, project_id, workflow_name, status, started_at
           WHERE id = ?
           LIMIT 1`;
 
+// Cache eviction must retain local provenance while the durable row survives.
 function clearRunState(ctx: RegistryCtx, workflowRunId: string): void {
   ctx.waitersByRunId.delete(workflowRunId);
   ctx.persistenceByRunId.delete(workflowRunId);
@@ -207,10 +208,11 @@ function sweepExpired(ctx: RegistryCtx, nowMs: number): void {
     if (entry.registered_at + ctx.ttlMs >= nowMs) continue;
     // Keep evicting orphan entries so capacity still drains, but never drop an
     // entry that live waiters are parked on.
-    if (!entry.record && ctx.waitersByRunId.has(workflowRunId)) continue;
+    if (ctx.waitersByRunId.has(workflowRunId)) continue;
     ctx.entries.delete(workflowRunId);
     clearRunState(ctx, workflowRunId);
   }
+  purgeExpiredRows(ctx, nowMs);
 }
 
 async function safeUnlinkSpill(
@@ -251,13 +253,12 @@ function purgeExpiredRows(ctx: RegistryCtx, nowMs: number): void {
     .query<
       { id: string; result_spill_path: string | null; error_spill_path: string | null },
       [number]
-    >(`SELECT id, result_spill_path, error_spill_path FROM workflow_runs WHERE status IN ('completed','failed') AND expires_at <= ?`)
+    >(`DELETE FROM workflow_runs WHERE status IN ('completed','failed') AND expires_at <= ? RETURNING id, result_spill_path, error_spill_path`)
     .all(nowMs);
-  ctx.opts.db
-    .query(`DELETE FROM workflow_runs WHERE status IN ('completed','failed') AND expires_at <= ?`)
-    .run(nowMs);
   for (const row of expiredRows) {
+    ctx.entries.delete(row.id);
     clearRunState(ctx, row.id);
+    ctx.locallyRegisteredRunIds.delete(row.id);
     void safeUnlinkSpill(ctx.opts.storageRoot, row.result_spill_path, ctx.opts.log);
     void safeUnlinkSpill(ctx.opts.storageRoot, row.error_spill_path, ctx.opts.log);
   }
@@ -549,7 +550,6 @@ async function registryGetStatus(
   workflowRunId: string,
 ): Promise<WorkflowRunRecord | null> {
   sweepExpired(ctx, ctx.opts.clock().getTime());
-  purgeExpiredRows(ctx, ctx.opts.clock().getTime());
   const entry = await hydrateRecord(ctx, workflowRunId, true);
   if (!entry) return null;
   const persistenceStatus = ctx.persistenceByRunId.get(workflowRunId);
@@ -576,7 +576,6 @@ function registryWaitForResult(
   timeoutMs: number,
 ): Promise<WorkflowRunRecord | null> {
   sweepExpired(ctx, ctx.opts.clock().getTime());
-  purgeExpiredRows(ctx, ctx.opts.clock().getTime());
   const entry = hydrateInfo(ctx, workflowRunId, true);
   if (!entry) return Promise.resolve(null);
   if (entry.record) {
@@ -674,7 +673,10 @@ export function createWorkflowRunsRegistry(opts: RegistryOpts): WorkflowRunsRegi
       if (entry) releaseWaiters(ctx, workflowRunId, entry);
       clearRunState(ctx, workflowRunId);
       ctx.entries.delete(workflowRunId);
-      opts.db.query(`DELETE FROM workflow_runs WHERE id = ?`).run(workflowRunId);
+      const deleted = opts.db
+        .query<{ id: string }, [string]>(`DELETE FROM workflow_runs WHERE id = ? RETURNING id`)
+        .get(workflowRunId);
+      if (deleted) ctx.locallyRegisteredRunIds.delete(workflowRunId);
       const spillPath = makeSpillPath(opts.storageRoot, workflowRunId);
       if (existsSync(spillPath)) {
         void unlink(spillPath).catch((err: unknown) => {
@@ -691,6 +693,7 @@ export function createWorkflowRunsRegistry(opts: RegistryOpts): WorkflowRunsRegi
     getStatus: (workflowRunId) => registryGetStatus(ctx, workflowRunId),
 
     getStatusLight(workflowRunId: string): Promise<WorkflowStatusLight | null> {
+      sweepExpired(ctx, ctx.opts.clock().getTime());
       const row = opts.db
         .query<
           {
