@@ -229,6 +229,52 @@ function seedRecencyFixture(db: Database, withProjectId: boolean): void {
   });
 }
 
+function seedNumericSourceAction(
+  db: Database,
+  actionId: string,
+  payload: string,
+  decidedAt: number,
+): void {
+  db.prepare(
+    `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json, decided_at)
+     VALUES(?, 'cycle-seed', 'P4', 'research_query', 0.5, 'completed', '["proj-a"]', ?, ?)`,
+  ).run(actionId, payload, decidedAt);
+}
+
+function seedNumericTextFixture(db: Database, withProjectId: boolean): void {
+  db.prepare(
+    `INSERT INTO dream_cycles(cycle_id, started_at, trigger, budget_usd_cap, outcome)
+     VALUES('cycle-seed', ?, 'cron', 1.0, 'completed')`,
+  ).run(NOW_MS);
+  seedMemory(
+    db,
+    {
+      id: "7",
+      title: "Numeric-sourced memory",
+      projectId: PROJ_A,
+      createdAt: "2026-01-01T00:00:00Z",
+    },
+    withProjectId,
+  );
+  seedMemory(
+    db,
+    {
+      id: "8",
+      title: "Never researched memory",
+      projectId: PROJ_A,
+      createdAt: "2026-01-02T00:00:00Z",
+    },
+    withProjectId,
+  );
+  seedNumericSourceAction(db, "a-int", '{"query":"q-int","source_memory_id":7}', CUTOFF_MS + 500);
+  seedNumericSourceAction(
+    db,
+    "a-text",
+    '{"query":"q-text","source_memory_id":"7"}',
+    CUTOFF_MS + 2_000,
+  );
+}
+
 it("P4 project variant returns the same ranked memories as the correlated-subquery oracle", () => {
   const db = openTestDb();
   seedRecencyFixture(db, true);
@@ -255,6 +301,34 @@ it("P4 legacy variant returns the same ranked memories as the correlated-subquer
   expect(actual.map((row) => row.memory_id)).toEqual(["m-b", "m-null"]);
   expect(actual[0]?.last_researched_at).toBeNull();
   expect(actual[1]?.last_researched_at).toBeNull();
+});
+
+it("P4 project variant merges INTEGER and TEXT source_memory_id like the oracle", () => {
+  const db = openTestDb();
+  seedNumericTextFixture(db, true);
+
+  const expected = db.prepare(ORACLE_PROJECT_SQL).all(PROJ_A, NOW_MS, CUTOFF_MS) as MemoryRow[];
+  const actual = db
+    .prepare(p4MemoryByProjectSql(true))
+    .all(PROJ_A, NOW_MS, CUTOFF_MS) as MemoryRow[];
+
+  expect(actual).toEqual(expected);
+  expect(actual.map((row) => row.memory_id)).toEqual(["8", "7"]);
+  expect(actual[0]?.last_researched_at).toBeNull();
+  expect(actual[1]?.last_researched_at).toBe(CUTOFF_MS + 2_000);
+});
+
+it("P4 legacy variant merges INTEGER and TEXT source_memory_id like the oracle", () => {
+  const db = openLegacyDb();
+  seedNumericTextFixture(db, false);
+
+  const expected = db.prepare(ORACLE_FALLBACK_SQL).all(NOW_MS, CUTOFF_MS) as MemoryRow[];
+  const actual = db.prepare(p4MemoryByProjectSql(false)).all(NOW_MS, CUTOFF_MS) as MemoryRow[];
+
+  expect(actual).toEqual(expected);
+  expect(actual.map((row) => row.memory_id)).toEqual(["8", "7"]);
+  expect(actual[0]?.last_researched_at).toBeNull();
+  expect(actual[1]?.last_researched_at).toBe(CUTOFF_MS + 2_000);
 });
 
 it("P4 statement computes research recency without a correlated scalar subquery", () => {

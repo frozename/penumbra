@@ -306,13 +306,13 @@ export function p4MemoryByProjectSql(hasT2ProjectId: boolean): string {
   return hasT2ProjectId
     ? `WITH p4_research_recency AS (
          SELECT
-           json_extract(da.payload_json, '$.source_memory_id') AS source_memory_id,
+           CAST(json_extract(da.payload_json, '$.source_memory_id') AS TEXT) AS source_memory_id,
            MAX(COALESCE(da.decided_at, ?2)) AS last_researched_at
          FROM dream_actions da
          WHERE da.phase='P4'
            AND da.action_type='research_query'
            AND COALESCE(da.decided_at, ?2) > ?3
-         GROUP BY json_extract(da.payload_json, '$.source_memory_id')
+         GROUP BY CAST(json_extract(da.payload_json, '$.source_memory_id') AS TEXT)
        )
        SELECT
          t2_memories.memory_id,
@@ -332,13 +332,13 @@ export function p4MemoryByProjectSql(hasT2ProjectId: boolean): string {
        LIMIT 2`
     : `WITH p4_research_recency AS (
          SELECT
-           json_extract(da.payload_json, '$.source_memory_id') AS source_memory_id,
+           CAST(json_extract(da.payload_json, '$.source_memory_id') AS TEXT) AS source_memory_id,
            MAX(COALESCE(da.decided_at, ?1)) AS last_researched_at
          FROM dream_actions da
          WHERE da.phase='P4'
            AND da.action_type='research_query'
            AND COALESCE(da.decided_at, ?1) > ?2
-         GROUP BY json_extract(da.payload_json, '$.source_memory_id')
+         GROUP BY CAST(json_extract(da.payload_json, '$.source_memory_id') AS TEXT)
        )
        SELECT
          t2_memories.memory_id,
