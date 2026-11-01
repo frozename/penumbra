@@ -29,6 +29,12 @@ type ProviderConcurrencyCapResponse = ErrorResponse & {
   max_in_flight: number;
   in_flight_count: number;
 };
+type SeatConcurrencyCapResponse = ErrorResponse & {
+  seat: string;
+  provider: string | null;
+  max_in_flight: number;
+  in_flight_count: number;
+};
 type WorkerAuthz = Map<string, { isolation: "sticky" | "hard" | "shared"; project_id?: string }>;
 type ClaimServices = Services & {
   workerAuthz?: WorkerAuthz;
@@ -563,6 +569,245 @@ test("/handoffs/:id/claim uses provider-wide max_in_flight regardless of quota r
     )
     .get();
   expect(count?.n).toBe(2);
+});
+
+// #257: claude-a carries a per-seat cap while claude-b stays uncapped on the
+// same provider; providerCap is optional so provider room can be varied.
+function configureSeatCap(services: Services, seatCap: number, providerCap?: number): void {
+  services.agentchatConfig = {
+    agents: [
+      {
+        name: "claude-a",
+        roles: [],
+        adapter: "stdio-acp",
+        pricing_mode: "subscription",
+        subscription_provider: "anthropic",
+        max_in_flight: seatCap,
+      },
+      {
+        name: "claude-b",
+        roles: [],
+        adapter: "stdio-acp",
+        pricing_mode: "subscription",
+        subscription_provider: "anthropic",
+      },
+    ],
+    default_roles: {},
+    providers: [],
+  };
+  services.providerQuotas =
+    providerCap === undefined ? [] : [{ provider: "anthropic", max_in_flight: providerCap }];
+}
+
+test("/handoffs/:id/claim holds back a second dispatch to a seat at its own max_in_flight while a sibling seat still claims (#257)", async () => {
+  const services = tempServices();
+  configureSeatCap(services, 1);
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+
+  seedApprovedHandoff(services, "seat-running", null, { to: "claude-a" });
+  seedApprovedHandoff(services, "seat-next", null, { to: "claude-a", tsOffsetMs: 1 });
+  seedApprovedHandoff(services, "seat-sibling", null, { to: "claude-b", tsOffsetMs: 2 });
+
+  const { worker_token: tokenA } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-A",
+    fetcher: makeFetcher(fetchHandler),
+  });
+  const { worker_token: tokenB } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-B",
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const first = await fetchHandler(
+    new Request("http://x/handoffs/seat-running/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokenA}` },
+      body: JSON.stringify({ worker_id: "W-A" }),
+    }),
+  );
+  expect(first.status).toBe(200);
+
+  const capped = await fetchHandler(
+    new Request("http://x/handoffs/seat-next/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokenB}` },
+      body: JSON.stringify({ worker_id: "W-B" }),
+    }),
+  );
+
+  expectRetryableClaimRefusalStatus(capped.status);
+  const body = (await capped.json()) as SeatConcurrencyCapResponse;
+  expect(body.error.code).toBe("seat_concurrency_cap");
+  expect(body.seat).toBe("claude-a");
+  expect(body.provider).toBe("anthropic");
+  expect(body.max_in_flight).toBe(1);
+  expect(body.in_flight_count).toBe(1);
+
+  const row = services.db
+    .query<
+      { status: string; worker_id: string | null },
+      [string]
+    >("SELECT status, worker_id FROM handoffs WHERE handoff_id = ?")
+    .get("seat-next");
+  expect(row).toEqual({ status: "approved", worker_id: null });
+
+  const refusals = services.db
+    .query<
+      { n: number },
+      []
+    >("SELECT COUNT(*) AS n FROM dispatch_events WHERE handoff_id='seat-next' AND kind='claim.seat_cap_refused'")
+    .get();
+  expect(refusals?.n).toBe(1);
+
+  const sibling = await fetchHandler(
+    new Request("http://x/handoffs/seat-sibling/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokenB}` },
+      body: JSON.stringify({ worker_id: "W-B" }),
+    }),
+  );
+  expect(sibling.status).toBe(200);
+});
+
+test("/handoffs/:id/claim applies the tighter cap when provider and seat caps coexist (#257)", async () => {
+  const services = tempServices();
+  configureSeatCap(services, 1, 5);
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+
+  seedApprovedHandoff(services, "seat-tight-running", null, { to: "claude-a" });
+  seedApprovedHandoff(services, "seat-tight-next", null, { to: "claude-a", tsOffsetMs: 1 });
+
+  const { worker_token: tokenA } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-A",
+    fetcher: makeFetcher(fetchHandler),
+  });
+  const { worker_token: tokenB } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-B",
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  expect(
+    (
+      await fetchHandler(
+        new Request("http://x/handoffs/seat-tight-running/claim", {
+          method: "POST",
+          headers: { authorization: `Bearer ${tokenA}` },
+          body: JSON.stringify({ worker_id: "W-A" }),
+        }),
+      )
+    ).status,
+  ).toBe(200);
+
+  // Provider cap (5) has room; the seat cap (1) is the tighter constraint.
+  const refused = await fetchHandler(
+    new Request("http://x/handoffs/seat-tight-next/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokenB}` },
+      body: JSON.stringify({ worker_id: "W-B" }),
+    }),
+  );
+  expectRetryableClaimRefusalStatus(refused.status);
+  const body = (await refused.json()) as SeatConcurrencyCapResponse;
+  expect(body.error.code).toBe("seat_concurrency_cap");
+  expect(body.seat).toBe("claude-a");
+});
+
+test("/handoffs/:id/claim refuses via the provider cap when it is the tighter constraint (#257)", async () => {
+  const services = tempServices();
+  configureSeatCap(services, 3, 1);
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+
+  seedApprovedHandoff(services, "provider-tight-running", null, { to: "claude-b" });
+  seedApprovedHandoff(services, "provider-tight-next", null, { to: "claude-a", tsOffsetMs: 1 });
+
+  const { worker_token: tokenA } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-A",
+    fetcher: makeFetcher(fetchHandler),
+  });
+  const { worker_token: tokenB } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-B",
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  expect(
+    (
+      await fetchHandler(
+        new Request("http://x/handoffs/provider-tight-running/claim", {
+          method: "POST",
+          headers: { authorization: `Bearer ${tokenA}` },
+          body: JSON.stringify({ worker_id: "W-A" }),
+        }),
+      )
+    ).status,
+  ).toBe(200);
+
+  // claude-a's seat cap (3) has room, but the provider cap (1) is exhausted by claude-b.
+  const refused = await fetchHandler(
+    new Request("http://x/handoffs/provider-tight-next/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${tokenB}` },
+      body: JSON.stringify({ worker_id: "W-B" }),
+    }),
+  );
+  expectRetryableClaimRefusalStatus(refused.status);
+  const body = (await refused.json()) as ProviderConcurrencyCapResponse;
+  expect(body.error.code).toBe("provider_concurrency_cap");
+  expect(body.provider).toBe("anthropic");
+});
+
+test("/handoffs/:id/claim returns retryable seat cap response when CAS loses to a seat cap race (#257)", async () => {
+  const services = tempServices();
+  configureSeatCap(services, 1);
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+
+  seedApprovedHandoff(services, "seat-race-fill", null, { to: "claude-a" });
+  seedApprovedHandoff(services, "seat-race-next", null, { to: "claude-a", tsOffsetMs: 1 });
+  services.handoffWriter = new RacingHandoffWriter(services.db, () => {
+    services.db.run(
+      `UPDATE handoffs SET status='dispatched', worker_id='W-A' WHERE handoff_id='seat-race-fill'`,
+    );
+  });
+
+  const { worker_token } = await registerWorkerForTest({
+    baseUrl: "http://x",
+    sharedBearer: SHARED_TOKEN,
+    worker_id: "W-B",
+    fetcher: makeFetcher(fetchHandler),
+  });
+
+  const raced = await fetchHandler(
+    new Request("http://x/handoffs/seat-race-next/claim", {
+      method: "POST",
+      headers: { authorization: `Bearer ${worker_token}` },
+      body: JSON.stringify({ worker_id: "W-B" }),
+    }),
+  );
+
+  expectRetryableClaimRefusalStatus(raced.status);
+  const body = (await raced.json()) as SeatConcurrencyCapResponse;
+  expect(body.error.code).toBe("seat_concurrency_cap");
+  expect(body.seat).toBe("claude-a");
+  expect(body.max_in_flight).toBe(1);
+  expect(body.in_flight_count).toBe(1);
+
+  const row = services.db
+    .query<
+      { status: string; worker_id: string | null },
+      [string]
+    >("SELECT status, worker_id FROM handoffs WHERE handoff_id = ?")
+    .get("seat-race-next");
+  expect(row).toEqual({ status: "approved", worker_id: null });
 });
 
 test("workflow sibling spreading does not block a warm-pool home worker", async () => {

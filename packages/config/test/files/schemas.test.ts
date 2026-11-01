@@ -116,6 +116,25 @@ describe("AgentsConfigSchema", () => {
     ).toThrow(/enabledd/);
   });
 
+  test("accepts optional per-seat max_in_flight as a positive integer (#257)", () => {
+    const parsed = AgentConfigSchema.parse({
+      name: "capped-seat",
+      adapter: "stdio-acp",
+      max_in_flight: 2,
+    });
+    expect(parsed.max_in_flight).toBe(2);
+
+    expect(
+      AgentConfigSchema.parse({ name: "plain", adapter: "stdio-acp" }).max_in_flight,
+    ).toBeUndefined();
+
+    for (const bad of [0, -1, 1.5, "2", true]) {
+      expect(() =>
+        AgentConfigSchema.parse({ name: "a", adapter: "stdio-acp", max_in_flight: bad }),
+      ).toThrow();
+    }
+  });
+
   test("accepts strict agent provenance metadata", () => {
     const parsed = AgentsConfigSchema.parse({
       agents: [

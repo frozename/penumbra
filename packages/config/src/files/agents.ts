@@ -387,6 +387,8 @@ export const AgentConfigSchema = z
       .optional(),
     tier: z.string().optional(),
     cost_cents_per_run: z.number().nonnegative().optional(),
+    /** #257: per-seat cap on concurrently in-flight dispatches, enforced with the provider-wide cap. */
+    max_in_flight: z.number().int().positive().optional(),
     maestro_capable: z.boolean().optional(),
     task_types: z.array(z.string().min(1)).optional(),
     task_types_supported: z.array(z.string().min(1)).optional(),

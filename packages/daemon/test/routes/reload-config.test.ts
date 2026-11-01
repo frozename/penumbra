@@ -96,6 +96,12 @@ interface ReloadBody {
     error?: string;
   };
   provider_quotas?: { provider: string; max_in_flight: number; in_flight: number }[];
+  seat_quotas?: {
+    seat: string;
+    provider: string | null;
+    max_in_flight: number;
+    in_flight: number;
+  }[];
   error?: string;
 }
 
@@ -433,6 +439,7 @@ agents:
     adapter: mock
     pricing_mode: subscription
     subscription_provider: anthropic
+    max_in_flight: 1
 providers:
   - name: anthropic
     max_in_flight: 2
@@ -450,6 +457,9 @@ providers:
   expect(res.status).toBe(200);
   const body = await readJson<ReloadBody>(res);
   expect(body.provider_quotas).toEqual([{ provider: "anthropic", max_in_flight: 2, in_flight: 0 }]);
+  expect(body.seat_quotas).toEqual([
+    { seat: "claude-a", provider: "anthropic", max_in_flight: 1, in_flight: 0 },
+  ]);
 });
 
 test("provider quota mapper preserves seven-day token ceilings for boot/reload parity", () => {

@@ -101,8 +101,11 @@ test("usageProviderQuotasRoute returns the provider-wide caps with live in-fligh
   const res = usageProviderQuotasRoute(services);
   expect(res.status).toBe(200);
   const body: unknown = await res.json();
-  expect(body).toEqual({ provider_quotas: [ANTHROPIC_QUOTA] });
-  expect(body).toEqual({ provider_quotas: listProviderQuotaStatus(services) });
+  expect(body).toEqual({ provider_quotas: [ANTHROPIC_QUOTA], seat_quotas: [] });
+  expect(body).toEqual({
+    provider_quotas: listProviderQuotaStatus(services),
+    seat_quotas: [],
+  });
 });
 
 test("GET /usage/provider_quotas is served behind the bearer token and only for GET", async () => {
@@ -113,7 +116,7 @@ test("GET /usage/provider_quotas is served behind the bearer token and only for 
     new Request("http://x/usage/provider_quotas", { headers: { authorization: "Bearer tok" } }),
   );
   expect(ok.status).toBe(200);
-  expect(await ok.json()).toEqual({ provider_quotas: [ANTHROPIC_QUOTA] });
+  expect(await ok.json()).toEqual({ provider_quotas: [ANTHROPIC_QUOTA], seat_quotas: [] });
 
   const unauthenticated = await handler(new Request("http://x/usage/provider_quotas"));
   expect(unauthenticated.status).toBe(401);
@@ -134,4 +137,19 @@ test("reading provider quotas leaves the quota config and the in-flight count un
   usageProviderQuotasRoute(services);
   expect(services.providerQuotas).toBe(before);
   expect(listProviderQuotaStatus(services)).toEqual([ANTHROPIC_QUOTA]);
+});
+
+test("usageProviderQuotasRoute reports capped seats alongside provider caps (#257)", async () => {
+  const services = servicesWithOneDispatched();
+  const seat = services.agentchatConfig?.agents.find((agent) => agent.name === "claude-a");
+  if (!seat) throw new Error("missing test seat claude-a");
+  seat.max_in_flight = 1;
+
+  const res = usageProviderQuotasRoute(services);
+  expect(res.status).toBe(200);
+  const body: unknown = await res.json();
+  expect(body).toEqual({
+    provider_quotas: [ANTHROPIC_QUOTA],
+    seat_quotas: [{ seat: "claude-a", provider: "anthropic", max_in_flight: 1, in_flight: 1 }],
+  });
 });
