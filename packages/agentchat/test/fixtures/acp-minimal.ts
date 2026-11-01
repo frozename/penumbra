@@ -4,7 +4,7 @@ import { createInterface } from "node:readline";
 interface JsonRpcRequest {
   method?: unknown;
   id?: unknown;
-  params?: { sessionId?: unknown } | undefined;
+  params?: { sessionId?: unknown; model?: unknown } | undefined;
 }
 
 const rl = createInterface({ input: process.stdin, terminal: false });
@@ -21,7 +21,12 @@ rl.on("line", (line) => {
     return;
   }
   if (request.method === "session/new") {
-    send({ jsonrpc: "2.0", id: request.id, result: { sessionId: "minimal-session" } });
+    const model = request.params?.model;
+    const models =
+      typeof model === "string"
+        ? { currentModelId: model, availableModels: [{ modelId: model }] }
+        : undefined;
+    send({ jsonrpc: "2.0", id: request.id, result: { sessionId: "minimal-session", models } });
     return;
   }
   if (request.method === "session/prompt") {

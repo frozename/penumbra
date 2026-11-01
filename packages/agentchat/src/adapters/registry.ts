@@ -203,10 +203,9 @@ function warnStdioAcpModelOnce(seat: string, model: string): void {
   if (warnedStdioAcpModels.has(pair)) return;
   warnedStdioAcpModels.add(pair);
   console.warn(
-    `stdio-acp: seat "${seat}" sets options.model "${model}". stdio-acp applies options.model only when the ACP agent ` +
-      "advertises that model id in its session/new models and accepts session/set_model " +
-      "(see the acp.model_selected and acp.model_unavailable dispatch events). Otherwise the agent's own configuration " +
-      "(for example OPENCODE_CONFIG_DIR/opencode.json, or ANTHROPIC_MODEL in env) decides which model runs (#328).",
+    `stdio-acp: seat "${seat}" sets options.model "${model}". An explicit pin fails before prompting unless ` +
+      "advertised configOptions acknowledge session/set_config_option, or legacy models accept session/set_model. " +
+      "See acp.model_selected, acp.model_unavailable and acp.model_select_failed (#328).",
   );
 }
 
@@ -233,6 +232,7 @@ export function createStdioAcpAdapter(
       binary: opts.binary,
       args: opts.args,
       model: opts.model,
+      modelConfigOptions: opts.modelConfigOptions,
       cwd: opts.cwd,
       // Warm-pool scope. Set per-dispatch by the worktree override
       // (worktree-integration.ts) to the stable project root so an ACP process

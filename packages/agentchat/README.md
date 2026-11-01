@@ -246,3 +246,38 @@ Poll for completion:
     # empty result = chain idle
 
 The worker is the only dispatch path: every dispatch goes through the `/handoffs/<id>/claim` gate, which makes concurrent workers safe. The interactive `@mention` chat that used to dispatch in-process (`agentchat new`) has been removed — the `agentchat` bin now only inspects and resolves the queue (`queue`, `approve`, `reject`, `discord`).
+
+## Explicit stdio ACP model pins
+
+A nonempty `stdio-acp` `options.model` is an explicit pin. The adapter selects
+that literal value from an unambiguous advertised model config option, or uses
+the legacy `models` / `session/set_model` protocol when `configOptions` is absent.
+An unavailable, rejected, or unacknowledged pin fails the dispatch before either
+model warmup or the task prompt. Leave `model` unset to use the agent's default.
+
+For agents that represent a model variant with several selectors, set the
+advertised IDs and values explicitly:
+
+```yaml
+adapter: stdio-acp
+options:
+  binary: example-acp
+  model: requested-variant
+  modelConfigOptions:
+    model: advertised-family
+    reasoning: high
+    speed: standard
+```
+
+`modelConfigOptions` is a nonempty map of advertised select-option IDs to string
+values. It may also be used without a `model` label. An unambiguous model selector
+is applied first, then each remaining choice is checked against the updated
+menu. Every acknowledgment must retain earlier pins; the final state must match
+the whole map. Missing or unsupported selectors fail without falling back to the
+legacy model list. Flat and grouped select menus are supported.
+
+For composed selections, `model` is the requested logical label and is not sent
+as the nonstandard `session/new.model` field. The
+`acp.model_selected` event reports the acknowledged wire values separately in
+`config_options`. Those acknowledgments do not establish a backend model UID;
+`backend_model_uid` remains `null`.

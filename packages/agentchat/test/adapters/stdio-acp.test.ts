@@ -1383,7 +1383,17 @@ describe("StdioAcpAdapter", () => {
 
     await sleep(10);
     handle.stdout.write(
-      JSON.stringify({ jsonrpc: "2.0", result: { sessionId: "session-123" }, id: 2 }) + "\n",
+      JSON.stringify({
+        jsonrpc: "2.0",
+        result: {
+          sessionId: "session-123",
+          models: {
+            currentModelId: "gemini-acp-pro",
+            availableModels: [{ modelId: "gemini-acp-pro" }],
+          },
+        },
+        id: 2,
+      }) + "\n",
     );
 
     await sleep(10);
