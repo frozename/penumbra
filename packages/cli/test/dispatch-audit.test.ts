@@ -1,9 +1,13 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import type { DispatchReliabilityReport } from "@penumbra/core";
+
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { formatDispatchAudit, runDispatchAudit } from "../src/commands/dispatch-audit.js";
+import { formatDispatchAudit, runDispatchAudit } from "@src/commands/dispatch-audit.js";
+
+import { parseJson, urlToString } from "./commands/_helpers.js";
 
 const report = {
   handoff_id: "h-1",
@@ -17,13 +21,14 @@ const report = {
     event_count: 3,
     response_count: 0,
     worktree_changed: null,
+    dispatch_end_committed: null,
     reconciled: null,
     watchdog_failed: true,
     cancel_requested: false,
     adapter_streaming: null,
   },
   recommended_action: "retry",
-} as const;
+} satisfies DispatchReliabilityReport;
 
 let storageRoot = "";
 
@@ -62,27 +67,33 @@ describe("runDispatchAudit", () => {
   test("fetches the dispatch audit and prints the formatted report", async () => {
     const calls: { url: string; init?: RequestInit }[] = [];
     const printed: string[] = [];
-    const fetch = mock((url: string | URL, init?: RequestInit) => {
-      calls.push({ url: String(url), init });
-      return Promise.resolve(
-        new Response(JSON.stringify({ report }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-      );
-    });
+    const fetchImpl = Object.assign(
+      (
+        url: string | URL | Request,
+        init: RequestInit | BunFetchRequestInit | undefined,
+      ): Promise<Response> => {
+        calls.push({ url: urlToString(url), init });
+        return Promise.resolve(
+          new Response(JSON.stringify({ report }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      },
+      { preconnect: fetch.preconnect.bind(fetch) },
+    );
 
     await runDispatchAudit({
       handoffId: "handoff-1",
       json: false,
       storageRoot,
-      fetch,
+      fetch: fetchImpl,
       print: (line) => {
         printed.push(line);
       },
     });
 
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe("http://127.0.0.1:4242/dispatch/audit?handoff_id=handoff-1");
     expect(new Headers(calls[0]?.init?.headers).get("authorization")).toBe("Bearer tok");
     expect(printed).toHaveLength(1);
@@ -99,19 +110,22 @@ describe("runDispatchAudit", () => {
       handoffId: "handoff-2",
       json: true,
       storageRoot,
-      fetch: () =>
-        Promise.resolve(
-          new Response(JSON.stringify({ report }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          }),
-        ),
+      fetch: Object.assign(
+        (): Promise<Response> =>
+          Promise.resolve(
+            new Response(JSON.stringify({ report }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+        { preconnect: fetch.preconnect.bind(fetch) },
+      ),
       print: (line) => {
         printed = line;
       },
     });
 
-    expect(JSON.parse(printed)).toEqual(report);
+    expect(parseJson(printed)).toEqual(report);
     expect(printed).toContain('\n  "handoff_id": "h-1"');
   });
 
@@ -124,13 +138,16 @@ describe("runDispatchAudit", () => {
         handoffId: "missing-handoff",
         json: false,
         storageRoot,
-        fetch: () =>
-          Promise.resolve(
-            new Response(JSON.stringify({ error: { code: "not_found", message: "missing" } }), {
-              status: 404,
-              headers: { "content-type": "application/json" },
-            }),
-          ),
+        fetch: Object.assign(
+          (): Promise<Response> =>
+            Promise.resolve(
+              new Response(JSON.stringify({ error: { code: "not_found", message: "missing" } }), {
+                status: 404,
+                headers: { "content-type": "application/json" },
+              }),
+            ),
+          { preconnect: fetch.preconnect.bind(fetch) },
+        ),
         print: (line) => {
           printed.push(line);
         },

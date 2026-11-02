@@ -21,6 +21,7 @@ const report = {
     event_count: 3,
     response_count: 0,
     worktree_changed: null,
+    dispatch_end_committed: null,
     reconciled: null,
     watchdog_failed: true,
     cancel_requested: false,
@@ -88,15 +89,21 @@ describe("runDispatchAudit", () => {
       handoffId: "handoff-1",
       json: false,
       storageRoot,
-      fetch: (url, init) => {
-        calls.push({ url: urlToString(url), init });
-        return Promise.resolve(
-          new Response(JSON.stringify({ report }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          }),
-        );
-      },
+      fetch: Object.assign(
+        (
+          url: string | URL | Request,
+          init: RequestInit | BunFetchRequestInit | undefined,
+        ): Promise<Response> => {
+          calls.push({ url: urlToString(url), init });
+          return Promise.resolve(
+            new Response(JSON.stringify({ report }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          );
+        },
+        { preconnect: fetch.preconnect.bind(fetch) },
+      ),
       print: (line) => {
         printed.push(line);
       },
@@ -117,13 +124,16 @@ describe("runDispatchAudit", () => {
       handoffId: "handoff-2",
       json: true,
       storageRoot,
-      fetch: () =>
-        Promise.resolve(
-          new Response(JSON.stringify({ report }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          }),
-        ),
+      fetch: Object.assign(
+        (): Promise<Response> =>
+          Promise.resolve(
+            new Response(JSON.stringify({ report }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+        { preconnect: fetch.preconnect.bind(fetch) },
+      ),
       print: (line) => {
         printed = line;
       },
