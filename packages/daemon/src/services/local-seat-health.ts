@@ -26,6 +26,7 @@ export type SeatHealthState =
   | "unauthorized"
   | "http_error"
   | "unreachable"
+  | "tls_error"
   | "config_error";
 
 export interface SeatHealthRecord {
@@ -164,13 +165,32 @@ async function readProbeCredentials(
   }
 }
 
-// TLS failures are deliberately folded into "unreachable": Bun fetch error codes vary.
+const TLS_PROBE_ERROR_CODE =
+  /^(?:ERR_TLS_|ERR_SSL_|CERT_|UNABLE_TO_(?:VERIFY|GET)_)|SELF_SIGNED_CERT|HOSTNAME_MISMATCH/;
+
+function isTlsProbeError(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 3 && current !== null && current !== undefined; depth++) {
+    const code = (current as { code?: unknown }).code;
+    if (typeof code === "string" && TLS_PROBE_ERROR_CODE.test(code)) {
+      return true;
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
+// TLS verify/SAN failures (identified by error code, including on the cause) are
+// reported as "tls_error"; everything else stays "unreachable".
 function classifyProbeError(error: unknown): ProbeOutcome {
   if (error instanceof ServedModelsProbeError) {
     if (error.status === 401 || error.status === 403) {
       return { state: "unauthorized", httpStatus: error.status };
     }
     return { state: "http_error", httpStatus: error.status };
+  }
+  if (isTlsProbeError(error)) {
+    return { state: "tls_error" };
   }
   return { state: "unreachable" };
 }
