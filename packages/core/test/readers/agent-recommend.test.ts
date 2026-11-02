@@ -2,17 +2,17 @@ import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 
 import { loadSqliteVec, migrate } from "@src/index.js";
+import { AgentTaskTypeSchema } from "@src/schemas/agent-performance.js";
 import { AgentRecommendInputSchema } from "@src/schemas/agent-recommend.js";
 import {
   type AgentRecommendation,
   buildSuccessPredicate,
   routeAgent,
+  type RouteAgentInput,
 } from "@src/services/agent-routing.js";
 import { AgentPerformanceWriter } from "@src/writers/agent-performance.js";
 
-function getRecommendationsViaRoute(
-  input: Parameters<typeof routeAgent>[0],
-): AgentRecommendation[] {
+function getRecommendationsViaRoute(input: Omit<RouteAgentInput, "detail">): AgentRecommendation[] {
   const out = routeAgent({ ...input, detail: "summary" });
   if (out.detail !== "summary")
     throw new Error(`routeAgent returned detail="${out.detail}", expected "summary"`);
@@ -315,7 +315,7 @@ describe("agent recommendations", () => {
     });
     const out = getRecommendationsViaRoute({
       db,
-      taskType: parsed.task_type,
+      taskType: AgentTaskTypeSchema.parse(parsed.task_type),
       now: NOW,
     });
 
