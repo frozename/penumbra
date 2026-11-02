@@ -110,11 +110,11 @@ test("round-robin distributes calls across two healthy judges", async () => {
   const pool = createJudgePool({
     judges: [makeJudge("a", "http://a"), makeJudge("b", "http://b")],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: ((url, init): Promise<Response> => {
+    fetch: asFetchMock((url, init) => {
       readRequestBody(init);
       seen.push(fetchInputText(url).includes("http://a") ? "a" : "b");
       return Promise.resolve(okJudgeResponse());
-    }) satisfies FetchMock,
+    }),
     promptBuilder: (transcript) => transcript,
     parseResponse: () => [],
   });
@@ -131,12 +131,12 @@ test("judge that fails twice in a tick is skipped for the rest of that tick", as
   const pool = createJudgePool({
     judges: [makeJudge("a", "http://a"), makeJudge("b", "http://b")],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: ((url): Promise<Response> => {
+    fetch: asFetchMock((url) => {
       const which = fetchInputText(url).includes("http://a") ? "a" : "b";
       seen.push(which);
       if (which === "a") return Promise.reject(new Error("a-fail"));
       return Promise.resolve(okJudgeResponse());
-    }) satisfies FetchMock,
+    }),
     unhealthyAfter: 2,
     promptBuilder: (transcript) => transcript,
     parseResponse: () => [],
@@ -156,12 +156,12 @@ test("resetTickHealth re-enables a previously unhealthy judge", async () => {
   const pool = createJudgePool({
     judges: [makeJudge("a", "http://a"), makeJudge("b", "http://b")],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: ((url): Promise<Response> => {
+    fetch: asFetchMock((url) => {
       const which = fetchInputText(url).includes("http://a") ? "a" : "b";
       seen.push(which);
       if (which === "a" && aShouldFail) return Promise.reject(new Error("a-fail"));
       return Promise.resolve(okJudgeResponse());
-    }) satisfies FetchMock,
+    }),
     unhealthyAfter: 2,
     promptBuilder: (transcript) => transcript,
     parseResponse: () => [],
@@ -188,7 +188,7 @@ test("all judges unhealthy this tick throws", async () => {
   const pool = createJudgePool({
     judges: [makeJudge("a", "http://a"), makeJudge("b", "http://b")],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: ((): Promise<Response> => Promise.reject(new Error("fetch failed"))) satisfies FetchMock,
+    fetch: asFetchMock(() => Promise.reject(new Error("fetch failed"))),
     unhealthyAfter: 2,
     promptBuilder: (transcript) => transcript,
     parseResponse: () => [],
@@ -204,10 +204,10 @@ test("single-judge pool degenerates to that one judge", async () => {
   const pool = createJudgePool({
     judges: [makeJudge("a", "http://a")],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: ((_url, init): Promise<Response> => {
+    fetch: asFetchMock((_url, init) => {
       seen.push(readPromptContent(init));
       return Promise.resolve(okJudgeResponse());
-    }) satisfies FetchMock,
+    }),
     promptBuilder: (transcript) => transcript,
     parseResponse: () => [],
   });
@@ -235,10 +235,10 @@ test("judge requestExtras override request defaults but not model or messages", 
       },
     ],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: ((_url, init): Promise<Response> => {
+    fetch: asFetchMock((_url, init) => {
       seenBody = readRequestBody(init);
       return Promise.resolve(okJudgeResponse());
-    }) satisfies FetchMock,
+    }),
     promptBuilder: (transcript) => `prompt:${transcript}`,
     parseResponse: () => [],
   });
@@ -258,10 +258,10 @@ test("judge without requestExtras sends the default request body", async () => {
   const pool = createJudgePool({
     judges: [makeJudge("a", "http://a", "judge-model")],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: ((_url, init): Promise<Response> => {
+    fetch: asFetchMock((_url, init) => {
       seenBody = readRequestBody(init);
       return Promise.resolve(okJudgeResponse());
-    }) satisfies FetchMock,
+    }),
     promptBuilder: (transcript) => `prompt:${transcript}`,
     parseResponse: () => [],
   });
@@ -282,14 +282,14 @@ test("parseResponse error counts as judge failure", async () => {
   const pool = createJudgePool({
     judges: [makeJudge("a", "http://a"), makeJudge("b", "http://b")],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: ((url): Promise<Response> => {
+    fetch: asFetchMock((url) => {
       const which = fetchInputText(url).includes("http://a") ? "a" : "b";
       seen.push(which);
       const content = which === "a" ? "not-json" : '{"memories":[]}';
       return Promise.resolve(
         new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 }),
       );
-    }) satisfies FetchMock,
+    }),
     unhealthyAfter: 1,
     promptBuilder: (transcript) => transcript,
     parseResponse: (rawContent) => {
@@ -317,13 +317,13 @@ test("judge caPath is plumbed into fetch tls.ca", async () => {
       { name: "without-ca", baseUrl: "http://b", apiKey: "", model: "judge-model" },
     ],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: ((_url, init): Promise<Response> => {
+    fetch: asFetchMock((_url, init) => {
       if (init === undefined) {
         throw new Error("expected request init");
       }
-      seen.push(init as FetchInitWithTls);
+      seen.push(init);
       return Promise.resolve(okJudgeResponse());
-    }) satisfies FetchMock,
+    }),
     unhealthyAfter: 1,
     promptBuilder: (transcript) => transcript,
     parseResponse: () => [],
@@ -356,7 +356,7 @@ test("judge pool init skips one bad caPath and keeps healthy judges", () => {
       },
       error: () => undefined,
     },
-    fetch: ((): Promise<Response> => Promise.resolve(okJudgeResponse())) satisfies FetchMock,
+    fetch: asFetchMock(() => Promise.resolve(okJudgeResponse())),
     promptBuilder: (transcript) => transcript,
     parseResponse: () => [],
   });
@@ -388,7 +388,7 @@ test("judge pool init throws no_judges_available when all ca paths fail", () => 
         },
         error: () => undefined,
       },
-      fetch: ((): Promise<Response> => Promise.resolve(okJudgeResponse())) satisfies FetchMock,
+      fetch: asFetchMock(() => Promise.resolve(okJudgeResponse())),
       promptBuilder: (transcript) => transcript,
       parseResponse: () => [],
     }),
@@ -431,7 +431,8 @@ test("judge pool enforces programmatic timeout and reports failure correctly", a
 
   expect(warnSpy.length).toBeGreaterThan(0);
   expect(String(warnSpy[0]?.err)).toMatch(/timed out after 10ms/i);
-  expect(warnSpy[0].judge).toBe("slow-judge");
+  expect(warnSpy[0]).toBeDefined();
+  expect(warnSpy[0]!.judge).toBe("slow-judge");
 
   await server.stop(true);
 });
@@ -535,7 +536,7 @@ test("overflow does not poison the single-judge pool", async () => {
   const pool = createJudgePool({
     judges: [makeJudge("solo", "http://solo")],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: ((_url, init): Promise<Response> => {
+    fetch: asFetchMock((_url, init) => {
       call++;
       readRequestBody(init);
       fetchCalls.push(`call-${String(call)}`);
@@ -557,7 +558,7 @@ test("overflow does not poison the single-judge pool", async () => {
         );
       }
       return Promise.resolve(okJudgeResponse());
-    }) satisfies FetchMock,
+    }),
     unhealthyAfter: 2,
     promptBuilder: (transcript) => transcript,
     parseResponse: () => [],
@@ -682,7 +683,7 @@ test("sequential invocations after a failed retry start on the next seat, not th
   const pool = createJudgePool({
     judges: [makeJudge("a", "http://a"), makeJudge("b", "http://b")],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: ((url, init): Promise<Response> => {
+    fetch: asFetchMock((url, init) => {
       readRequestBody(init);
       const which = fetchInputText(url).includes("http://a") ? "a" : "b";
       seen.push(which);
@@ -704,7 +705,7 @@ test("sequential invocations after a failed retry start on the next seat, not th
         );
       }
       return Promise.resolve(okJudgeResponse());
-    }) satisfies FetchMock,
+    }),
     unhealthyAfter: 2,
     promptBuilder: (transcript) => transcript,
     parseResponse: () => [],
@@ -728,7 +729,7 @@ test("non-overflow 400 with overflow-like message text is marked as failure, not
   const pool = createJudgePool({
     judges: [makeJudge("a", "http://a")],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: ((_url, init): Promise<Response> => {
+    fetch: asFetchMock((_url, init) => {
       readRequestBody(init);
       return Promise.resolve(
         new Response(
@@ -741,7 +742,7 @@ test("non-overflow 400 with overflow-like message text is marked as failure, not
           { status: 400, headers: { "content-type": "application/json" } },
         ),
       );
-    }) satisfies FetchMock,
+    }),
     unhealthyAfter: 3,
     promptBuilder: (transcript) => transcript,
     parseResponse: () => [],
@@ -758,7 +759,7 @@ test("plain-text overflow 400 does not poison the pool (text fallback classifica
   const pool = createJudgePool({
     judges: [makeJudge("solo", "http://solo")],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: ((_url, init): Promise<Response> => {
+    fetch: asFetchMock((_url, init) => {
       call++;
       readRequestBody(init);
       fetchCalls.push(`call-${String(call)}`);
@@ -771,7 +772,7 @@ test("plain-text overflow 400 does not poison the pool (text fallback classifica
         );
       }
       return Promise.resolve(okJudgeResponse());
-    }) satisfies FetchMock,
+    }),
     unhealthyAfter: 2,
     promptBuilder: (transcript) => transcript,
     parseResponse: () => [],
@@ -789,7 +790,7 @@ test("concurrent invokes: failed judge retries to healthy judge via local attemp
   const pool = createJudgePool({
     judges: [makeJudge("a", "http://a"), makeJudge("b", "http://b")],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: ((url, init): Promise<Response> => {
+    fetch: asFetchMock((url, init) => {
       readRequestBody(init);
       const which = fetchInputText(url).includes("http://a") ? "a" : "b";
       seen.push(which);
@@ -799,7 +800,7 @@ test("concurrent invokes: failed judge retries to healthy judge via local attemp
           resolve(okJudgeResponse());
         }, 50);
       });
-    }) satisfies FetchMock,
+    }),
     unhealthyAfter: 1,
     promptBuilder: (transcript) => transcript,
     parseResponse: () => [],
@@ -815,7 +816,7 @@ test("5xx with overflow phrase in body still counts toward health (not exempt)",
   const pool = createJudgePool({
     judges: [makeJudge("a", "http://a")],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: ((_url, init): Promise<Response> => {
+    fetch: asFetchMock((_url, init) => {
       readRequestBody(init);
       return Promise.resolve(
         new Response("request exceeds the available context size (8192 tokens)", {
@@ -823,7 +824,7 @@ test("5xx with overflow phrase in body still counts toward health (not exempt)",
           headers: { "content-type": "text/plain" },
         }),
       );
-    }) satisfies FetchMock,
+    }),
     unhealthyAfter: 3,
     promptBuilder: (transcript) => transcript,
     parseResponse: () => [],
@@ -839,7 +840,7 @@ test("concurrent invokes reserve distinct judges (reserve-then-invoke)", async (
   const pool = createJudgePool({
     judges: [makeJudge("a", "http://a"), makeJudge("b", "http://b")],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: ((url, init): Promise<Response> => {
+    fetch: asFetchMock((url, init) => {
       readRequestBody(init);
       const which = fetchInputText(url).includes("http://a") ? "a" : "b";
       seen.push(which);
@@ -848,7 +849,7 @@ test("concurrent invokes reserve distinct judges (reserve-then-invoke)", async (
           resolve(okJudgeResponse());
         }, 50);
       });
-    }) satisfies FetchMock,
+    }),
     promptBuilder: (transcript) => transcript,
     parseResponse: () => [],
   });
