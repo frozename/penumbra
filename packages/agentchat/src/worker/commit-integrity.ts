@@ -1,4 +1,5 @@
 import {
+  classifyBranchByContent,
   type CommitIntegrityEvidence,
   DISPATCH_BASE_CONFIG_KEY,
   isAncestorOf,
@@ -178,12 +179,54 @@ function displayIdentity(ident: GitIdent | undefined): GitIdent {
   };
 }
 
+interface CommandError {
+  code?: number | string | null;
+}
+
+// `git diff --quiet` exits 1 when the diff is non-empty; the runner rejects
+// on any non-zero exit, so the exit code is read off the error like
+// branch-land-probe.ts extractExitCode does.
+function extractExitCode(err: unknown): number | string | null | undefined {
+  if (typeof err !== "object" || err === null) return undefined;
+  return (err as CommandError).code;
+}
+
+// #238: a squash-landed stacked parent (or a rebase onto a FETCH_HEAD that
+// already carried the parent's squash commit) leaves the recorded base as a
+// commit that is not an ancestor of the head, even though the base's content
+// is fully present in the head. Content equivalence — not commit identity —
+// decides. Fails closed: any error yields false.
+async function baseContentLanded(
+  runner: WorktreeCommandRunner,
+  wtPath: string,
+  opts: WorktreeCommandRunnerOptions,
+  baseSha: string,
+  headSha: string,
+): Promise<boolean> {
+  const mb = await readSha(runner, ["merge-base", baseSha, headSha], opts);
+  if (mb === null) return false;
+  if (mb === headSha) return false;
+  try {
+    await runner("git", ["diff", "--quiet", mb, baseSha, "--"], opts);
+    // Exit 0: empty diff — the base is an empty commit above the merge base
+    // (e.g. a reset below the base), not content that landed.
+    return false;
+  } catch (err) {
+    if (extractExitCode(err) !== 1) return false;
+  }
+  // head is the receiving side: "landed" means merging the base into the head
+  // leaves the head's tree unchanged, i.e. the head already contains it.
+  return (await classifyBranchByContent(runner, wtPath, headSha, baseSha)) === "landed";
+}
+
 /**
  * Evidence about the dispatch branch — the ref the reconciler and
  * dispatch_land land, not whatever HEAD points at. Null when the base or the
  * branch cannot be resolved. Once ancestry is known it is always reported;
  * a failed identity check leaves mismatched_total null instead of
- * discarding the base verdict.
+ * discarding the base verdict. `base_is_ancestor` is also true when the
+ * base's content has landed in the head, as with a squash-landed stacked
+ * parent (#238).
  */
 export async function probeCommitIntegrity(
   wtPath: string,
@@ -208,6 +251,9 @@ export async function probeCommitIntegrity(
   let baseIsAncestor: boolean;
   try {
     baseIsAncestor = await isAncestorOf(runner, wtPath, baseSha, headSha);
+    if (!baseIsAncestor) {
+      baseIsAncestor = await baseContentLanded(runner, wtPath, opts, baseSha, headSha);
+    }
   } catch {
     return null;
   }
