@@ -3,6 +3,7 @@ import { TaskRouterConfigSchema } from "@penumbra/config";
 import {
   AgentPerformanceWriter,
   buildServices,
+  createLogger,
   DispatchEventLog,
   HandoffReader,
   HandoffWriter,
@@ -28,7 +29,7 @@ import {
   handoffsListPendingRoute,
   handoffsStatusRoute,
 } from "@src/routes/handoffs.js";
-import { createDaemonFetchHandler } from "@src/serve.js";
+import { createDaemonFetchHandler, type DaemonServices } from "@src/serve.js";
 
 try {
   if (process.platform === "darwin") {
@@ -71,6 +72,7 @@ interface ClaimBody {
   handoff_id?: string;
   status?: string;
   current_status?: string;
+  branch_name?: string;
 }
 interface ListBody {
   handoffs: HandoffSummary[];
@@ -120,7 +122,7 @@ function stubWorkerAuthz(
 // The Services interface from core declares dozens of required wirings. These
 // tests only exercise the handoff routes, so we mock the minimal surface and
 // route the single cross-type gap through a typed factory.
-function makeServices(db: Database): Services {
+function makeServices(db: Database): DaemonServices {
   const writer = new HandoffWriter({ db });
   const reader = new HandoffReader({ db });
   let n = 0;
@@ -142,7 +144,7 @@ function makeServices(db: Database): Services {
     redactor: { redact: (s: unknown): unknown => s },
     log: { info: noopLog, warn: noopLog },
     __testT0Events: t0Events,
-  } as unknown as Services;
+  } as unknown as DaemonServices;
 }
 
 function countHandoffRows(db: Database, message: string): number {
@@ -909,6 +911,9 @@ test("GET /handoffs/latest returns the most recent handoff for a conversation", 
     resolved_at: "2026-04-26T12:00:00Z",
     chain_max_hops: null,
     chain_trust_mode: null,
+    chain_task_type: null,
+    use_worktree: null,
+    parent_handoff_id: null,
   });
   services.handoffWriter.createApproved({
     handoff_id: "h2",
@@ -924,6 +929,9 @@ test("GET /handoffs/latest returns the most recent handoff for a conversation", 
     resolved_at: "2026-04-26T12:05:00Z",
     chain_max_hops: null,
     chain_trust_mode: null,
+    chain_task_type: null,
+    use_worktree: null,
+    parent_handoff_id: null,
   });
 
   const res = handoffsLatestRoute(
@@ -1642,16 +1650,13 @@ test("GET /handoffs?status=approved&project_id=__null__ logs deprecated sentinel
   migrate(db, { embeddingDim: 384 });
   const services = makeServices(db);
   const warns: unknown[][] = [];
-  // Override log to capture deprecated-sentinel warnings. The cast targets the
-  // narrow Logger shape the route actually exercises.
-  (
-    services as Services & { log: { info: () => undefined; warn: (...args: unknown[]) => void } }
-  ).log = {
-    info: noopLog,
-    warn: (...args: unknown[]): void => {
-      warns.push(args);
-    },
+  // Override log to capture deprecated-sentinel warnings. A real logger keeps the
+  // full pino surface; only warn is redirected into the capture list.
+  const warnLog = createLogger({ component: "test", level: "silent" });
+  warnLog.warn = (...args: unknown[]): void => {
+    warns.push(args);
   };
+  services.log = warnLog;
 
   const created1 = await readJsonAs<CreateBody>(
     await handoffsCreateRoute(
@@ -2257,7 +2262,9 @@ function makeFetcher(handler: (req: Request) => Promise<Response>): typeof fetch
   // boundary keeps the helper type-safe internally.
   return ((input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const req =
-      typeof input === "string" || input instanceof URL ? new Request(input, init) : input;
+      typeof input === "string" || input instanceof URL
+        ? new Request(input.toString(), init)
+        : input;
     return handler(req);
   }) as typeof fetch;
 }

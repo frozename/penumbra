@@ -611,9 +611,9 @@ test("OrphanHandoffRecoveryService lists orphans ordered by ts ASC", async () =>
   const orphans = services.handoffReader.listOrphanedDispatches([w1]);
 
   expect(orphans.length).toBe(3);
-  expect(orphans[0].handoff_id).toBe(c2.handoff_id); // 00:00:01
-  expect(orphans[1].handoff_id).toBe(c3.handoff_id); // 00:00:02
-  expect(orphans[2].handoff_id).toBe(c1.handoff_id); // 00:00:03
+  expect(orphans[0]?.handoff_id).toBe(c2.handoff_id); // 00:00:01
+  expect(orphans[1]?.handoff_id).toBe(c3.handoff_id); // 00:00:02
+  expect(orphans[2]?.handoff_id).toBe(c1.handoff_id); // 00:00:03
 });
 
 test("OrphanHandoffRecoveryService re-offers requeued rows for non-capped providers on the worker bus", async () => {
@@ -774,6 +774,45 @@ test("OrphanHandoffRecoveryService does not re-offer requeued rows for capped pr
   const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 0 });
 
   const w1 = "dead-worker-capped";
+  const c1 = await createPendingHandoff(services, { max_dispatch_attempts: 3 });
+  await approveAndClaim(services, c1.handoff_id, w1);
+
+  services.watchdog.recordHeartbeat(w1);
+  await delay(1);
+
+  const emitted: HandoffRow[] = [];
+  services.handoffEvents.subscribe((row) => emitted.push(row));
+
+  const result = recovery.runOnce();
+  expect(result).toMatchObject({ requeued: 1, exhausted: 0 });
+
+  expect(emitted).toEqual([]);
+
+  const reofferRows = services.db
+    .query<
+      { meta_json: string | null },
+      [string]
+    >("SELECT meta_json FROM dispatch_events WHERE handoff_id=? AND kind='claim.reoffer'")
+    .all(c1.handoff_id);
+  expect(reofferRows).toHaveLength(0);
+});
+
+test("OrphanHandoffRecoveryService does not re-offer requeued rows for capped seats (reoffer reactor owns that path) (#257)", async () => {
+  const services = tempServices();
+  services.agentchatConfig = {
+    agents: [
+      {
+        name: "b",
+        roles: [],
+        adapter: "stdio-acp",
+        max_in_flight: 1,
+      },
+    ],
+  };
+
+  const recovery = new OrphanHandoffRecoveryService(services, { staleMs: 0 });
+
+  const w1 = "dead-worker-seat-capped";
   const c1 = await createPendingHandoff(services, { max_dispatch_attempts: 3 });
   await approveAndClaim(services, c1.handoff_id, w1);
 
