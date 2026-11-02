@@ -167,6 +167,32 @@ describe("WorktreeManager isolated install git hooks", () => {
     }
   });
 
+  it("passes install through to husky for the legacy husky install prepare", async () => {
+    repo = await setupHooksRepo("penumbra-wt-hooks-legacy-", {
+      name: "x",
+      private: true,
+      scripts: { prepare: "husky install" },
+    });
+    const { runner, calls } = recordingRunner(repo.isolatedEnv);
+    const manager = new WorktreeManager({
+      rootDir: homeRoot,
+      mainRepoDir: repo.repoDir,
+      runner,
+    });
+
+    const id = "77777777-7777-4777-8777-777777777777";
+    try {
+      const handle = await manager.createWorktree(id, { isolated_install: true });
+
+      const installerCalls = calls.filter((call) => isHuskyInstallerCall(call.argv));
+      expect(installerCalls.length).toBeGreaterThan(0);
+      expect(installerCalls.every((call) => call.argv.includes("install"))).toBe(true);
+      expect(handle.gitHooks).toEqual({ status: "installed", configured: ".husky/_" });
+    } finally {
+      await manager.teardownWorktree(id, true);
+    }
+  });
+
   it("lets the installed pre-commit hook reject a commit inside the worktree", async () => {
     repo = await setupHooksRepo("penumbra-wt-hooks-commit-", HUSKY_PACKAGE_JSON);
     const { runner } = recordingRunner(repo.isolatedEnv);
@@ -330,9 +356,19 @@ describe("detectHookInstallerArgv", () => {
     expect(detectHookInstallerArgv(dir)).toEqual(["bun", "x", "husky"]);
   });
 
-  it("accepts the legacy husky install form", (): void => {
+  it("accepts the legacy husky install form and keeps install in argv", (): void => {
     writePrepare("husky install");
-    expect(detectHookInstallerArgv(dir)).toEqual(["bun", "x", "husky"]);
+    expect(detectHookInstallerArgv(dir)).toEqual(["bun", "x", "husky", "install"]);
+  });
+
+  it("keeps install after the local bin for the legacy husky install form", (): void => {
+    writePrepare("husky install");
+    const binDir = path.join(dir, "node_modules", ".bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    const bin = path.join(binDir, "husky");
+    fs.writeFileSync(bin, "#!/bin/sh\n");
+    fs.chmodSync(bin, 0o755);
+    expect(detectHookInstallerArgv(dir)).toEqual([bin, "install"]);
   });
 
   it("prefers the resolved node_modules/.bin/husky when present", (): void => {
