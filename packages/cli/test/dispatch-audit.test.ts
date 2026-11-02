@@ -1,9 +1,19 @@
+import type { DispatchReliabilityReport } from "@penumbra/core";
+
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { formatDispatchAudit, runDispatchAudit } from "../src/commands/dispatch-audit.js";
+import { urlToString } from "./commands/_helpers.js";
+
+type FetchArgs = Parameters<typeof globalThis.fetch>;
+
+// Bun's `typeof fetch` requires a static `preconnect` member that a bare stub lacks.
+function fetchStub(impl: (...args: Parameters<typeof fetch>) => Promise<Response>): typeof fetch {
+  return Object.assign(impl, { preconnect: fetch.preconnect.bind(fetch) });
+}
 
 const report = {
   handoff_id: "h-1",
@@ -17,13 +27,14 @@ const report = {
     event_count: 3,
     response_count: 0,
     worktree_changed: null,
+    dispatch_end_committed: null,
     reconciled: null,
     watchdog_failed: true,
     cancel_requested: false,
     adapter_streaming: null,
   },
   recommended_action: "retry",
-} as const;
+} satisfies DispatchReliabilityReport;
 
 let storageRoot = "";
 
@@ -62,15 +73,18 @@ describe("runDispatchAudit", () => {
   test("fetches the dispatch audit and prints the formatted report", async () => {
     const calls: { url: string; init?: RequestInit }[] = [];
     const printed: string[] = [];
-    const fetch = mock((url: string | URL, init?: RequestInit) => {
-      calls.push({ url: String(url), init });
-      return Promise.resolve(
-        new Response(JSON.stringify({ report }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
-      );
-    });
+    const fetch = fetchStub(
+      mock((...args: FetchArgs) => {
+        const [url, init] = args;
+        calls.push({ url: urlToString(url), init });
+        return Promise.resolve(
+          new Response(JSON.stringify({ report }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }),
+    );
 
     await runDispatchAudit({
       handoffId: "handoff-1",
@@ -99,13 +113,14 @@ describe("runDispatchAudit", () => {
       handoffId: "handoff-2",
       json: true,
       storageRoot,
-      fetch: () =>
+      fetch: fetchStub(() =>
         Promise.resolve(
           new Response(JSON.stringify({ report }), {
             status: 200,
             headers: { "content-type": "application/json" },
           }),
         ),
+      ),
       print: (line) => {
         printed = line;
       },
@@ -124,13 +139,14 @@ describe("runDispatchAudit", () => {
         handoffId: "missing-handoff",
         json: false,
         storageRoot,
-        fetch: () =>
+        fetch: fetchStub(() =>
           Promise.resolve(
             new Response(JSON.stringify({ error: { code: "not_found", message: "missing" } }), {
               status: 404,
               headers: { "content-type": "application/json" },
             }),
           ),
+        ),
         print: (line) => {
           printed.push(line);
         },
