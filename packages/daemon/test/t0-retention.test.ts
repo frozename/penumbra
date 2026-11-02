@@ -172,16 +172,15 @@ serviceTest(
       insertRollup(d, "s_yield", oldTs);
 
       let batchInvocations = 0;
-      type DeleteBatchCallback = (threshold: string, limit: number) => number;
-      type DeleteBatchTransaction = (fn: DeleteBatchCallback) => DeleteBatchCallback;
-      const originalTransaction = d.services.db.transaction.bind(
-        d.services.db,
-      ) as DeleteBatchTransaction;
-      d.services.db.transaction = ((fn: DeleteBatchCallback): DeleteBatchCallback => {
+      type BatchCallback = (...args: unknown[]) => unknown;
+      const originalTransaction = d.services.db.transaction.bind(d.services.db) as (
+        fn: BatchCallback,
+      ) => BatchCallback;
+      d.services.db.transaction = ((fn: BatchCallback): BatchCallback => {
         const wrapped = originalTransaction(fn);
-        return (threshold: string, limit: number): number => {
+        return (...args: unknown[]): unknown => {
           batchInvocations += 1;
-          return wrapped(threshold, limit);
+          return wrapped(...args);
         };
       }) as typeof d.services.db.transaction;
 

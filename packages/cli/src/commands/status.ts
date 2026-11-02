@@ -26,6 +26,11 @@ export type StatusProviderQuotas =
   | { ok: true; quotas: StatusProviderQuota[] }
   | { ok: false; error: string };
 
+/** #259: from GET /dispatch/events/last_claim. Null when no handoff has ever been claimed. */
+export type StatusLastClaim =
+  | { ok: true; last_claim_at: string | null }
+  | { ok: false; error: string };
+
 export interface StatusResult {
   status: "running" | "stopped" | "stale";
   port?: number;
@@ -34,6 +39,7 @@ export interface StatusResult {
   reason?: string;
   activity?: StatusActivity;
   provider_quotas?: StatusProviderQuotas;
+  last_claim?: StatusLastClaim;
 }
 
 export async function runStatus(opts: {
@@ -70,6 +76,7 @@ export async function runStatus(opts: {
     }
     const activity = await readActivity(fetchImpl, port, token);
     const providerQuotas = await readProviderQuotas(fetchImpl, port, token);
+    const lastClaim = await readLastClaim(fetchImpl, port, token);
     return {
       status: "running",
       pid,
@@ -77,6 +84,7 @@ export async function runStatus(opts: {
       embedder: body.embedder,
       activity,
       provider_quotas: providerQuotas,
+      last_claim: lastClaim,
     };
   } catch {
     return { status: "stale", pid, port };
@@ -176,6 +184,51 @@ async function readProviderQuotas(
     return {
       ok: false,
       error: `GET /usage/provider_quotas failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+// #259: a failure here is reported in `last_claim` and never changes `status`.
+interface LastClaimBody {
+  last_claim_at?: unknown;
+}
+
+function parseLastClaim(text: string): StatusLastClaim {
+  let body: LastClaimBody;
+  try {
+    body = JSON.parse(text) as LastClaimBody;
+  } catch {
+    return { ok: false, error: "daemon returned invalid JSON for /dispatch/events/last_claim" };
+  }
+  if (typeof body.last_claim_at !== "string" && body.last_claim_at !== null) {
+    return {
+      ok: false,
+      error: "daemon /dispatch/events/last_claim response has no last_claim_at",
+    };
+  }
+  return { ok: true, last_claim_at: body.last_claim_at };
+}
+
+async function readLastClaim(
+  fetchImpl: StatusFetch,
+  port: number,
+  token: string,
+): Promise<StatusLastClaim> {
+  try {
+    const res = await fetchImpl(`http://127.0.0.1:${String(port)}/dispatch/events/last_claim`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: `GET /dispatch/events/last_claim returned HTTP ${String(res.status)}`,
+      };
+    }
+    return parseLastClaim(await res.text());
+  } catch (err) {
+    return {
+      ok: false,
+      error: `GET /dispatch/events/last_claim failed: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
 }
