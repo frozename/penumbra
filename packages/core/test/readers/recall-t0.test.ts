@@ -272,6 +272,7 @@ test("queryT0 filters by session_id when provided", async () => {
     project_id: null,
     limit: 10,
     include_raw: true,
+    include_untrusted: false,
     min_score: 0,
     session_id: "s-abc",
   });
@@ -300,6 +301,7 @@ test("queryT0 filters by event_types when provided", async () => {
     project_id: null,
     limit: 10,
     include_raw: true,
+    include_untrusted: false,
     min_score: 0,
     event_types: ["agent-thought"],
   });
@@ -334,6 +336,7 @@ test("queryT0 combines session_id and event_types filters", async () => {
     project_id: null,
     limit: 10,
     include_raw: true,
+    include_untrusted: false,
     min_score: 0,
     session_id: "s-abc",
     event_types: ["agent-thought"],

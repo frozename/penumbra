@@ -4,6 +4,21 @@ import { describe, expect, it } from "bun:test";
 
 import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 
+type ColumnInfo = {
+  name: string;
+  type: string;
+  notnull: number;
+};
+
+function columnInfo(cols: ColumnInfo[], name: string): ColumnInfo {
+  const found = cols.find((c) => c.name === name);
+  expect(found, `column ${name}`).toBeDefined();
+  if (!found) {
+    throw new Error(`missing column ${name}`);
+  }
+  return found;
+}
+
 function fresh(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
@@ -46,22 +61,16 @@ describe("long-lived schema (v15)", () => {
 
   it("long_lived_agents has expected NOT NULL columns", () => {
     const db = fresh();
-    const cols = db
-      .query<
-        { name: string; type: string; notnull: number },
-        []
-      >("PRAGMA table_info('long_lived_agents')")
-      .all();
-    const byName = Object.fromEntries(cols.map((c) => [c.name, c]));
-    expect(byName.id.type).toBe("TEXT");
-    expect(byName.status.notnull).toBe(1);
-    expect(byName.consecutive_failures.notnull).toBe(1);
-    expect(byName.circuit_breaker_threshold.notnull).toBe(1);
-    expect(byName.mcp_allowlist_json.notnull).toBe(1);
-    expect(byName.approval_required_globs_json.notnull).toBe(1);
-    expect(byName.cooldown_overrides_json.notnull).toBe(1);
-    expect(byName.working_memory_json.notnull).toBe(1);
-    expect(byName.standing_brief.notnull).toBe(1);
+    const cols = db.query<ColumnInfo, []>("PRAGMA table_info('long_lived_agents')").all();
+    expect(columnInfo(cols, "id").type).toBe("TEXT");
+    expect(columnInfo(cols, "status").notnull).toBe(1);
+    expect(columnInfo(cols, "consecutive_failures").notnull).toBe(1);
+    expect(columnInfo(cols, "circuit_breaker_threshold").notnull).toBe(1);
+    expect(columnInfo(cols, "mcp_allowlist_json").notnull).toBe(1);
+    expect(columnInfo(cols, "approval_required_globs_json").notnull).toBe(1);
+    expect(columnInfo(cols, "cooldown_overrides_json").notnull).toBe(1);
+    expect(columnInfo(cols, "working_memory_json").notnull).toBe(1);
+    expect(columnInfo(cols, "standing_brief").notnull).toBe(1);
   });
 
   it("long_lived_agents has a nullable project_id column", () => {
