@@ -1,20 +1,19 @@
 import { afterEach, describe, expect, it } from "bun:test";
 
-import type { DaemonClient } from "@src/daemon-client.js";
+import { DaemonClient } from "@src/daemon-client.js";
 import { HandleStore } from "@src/handle-store.js";
 import { isEnvelopeResult } from "@src/responses/envelope.js";
 import { fsEditHandler } from "@src/tools/fs-edit.js";
 import { readHandleHandler } from "@src/tools/read-handle.js";
 
-type EditDaemon = Pick<DaemonClient, "editInWorktree">;
 type EditImpl = DaemonClient["editInWorktree"];
 type EditResult = Awaited<ReturnType<EditImpl>>;
 
-function fakeDaemon(impl?: EditImpl): EditDaemon {
-  return {
-    editInWorktree:
-      impl ?? ((): Promise<EditResult> => Promise.resolve({ path: "file.txt", replacements: 1 })),
-  };
+function fakeDaemon(impl?: EditImpl): DaemonClient {
+  const client = new DaemonClient({ baseUrl: "http://127.0.0.1:1", token: "test-token" });
+  client.editInWorktree =
+    impl ?? ((): Promise<EditResult> => Promise.resolve({ path: "file.txt", replacements: 1 }));
+  return client;
 }
 
 describe("fs.edit handler - envelope opt-in", () => {
