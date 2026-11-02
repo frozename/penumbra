@@ -29,7 +29,7 @@ function makeFetcher(
 ): (input: string | URL | Request, init?: RequestInit) => Promise<Response> {
   const handler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
   return (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
-    return handler(new Request(input, init));
+    return handler(input instanceof Request ? input : new Request(input.toString(), init));
   };
 }
 

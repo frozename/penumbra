@@ -927,6 +927,12 @@ export class DaemonClient {
         }
       | { error: string };
     provider_quotas?: { provider: string; max_in_flight: number; in_flight: number }[];
+    seat_quotas?: {
+      seat: string;
+      provider: string | null;
+      max_in_flight: number;
+      in_flight: number;
+    }[];
     reloaded_at: string;
   }> {
     return await this.post("/agentchat/reload", {});

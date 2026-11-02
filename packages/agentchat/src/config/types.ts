@@ -172,6 +172,8 @@ export const AgentConfigSchema = z
     tier: z.string().optional(),
     /** Estimated per-run cost in cents used by task eligibility filtering. */
     cost_cents_per_run: z.number().nonnegative().optional(),
+    /** #257: per-seat cap on concurrently in-flight dispatches, enforced with the provider-wide cap. */
+    max_in_flight: z.number().int().positive().optional(),
     /** Marks whether the agent can be assigned maestro spawn tasks. */
     maestro_capable: z.boolean().optional(),
     /** Optional per-agent task types this agent supports for maestro routing. */

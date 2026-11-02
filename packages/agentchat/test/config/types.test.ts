@@ -37,6 +37,20 @@ describe("AgentOptionsSchema — config single source of truth", () => {
     ).toThrow(/warm_pool.*opencode-acp/);
   });
 
+  test("agentchat accepts an optional per-seat max_in_flight as a positive integer (#257)", () => {
+    expect(
+      AgentConfigSchema.parse({ name: "a", adapter: "stdio-acp", max_in_flight: 1 }).max_in_flight,
+    ).toBe(1);
+    expect(
+      AgentConfigSchema.parse({ name: "a", adapter: "stdio-acp" }).max_in_flight,
+    ).toBeUndefined();
+    for (const bad of [0, -2, 2.5, "1"]) {
+      expect(() =>
+        AgentConfigSchema.parse({ name: "a", adapter: "stdio-acp", max_in_flight: bad }),
+      ).toThrow();
+    }
+  });
+
   test("agentchat keeps the declared health target on parsed agents", () => {
     const health = {
       url: "https://gw.example.invalid:7843/v1",

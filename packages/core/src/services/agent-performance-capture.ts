@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
 
+import { CommitIntegrityEvidenceSchema } from "@penumbra/api-contract";
+
 import type { HandoffRow } from "../schemas/handoff.js";
 import type { Uuid } from "../utils/uuid.js";
 
@@ -197,6 +199,15 @@ export function captureAgentPerformanceFromReconciler(opts: {
   const metadata: Record<string, unknown> = {};
   if (input.result.pr_url) metadata.pr_url = input.result.pr_url;
   if (input.result.timed_out !== undefined) metadata.timed_out = input.result.timed_out;
+  if (parsedDispatchEndMeta?.autocommitted === true) {
+    metadata.autocommitted = true;
+    if (
+      typeof parsedDispatchEndMeta.autocommit_sha === "string" &&
+      parsedDispatchEndMeta.autocommit_sha.length > 0
+    ) {
+      metadata.autocommit_sha = parsedDispatchEndMeta.autocommit_sha;
+    }
+  }
   const outcome = resolveReconcilerOutcome(opts.db, input, handoff);
   const row: AgentPerformanceRow = {
     performance_id: opts.uuid(),
@@ -381,6 +392,10 @@ function classifyDispatchReliabilityFromDb(
       dispatchEndDirty = parsedDispatchEndMeta.dirty;
   }
   if (typeof worktreeChangedHint === "boolean") worktreeChanged = worktreeChangedHint;
+  const parsedCommitIntegrity = parsedDispatchEndMeta?.commit_integrity
+    ? CommitIntegrityEvidenceSchema.safeParse(parsedDispatchEndMeta.commit_integrity)
+    : null;
+  const commitIntegrity = parsedCommitIntegrity?.success ? parsedCommitIntegrity.data : null;
   return classifyDispatchReliability({
     handoff: {
       handoff_id: handoffId,
@@ -402,6 +417,7 @@ function classifyDispatchReliabilityFromDb(
     // No dispatchPrompt: the worker usually sends a response summary, which
     // replaces the final text with a placeholder the CHECK_RESULT rule would misread.
     dispatchEndDirty,
+    commitIntegrity,
   });
 }
 
@@ -538,6 +554,7 @@ function buildDispatchMetadata(
   responseSummary: DispatchResponseSummary | null,
   taskTypeMismatch: boolean,
   quotaExhausted: boolean,
+  parsedDispatchEndMeta: Record<string, unknown> | null,
 ): Record<string, unknown> {
   const metadata: Record<string, unknown> = {
     reason: input.reason,
@@ -558,6 +575,15 @@ function buildDispatchMetadata(
     metadata.has_meaningful_output = responseSummary.hasMeaningfulOutput;
   }
   if (quotaExhausted) metadata.quota_exhausted = true;
+  if (parsedDispatchEndMeta?.autocommitted === true) {
+    metadata.autocommitted = true;
+    if (
+      typeof parsedDispatchEndMeta.autocommit_sha === "string" &&
+      parsedDispatchEndMeta.autocommit_sha.length > 0
+    ) {
+      metadata.autocommit_sha = parsedDispatchEndMeta.autocommit_sha;
+    }
+  }
   return metadata;
 }
 
@@ -645,6 +671,7 @@ export function captureAgentPerformanceFromDispatch(opts: {
     responseSummary,
     taskTypeMismatch,
     quotaExhausted,
+    parsedDispatchEndMeta,
   );
 
   const row: AgentPerformanceRow = {

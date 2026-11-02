@@ -4,6 +4,14 @@ import { beforeEach, describe, expect, it } from "bun:test";
 import { quotaStatus } from "@src/readers/cost-quota.js";
 import { recentCost } from "@src/readers/cost.js";
 
+function must<T>(value: T | undefined, what: string): T {
+  expect(value, what).toBeDefined();
+  if (value === undefined) {
+    throw new Error(`missing ${what}`);
+  }
+  return value;
+}
+
 function makeDb(): Database {
   const db = new Database(":memory:");
   db.run(`
@@ -188,11 +196,12 @@ describe("quotaStatus", () => {
       { since: "2026-04-28T00:00:00Z" },
       () => new Date("2026-04-28T13:00:00Z"),
     );
-    expect(out.providers[0].quota_usd).toBeNull();
-    expect(out.providers[0].used_tokens).toBe(250000);
-    expect(out.providers[0].quota_tokens).toBe(1_000_000);
-    expect(out.providers[0].remaining_tokens).toBe(750000);
-    expect(out.providers[0].remaining_pct_tokens).toBe(75.0);
+    const openai = must(out.providers[0], "openai provider row");
+    expect(openai.quota_usd).toBeNull();
+    expect(openai.used_tokens).toBe(250000);
+    expect(openai.quota_tokens).toBe(1_000_000);
+    expect(openai.remaining_tokens).toBe(750000);
+    expect(openai.remaining_pct_tokens).toBe(75.0);
   });
 
   it("surfaces prompt cache token fields from the shared cost reader", () => {
@@ -250,10 +259,11 @@ describe("quotaStatus", () => {
       { since: "2026-04-28T00:00:00Z" },
       () => new Date("2026-04-28T13:00:00Z"),
     );
-    expect(out.providers[0].used_usd).toBe(0);
-    expect(out.providers[0].used_usd_synth).toBeNull();
-    expect(out.providers[0].remaining_usd).toBe(25);
-    expect(out.providers[0].remaining_pct_usd).toBe(100);
+    const google = must(out.providers[0], "google provider row");
+    expect(google.used_usd).toBe(0);
+    expect(google.used_usd_synth).toBeNull();
+    expect(google.remaining_usd).toBe(25);
+    expect(google.remaining_pct_usd).toBe(100);
   });
 
   it("omits providers from response when no quota is configured", () => {
