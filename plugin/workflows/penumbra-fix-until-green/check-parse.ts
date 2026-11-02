@@ -61,6 +61,29 @@ export function stripFencedBlocks(text: string): string {
   return visibleLines.join("\n");
 }
 
+const ANY_CHECK_MARKER = /^ {0,3}CHECK_RESULT:[ \t]*(PASS|FAIL|BLOCKED)\b[ \t]*(.*)$/i;
+
+export type BlockedContract = { reason: string };
+
+// A worker may quote the BLOCKED instruction itself; only the LAST unfenced
+// CHECK_RESULT marker is the reply's verdict.
+export function detectBlockedContract(
+  sources: Array<string | null | undefined>,
+): BlockedContract | null {
+  let lastKind = "";
+  let last: BlockedContract = { reason: "" };
+  for (const source of sources) {
+    if (typeof source !== "string") continue;
+    for (const line of stripFencedBlocks(source).split("\n")) {
+      const marker = ANY_CHECK_MARKER.exec(line);
+      if (marker?.[1] === undefined) continue;
+      lastKind = marker[1].toUpperCase();
+      last = { reason: (marker[2] ?? "").trim() };
+    }
+  }
+  return lastKind === "BLOCKED" ? last : null;
+}
+
 function scanForMarker(text: string): { sawPass: boolean; sawFail: boolean } {
   let sawPass = false;
   let sawFail = false;

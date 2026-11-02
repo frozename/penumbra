@@ -2444,6 +2444,74 @@ describe("penumbra-fix-until-green contract-defect and escalation (#378)", () =>
     expect(rounds?.[0]?.reason).toBe("untrustworthy_dispatch");
   });
 
+  test("a quoted BLOCKED instruction with a final PASS marker is green, not a contract defect", async () => {
+    const response = [
+      "I ran the check as instructed. The brief notes that an impossible task should",
+      "reply `CHECK_RESULT: BLOCKED <reason>`, and had the check been unsatisfiable I would have sent",
+      "CHECK_RESULT: BLOCKED <reason>",
+      "instead. That case did not arise: the command exited 0 on the committed branch.",
+      "CHECK_RESULT: PASS",
+    ].join("\n");
+    const { result, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 1,
+        verifyCheck: false,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: async () => ({
+          results: [
+            {
+              conversation_id: "c",
+              handoff_id: "h",
+              ok: true,
+              status: "completed",
+              branch: "feat/x",
+              reliability_trustworthy: true,
+              check_line: "CHECK_RESULT: PASS",
+              response,
+            },
+          ],
+        }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.outcome).toBeUndefined();
+    expect(result?.green).toBe(true);
+    expect(result?.final_branch).toBe("feat/x");
+  });
+
+  test("a final BLOCKED marker after an earlier PASS is a contract defect with that reason", async () => {
+    const { result, error } = await runFixUntilGreen(
+      { task: { message: "m" }, check: "true", maxRounds: 3, defaults: { caller_cwd: "/abs" } },
+      {
+        workflow: async () => ({
+          results: [
+            {
+              conversation_id: "c",
+              handoff_id: "h",
+              ok: true,
+              status: "completed",
+              branch: "feat/x",
+              reliability_trustworthy: true,
+              check_line: "CHECK_RESULT: PASS",
+              response:
+                "CHECK_RESULT: PASS\nI believe the fix works.\nCHECK_RESULT: BLOCKED tests contradict",
+            },
+          ],
+        }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.outcome).toBe("contract_defect");
+    expect(result?.contract_defect_reason).toBe("tests contradict");
+    expect(result?.green).toBe(false);
+  });
+
   test("an untrustworthy non-final round with escalateTo proceeds to the escalation round", async () => {
     const fanoutRecords = [
       { ...untrustworthyRecord, check_line: "CHECK_RESULT: FAIL" },

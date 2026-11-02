@@ -160,7 +160,7 @@ const rubric = Array.isArray(input.rubric) ? input.rubric.filter((c) => typeof c
 const PROXY_NOT_INSTALLED_HINT = "The fanout proxy agent penumbra:penumbra-fanout-proxy is not available in this session (the Penumbra Claude Code plugin ships it as plugin/agents/penumbra-fanout-proxy.md). Install or enable that plugin and start a new Claude Code session, or pass agentType: 'inherit' to opt in to the generic proxy, which can run Bash."
 
 const CHECK_RESULT_BLOCKED_INSTRUCTION = 'If the task or check is impossible to satisfy as specified (a contract defect rather than a fixable failure), instead BEGIN your FINAL message with `CHECK_RESULT: BLOCKED` followed by a one-line reason.'
-const CHECK_RESULT_BLOCKED_MARKER = /^ {0,3}CHECK_RESULT:[ \t]*BLOCKED\b[ \t]*(.*)$/i
+const CHECK_RESULT_ANY_MARKER = /^ {0,3}CHECK_RESULT:[ \t]*(PASS|FAIL|BLOCKED)\b[ \t]*(.*)$/i
 
 const RUBRIC_RESULT = {
   type: 'object',
@@ -249,15 +249,21 @@ function roundMessage(roundIndex, prevBranch, prevOutput) {
   return lines.join('\n')
 }
 
+// A worker may quote the BLOCKED instruction itself; only the LAST unfenced
+// CHECK_RESULT marker is the reply's verdict.
 function detectBlockedContract(sources) {
+  let lastKind = ''
+  let last = { reason: '' }
   for (const source of sources) {
     if (typeof source !== 'string') continue
     for (const line of stripFencedBlocks(source).split('\n')) {
-      const marker = CHECK_RESULT_BLOCKED_MARKER.exec(line)
-      if (marker) return { reason: (marker[1] || '').trim() }
+      const marker = CHECK_RESULT_ANY_MARKER.exec(line)
+      if (!marker) continue
+      lastKind = marker[1].toUpperCase()
+      last = { reason: (marker[2] || '').trim() }
     }
   }
-  return null
+  return lastKind === 'BLOCKED' ? last : null
 }
 
 function parseCheck(result, responseMode = 'first_line') {

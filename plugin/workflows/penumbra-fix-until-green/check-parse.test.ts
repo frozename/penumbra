@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 
 import {
   bashCheckCommand,
+  detectBlockedContract,
   parseCheck,
   roundMessage,
   shellQuote,
@@ -148,6 +149,54 @@ test("parseCheck uses failure_tail when available in first_line mode", () => {
 test("parseCheck handles null result", () => {
   const verdict = parseCheck(null, "full");
   expect(verdict.passed).toBe(false);
+});
+
+// ---------------------------------------------------------------------------
+// detectBlockedContract
+// ---------------------------------------------------------------------------
+
+test("detectBlockedContract ignores a quoted BLOCKED instruction when the final marker is PASS", () => {
+  const response = [
+    "I ran the check as instructed. The brief notes that an impossible task should",
+    "reply `CHECK_RESULT: BLOCKED <reason>`, and had the check been unsatisfiable I would have sent",
+    "CHECK_RESULT: BLOCKED <reason>",
+    "instead. That case did not arise: the command exited 0 on the committed branch.",
+    "CHECK_RESULT: PASS",
+  ].join("\n");
+  expect(detectBlockedContract(["CHECK_RESULT: PASS", response, null])).toBeNull();
+});
+
+test("detectBlockedContract reports BLOCKED only when it is the final marker", () => {
+  const response =
+    "CHECK_RESULT: PASS\nI believe the fix works.\nCHECK_RESULT: BLOCKED tests contradict";
+  expect(detectBlockedContract([response])).toEqual({ reason: "tests contradict" });
+});
+
+test("detectBlockedContract returns the reason of a lone BLOCKED marker", () => {
+  expect(detectBlockedContract(["CHECK_RESULT: BLOCKED undefined budget"])).toEqual({
+    reason: "undefined budget",
+  });
+});
+
+test("detectBlockedContract ignores markers inside fenced blocks", () => {
+  expect(
+    detectBlockedContract(["CHECK_RESULT: FAIL\n```\nCHECK_RESULT: BLOCKED x\n```"]),
+  ).toBeNull();
+});
+
+test("detectBlockedContract takes the final marker across sources in order", () => {
+  expect(
+    detectBlockedContract([
+      "CHECK_RESULT: BLOCKED earlier claim",
+      "narration\nCHECK_RESULT: PASS",
+      undefined,
+      null,
+    ]),
+  ).toBeNull();
+});
+
+test("detectBlockedContract handles null and empty sources", () => {
+  expect(detectBlockedContract([null, undefined, ""])).toBeNull();
 });
 
 // ---------------------------------------------------------------------------
