@@ -277,6 +277,34 @@ function getParsedAcpSessionMeta(db: Database, handoffId: string): Record<string
   }
 }
 
+// #400: agent.tool_call.failed events carry failure_kind ("policy" | "error")
+// in their meta; events from before the kind existed (or with unparseable
+// meta) count as "error".
+function countToolFailuresByKind(
+  db: Database,
+  handoffId: string,
+): { policy: number; error: number } {
+  const counts = { policy: 0, error: 0 };
+  const rows = db
+    .prepare<
+      { meta_json: string | null },
+      [string]
+    >(`SELECT meta_json FROM dispatch_events WHERE handoff_id = ? AND kind = 'agent.tool_call.failed'`)
+    .all(handoffId);
+  for (const row of rows) {
+    let kind: unknown;
+    if (row.meta_json) {
+      try {
+        kind = (JSON.parse(row.meta_json) as Record<string, unknown>).failure_kind;
+      } catch {
+        kind = undefined;
+      }
+    }
+    counts[kind === "policy" ? "policy" : "error"] += 1;
+  }
+  return counts;
+}
+
 function computeDispatchSignals(
   db: Database,
   handoffId: string,
@@ -287,16 +315,12 @@ function computeDispatchSignals(
 ): {
   silent_failure: boolean;
   tool_failure_count: number;
+  tool_failure_kinds: { policy: number; error: number };
   classifier_declined: boolean;
   decline_reason: string | null;
 } {
-  const countRow = db
-    .prepare<
-      { count: number },
-      [string]
-    >(`SELECT COUNT(*) as count FROM dispatch_events WHERE handoff_id = ? AND kind = 'agent.tool_call.failed'`)
-    .get(handoffId);
-  const toolFailureCount = countRow?.count ?? 0;
+  const toolFailureKinds = countToolFailuresByKind(db, handoffId);
+  const toolFailureCount = toolFailureKinds.policy + toolFailureKinds.error;
 
   let worktreeChanged: boolean | null = null;
   if (parsedDispatchEndMeta && typeof parsedDispatchEndMeta.worktree_changed === "boolean") {
@@ -328,6 +352,7 @@ function computeDispatchSignals(
   return {
     silent_failure: silentFailure,
     tool_failure_count: toolFailureCount,
+    tool_failure_kinds: toolFailureKinds,
     classifier_declined: classifierDeclined,
     decline_reason: declineReason,
   };
@@ -561,6 +586,11 @@ function buildDispatchMetadata(
     silent_failure: signals.silent_failure,
     tool_failure_count: signals.tool_failure_count,
   };
+  // #400: the per-kind breakdown distinguishes a run blocked by permission
+  // policy from one whose tools genuinely errored. Omitted with no failures.
+  if (signals.tool_failure_count > 0) {
+    metadata.tool_failure_kinds = signals.tool_failure_kinds;
+  }
   if (signals.classifier_declined) {
     metadata.classifier_declined = true;
     metadata.decline_reason = signals.decline_reason;
