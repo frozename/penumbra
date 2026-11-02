@@ -21,6 +21,14 @@ type ColumnInfo = {
   pk: number;
 };
 
+function must<T>(value: T | undefined, what: string): T {
+  expect(value, what).toBeDefined();
+  if (value === undefined) {
+    throw new Error(`missing ${what}`);
+  }
+  return value;
+}
+
 test("applySchema creates worker_tokens table with the expected columns", () => {
   const db = new Database(":memory:");
   loadSqliteVec(db);
@@ -32,23 +40,23 @@ test("applySchema creates worker_tokens table with the expected columns", () => 
 
   const byName = Object.fromEntries(cols.map((c) => [c.name, c]));
 
-  expect(byName["token_hash"].type).toBe("TEXT");
-  expect(byName["token_hash"].notnull).toBe(1);
+  expect(must(byName["token_hash"], "token_hash column").type).toBe("TEXT");
+  expect(must(byName["token_hash"], "token_hash column").notnull).toBe(1);
 
-  expect(byName["worker_id"].type).toBe("TEXT");
-  expect(byName["worker_id"].notnull).toBe(1);
+  expect(must(byName["worker_id"], "worker_id column").type).toBe("TEXT");
+  expect(must(byName["worker_id"], "worker_id column").notnull).toBe(1);
 
-  expect(byName["issued_at"].type).toBe("INTEGER");
-  expect(byName["issued_at"].notnull).toBe(1);
+  expect(must(byName["issued_at"], "issued_at column").type).toBe("INTEGER");
+  expect(must(byName["issued_at"], "issued_at column").notnull).toBe(1);
 
-  expect(byName["last_seen_at"].type).toBe("INTEGER");
-  expect(byName["last_seen_at"].notnull).toBe(1);
+  expect(must(byName["last_seen_at"], "last_seen_at column").type).toBe("INTEGER");
+  expect(must(byName["last_seen_at"], "last_seen_at column").notnull).toBe(1);
 
-  expect(byName["revoked_at"].type).toBe("INTEGER");
-  expect(byName["revoked_at"].notnull).toBe(0);
+  expect(must(byName["revoked_at"], "revoked_at column").type).toBe("INTEGER");
+  expect(must(byName["revoked_at"], "revoked_at column").notnull).toBe(0);
 
-  expect(byName["metadata_json"].type).toBe("TEXT");
-  expect(byName["metadata_json"].notnull).toBe(0);
+  expect(must(byName["metadata_json"], "metadata_json column").type).toBe("TEXT");
+  expect(must(byName["metadata_json"], "metadata_json column").notnull).toBe(0);
 
   db.close();
 });
@@ -62,7 +70,7 @@ test("worker_tokens primary key is token_hash", () => {
 
   const pk = cols.filter((c) => c.pk === 1);
   expect(pk.length).toBe(1);
-  expect(pk[0].name).toBe("token_hash");
+  expect(must(pk[0], "primary key column").name).toBe("token_hash");
 
   const nonPk = cols.filter((c) => c.pk !== 1);
   for (const c of nonPk) {
@@ -120,15 +128,17 @@ test("worker_tokens INSERT round-trip works with metadata_json null", () => {
 
   expect(rows.length).toBe(2);
 
-  expect(rows[0].token_hash).toBe("hash-a");
-  expect(rows[0].worker_id).toBe("worker-1");
-  expect(rows[0].issued_at).toBe(1000);
-  expect(rows[0].last_seen_at).toBe(1001);
-  expect(rows[0].revoked_at).toBeNull();
-  expect(rows[0].metadata_json).toBeNull();
+  const first = must(rows[0], "first worker_tokens row");
+  expect(first.token_hash).toBe("hash-a");
+  expect(first.worker_id).toBe("worker-1");
+  expect(first.issued_at).toBe(1000);
+  expect(first.last_seen_at).toBe(1001);
+  expect(first.revoked_at).toBeNull();
+  expect(first.metadata_json).toBeNull();
 
-  expect(rows[1].token_hash).toBe("hash-b");
-  expect(rows[1].metadata_json).toBe('{"host":"x"}');
+  const second = must(rows[1], "second worker_tokens row");
+  expect(second.token_hash).toBe("hash-b");
+  expect(second.metadata_json).toBe('{"host":"x"}');
 
   db.close();
 });

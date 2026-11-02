@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
 
+import { CommitIntegrityEvidenceSchema } from "@penumbra/api-contract";
+
 import type { HandoffRow } from "../schemas/handoff.js";
 import type { Uuid } from "../utils/uuid.js";
 
@@ -381,6 +383,10 @@ function classifyDispatchReliabilityFromDb(
       dispatchEndDirty = parsedDispatchEndMeta.dirty;
   }
   if (typeof worktreeChangedHint === "boolean") worktreeChanged = worktreeChangedHint;
+  const parsedCommitIntegrity = parsedDispatchEndMeta?.commit_integrity
+    ? CommitIntegrityEvidenceSchema.safeParse(parsedDispatchEndMeta.commit_integrity)
+    : null;
+  const commitIntegrity = parsedCommitIntegrity?.success ? parsedCommitIntegrity.data : null;
   return classifyDispatchReliability({
     handoff: {
       handoff_id: handoffId,
@@ -402,6 +408,7 @@ function classifyDispatchReliabilityFromDb(
     // No dispatchPrompt: the worker usually sends a response summary, which
     // replaces the final text with a placeholder the CHECK_RESULT rule would misread.
     dispatchEndDirty,
+    commitIntegrity,
   });
 }
 
