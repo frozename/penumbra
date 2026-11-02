@@ -1,0 +1,99 @@
+{
+  "tier": "free",
+  "intelligence_index_version": 5,
+  "pagination": {
+    "page": 1,
+    "page_size": 200,
+    "total_pages": 1,
+    "has_more": false
+  },
+  "data": [
+    {
+      "id": "cd684ea4-b475-4269-b001-d469d06d8a7a",
+      "name": "GPT-5.6 Sol (max)",
+      "slug": "gpt-5-6-sol",
+      "release_date": "2026-07-09",
+      "model_creator": {
+        "id": "e67e56e3-15cd-43db-b679-da4660a69f41",
+        "name": "OpenAI"
+      },
+      "evaluations": {
+        "artificial_analysis_intelligence_index": 60.9,
+        "artificial_analysis_coding_index": null,
+        "artificial_analysis_agentic_index": null,
+        "artificial_analysis_engineering_index": 71.2
+      },
+      "artificial_analysis_intelligence_index_cost": {
+        "total_cost": 3495.62,
+        "cost_per_task": { "total_cost": 5.0093 }
+      },
+      "pricing": {
+        "price_1m_input_tokens": 4,
+        "price_1m_output_tokens": 20,
+        "price_1m_cache_hit_tokens": 0.4,
+        "price_1m_cache_write_tokens": null
+      },
+      "performance": {
+        "median_output_tokens_per_second": 62.221,
+        "median_time_to_first_token_seconds": 0.585,
+        "median_time_to_first_answer_token_seconds": 0.9,
+        "median_end_to_end_response_time_seconds": 12.3
+      }
+    },
+    {
+      "id": "9f1c2d3e-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+      "name": "Llama 4.2 Maverick",
+      "slug": "llama-4-2-maverick",
+      "release_date": "2026-04-05",
+      "model_creator": {
+        "id": "2b8f9d41-3c7e-4f1a-9b2d-5e6a7c8d9e0f",
+        "name": "Meta AI"
+      },
+      "evaluations": {
+        "artificial_analysis_intelligence_index": 48.3,
+        "artificial_analysis_coding_index": null,
+        "artificial_analysis_agentic_index": null,
+        "artificial_analysis_engineering_index": 44.1
+      },
+      "artificial_analysis_intelligence_index_cost": null,
+      "pricing": {
+        "price_1m_input_tokens": null,
+        "price_1m_output_tokens": 0.9,
+        "price_1m_cache_hit_tokens": null,
+        "price_1m_cache_write_tokens": null
+      },
+      "performance": {
+        "median_output_tokens_per_second": null,
+        "median_time_to_first_token_seconds": null,
+        "median_time_to_first_answer_token_seconds": null,
+        "median_end_to_end_response_time_seconds": null
+      }
+    },
+    {
+      "id": "7a6b5c4d-3e2f-4a1b-9c8d-7e6f5a4b3c2d",
+      "name": "Mystery Model X",
+      "slug": "mystery-model-x",
+      "release_date": null,
+      "model_creator": null,
+      "evaluations": {
+        "artificial_analysis_intelligence_index": 33.0,
+        "artificial_analysis_coding_index": null,
+        "artificial_analysis_agentic_index": null,
+        "artificial_analysis_engineering_index": null
+      },
+      "artificial_analysis_intelligence_index_cost": null,
+      "pricing": {
+        "price_1m_input_tokens": 0.5,
+        "price_1m_output_tokens": 0.5,
+        "price_1m_cache_hit_tokens": 0.05,
+        "price_1m_cache_write_tokens": 0.6
+      },
+      "performance": {
+        "median_output_tokens_per_second": 120,
+        "median_time_to_first_token_seconds": 0.2,
+        "median_time_to_first_answer_token_seconds": 0.3,
+        "median_end_to_end_response_time_seconds": 1.0
+      }
+    }
+  ]
+}
