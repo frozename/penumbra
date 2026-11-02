@@ -160,6 +160,7 @@ describe("dispatchWorkflowSubcommand", () => {
       deps,
     );
     expect(code).toBe(0);
+    expect(seen).toHaveLength(1);
     expect(seen[0]?.method).toBe("POST");
     expect(seen[0]?.path).toBe("/workflows/run");
     expect(seen[0]?.body).toEqual({
@@ -177,14 +178,25 @@ describe("dispatchWorkflowSubcommand", () => {
   });
 
   test("history URL-encodes the workflow name", async () => {
-    const code = await dispatchWorkflowSubcommand(["history", "a b"], storageRoot, deps);
+    const calls: string[] = [];
+    const localFetch: DaemonFetch = (input, init) => {
+      const req = new Request(input, init);
+      const u = new URL(req.url);
+      calls.push(u.pathname + u.search);
+      return Promise.resolve(Response.json({ runs: [] }));
+    };
+    const code = await dispatchWorkflowSubcommand(["history", "a b"], storageRoot, {
+      fetch: localFetch,
+    });
     expect(code).toBe(0);
-    expect(seen[0]?.path).toBe("/workflows/history?name=a%20b");
+    expect(calls).toEqual(["/workflows/history?name=a%20b"]);
+    expect(seen).toHaveLength(0);
   });
 
   test("suggest posts to /workflows/suggest", async () => {
     const code = await dispatchWorkflowSubcommand(["suggest"], storageRoot, deps);
     expect(code).toBe(0);
+    expect(seen).toHaveLength(1);
     expect(seen[0]?.method).toBe("POST");
     expect(seen[0]?.path).toBe("/workflows/suggest");
   });
