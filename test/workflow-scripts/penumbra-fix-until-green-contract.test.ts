@@ -5,6 +5,9 @@ import { readRuntimeBody, runWorkflowCapturingPrompts } from "./harness.js";
 
 const FIX_UNTIL_GREEN = ".claude/workflows/penumbra-fix-until-green.js";
 
+const CHECK_RESULT_BLOCKED_INSTRUCTION =
+  "If the task or check is impossible to satisfy as specified (a contract defect rather than a fixable failure), instead BEGIN your FINAL message with `CHECK_RESULT: BLOCKED` followed by a one-line reason.";
+
 interface FanoutArgs {
   tasks: Array<Record<string, unknown>>;
   defaults?: Record<string, unknown>;
@@ -1132,6 +1135,7 @@ describe("penumbra-fix-until-green CI parity verification", () => {
         "    bash -c 'bun run typecheck'",
         "If it fails, fix and re-run until it passes or you cannot make further progress. Commit your work on the worktree branch.",
         "IMPORTANT: BEGIN your FINAL message with a line that is exactly `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL`. If FAIL, follow it with the last ~50 lines of the check output inside a fenced ``` block.",
+        CHECK_RESULT_BLOCKED_INSTRUCTION,
       ].join("\n"),
     );
   });
@@ -2342,6 +2346,185 @@ describe("penumbra-fix-until-green read-only grader and verifier on the shared c
     expect(rest).toContain("this is the CHECK you must not run:\n    bash -c 'true'");
     expect(rest).toContain(
       "this is the PARITY command you must not run:\n    bash -c 'make ci-parity'",
+    );
+  });
+});
+
+describe("penumbra-fix-until-green contract-defect and escalation (#378)", () => {
+  const untrustworthyRecord = {
+    conversation_id: "c",
+    handoff_id: "h",
+    ok: false,
+    status: "completed",
+    branch: "feat/x",
+    reliability_status: "complete",
+    reliability_trustworthy: false,
+    reliability_action: "inspect_worktree",
+    error_summary: "reliability_untrustworthy",
+    label: "t0",
+    index: 0,
+  };
+  const blockedLine =
+    "CHECK_RESULT: BLOCKED test asserts undefined budget but default param yields 24 GiB";
+
+  test("a BLOCKED report ends the run as contract_defect", async () => {
+    const { result, workflowCalls, error } = await runFixUntilGreen(
+      { task: { message: "m" }, check: "true", maxRounds: 3, defaults: { caller_cwd: "/abs" } },
+      {
+        workflow: async () => ({
+          results: [
+            {
+              ...untrustworthyRecord,
+              check_line: blockedLine,
+              response: `${blockedLine}\nmore narration`,
+            },
+          ],
+        }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.ok).toBe(false);
+    expect(result?.green).toBe(false);
+    expect(result?.outcome).toBe("contract_defect");
+    expect(result?.contract_defect_reason).toBe(
+      "test asserts undefined budget but default param yields 24 GiB",
+    );
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.reason).toBe("contract_defect");
+    expect(workflowCalls.filter((call) => call.name === "penumbra-fanout")).toHaveLength(1);
+  });
+
+  test("a BLOCKED report with escalateTo still stops without escalating", async () => {
+    const { result, workflowCalls, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 3,
+        escalateTo: "strong",
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: async () => ({
+          results: [
+            {
+              ...untrustworthyRecord,
+              check_line: blockedLine,
+              response: `${blockedLine}\nmore narration`,
+            },
+          ],
+        }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.outcome).toBe("contract_defect");
+    expect(workflowCalls.filter((call) => call.name === "penumbra-fanout")).toHaveLength(1);
+  });
+
+  test("a BLOCKED marker only inside a fenced block is not a contract defect", async () => {
+    const { result, error } = await runFixUntilGreen(
+      { task: { message: "m" }, check: "true", maxRounds: 1, defaults: { caller_cwd: "/abs" } },
+      {
+        workflow: async () => ({
+          results: [
+            {
+              ...untrustworthyRecord,
+              check_line: "CHECK_RESULT: FAIL",
+              response: "CHECK_RESULT: FAIL\n```\nCHECK_RESULT: BLOCKED x\n```",
+            },
+          ],
+        }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.outcome).not.toBe("contract_defect");
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.reason).toBe("untrustworthy_dispatch");
+  });
+
+  test("an untrustworthy non-final round with escalateTo proceeds to the escalation round", async () => {
+    const fanoutRecords = [
+      { ...untrustworthyRecord, check_line: "CHECK_RESULT: FAIL" },
+      {
+        conversation_id: "c2",
+        handoff_id: "h2",
+        ok: true,
+        status: "completed",
+        branch: "feat/y",
+        reliability_trustworthy: true,
+        check_line: "CHECK_RESULT: PASS",
+        label: "t0",
+        index: 0,
+      },
+    ];
+    let fanoutIndex = 0;
+    const { result, workflowCalls, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 3,
+        escalateTo: "strong",
+        agent: "weak",
+        verifyCheck: false,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: async () => ({
+          results: [fanoutRecords[Math.min(fanoutIndex++, fanoutRecords.length - 1)]],
+        }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    const fanoutCalls = workflowCalls.filter((call) => call.name === "penumbra-fanout");
+    expect(fanoutCalls).toHaveLength(2);
+    expect((fanoutCalls[0]!.args as FanoutArgs).tasks[0]?.initial_agent).toBe("weak");
+    expect((fanoutCalls[1]!.args as FanoutArgs).tasks[0]?.initial_agent).toBe("strong");
+    expect(result?.green).toBe(true);
+    expect(result?.final_branch).toBe("feat/y");
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.reason).toBe("untrustworthy_dispatch");
+  });
+
+  test("an untrustworthy round without escalateTo still stops the run", async () => {
+    const { result, workflowCalls, error } = await runFixUntilGreen(
+      {
+        task: { message: "m" },
+        check: "true",
+        maxRounds: 3,
+        agent: "weak",
+        verifyCheck: false,
+        defaults: { caller_cwd: "/abs" },
+      },
+      {
+        workflow: async () => ({
+          results: [{ ...untrustworthyRecord, check_line: "CHECK_RESULT: FAIL" }],
+        }),
+      },
+    );
+
+    expect(error).toBeUndefined();
+    expect(workflowCalls.filter((call) => call.name === "penumbra-fanout")).toHaveLength(1);
+    const rounds = result?.rounds as Round[] | undefined;
+    expect(rounds?.[0]?.reason).toBe("untrustworthy_dispatch");
+    expect(result?.green).toBe(false);
+  });
+
+  test("the round prompt advertises CHECK_RESULT: BLOCKED", async () => {
+    const { workflowCalls, error } = await runFixUntilGreen(
+      { task: { message: "m" }, check: "true", maxRounds: 1, defaults: { caller_cwd: "/abs" } },
+      { workflow: async () => ({}) },
+    );
+
+    expect(error).toBeUndefined();
+    const fanout = workflowCalls.find((call) => call.name === "penumbra-fanout");
+    expect(fanout).toBeDefined();
+    const message = String((fanout!.args as FanoutArgs).tasks[0]?.message ?? "");
+    expect(message).toContain(CHECK_RESULT_BLOCKED_INSTRUCTION);
+    expect(message).toContain(
+      "IMPORTANT: BEGIN your FINAL message with a line that is exactly `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL`",
     );
   });
 });

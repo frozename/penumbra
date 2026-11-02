@@ -154,6 +154,9 @@ test("parseCheck handles null result", () => {
 // roundMessage
 // ---------------------------------------------------------------------------
 
+const CHECK_RESULT_BLOCKED_INSTRUCTION =
+  "If the task or check is impossible to satisfy as specified (a contract defect rather than a fixable failure), instead BEGIN your FINAL message with `CHECK_RESULT: BLOCKED` followed by a one-line reason.";
+
 test("roundMessage round 0 uses the task message directly", () => {
   const msg = roundMessage(0, "fix the bug", "bun run typecheck", null, null);
   expect(msg).toContain("fix the bug");
@@ -182,6 +185,7 @@ test("roundMessage is byte-for-byte unchanged without a parity command", () => {
       "    bash -c 'bun run typecheck'",
       "If it fails, fix and re-run until it passes or you cannot make further progress. Commit your work on the worktree branch.",
       "IMPORTANT: BEGIN your FINAL message with a line that is exactly `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL`. If FAIL, follow it with the last ~50 lines of the check output inside a fenced ``` block.",
+      CHECK_RESULT_BLOCKED_INSTRUCTION,
     ].join("\n"),
   );
   expect(roundMessage(1, "fix the bug", "bun run typecheck", "feature/prev", "error here")).toBe(
@@ -198,6 +202,7 @@ test("roundMessage is byte-for-byte unchanged without a parity command", () => {
       "    bash -c 'bun run typecheck'",
       "If it fails, fix and re-run until it passes or you cannot make further progress. Commit your work on the worktree branch.",
       "IMPORTANT: BEGIN your FINAL message with a line that is exactly `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL`. If FAIL, follow it with the last ~50 lines of the check output inside a fenced ``` block.",
+      CHECK_RESULT_BLOCKED_INSTRUCTION,
     ].join("\n"),
   );
 });
