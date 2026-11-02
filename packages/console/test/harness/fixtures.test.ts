@@ -1135,12 +1135,22 @@ describe("chains fixture", () => {
   test("cross-conversation SSE isolation: event for c1 is not delivered to c2", async () => {
     const h = await startHarness();
     try {
+      const assertSseOk = async (res: Response, stream: string): Promise<void> => {
+        if (res.status !== 200) {
+          const body = await res.clone().text();
+          throw new Error(
+            `unexpected ${String(res.status)} from ${stream} stream harness port=${String(h.port)} calls=${String(h.getCalls().length)} body=${body}`,
+          );
+        }
+      };
       const sse1Res = await Bun.fetch(`${h.baseUrl}/conversations/c1/stream`, {
         headers: { Authorization: `Bearer ${h.token}`, Accept: "text/event-stream" },
       });
+      await assertSseOk(sse1Res, "c1");
       const sse2Res = await Bun.fetch(`${h.baseUrl}/conversations/c2/stream`, {
         headers: { Authorization: `Bearer ${h.token}`, Accept: "text/event-stream" },
       });
+      await assertSseOk(sse2Res, "c2");
       const reader1 = sse1Res.body!.getReader();
       const reader2 = sse2Res.body!.getReader();
       const decoder = new TextDecoder();
@@ -1156,11 +1166,21 @@ describe("chains fixture", () => {
           if (buf.includes(": ok")) return buf;
         }
       };
-      await readInitial(reader1);
-      await readInitial(reader2);
+      const init1 = await readInitial(reader1);
+      if (!init1.includes(": ok")) {
+        throw new Error(
+          `c1 stream never emitted the ": ok" frame; buffer=${JSON.stringify(init1)}`,
+        );
+      }
+      const init2 = await readInitial(reader2);
+      if (!init2.includes(": ok")) {
+        throw new Error(
+          `c2 stream never emitted the ": ok" frame; buffer=${JSON.stringify(init2)}`,
+        );
+      }
 
-      await h.waitForConversationSseClient("c1");
-      await h.waitForConversationSseClient("c2");
+      await h.waitForConversationSseClient("c1", { timeoutMs: 2_000 });
+      await h.waitForConversationSseClient("c2", { timeoutMs: 2_000 });
 
       h.pushConversationEvent("c1", { text: "for c1 only" });
       h.pushConversationEvent("c2", { text: "c2-sentinel" });
