@@ -1,4 +1,9 @@
-import { type AaSnapshotStore, type AaTransport, createAaSnapshotStore } from "@penumbra/core";
+import {
+  type AaFetchFailureKind,
+  type AaSnapshotStore,
+  type AaTransport,
+  createAaSnapshotStore,
+} from "@penumbra/core";
 import { describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -58,13 +63,18 @@ function aaFreeResponseBody(data: Record<string, unknown>[]): Record<string, unk
   };
 }
 
-function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
+function jsonResponse(
+  body: unknown,
+  init: { status?: number; headers?: Record<string, string> } = {},
+): Promise<Response> {
   const headers = new Headers(init.headers);
   if (!headers.has("content-type")) headers.set("content-type", "application/json");
-  return new Response(JSON.stringify(body), {
-    status: init.status ?? 200,
-    headers,
-  });
+  return Promise.resolve(
+    new Response(JSON.stringify(body), {
+      status: init.status ?? 200,
+      headers,
+    }),
+  );
 }
 
 function withTempDir<T>(prefix: string, fn: (dir: string) => Promise<T>): Promise<T> {
@@ -227,7 +237,7 @@ describe("aa-snapshot-refresh sweeper", () => {
           return jsonResponse({ error: "server exploded" }, { status: 500 });
         },
       };
-      const warn = mock(() => undefined);
+      const warn = mock((_obj: Record<string, unknown>, _msg: string) => undefined);
 
       const result = await runAaSnapshotRefreshSweep(
         {
@@ -259,8 +269,8 @@ describe("aa-snapshot-refresh sweeper", () => {
       await Bun.write(keyPath, "test-aa-key\n");
       const cases: {
         name: string;
-        expectedKind: string;
-        respond: () => Response;
+        expectedKind: AaFetchFailureKind;
+        respond: () => Promise<Response>;
       }[] = [
         {
           name: "410 retired endpoint",
@@ -483,7 +493,7 @@ describe("aa-snapshot-refresh sweeper", () => {
       return timerId;
     }) as unknown as typeof global.setInterval;
     global.clearInterval = mock((id: { unref: () => void }) => {
-      expect(id).toBe(timerId);
+      expect(id).toBe(timerId!);
     }) as unknown as typeof global.clearInterval;
 
     try {

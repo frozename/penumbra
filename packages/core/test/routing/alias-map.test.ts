@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 
 import { type AaTransport, fetchAaModels } from "@src/routing/aa-client.js";
 import { buildAliasIndex, reconcileAliases } from "@src/routing/alias-map.js";
 import type { AaModel, AaModelSnapshot } from "@src/routing/schemas.js";
 
-import aaLanguageFreeSample from "./fixtures/aa-language-free-sample.json";
+const aaLanguageFreeSample: unknown = JSON.parse(
+  readFileSync(new URL("./fixtures/aa-language-free-sample.json", import.meta.url), "utf8"),
+);
 
 function aaModel(overrides: {
   id: string;
@@ -137,6 +140,8 @@ describe("routing alias-map reconciliation", () => {
 
     const fetched = await fetchAaModels({ apiKey: "secret-key", transport });
     if (!fetched.ok) throw new Error("expected the free-envelope fetch to succeed");
+    const [gptModel, llamaModel] = fetched.snapshot.models;
+    if (!gptModel || !llamaModel) throw new Error("expected the fixture to keep both models");
 
     const result = reconcileAliases(
       buildAliasIndex({
@@ -148,8 +153,8 @@ describe("routing alias-map reconciliation", () => {
     );
 
     expect(result).toEqual({
-      "codex-seat": { matched: fetched.snapshot.models[0] },
-      "llama-seat": { matched: fetched.snapshot.models[1] },
+      "codex-seat": { matched: gptModel },
+      "llama-seat": { matched: llamaModel },
     });
   });
 

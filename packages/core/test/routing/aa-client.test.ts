@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,7 +10,9 @@ import {
   readAaApiKey,
 } from "@src/routing/aa-client.js";
 
-import aaLanguageFreeSample from "./fixtures/aa-language-free-sample.json";
+const aaLanguageFreeSample: unknown = JSON.parse(
+  readFileSync(new URL("./fixtures/aa-language-free-sample.json", import.meta.url), "utf8"),
+);
 
 function aaModel(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -50,13 +52,18 @@ function aaResponse(data: Record<string, unknown>[] = [aaModel()]): Record<strin
   };
 }
 
-function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
+function jsonResponse(
+  body: unknown,
+  init: { status?: number; headers?: Record<string, string> } = {},
+): Promise<Response> {
   const headers = new Headers(init.headers);
   if (!headers.has("content-type")) headers.set("content-type", "application/json");
-  return new Response(JSON.stringify(body), {
-    status: init.status ?? 200,
-    headers,
-  });
+  return Promise.resolve(
+    new Response(JSON.stringify(body), {
+      status: init.status ?? 200,
+      headers,
+    }),
+  );
 }
 
 function aaFreeModel(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -163,7 +170,7 @@ describe("Artificial Analysis API client", () => {
       const result = await fetchAaModels({ apiKey: "secret-key", transport, timeoutMs: 1234 });
 
       expect(result.ok).toBe(true);
-      expect(timeoutMs).toBe(1234);
+      expect(timeoutMs!).toBe(1234);
     } finally {
       AbortSignal.timeout = originalTimeout;
     }
@@ -339,10 +346,12 @@ describe("Artificial Analysis API client", () => {
   test("oversized responses fail before JSON parsing", async () => {
     const transport: AaTransport = {
       fetch() {
-        return new Response(JSON.stringify(aaResponse([aaModel({ name: "x".repeat(200) })])), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
+        return Promise.resolve(
+          new Response(JSON.stringify(aaResponse([aaModel({ name: "x".repeat(200) })])), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
       },
     };
 
@@ -366,10 +375,12 @@ describe("Artificial Analysis API client", () => {
         if (attempts === 1) {
           return jsonResponse({ error: "unavailable" }, { status: 503 });
         }
-        return new Response("{not-json", {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        });
+        return Promise.resolve(
+          new Response("{not-json", {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
       },
     };
 
