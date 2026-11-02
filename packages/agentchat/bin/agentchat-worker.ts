@@ -1570,7 +1570,7 @@ const dispatcher = createWorkerDispatcher({
   markFailed: async (id, reason): Promise<void> => {
     await client.markFailed(id, reason, workerId);
   },
-  autocommitOnChainEnd: async (rawHandoff): Promise<AutocommitResult | void> => {
+  autocommitOnChainEnd: async (rawHandoff): Promise<AutocommitResult | undefined> => {
     const handoff = rawHandoff as HandoffRow;
     const wt = worktreeManager.getWorktree(handoff.handoff_id);
     if (!wt) {

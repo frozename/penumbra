@@ -1,13 +1,13 @@
 import type { CommitIntegrityEvidence, DispatchEventInput, Logger } from "@penumbra/core";
 
 import type { DispatchHandoffResult } from "../cli/dispatch-handoff.js";
+import type { AutocommitResult } from "./autocommit-on-chain-end.js";
 import type { DiscordNotificationEvent } from "./discord-events.js";
 import type { TerminalReport, TerminalReportStatus } from "./terminal-outbox.js";
 
 import { detectClassifierDecline } from "../classifier-decline.js";
 import { pendingObservationsOf } from "../cli/dispatch-handoff.js";
 import { isTerminalHttpStatus, PenumbraHttpError } from "../penumbra-client.js";
-import type { AutocommitResult } from "./autocommit-on-chain-end.js";
 
 /**
  * Minimal structural shape the dispatcher reads off a handoff row. Public
@@ -67,7 +67,7 @@ export interface WorkerDispatcherDeps<H extends DispatcherHandoff = DispatcherHa
    * git add/commit implementation; its outcome is stamped into dispatch.end
    * meta so the dispatch record shows the round was autocommitted.
    */
-  autocommitOnChainEnd?: (handoff: H) => Promise<AutocommitResult | void>;
+  autocommitOnChainEnd?: (handoff: H) => Promise<AutocommitResult | undefined>;
   /**
    * Called when this worker did not win the row: retryable claim failure,
    * terminal 409 claim conflict, or barrier-failure markFailed fallback.
