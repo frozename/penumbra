@@ -1581,6 +1581,8 @@ test("HandoffWriter.createApproved inserts a handoff already in approved status 
     chain_max_hops: 5,
     chain_trust_mode: "all",
     chain_task_type: "implement_small",
+    use_worktree: null,
+    parent_handoff_id: null,
   });
 
   const row = db
