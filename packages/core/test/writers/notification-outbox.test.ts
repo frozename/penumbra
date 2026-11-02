@@ -1,7 +1,13 @@
-import { loadSqliteVec, NotificationOutboxWriter } from "@penumbra/core";
-import { applySchema } from "@penumbra/core/db/schema";
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, it } from "bun:test";
+
+import { applySchema } from "@src/db/schema.js";
+import { loadSqliteVec } from "@src/db/sqlite-vec.js";
+import { NotificationOutboxWriter } from "@src/writers/notification-outbox.js";
+
+function assertDefined<T>(value: T | undefined, msg: string): asserts value is T {
+  if (value === undefined) throw new Error(msg);
+}
 
 interface OutboxStatusRow {
   status: string;
@@ -39,11 +45,13 @@ describe("NotificationOutboxWriter", () => {
 
     const pending = outbox.listPending(10);
     expect(pending.length).toBe(1);
-    expect(pending[0].kind).toBe("task_draft");
-    expect(pending[0].reference_id).toBe("ref-1");
-    expect(pending[0].project_id).toBe("test-project");
-    expect(pending[0].coalesce_key).toBe("test-project");
-    expect(pending[0].status).toBe("pending");
+    const first = pending[0];
+    assertDefined(first, "expected first entry");
+    expect(first.kind).toBe("task_draft");
+    expect(first.reference_id).toBe("ref-1");
+    expect(first.project_id).toBe("test-project");
+    expect(first.coalesce_key).toBe("test-project");
+    expect(first.status).toBe("pending");
   });
 
   it("deduplicates by kind + reference_id", () => {
@@ -91,7 +99,10 @@ describe("NotificationOutboxWriter", () => {
     });
 
     const pending = outbox.listPending(10);
-    const id = pending[0].id;
+    expect(pending.length).toBe(1);
+    const entry = pending[0];
+    assertDefined(entry, "expected entry");
+    const id = entry.id;
 
     expect(outbox.markProcessing(id, 2000)).toBe(true);
     expect(outbox.markProcessing(id, 2100)).toBe(false);
@@ -99,7 +110,7 @@ describe("NotificationOutboxWriter", () => {
     let row = db
       .query<
         OutboxStatusRow,
-        [string]
+        [number]
       >("SELECT status, attempted_at, attempt_count FROM notification_outbox WHERE id=?")
       .get(id);
     expect(row?.status).toBe("processing");
@@ -110,7 +121,7 @@ describe("NotificationOutboxWriter", () => {
     row = db
       .query<
         OutboxStatusRow,
-        [string]
+        [number]
       >("SELECT status, completed_at FROM notification_outbox WHERE id=?")
       .get(id);
     expect(row?.status).toBe("done");
@@ -125,7 +136,11 @@ describe("NotificationOutboxWriter", () => {
       created_at: 1000,
     });
 
-    const id = outbox.listPending(10)[0].id;
+    const pending = outbox.listPending(10);
+    expect(pending.length).toBe(1);
+    const entry = pending[0];
+    assertDefined(entry, "expected entry");
+    const id = entry.id;
     expect(outbox.markProcessing(id, 2000)).toBe(true);
 
     expect(outbox.requeueStaleProcessing(1500)).toBe(0);
@@ -134,7 +149,7 @@ describe("NotificationOutboxWriter", () => {
     const row = db
       .query<
         OutboxStatusRow,
-        [string]
+        [number]
       >("SELECT status, attempted_at FROM notification_outbox WHERE id=?")
       .get(id);
     expect(row?.status).toBe("pending");
@@ -149,14 +164,18 @@ describe("NotificationOutboxWriter", () => {
       created_at: 1000,
     });
 
-    const id = outbox.listPending(10)[0].id;
+    const pending = outbox.listPending(10);
+    expect(pending.length).toBe(1);
+    const entry = pending[0];
+    assertDefined(entry, "expected entry");
+    const id = entry.id;
     expect(outbox.markProcessing(id, 2000)).toBe(true);
     outbox.markRetry(id, "discord_post_failed", 5100);
 
     const row = db
       .query<
         OutboxStatusRow,
-        [string]
+        [number]
       >("SELECT status, error, deliver_after, completed_at FROM notification_outbox WHERE id=?")
       .get(id);
     expect(row?.status).toBe("pending");
@@ -174,11 +193,14 @@ describe("NotificationOutboxWriter", () => {
     });
 
     const pending = outbox.listPending(10);
-    outbox.markFailed(pending[0].id, 2000, "discord_post_failed");
+    expect(pending.length).toBe(1);
+    const entry = pending[0];
+    assertDefined(entry, "expected entry");
+    outbox.markFailed(entry.id, 2000, "discord_post_failed");
 
     const row = db
-      .query<OutboxStatusRow, [string]>("SELECT status, error FROM notification_outbox WHERE id=?")
-      .get(pending[0].id);
+      .query<OutboxStatusRow, [number]>("SELECT status, error FROM notification_outbox WHERE id=?")
+      .get(entry.id);
     expect(row?.status).toBe("failed");
     expect(row?.error).toBe("discord_post_failed");
   });
@@ -199,7 +221,9 @@ describe("NotificationOutboxWriter", () => {
 
     const entries = outbox.listPendingBeforeCutoff(300_000, 10);
     expect(entries.length).toBe(1);
-    expect(entries[0].reference_id).toBe("ref-old");
+    const firstEntry = entries[0];
+    assertDefined(firstEntry, "expected first entry");
+    expect(firstEntry.reference_id).toBe("ref-old");
   });
 
   it("checks existence by kind and reference_id", () => {
@@ -226,7 +250,9 @@ describe("NotificationOutboxWriter", () => {
 
     const pending = outbox.listPending(10);
     expect(pending.length).toBe(1);
-    expect(pending[0].project_id).toBeNull();
-    expect(pending[0].coalesce_key).toBe("_default");
+    const entry = pending[0];
+    assertDefined(entry, "expected entry");
+    expect(entry.project_id).toBeNull();
+    expect(entry.coalesce_key).toBe("_default");
   });
 });
