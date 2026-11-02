@@ -1,3 +1,5 @@
+import type { DispatchReliabilityReport } from "@penumbra/core";
+
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,13 +19,14 @@ const report = {
     event_count: 3,
     response_count: 0,
     worktree_changed: null,
+    dispatch_end_committed: null,
     reconciled: null,
     watchdog_failed: true,
     cancel_requested: false,
     adapter_streaming: null,
   },
   recommended_action: "retry",
-} as const;
+} satisfies DispatchReliabilityReport;
 
 let storageRoot = "";
 
