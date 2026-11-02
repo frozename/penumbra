@@ -61,14 +61,14 @@ export function stripFencedBlocks(text: string): string {
   return visibleLines.join("\n");
 }
 
-const ANY_CHECK_MARKER = /^ {0,3}CHECK_RESULT:[ \t]*(PASS|FAIL|BLOCKED)\b[ \t]*(.*)$/i;
+const ANY_CHECK_MARKER = /^ {0,3}CHECK_RESULT:[ \t]*(PASS|FAIL|BLOCKED)\b(.*)$/i;
 
 export type BlockedContract = { reason: string };
 
 // A worker may quote the BLOCKED instruction itself; only the LAST unfenced
 // CHECK_RESULT marker is the reply's verdict.
 export function detectBlockedContract(
-  sources: Array<string | null | undefined>,
+  sources: (string | null | undefined)[],
 ): BlockedContract | null {
   let lastKind = "";
   let last: BlockedContract = { reason: "" };
