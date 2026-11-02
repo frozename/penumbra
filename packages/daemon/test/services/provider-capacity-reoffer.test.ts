@@ -113,7 +113,9 @@ function claimReofferRows(services: Services, handoff_id: string): { meta_json: 
     .all(handoff_id);
 }
 
-function expectSummary(outcome: ReofferOutcome): ReofferSummary {
+function expectSummary(outcome: ReofferOutcome | undefined): ReofferSummary {
+  expect(outcome).toBeDefined();
+  if (outcome === undefined) throw new Error("expected a re-offer outcome");
   if ("skipped" in outcome) throw new Error(`expected summary, got ${outcome.skipped}`);
   return outcome;
 }
@@ -363,4 +365,97 @@ test("sweep() warns when a capped provider resolves to no seats", () => {
     "provider capacity re-offer: capped provider has no seats",
   );
   expect(emitted).toEqual([]);
+});
+
+// #257: drops the provider cap and puts max_in_flight: 1 on claude-a itself.
+function configureSeatCapOnly(services: Services): void {
+  services.providerQuotas = [];
+  const seat = services.agentchatConfig?.agents?.find((agent) => agent.name === "claude-a");
+  if (!seat) throw new Error("missing test seat claude-a");
+  seat.max_in_flight = 1;
+}
+
+test("a completed dispatch re-offers the oldest waiting row for the same capped seat (#257)", () => {
+  const { services, emitted, log } = setup();
+  configureSeatCapOnly(services);
+  seedApprovedHandoff(services, "seat-running", { to: "claude-a" });
+  seedApprovedHandoff(services, "seat-waiting", { to: "claude-a", tsOffsetMs: 1 });
+  seedApprovedHandoff(services, "uncapped-waiting", { to: "claude-b", tsOffsetMs: 2 });
+  expect(services.handoffWriter.claimDispatch("seat-running", "W-A")).toBe(true);
+  emitted.length = 0;
+  const reactor = createProviderCapacityReoffer({ services });
+  reactor.start();
+
+  expect(services.handoffWriter.markCompleted("seat-running", { expected_worker_id: "W-A" })).toBe(
+    true,
+  );
+
+  expect(emitted.map((row) => row.handoff_id)).toEqual(["seat-waiting"]);
+  const rows = claimReofferRows(services, "seat-waiting");
+  expect(rows).toHaveLength(1);
+  expect(JSON.parse(rows[0]?.meta_json ?? "{}")).toMatchObject({
+    cause: "left_dispatched",
+    freed_by: "seat-running",
+    to_status: "completed",
+    seat: "claude-a",
+  });
+  expect(log.info).toHaveBeenCalledWith(
+    expect.objectContaining({
+      seat: "claude-a",
+      cause: "left_dispatched",
+      max_in_flight: 1,
+      in_flight_count: 0,
+      free: 1,
+      waiting: 1,
+      reoffered: ["seat-waiting"],
+    }),
+    "provider capacity re-offer",
+  );
+});
+
+test("sweep() re-offers waiting rows for capped seats and skips seats still at cap (#257)", () => {
+  const { services, emitted } = setup();
+  configureSeatCapOnly(services);
+  seedApprovedHandoff(services, "seat-waiting", { to: "claude-a" });
+  seedApprovedHandoff(services, "uncapped-waiting", { to: "claude-b", tsOffsetMs: 1 });
+  emitted.length = 0;
+
+  const outcomes = createProviderCapacityReoffer({ services }).sweep();
+
+  expect(outcomes).toHaveLength(1);
+  expect(outcomes[0]).toMatchObject({
+    seat: "claude-a",
+    cause: "sweep",
+    reoffered: ["seat-waiting"],
+  });
+  expect(emitted.map((row) => row.handoff_id)).toEqual(["seat-waiting"]);
+  expect(
+    JSON.parse(claimReofferRows(services, "seat-waiting")[0]?.meta_json ?? "{}"),
+  ).toMatchObject({ cause: "sweep", seat: "claude-a" });
+
+  // claude-a still holds one dispatched row → the next sweep reports still_at_cap.
+  expect(services.handoffWriter.claimDispatch("seat-waiting", "W-A")).toBe(true);
+  const atCap = createProviderCapacityReoffer({ services }).sweep();
+  expect(atCap).toHaveLength(1);
+  expect(atCap[0]).toMatchObject({ skipped: "still_at_cap", seat: "claude-a" });
+});
+
+test("onLeftDispatched does not re-emit a row the provider pass already re-offered for the same seat (#257)", () => {
+  const { services, emitted } = setup();
+  const seat = services.agentchatConfig?.agents?.find((agent) => agent.name === "claude-a");
+  if (!seat) throw new Error("missing test seat claude-a");
+  seat.max_in_flight = 1;
+  seedApprovedHandoff(services, "running", { to: "claude-a" });
+  seedApprovedHandoff(services, "seat-waiting", { to: "claude-a", tsOffsetMs: 1 });
+  expect(services.handoffWriter.claimDispatch("running", "W-A")).toBe(true);
+  emitted.length = 0;
+  const reactor = createProviderCapacityReoffer({ services });
+  reactor.start();
+
+  // Provider cap is 1 and the seat cap is 1 — one completion frees both views of
+  // the same slot, but the waiting row must be emitted exactly once.
+  expect(services.handoffWriter.markCompleted("running", { expected_worker_id: "W-A" })).toBe(true);
+
+  expect(emitted.map((row) => row.handoff_id)).toEqual(["seat-waiting"]);
+  expect(claimReofferRows(services, "seat-waiting")).toHaveLength(1);
 });

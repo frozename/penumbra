@@ -371,7 +371,7 @@ export type DaemonServices = CoreServices & {
   // reload doesn't touch the operator's real snapshot file.
   aaSnapshotPath?: string;
   agentchatConfig?: {
-    agents?: { name: string; roles?: string[]; [key: string]: unknown };
+    agents?: { name: string; roles?: string[]; [key: string]: unknown }[];
     providers?: { name: string; model: string; [key: string]: unknown }[];
     [key: string]: unknown;
   };

@@ -12,12 +12,17 @@ import { describe, expect, mock, test } from "bun:test";
 import {
   countProviderInFlight,
   listCappedProviders,
+  listCappedSeats,
   listProviderQuotaStatus,
+  listSeatQuotaStatus,
   type ProviderConcurrencyDecision,
   recordProviderCapRefusal,
+  recordSeatCapRefusal,
   releaseSweptDrainHolds,
   resolveProviderConcurrencyDecision,
   resolveProviderSeatNames,
+  resolveSeatConcurrencyDecision,
+  type SeatConcurrencyDecision,
   STALE_SWEEP_DRAIN_MAX_HOLD_MS,
   sweeperDrainingCountSql,
   SWEPT_DRAIN_RELEASE_CANDIDATES_SQL,
@@ -185,6 +190,153 @@ test("recordProviderCapRefusal logs info every time and records claim.provider_c
     >("SELECT COUNT(*) AS n FROM dispatch_events WHERE handoff_id='h' AND kind='claim.provider_cap_refused'")
     .get();
   expect(row?.n).toBe(2);
+});
+
+// #257: claude-a carries a per-seat cap while claude-b stays uncapped; the
+// provider itself has no cap unless the test opts in via providerCap.
+function configureSeatCap(services: Services, seatCap: number, providerCap?: number): void {
+  services.agentchatConfig = {
+    agents: [
+      {
+        name: "claude-a",
+        roles: [],
+        adapter: "stdio-acp",
+        pricing_mode: "subscription",
+        subscription_provider: "anthropic",
+        max_in_flight: seatCap,
+      },
+      {
+        name: "claude-b",
+        roles: [],
+        adapter: "stdio-acp",
+        pricing_mode: "subscription",
+        subscription_provider: "anthropic",
+      },
+    ],
+  };
+  services.providerQuotas =
+    providerCap === undefined ? [] : [{ provider: "anthropic", max_in_flight: providerCap }];
+}
+
+test("resolveSeatConcurrencyDecision returns null without a seat cap and counts only the seat's own in-flight work (#257)", () => {
+  const services = tempServices();
+  expect(resolveSeatConcurrencyDecision(services, { to_agent: "claude-a" })).toBeNull();
+
+  configureSeatCap(services, 1);
+  expect(resolveSeatConcurrencyDecision(services, { to_agent: "claude-b" })).toBeNull();
+
+  seedApprovedHandoff(services, "h-seat-1", { to: "claude-a" });
+  seedApprovedHandoff(services, "h-seat-2", { to: "claude-b", tsOffsetMs: 1 });
+  expect(services.handoffWriter.claimDispatch("h-seat-1", "W-A")).toBe(true);
+  expect(services.handoffWriter.claimDispatch("h-seat-2", "W-B")).toBe(true);
+
+  expect(resolveSeatConcurrencyDecision(services, { to_agent: "claude-a" })).toEqual({
+    seat: "claude-a",
+    provider: "anthropic",
+    max_in_flight: 1,
+    in_flight_count: 1,
+  });
+});
+
+test("listCappedSeats and listSeatQuotaStatus report per-seat caps with live in-flight counts (#257)", () => {
+  const services = tempServices();
+  configureSeatCap(services, 1);
+
+  expect(listCappedSeats(services)).toEqual([
+    { seat: "claude-a", provider: "anthropic", max_in_flight: 1 },
+  ]);
+  expect(listCappedSeats({ agentchatConfig: undefined })).toEqual([]);
+
+  seedApprovedHandoff(services, "h-seat-1", { to: "claude-a" });
+  expect(services.handoffWriter.claimDispatch("h-seat-1", "W-A")).toBe(true);
+
+  expect(listSeatQuotaStatus(services)).toEqual([
+    { seat: "claude-a", provider: "anthropic", max_in_flight: 1, in_flight: 1 },
+  ]);
+});
+
+test("recordSeatCapRefusal logs every time and records claim.seat_cap_refused once per handoff on precheck but every time on cas_loss (#257)", () => {
+  const services = tempServices();
+  const log = { info: mock(), warn: mock(), debug: mock(), error: mock() };
+  services.log = log as unknown as Services["log"];
+  const decision: SeatConcurrencyDecision = {
+    seat: "claude-a",
+    provider: "anthropic",
+    max_in_flight: 1,
+    in_flight_count: 1,
+  };
+
+  recordSeatCapRefusal(services, {
+    handoff_id: "h",
+    worker_id: "W-B",
+    decision,
+    path: "precheck",
+  });
+  recordSeatCapRefusal(services, {
+    handoff_id: "h",
+    worker_id: "W-B",
+    decision,
+    path: "precheck",
+  });
+  recordSeatCapRefusal(services, {
+    handoff_id: "h",
+    worker_id: "W-B",
+    decision,
+    path: "cas_loss",
+  });
+
+  expect(log.info).toHaveBeenCalledTimes(3);
+  expect(log.info).toHaveBeenNthCalledWith(
+    1,
+    expect.objectContaining({
+      handoff_id: "h",
+      worker_id: "W-B",
+      seat: "claude-a",
+      provider: "anthropic",
+      max_in_flight: 1,
+      in_flight_count: 1,
+      path: "precheck",
+    }),
+    "claim refused: seat in-flight cap",
+  );
+  const rows = services.db
+    .query<
+      { n: number },
+      []
+    >("SELECT COUNT(*) AS n FROM dispatch_events WHERE handoff_id='h' AND kind='claim.seat_cap_refused'")
+    .get();
+  expect(rows?.n).toBe(2);
+});
+
+test("claimDispatch with maxSeatInFlight holds a second claim on the same seat while a sibling seat still claims (#257)", () => {
+  const services = tempServices();
+  configureSeatCap(services, 1);
+
+  seedApprovedHandoff(services, "h-seat-1", { to: "claude-a" });
+  expect(services.handoffWriter.claimDispatch("h-seat-1", "W-A", { maxSeatInFlight: 1 })).toBe(
+    true,
+  );
+
+  seedApprovedHandoff(services, "h-seat-2", { to: "claude-a", tsOffsetMs: 1 });
+  expect(services.handoffWriter.claimDispatch("h-seat-2", "W-B", { maxSeatInFlight: 1 })).toBe(
+    false,
+  );
+
+  seedApprovedHandoff(services, "h-seat-3", { to: "claude-b", tsOffsetMs: 2 });
+  expect(services.handoffWriter.claimDispatch("h-seat-3", "W-C", { maxSeatInFlight: 1 })).toBe(
+    true,
+  );
+
+  // A seat cap composes with the provider cap inside the same CAS: both must pass.
+  services.handoffWriter.markCompleted("h-seat-1", { expected_worker_id: "W-A" });
+  seedApprovedHandoff(services, "h-seat-4", { to: "claude-a", tsOffsetMs: 3 });
+  expect(
+    services.handoffWriter.claimDispatch("h-seat-4", "W-D", {
+      providerSeatNames: ["claude-a", "claude-b"],
+      maxProviderInFlight: 1,
+      maxSeatInFlight: 1,
+    }),
+  ).toBe(false);
 });
 
 function seedApprovedHandoff(

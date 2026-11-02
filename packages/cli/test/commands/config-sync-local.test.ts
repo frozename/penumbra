@@ -43,21 +43,18 @@ describe("penumbra config sync-local", () => {
     const result = await runConfigSyncLocal({
       configDir: dir,
       dryRun: true,
-      inventory: (): {
-        status: "ok";
-        messages: string[];
-        models: never[];
-      } => ({
-        status: "ok",
-        messages: [],
-        nodes: [{ name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true }],
-        models: [
-          {
-            id: "granite-4.1-3b-Q8_0.gguf",
-            node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
-          },
-        ],
-      }),
+      inventory: (): Promise<LlamactlInventory> =>
+        Promise.resolve({
+          status: "ok",
+          messages: [],
+          nodes: [{ name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true }],
+          models: [
+            {
+              id: "granite-4.1-3b-Q8_0.gguf",
+              node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
+            },
+          ],
+        }),
     });
 
     expect(result.exitCode).toBe(0);
@@ -84,7 +81,7 @@ describe("penumbra config sync-local", () => {
             },
           ],
         }),
-      reloadConfig: (): { ok: boolean } => ({ ok: true }),
+      reloadConfig: (): Promise<unknown> => Promise.resolve({ ok: true }),
     });
 
     const seat = readAgents(dir).agents.find(
@@ -118,20 +115,21 @@ describe("penumbra config sync-local", () => {
     const result = await runConfigSyncLocal({
       configDir: dir,
       apply: true,
-      inventory: (): LlamactlInventory => ({
-        status: "ok",
-        messages: [],
-        nodes: [{ name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true }],
-        models: [
-          {
-            id: "granite-4.1-3b-Q8_0.gguf",
-            node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
-          },
-        ],
-      }),
+      inventory: (): Promise<LlamactlInventory> =>
+        Promise.resolve({
+          status: "ok",
+          messages: [],
+          nodes: [{ name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true }],
+          models: [
+            {
+              id: "granite-4.1-3b-Q8_0.gguf",
+              node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
+            },
+          ],
+        }),
       reloadConfig: () => {
         reloads.push("reload");
-        return { ok: true };
+        return Promise.resolve({ ok: true });
       },
     });
 
@@ -159,18 +157,19 @@ describe("penumbra config sync-local", () => {
     await runConfigSyncLocal({
       configDir: dir,
       apply: true,
-      inventory: (): LlamactlInventory => ({
-        status: "ok",
-        messages: [],
-        nodes: [],
-        models: [
-          {
-            id: "fresh-model.gguf",
-            node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
-          },
-        ],
-      }),
-      reloadConfig: (): { ok: boolean } => ({ ok: true }),
+      inventory: (): Promise<LlamactlInventory> =>
+        Promise.resolve({
+          status: "ok",
+          messages: [],
+          nodes: [],
+          models: [
+            {
+              id: "fresh-model.gguf",
+              node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
+            },
+          ],
+        }),
+      reloadConfig: (): Promise<unknown> => Promise.resolve({ ok: true }),
     });
 
     const seat = readAgents(dir).agents.find((agent) => agent.name === "local-fresh-model-http");
@@ -209,18 +208,19 @@ describe("penumbra config sync-local", () => {
     const result = await runConfigSyncLocal({
       configDir: dir,
       apply: true,
-      inventory: (): LlamactlInventory => ({
-        status: "ok",
-        messages: [],
-        nodes: [],
-        models: [
-          {
-            id: "new-model.gguf",
-            node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
-          },
-        ],
-      }),
-      reloadConfig: (): { ok: boolean } => ({ ok: true }),
+      inventory: (): Promise<LlamactlInventory> =>
+        Promise.resolve({
+          status: "ok",
+          messages: [],
+          nodes: [],
+          models: [
+            {
+              id: "new-model.gguf",
+              node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
+            },
+          ],
+        }),
+      reloadConfig: (): Promise<unknown> => Promise.resolve({ ok: true }),
     });
 
     expect(result.exitCode).toBe(1);
@@ -249,18 +249,19 @@ describe("penumbra config sync-local", () => {
     await runConfigSyncLocal({
       configDir: dir,
       apply: true,
-      inventory: (): LlamactlInventory => ({
-        status: "ok",
-        messages: [],
-        nodes: [],
-        models: [
-          {
-            id: "new-model.gguf",
-            node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
-          },
-        ],
-      }),
-      reloadConfig: (): { ok: boolean } => ({ ok: true }),
+      inventory: (): Promise<LlamactlInventory> =>
+        Promise.resolve({
+          status: "ok",
+          messages: [],
+          nodes: [],
+          models: [
+            {
+              id: "new-model.gguf",
+              node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
+            },
+          ],
+        }),
+      reloadConfig: (): Promise<unknown> => Promise.resolve({ ok: true }),
     });
 
     expect(
@@ -301,22 +302,23 @@ describe("penumbra config sync-local", () => {
     await runConfigSyncLocal({
       configDir: dir,
       apply: true,
-      inventory: (): LlamactlInventory => ({
-        status: "ok",
-        messages: [],
-        nodes: [{ name: "llm-node", endpoint: "https://llm-node.local:7945", healthy: true }],
-        models: [
-          {
-            id: "LFM2.5-8B-A1B-MoQ/MoQ-4.25.gguf",
-            node: { name: "llm-node", endpoint: "https://llm-node.local:7945", healthy: true },
-          },
-          {
-            id: "new-model.gguf",
-            node: { name: "llm-node", endpoint: "https://llm-node.local:7945", healthy: true },
-          },
-        ],
-      }),
-      reloadConfig: (): { ok: boolean } => ({ ok: true }),
+      inventory: (): Promise<LlamactlInventory> =>
+        Promise.resolve({
+          status: "ok",
+          messages: [],
+          nodes: [{ name: "llm-node", endpoint: "https://llm-node.local:7945", healthy: true }],
+          models: [
+            {
+              id: "LFM2.5-8B-A1B-MoQ/MoQ-4.25.gguf",
+              node: { name: "llm-node", endpoint: "https://llm-node.local:7945", healthy: true },
+            },
+            {
+              id: "new-model.gguf",
+              node: { name: "llm-node", endpoint: "https://llm-node.local:7945", healthy: true },
+            },
+          ],
+        }),
+      reloadConfig: (): Promise<unknown> => Promise.resolve({ ok: true }),
     });
 
     const agents = readAgents(dir).agents;
@@ -339,18 +341,19 @@ describe("penumbra config sync-local", () => {
     const opts = {
       configDir: dir,
       apply: true,
-      inventory: (): LlamactlInventory => ({
-        status: "ok" as const,
-        messages: [],
-        nodes: [],
-        models: [
-          {
-            id: "new-model.gguf",
-            node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
-          },
-        ],
-      }),
-      reloadConfig: (): { ok: boolean } => ({ ok: true }),
+      inventory: (): Promise<LlamactlInventory> =>
+        Promise.resolve({
+          status: "ok" as const,
+          messages: [],
+          nodes: [],
+          models: [
+            {
+              id: "new-model.gguf",
+              node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
+            },
+          ],
+        }),
+      reloadConfig: (): Promise<unknown> => Promise.resolve({ ok: true }),
     };
 
     await runConfigSyncLocal(opts);
@@ -368,12 +371,13 @@ describe("penumbra config sync-local", () => {
     const result = await runConfigSyncLocal({
       configDir: dir,
       apply: true,
-      inventory: () => ({
-        status: "unavailable",
-        messages: ["llamactl unavailable"],
-        nodes: [],
-        models: [],
-      }),
+      inventory: (): Promise<LlamactlInventory> =>
+        Promise.resolve({
+          status: "unavailable",
+          messages: ["llamactl unavailable"],
+          nodes: [],
+          models: [],
+        }),
     });
 
     expect(result.exitCode).toBe(0);
@@ -389,12 +393,13 @@ describe("penumbra config sync-local", () => {
     const result = await runConfigSyncLocal({
       configDir: dir,
       apply: true,
-      inventory: () => ({
-        status: "unavailable",
-        messages: [],
-        nodes: [{ name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true }],
-        models: [],
-      }),
+      inventory: (): Promise<LlamactlInventory> =>
+        Promise.resolve({
+          status: "unavailable",
+          messages: [],
+          nodes: [{ name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true }],
+          models: [],
+        }),
     });
 
     expect(result.exitCode).toBe(0);
@@ -417,18 +422,19 @@ describe("penumbra config sync-local", () => {
     const result = await runConfigSyncLocal({
       configDir: dir,
       apply: true,
-      inventory: () => ({
-        status: "partial",
-        messages: ["served models unavailable: node-b timed out"],
-        nodes: [{ name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true }],
-        models: [
-          {
-            id: "new-model.gguf",
-            node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
-          },
-        ],
-      }),
-      reloadConfig: () => ({ ok: true }),
+      inventory: (): Promise<LlamactlInventory> =>
+        Promise.resolve({
+          status: "partial",
+          messages: ["served models unavailable: node-b timed out"],
+          nodes: [{ name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true }],
+          models: [
+            {
+              id: "new-model.gguf",
+              node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
+            },
+          ],
+        }),
+      reloadConfig: () => Promise.resolve({ ok: true }),
     });
 
     expect(result.exitCode).toBe(0);
@@ -448,17 +454,18 @@ describe("penumbra config sync-local", () => {
     const result = await runConfigSyncLocal({
       configDir: dir,
       apply: true,
-      inventory: () => ({
-        status: "ok",
-        messages: [],
-        nodes: [],
-        models: [
-          {
-            id: "new-model.gguf",
-            node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
-          },
-        ],
-      }),
+      inventory: (): Promise<LlamactlInventory> =>
+        Promise.resolve({
+          status: "ok",
+          messages: [],
+          nodes: [],
+          models: [
+            {
+              id: "new-model.gguf",
+              node: { name: "mac-mini", endpoint: "https://mac-mini.local:7945", healthy: true },
+            },
+          ],
+        }),
       validateAgentsConfig: () => {
         throw new Error("schema fail");
       },
