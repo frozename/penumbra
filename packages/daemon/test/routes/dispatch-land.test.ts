@@ -331,6 +331,7 @@ function writeVerdictEvent(
     cost_usd: null,
     latency_ms: null,
     request_id: null,
+    origin: null,
     payload_json: {
       handoff_id: input.handoffId,
       conversation_id: input.conversationId,
@@ -773,7 +774,8 @@ describe("dispatchLandRoute", () => {
     const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
-    expect(body.result.commit_sha).toBe("post-merge-main");
+    expect(body.result).not.toBeNull();
+    expect(body.result?.commit_sha).toBe("post-merge-main");
   });
 
   test("squash mode lands with curated message, emits event, deletes branch, and closes open PR", async () => {
@@ -835,11 +837,12 @@ describe("dispatchLandRoute", () => {
     const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
-    expect(body.result.ok).toBe(true);
-    expect(body.result.commit_sha).toBe("new-main");
-    expect(body.result.message_subject).toBe("feat(core): curated subject");
-    expect(body.result.branch_deleted).toBe(true);
-    expect(body.result.pr_closed).toBe(true);
+    expect(body.result).not.toBeNull();
+    expect(body.result?.ok).toBe(true);
+    expect(body.result?.commit_sha).toBe("new-main");
+    expect(body.result?.message_subject).toBe("feat(core): curated subject");
+    expect(body.result?.branch_deleted).toBe(true);
+    expect(body.result?.pr_closed).toBe(true);
 
     expect(gitCalls.map((c) => c.args.join(" "))).toEqual([
       "rev-parse main",
@@ -933,7 +936,8 @@ describe("dispatchLandRoute", () => {
     const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
-    expect(body.result.ok).toBe(true);
+    expect(body.result).not.toBeNull();
+    expect(body.result?.ok).toBe(true);
 
     const row = svc.db
       .query<
@@ -1214,7 +1218,7 @@ describe("dispatchLandRoute", () => {
       ok: true,
       commit_sha: realCommit,
     });
-    expect(terminal.result.already_landed).toBeUndefined();
+    expect(terminal.result?.already_landed).toBeUndefined();
   });
 
   test("ff mode runs ff-only merge and leaves branch when delete_branch=false", async () => {
@@ -1269,9 +1273,10 @@ describe("dispatchLandRoute", () => {
     const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
-    expect(body.result.commit_sha).toBe("ff-main");
-    expect(body.result.branch_deleted).toBe(false);
-    expect(body.result.pr_closed).toBe(false);
+    expect(body.result).not.toBeNull();
+    expect(body.result?.commit_sha).toBe("ff-main");
+    expect(body.result?.branch_deleted).toBe(false);
+    expect(body.result?.pr_closed).toBe(false);
     expect(gitCalls).toEqual([
       "rev-parse main",
       "status --porcelain --untracked-files=no",
@@ -1323,8 +1328,9 @@ describe("dispatchLandRoute", () => {
     const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("failed");
-    expect(body.error.code).toBe("dirty_before_land");
-    expect(body.error.dirty_status).toBe("M  packages/core/src/index.ts");
+    expect(body.result).toBeNull();
+    expect(body.error?.code).toBe("dirty_before_land");
+    expect(body.error?.dirty_status).toBe("M  packages/core/src/index.ts");
     expect(gitCalls).toEqual(["rev-parse main", "status --porcelain --untracked-files=no"]);
   });
 
@@ -1393,7 +1399,8 @@ describe("dispatchLandRoute", () => {
     const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
-    expect(body.result.commit_sha).toBe(agentTip);
+    expect(body.result).not.toBeNull();
+    expect(body.result?.commit_sha).toBe(agentTip);
     expect(expectGitOk(repoDir, ["rev-parse", "main"])).toBe(agentTip);
     expect(expectGitOk(repoDir, ["rev-parse", "other"])).toBe(baseMain);
     expect(gitCalls).toEqual([
@@ -1775,6 +1782,7 @@ describe("dispatchLandRoute", () => {
       cost_usd: null,
       latency_ms: null,
       request_id: null,
+      origin: null,
       payload_json: { response: "done" },
       payload_summary: "done",
     });
@@ -1872,6 +1880,7 @@ describe("dispatchLandRoute", () => {
       cost_usd: null,
       latency_ms: null,
       request_id: null,
+      origin: null,
       payload_json: { response: "done" },
       payload_summary: "done",
     });
@@ -1917,7 +1926,8 @@ describe("dispatchLandRoute", () => {
     const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
-    expect(body.result.commit_sha).toBe("new-main");
+    expect(body.result).not.toBeNull();
+    expect(body.result?.commit_sha).toBe("new-main");
   });
 
   test("returns 409 verdict_unverified when environment-error verdict lacks audit accept", async () => {
@@ -2037,6 +2047,7 @@ describe("dispatchLandRoute", () => {
       cost_usd: null,
       latency_ms: null,
       request_id: null,
+      origin: null,
       payload_json: { response: "done" },
       payload_summary: "done",
     });
@@ -2082,7 +2093,8 @@ describe("dispatchLandRoute", () => {
     const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
-    expect(body.result.commit_sha).toBe("new-main");
+    expect(body.result).not.toBeNull();
+    expect(body.result?.commit_sha).toBe("new-main");
   });
 
   test("rejects worker-principal callers with 403 principal_forbidden", async () => {
@@ -2176,8 +2188,9 @@ describe("dispatchLandRoute", () => {
     const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("failed");
-    expect(body.error.code).toBe("merge_conflict");
-    expect(body.error.files).toEqual(["a.txt", "b.ts"]);
+    expect(body.result).toBeNull();
+    expect(body.error?.code).toBe("merge_conflict");
+    expect(body.error?.files).toEqual(["a.txt", "b.ts"]);
     expect(dirtyIndex).toBe(false);
     expect(gitCalls.slice(0, 7)).toEqual([
       "rev-parse main",
@@ -2206,7 +2219,8 @@ describe("dispatchLandRoute", () => {
     const retryAccepted = await readJsonAs<AcceptedBody>(retry);
     const retryBody = await waitForLandTask(svc, retryAccepted.task_id);
     expect(retryBody.status).toBe("done");
-    expect(retryBody.result.commit_sha).toBe("main-after-second-land");
+    expect(retryBody.result).not.toBeNull();
+    expect(retryBody.result?.commit_sha).toBe("main-after-second-land");
     expect(gitCalls).not.toContain("merge --abort");
   });
 
@@ -2252,8 +2266,9 @@ describe("dispatchLandRoute", () => {
     const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("failed");
-    expect(body.error.code).toBe("dirty_before_land");
-    expect(body.error.dirty_status).toBe("A  fileA");
+    expect(body.result).toBeNull();
+    expect(body.error?.code).toBe("dirty_before_land");
+    expect(body.error?.dirty_status).toBe("A  fileA");
     expect(gitCalls).toEqual(["rev-parse main", "status --porcelain --untracked-files=no"]);
   });
 
@@ -2311,10 +2326,11 @@ describe("dispatchLandRoute", () => {
     const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("failed");
-    expect(body.error.code).toBe("merge_conflict_cleanup_failed");
-    expect(body.error.files).toEqual(["packages/core/src/index.ts"]);
-    expect(body.error.cleanup_stderr).toContain("not uptodate");
-    expect(body.error.manual_repair).toBe(
+    expect(body.result).toBeNull();
+    expect(body.error?.code).toBe("merge_conflict_cleanup_failed");
+    expect(body.error?.files).toEqual(["packages/core/src/index.ts"]);
+    expect(body.error?.cleanup_stderr).toContain("not uptodate");
+    expect(body.error?.manual_repair).toBe(
       "run git reset --merge in the target repo before retrying",
     );
     expect(gitCalls).toEqual([
@@ -2370,8 +2386,9 @@ describe("dispatchLandRoute", () => {
     const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("failed");
-    expect(body.error.code).toBe("git_failed");
-    expect(body.error.step).toBe("merge_squash");
+    expect(body.result).toBeNull();
+    expect(body.error?.code).toBe("git_failed");
+    expect(body.error?.step).toBe("merge_squash");
     expect(gitCalls).toContain("reset --merge");
     expect(gitCalls).toContain("status --porcelain --untracked-files=no");
   });
@@ -2449,9 +2466,10 @@ describe("dispatchLandRoute", () => {
     const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("failed");
-    expect(body.error.code).toBe("commit_hook_failed");
-    expect(body.error.step).toBe("commit_squash");
-    expect(body.error.stderr).toContain("pre-commit hook failed");
+    expect(body.result).toBeNull();
+    expect(body.error?.code).toBe("commit_hook_failed");
+    expect(body.error?.step).toBe("commit_squash");
+    expect(body.error?.stderr).toContain("pre-commit hook failed");
     expect(stagedSquashResidue).toBe(false);
     expect(gitCalls).toEqual([
       "rev-parse main",
@@ -2487,6 +2505,7 @@ describe("dispatchLandRoute", () => {
       cost_usd: null,
       latency_ms: null,
       request_id: null,
+      origin: null,
       payload_json: {
         handoff_id: "h-4b",
         conversation_id: "c-4b",
@@ -2594,8 +2613,9 @@ describe("dispatchLandRoute", () => {
     const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
-    expect(body.result.worktree_torn_down).toBe(true);
-    expect(body.result.branch_deleted).toBe(true);
+    expect(body.result).not.toBeNull();
+    expect(body.result?.worktree_torn_down).toBe(true);
+    expect(body.result?.branch_deleted).toBe(true);
     expect(teardownCalls).toEqual([
       { handoffId: "h-wt-1", force: false, projectId: undefined, deleteBranch: false },
     ]);
@@ -2791,8 +2811,9 @@ describe("dispatchLandRoute", () => {
     const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
-    expect(body.result.ok).toBe(true);
-    expect(body.result.worktree_torn_down).toBe(false);
+    expect(body.result).not.toBeNull();
+    expect(body.result?.ok).toBe(true);
+    expect(body.result?.worktree_torn_down).toBe(false);
     expect(warnCalls.some((args) => String(args[1] ?? args[0]).includes("teardown failed"))).toBe(
       true,
     );
@@ -2847,9 +2868,10 @@ describe("dispatchLandRoute", () => {
     const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
-    expect(body.result.ok).toBe(true);
-    expect(body.result.worktree_torn_down).toBe(false);
-    expect(body.result.branch_deleted).toBe(false);
+    expect(body.result).not.toBeNull();
+    expect(body.result?.ok).toBe(true);
+    expect(body.result?.worktree_torn_down).toBe(false);
+    expect(body.result?.branch_deleted).toBe(false);
   });
 
   test("is silent about PR close when branch has no open PR", async () => {
@@ -2896,7 +2918,8 @@ describe("dispatchLandRoute", () => {
     const accepted = await readJsonAs<AcceptedBody>(res);
     const body = await waitForLandTask(svc, accepted.task_id);
     expect(body.status).toBe("done");
-    expect(body.result.pr_closed).toBe(false);
+    expect(body.result).not.toBeNull();
+    expect(body.result?.pr_closed).toBe(false);
     expect(closed).toEqual([]);
   });
 
