@@ -247,7 +247,10 @@ test("existing stores gain the claimed partial index on re-apply", () => {
   db.run(`DROP INDEX IF EXISTS ${CLAIMED_INDEX}`);
   applySchema(db, { embeddingDim: 384 });
   const name = db
-    .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?")
+    .query<
+      { name: string },
+      [string]
+    >("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?")
     .get(CLAIMED_INDEX)?.name;
   expect(name).toBe(CLAIMED_INDEX);
 });

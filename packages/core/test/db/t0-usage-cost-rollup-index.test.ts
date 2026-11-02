@@ -337,7 +337,10 @@ test("the index builds over malformed payloads on re-apply", () => {
   });
   applySchema(db, { embeddingDim: 384 });
   const name = db
-    .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?")
+    .query<
+      { name: string },
+      [string]
+    >("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?")
     .get(ROLLUP_INDEX)?.name;
   expect(name).toBe(ROLLUP_INDEX);
 });
@@ -345,7 +348,10 @@ test("the index builds over malformed payloads on re-apply", () => {
 test("every guarded expression in the shipped query appears verbatim in the index", async () => {
   const db = freshDb();
   const indexSql = db
-    .query<{ sql: string }, []>("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?")
+    .query<
+      { sql: string },
+      [string]
+    >("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?")
     .get(ROLLUP_INDEX)?.sql;
   expect(indexSql).toBeDefined();
   const normalizedIndex = indexSql!.replaceAll(/\s+/g, " ");
