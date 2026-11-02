@@ -17,7 +17,13 @@ import { z } from "zod";
 import { DaemonClient } from "@src/daemon-client.js";
 import { laneCloseHandler, LaneCloseInputShape } from "@src/tools/lane-close.js";
 
-import { bodyAsString, type FetchHarness, installFetchMock, requestUrl } from "../helpers.js";
+import {
+  asGlobalFetch,
+  bodyAsString,
+  type FetchHarness,
+  installFetchMock,
+  requestUrl,
+} from "../helpers.js";
 
 interface MockToolResult {
   content: { type: string; text: string }[];
@@ -307,7 +313,7 @@ test("lane_close forwards metadata to daemon POST body", async () => {
 test("lane_close round-trips through the live daemon contract and authorizes memory verify", async () => {
   const live = makeLiveDaemon();
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = live.fetchImpl;
+  globalThis.fetch = asGlobalFetch(live.fetchImpl);
 
   try {
     const opened = await live.fetchImpl("http://daemon/lanes/open", {
@@ -621,10 +627,10 @@ test("lane_close round-trips a reviewer-less passed close through the live daemo
   // authorize call is asserted, not assumed (the test's own setup calls go
   // through live.fetchImpl directly and bypass this recorder).
   const shimPaths: string[] = [];
-  globalThis.fetch = async (input, init): Promise<Response> => {
+  globalThis.fetch = asGlobalFetch(async (input, init): Promise<Response> => {
     shimPaths.push(new URL(requestUrl(input)).pathname);
     return await live.fetchImpl(input, init);
-  };
+  });
 
   try {
     const opened = await live.fetchImpl("http://daemon/lanes/open", {
@@ -676,13 +682,13 @@ test("swept lane supersede passes through MCP and authorizes lane_close memory b
   const live = makeLiveDaemon();
   const originalFetch = globalThis.fetch;
   const calls: { path: string; body: unknown }[] = [];
-  globalThis.fetch = (input, init): Promise<Response> => {
+  globalThis.fetch = asGlobalFetch((input, init): Promise<Response> => {
     calls.push({
       path: new URL(requestUrl(input)).pathname,
       body: JSON.parse(bodyAsString(init?.body)),
     });
     return live.fetchImpl(input, init);
-  };
+  });
   try {
     const db = live.services.db;
     for (const [id, agent] of [
