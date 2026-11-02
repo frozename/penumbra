@@ -1,4 +1,4 @@
-import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import { buildServices, loadSqliteVec, migrate } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { createDaemonFetchHandler } from "@penumbra/daemon";
 import { Database } from "bun:sqlite";
@@ -33,8 +33,21 @@ afterEach(() => {
 });
 
 interface MaestroDaemonHandle {
-  fetch: (path: string | URL, init?: RequestInit) => Promise<Response>;
+  fetch: typeof fetch;
   stop: () => void;
+}
+
+function inputToString(input: string | URL | Request): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  const url = new URL(input.url);
+  return `${url.pathname}${url.search}`;
+}
+
+function stubFetch(stub: (path: string, init?: RequestInit) => Promise<Response>): typeof fetch {
+  const fn = async (input: string | URL | Request, init?: RequestInit): Promise<Response> =>
+    await stub(inputToString(input), init);
+  return fn as typeof fetch;
 }
 function setupDaemon(): MaestroDaemonHandle {
   const db = new Database(":memory:");
@@ -50,19 +63,17 @@ function setupDaemon(): MaestroDaemonHandle {
     embedder: new TestEmbedder({ dim: 384 }),
     clock: () => new Date("2026-05-05T12:00:00.000Z"),
   });
-  (services as Services & { agentchatConfig?: unknown }).agentchatConfig = {
+  services.agentchatConfig = {
     agents: [
       { name: "stub-maestro", adapter: "noop", options: {}, maestro_capable: true, roles: [] },
     ],
-    default_roles: {},
   };
   const handler = createDaemonFetchHandler({ services, token: "tok" });
   return {
-    fetch: (path, init = {}): Promise<Response> => {
-      const pathStr = typeof path === "string" ? path : path.toString();
+    fetch: stubFetch(async (path, init = {}) => {
       const existingHeaders = (init.headers ?? {}) as Record<string, string>;
-      return handler(
-        new Request(`http://x${pathStr}`, {
+      return await handler(
+        new Request(`http://x${path}`, {
           ...init,
           headers: {
             authorization: "Bearer tok",
@@ -70,7 +81,7 @@ function setupDaemon(): MaestroDaemonHandle {
           },
         }),
       );
-    },
+    }),
     stop: (): void => {
       try {
         services.supervisor.stopAll();
@@ -84,10 +95,6 @@ function setupDaemon(): MaestroDaemonHandle {
       }
     },
   };
-}
-
-function pathToString(path: string | URL): string {
-  return typeof path === "string" ? path : path.toString();
 }
 
 function bodyToString(body: unknown): string {
@@ -153,8 +160,8 @@ test("task show and maestro list render maestro session information", async () =
       id: taskId,
       json: false,
       storageRoot: root,
-      fetch: async (path, init) => {
-        if (pathToString(path).startsWith("/maestro/sessions/")) {
+      fetch: stubFetch(async (path, init) => {
+        if (path.startsWith("/maestro/sessions/")) {
           return Response.json({
             task_id: taskId,
             agent_id: "stub-maestro",
@@ -172,7 +179,7 @@ test("task show and maestro list render maestro session information", async () =
           });
         }
         return await daemon.fetch(path, init);
-      },
+      }),
       print: (line) => shown.push(line),
     });
     expect(shown.join("\n")).toContain("Maestro session");
@@ -181,8 +188,8 @@ test("task show and maestro list render maestro session information", async () =
     await runMaestroList({
       json: false,
       storageRoot: root,
-      fetch: async (path, init) => {
-        if (pathToString(path).startsWith("/maestro/sessions/")) {
+      fetch: stubFetch(async (path, init) => {
+        if (path.startsWith("/maestro/sessions/")) {
           return Response.json({
             task_id: taskId,
             agent_id: "stub-maestro",
@@ -200,7 +207,7 @@ test("task show and maestro list render maestro session information", async () =
           });
         }
         return await daemon.fetch(path, init);
-      },
+      }),
       print: (line) => table.push(line),
     });
     expect(table.join("\n")).toContain("wall_clock_pct");
@@ -228,8 +235,8 @@ test("task show renders maestro session budgets from canonical fields", async ()
       id: taskId,
       json: false,
       storageRoot: root,
-      fetch: async (path, init) => {
-        if (pathToString(path).startsWith("/tasks/task-render?")) {
+      fetch: stubFetch(async (path, init) => {
+        if (path.startsWith("/tasks/task-render?")) {
           return Response.json({
             id: taskId,
             created_at: Date.now() - 240_000,
@@ -255,7 +262,7 @@ test("task show renders maestro session budgets from canonical fields", async ()
             events: [],
           });
         }
-        if (pathToString(path).startsWith("/maestro/sessions/")) {
+        if (path.startsWith("/maestro/sessions/")) {
           return Response.json({
             task_id: taskId,
             agent_id: "stub-maestro",
@@ -272,7 +279,7 @@ test("task show renders maestro session budgets from canonical fields", async ()
           });
         }
         return await daemon.fetch(path, init);
-      },
+      }),
       print: (line) => completed.push(line),
     });
 
@@ -294,8 +301,8 @@ test("task show renders running sessions and null counters without NaN", async (
       id: taskId,
       json: false,
       storageRoot: root,
-      fetch: async (path, init) => {
-        if (pathToString(path).startsWith("/tasks/task-running?")) {
+      fetch: stubFetch(async (path, init) => {
+        if (path.startsWith("/tasks/task-running?")) {
           return Response.json({
             id: taskId,
             created_at: Date.now() - 60_000,
@@ -321,7 +328,7 @@ test("task show renders running sessions and null counters without NaN", async (
             events: [],
           });
         }
-        if (pathToString(path).startsWith("/maestro/sessions/")) {
+        if (path.startsWith("/maestro/sessions/")) {
           return Response.json({
             task_id: taskId,
             agent_id: "stub-maestro",
@@ -338,7 +345,7 @@ test("task show renders running sessions and null counters without NaN", async (
           });
         }
         return await daemon.fetch(path, init);
-      },
+      }),
       print: (line) => output.push(line),
     });
 
@@ -365,8 +372,8 @@ test("maestro session start posts to daemon and prints the created session", asy
       wall_budget_ms: 90_000,
       cost_budget_cents: 120,
       sub_dispatch_budget: 5,
-      fetch: async (path, init) => {
-        if (pathToString(path) === "/maestro/sessions") {
+      fetch: stubFetch(async (path, init) => {
+        if (path === "/maestro/sessions") {
           expect(init?.method).toBe("POST");
           const body = parseJson(bodyToString(init?.body));
           expect(body).toEqual({
@@ -396,7 +403,7 @@ test("maestro session start posts to daemon and prints the created session", asy
           );
         }
         return await daemon.fetch(path, init);
-      },
+      }),
       print: (line) => output.push(line),
     });
     const payload = parseJson(output.join("\n")) as { task_id: string; agent_id: string };
@@ -419,8 +426,8 @@ test("maestro session start posts without chain_handoff_id when omitted", async 
       wall_budget_ms: 90_000,
       cost_budget_cents: 120,
       sub_dispatch_budget: 5,
-      fetch: async (path, init) => {
-        if (pathToString(path) === "/maestro/sessions") {
+      fetch: stubFetch(async (path, init) => {
+        if (path === "/maestro/sessions") {
           expect(init?.method).toBe("POST");
           const body = parseJson(bodyToString(init?.body));
           expect(body).toEqual({
@@ -449,7 +456,7 @@ test("maestro session start posts without chain_handoff_id when omitted", async 
           );
         }
         return await daemon.fetch(path, init);
-      },
+      }),
       print: (line) => output.push(line),
     });
     const payload = parseJson(output.join("\n")) as {
@@ -476,8 +483,8 @@ test("maestro session start-adhoc posts to daemon and prints dispatch payload", 
       cost_budget_cents: 50,
       sub_dispatch_budget: 5,
       project_id: "proj-a",
-      fetch: async (path, init) => {
-        if (pathToString(path) === "/maestro/sessions/adhoc") {
+      fetch: stubFetch(async (path, init) => {
+        if (path === "/maestro/sessions/adhoc") {
           expect(init?.method).toBe("POST");
           const body = parseJson(bodyToString(init?.body));
           expect(body).toEqual({
@@ -513,7 +520,7 @@ test("maestro session start-adhoc posts to daemon and prints dispatch payload", 
           );
         }
         return await daemon.fetch(path, init);
-      },
+      }),
       print: (line) => output.push(line),
     });
     const payload = parseJson(output.join("\n")) as {
@@ -552,8 +559,8 @@ test("maestro session get fetches one session by task id", async () => {
       json: true,
       storageRoot: root,
       task_id: "task-session-get",
-      fetch: async (path, init) => {
-        if (pathToString(path) === "/maestro/sessions/task-session-get") {
+      fetch: stubFetch(async (path, init) => {
+        if (path === "/maestro/sessions/task-session-get") {
           return Response.json({
             task_id: "task-session-get",
             chain_handoff_id: "handoff-session-get",
@@ -570,7 +577,7 @@ test("maestro session get fetches one session by task id", async () => {
           });
         }
         return await daemon.fetch(path, init);
-      },
+      }),
       print: (line) => output.push(line),
     });
     const payload = parseJson(output.join("\n")) as {
