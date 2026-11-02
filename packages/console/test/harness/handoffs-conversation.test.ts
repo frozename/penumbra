@@ -46,18 +46,27 @@ function atSecond(offsetSeconds: number): string {
   return new Date(BASE_TS + offsetSeconds * 1000).toISOString();
 }
 
+type Harness = Awaited<ReturnType<typeof startHarness>>;
+
 async function authFetch(
-  baseUrl: string,
-  token: string,
+  h: Harness,
   path: string,
   init?: RequestInit,
+  opts?: { allowNonOk?: boolean },
 ): Promise<Response> {
   const headers = new Headers(init?.headers);
-  headers.set("Authorization", `Bearer ${token}`);
-  return await Bun.fetch(`${baseUrl}${path}`, {
+  headers.set("Authorization", `Bearer ${h.token}`);
+  const res = await Bun.fetch(`${h.baseUrl}${path}`, {
     ...init,
     headers,
   });
+  if (!res.ok && opts?.allowNonOk !== true) {
+    const body = await res.clone().text();
+    throw new Error(
+      `unexpected ${String(res.status)} from harness port=${String(h.port)} baseUrl=${h.baseUrl} calls=${String(h.getCalls().length)} body=${body}`,
+    );
+  }
+  return res;
 }
 
 describe("handoffs conversation fixture", () => {
@@ -70,7 +79,7 @@ describe("handoffs conversation fixture", () => {
         baseRow("h3", { status: "dispatched", ts: atSecond(3), conversation_id: "c2" }),
       ]);
 
-      const res = await authFetch(h.baseUrl, h.token, "/handoffs/latest?conversation_id=c1");
+      const res = await authFetch(h, "/handoffs/latest?conversation_id=c1");
       expect(res.status).toBe(200);
       const body = (await res.json()) as { handoff: { handoff_id: string } };
       expect(body.handoff.handoff_id).toBe("h2");
@@ -92,8 +101,7 @@ describe("handoffs conversation fixture", () => {
       ]);
 
       const res = await authFetch(
-        h.baseUrl,
-        h.token,
+        h,
         `/handoffs/latest?conversation_id=${encodeURIComponent(conversationId)}`,
       );
       expect(res.status).toBe(200);
@@ -111,7 +119,7 @@ describe("handoffs conversation fixture", () => {
     const h = await startHarness();
     try {
       h.setHandoffs([baseRow("latest", { status: "dispatched", ts: atSecond(1) })]);
-      const res = await authFetch(h.baseUrl, h.token, "/handoffs/latest");
+      const res = await authFetch(h, "/handoffs/latest", undefined, { allowNonOk: true });
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: { code: string; message: string } };
       expect(body.error.code).toBe("missing_param");
@@ -127,7 +135,7 @@ describe("handoffs conversation fixture", () => {
   test("GET /handoffs/latest rejects missing or empty conversation_id with 400", async () => {
     const h = await startHarness();
     try {
-      const missing = await authFetch(h.baseUrl, h.token, "/handoffs/latest");
+      const missing = await authFetch(h, "/handoffs/latest", undefined, { allowNonOk: true });
       expect(missing.status).toBe(400);
       const missingBody = (await missing.json()) as { error: { code: string; message: string } };
       expect(missingBody.error.code).toBe("missing_param");
@@ -135,7 +143,9 @@ describe("handoffs conversation fixture", () => {
         error: { code: "missing_param", message: "conversation_id query parameter is required" },
       });
 
-      const empty = await authFetch(h.baseUrl, h.token, "/handoffs/latest?conversation_id=");
+      const empty = await authFetch(h, "/handoffs/latest?conversation_id=", undefined, {
+        allowNonOk: true,
+      });
       expect(empty.status).toBe(400);
       const emptyBody = (await empty.json()) as { error: { code: string; message: string } };
       expect(emptyBody.error.code).toBe("missing_param");
@@ -150,7 +160,9 @@ describe("handoffs conversation fixture", () => {
   test("GET /handoffs/latest returns 404 when no handoffs match the conversation", async () => {
     const h = await startHarness();
     try {
-      const res = await authFetch(h.baseUrl, h.token, "/handoffs/latest?conversation_id=none");
+      const res = await authFetch(h, "/handoffs/latest?conversation_id=none", undefined, {
+        allowNonOk: true,
+      });
       expect(res.status).toBe(404);
       const body = (await res.json()) as { error: { code: string; message: string } };
       expect(body.error.code).toBe("not_found");
@@ -198,8 +210,7 @@ describe("handoffs conversation fixture", () => {
       ]);
 
       const res = await authFetch(
-        h.baseUrl,
-        h.token,
+        h,
         "/handoffs?conversation_id=c1&status=dispatched&agent=gemini&project_id=p-2",
       );
       expect(res.status).toBe(200);
@@ -215,19 +226,21 @@ describe("handoffs conversation fixture", () => {
     const h = await startHarness();
     try {
       h.setHandoffs([baseRow("h1", { status: "dispatched", ts: atSecond(1) })]);
-      const first = await authFetch(h.baseUrl, h.token, "/handoffs/latest?conversation_id=c1");
+      const first = await authFetch(h, "/handoffs/latest?conversation_id=c1");
       expect(first.status).toBe(200);
       const firstBody = (await first.json()) as { handoff: { handoff_id: string } };
       expect(firstBody.handoff.handoff_id).toBe("h1");
 
       h.setHandoffs([baseRow("h2", { status: "dispatched", ts: atSecond(2) })]);
-      const second = await authFetch(h.baseUrl, h.token, "/handoffs/latest?conversation_id=c1");
+      const second = await authFetch(h, "/handoffs/latest?conversation_id=c1");
       expect(second.status).toBe(200);
       const secondBody = (await second.json()) as { handoff: { handoff_id: string } };
       expect(secondBody.handoff.handoff_id).toBe("h2");
 
       h.reset();
-      const third = await authFetch(h.baseUrl, h.token, "/handoffs/latest?conversation_id=c1");
+      const third = await authFetch(h, "/handoffs/latest?conversation_id=c1", undefined, {
+        allowNonOk: true,
+      });
       expect(third.status).toBe(404);
     } finally {
       await h.stop();
@@ -243,10 +256,10 @@ describe("handoffs conversation fixture", () => {
         baseRow("h3", { status: "pending", ts: atSecond(3) }),
       ]);
 
-      const latest = await authFetch(h.baseUrl, h.token, "/handoffs/latest?conversation_id=c1");
+      const latest = await authFetch(h, "/handoffs/latest?conversation_id=c1");
       expect(latest.status).toBe(200);
 
-      const list = await authFetch(h.baseUrl, h.token, "/handoffs?conversation_id=c1");
+      const list = await authFetch(h, "/handoffs?conversation_id=c1");
       const body = (await list.json()) as { handoffs: { handoff_id: string }[] };
       expect(body.handoffs.map((r) => r.handoff_id)).toEqual(["h1", "h2", "h3"]);
     } finally {
@@ -274,7 +287,7 @@ describe("handoffs conversation fixture", () => {
       );
       h.setHandoffs(rows);
 
-      const res = await authFetch(h.baseUrl, h.token, "/handoffs/latest?conversation_id=c1");
+      const res = await authFetch(h, "/handoffs/latest?conversation_id=c1");
       expect(res.status).toBe(200);
       const body = (await res.json()) as { handoff: { handoff_id: string } };
       expect(body.handoff.handoff_id).toBe("h-new");
@@ -290,7 +303,7 @@ describe("handoffs conversation fixture", () => {
         baseRow("plus", { ts: "2026-01-01T00:00:00+01:00" }),
         baseRow("minus", { ts: "2026-01-01T00:00:00-01:00" }),
       ]);
-      const res = await authFetch(h.baseUrl, h.token, "/handoffs/latest?conversation_id=c1");
+      const res = await authFetch(h, "/handoffs/latest?conversation_id=c1");
       expect(res.status).toBe(200);
       const body = (await res.json()) as { handoff: { handoff_id: string; ts: string } };
       expect(body.handoff.handoff_id).toBe("minus");
