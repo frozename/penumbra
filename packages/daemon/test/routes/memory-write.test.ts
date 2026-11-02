@@ -1,5 +1,3 @@
-import type { WorkflowFn } from "@penumbra/workflows";
-
 import {
   buildServices,
   type Embedder,
@@ -9,6 +7,7 @@ import {
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { registerWorkerForTest } from "@penumbra/daemon/test-utils";
+import { loadTsWorkflow } from "@penumbra/workflows";
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -19,8 +18,12 @@ import { runPC1Phase } from "@src/dreaming/curator/pc1-ephemera.js";
 import { runPC2Phase } from "@src/dreaming/curator/pc2-cluster.js";
 import { createDaemonFetchHandler } from "@src/serve.js";
 
-const { fn: memoryDigestFn }: { fn: WorkflowFn } =
-  await import("../../../../plugin/workflows/memory-digest/workflow.js");
+const { fn: memoryDigestFn } = await loadTsWorkflow(
+  join(import.meta.dir, "../../../..", "plugin/workflows/memory-digest/workflow.ts"),
+);
+if (memoryDigestFn === undefined) {
+  throw new Error("memory-digest workflow did not export fn");
+}
 
 const SHARED_TOKEN = "shared-token";
 
