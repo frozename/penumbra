@@ -112,7 +112,11 @@ test("POST /conversations/:id/cancel records in DB and broadcasts", async () => 
   expect(row.cancel_requested_at).toBe("2026-04-26T00:00:00.000Z");
 
   // Verify Broadcast
-  expect(emitted).toEqual({ type: "cancel", conversation_id: cid, handoff_id: "e-1" });
+  expect<WorkerControlTestEvent | null>(emitted).toEqual({
+    type: "cancel",
+    conversation_id: cid,
+    handoff_id: "e-1",
+  });
 });
 
 test("GET /worker/control performs durable sync and live broadcast", async () => {

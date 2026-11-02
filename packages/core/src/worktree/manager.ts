@@ -7,7 +7,7 @@ import { createLogger, type Logger } from "../logger.js";
 import { isResourceKill, wrapResourceScopeArgv } from "../process/resource-scope.js";
 import { classifyBranchLandStatus } from "./branch-land-probe.js";
 import { resolveHandoffBranchName } from "./branch-name.js";
-import { classifyGitHooks, type WorktreeGitHooks } from "./git-hooks.js";
+import { classifyGitHooks, detectHookInstallerArgv, type WorktreeGitHooks } from "./git-hooks.js";
 import {
   resolveWorktreeGitDir as resolveScratchGitDir,
   SCRATCH_OWNER_FILE,
@@ -245,6 +245,40 @@ export async function runIsolatedInstall(
     }
     throw err;
   }
+}
+
+/**
+ * Run the target repository's husky bootstrap directly (never via
+ * `bun run prepare`, so a mixed prepare script like
+ * `husky && bun run build` is never executed) inside a newly created
+ * isolated-install worktree, so that `.husky/_` is materialised and
+ * `classifyGitHooks` reports `installed` instead of `missing`.
+ *
+ * No-ops when there is no bare husky prepare script. On failure the
+ * worktree is kept and the caller sees `status: "missing"` — the handoff
+ * is not aborted.
+ */
+export async function runHookInstaller(
+  wtPath: string,
+  opts: { runner?: WorktreeCommandRunner; signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<void> {
+  const argv = detectHookInstallerArgv(wtPath);
+  if (argv === null) return;
+
+  const timeout =
+    opts.timeoutMs ??
+    readPositiveIntEnv("PENUMBRA_ISOLATED_INSTALL_TIMEOUT_MS", DEFAULT_ISOLATED_INSTALL_TIMEOUT_MS);
+  const runner = opts.runner ?? defaultRunner;
+  const [cmd = "bun", ...args] = wrapResourceScopeArgv(argv, { label: "install" });
+
+  await runner(cmd, args, {
+    cwd: wtPath,
+    timeout,
+    maxBuffer: ISOLATED_INSTALL_MAX_BUFFER,
+    encoding: "utf8",
+    signal: opts.signal,
+    env: process.env,
+  });
 }
 
 // The worker's commit-integrity probe reads this back to prove the branch
@@ -506,6 +540,27 @@ export class WorktreeManager {
     writeWorktreeReady(wtPath, handoffId);
   }
 
+  // For isolated-install worktrees with a bare husky prepare script, run
+  // husky directly so that .husky/_ is materialised before classifyGitHooks
+  // checks. Symlink-mirror worktrees never run the installer: the main
+  // checkout is the source of truth and its hooks are either there or not.
+  private async installIsolatedGitHooks(
+    wtPath: string,
+    handoffId: string,
+    signal: AbortSignal | undefined,
+  ): Promise<void> {
+    try {
+      await runHookInstaller(wtPath, { runner: this.runner, signal });
+    } catch (err) {
+      // A failure is non-fatal: the worktree is kept with hooks "missing".
+      if (isAbortError(err)) throw err;
+      this.log.warn(
+        { handoffId, err },
+        "isolated_install hook installer failed; worktree will have no git hooks",
+      );
+    }
+  }
+
   async createWorktree(handoffId: string, opts?: CreateOpts): Promise<WorktreeHandle> {
     if (this.worktrees.has(handoffId)) {
       throw new Error(`Worktree for handoff ${handoffId} already exists`);
@@ -569,6 +624,10 @@ export class WorktreeManager {
       writeWorktreeMode(wtPath, worktreeMode);
 
       await this.finalizeWorktreeMode(wtPath, repoRoot, handoffId, worktreeMode, opts?.signal);
+
+      if (worktreeMode === "isolated_install") {
+        await this.installIsolatedGitHooks(wtPath, handoffId, opts?.signal);
+      }
 
       // Both modes share this gap: .husky/_ is generated and untracked, and git resolves a relative core.hooksPath against the worktree root; symlink_mirror only links node_modules.
       const gitHooks = classifyGitHooks(wtPath, await this.readHooksPath(wtPath));

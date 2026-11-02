@@ -20,7 +20,10 @@ import {
   countProviderInFlight,
   type ProviderConcurrencyDecision,
   recordProviderCapRefusal,
+  recordSeatCapRefusal,
   resolveProviderConcurrencyDecision,
+  resolveSeatConcurrencyDecision,
+  type SeatConcurrencyDecision,
 } from "../services/provider-concurrency.js";
 import { workerHeartbeatStaleMs } from "../worker-heartbeat-stale.js";
 import { json } from "./_helpers.js";
@@ -366,6 +369,75 @@ function enforceProviderConcurrencyCap(
     };
   }
   return { decision };
+}
+
+// #257: a seat's own max_in_flight is an admission cap independent of the
+// provider cap; when both exist, whichever is exhausted first refuses.
+function seatConcurrencyCapResponse(
+  services: DaemonServices,
+  handoff_id: string,
+  worker_id: string,
+  decision: SeatConcurrencyDecision,
+  path: "precheck" | "cas_loss",
+): Response {
+  // Same retryable-status constraint as providerConcurrencyCapResponse.
+  recordSeatCapRefusal(services, { handoff_id, worker_id, decision, path });
+  return json(
+    {
+      error: {
+        code: "seat_concurrency_cap",
+        message: `handoff ${handoff_id} targets seat ${decision.seat}; the seat is at its in-flight dispatch cap`,
+      },
+      seat: decision.seat,
+      provider: decision.provider,
+      max_in_flight: decision.max_in_flight,
+      in_flight_count: decision.in_flight_count,
+    },
+    429,
+  );
+}
+
+function enforceSeatConcurrencyCap(
+  services: DaemonServices,
+  handoff: { to_agent: string },
+  handoff_id: string,
+  worker_id: string,
+): { decision: SeatConcurrencyDecision | null; response?: Response } {
+  const decision = resolveSeatConcurrencyDecision(services, handoff);
+  if (!decision) return { decision: null };
+  if (decision.in_flight_count >= decision.max_in_flight) {
+    return {
+      decision,
+      response: seatConcurrencyCapResponse(services, handoff_id, worker_id, decision, "precheck"),
+    };
+  }
+  return { decision };
+}
+
+function enforceClaimCaps(
+  services: DaemonServices,
+  handoff: { to_agent: string },
+  handoff_id: string,
+  worker_id: string,
+): {
+  response?: Response;
+  providerDecision: ProviderConcurrencyDecision | null;
+  seatDecision: SeatConcurrencyDecision | null;
+} {
+  const providerCap = enforceProviderConcurrencyCap(services, handoff, handoff_id, worker_id);
+  if (providerCap.response) {
+    return {
+      response: providerCap.response,
+      providerDecision: providerCap.decision,
+      seatDecision: null,
+    };
+  }
+  const seatCap = enforceSeatConcurrencyCap(services, handoff, handoff_id, worker_id);
+  return {
+    response: seatCap.response,
+    providerDecision: providerCap.decision,
+    seatDecision: seatCap.decision,
+  };
 }
 
 function resolveCreateRoute(
@@ -1026,6 +1098,7 @@ function buildClaimConflictResponse(
   worker_id: string,
   spreadDecision: ClaimSpreadDecision | null,
   providerDecision: ProviderConcurrencyDecision | null,
+  seatDecision: SeatConcurrencyDecision | null,
 ): Response {
   const after = services.handoffReader.get(handoff_id);
   if (
@@ -1045,6 +1118,18 @@ function buildClaimConflictResponse(
         handoff_id,
         worker_id,
         { ...providerDecision, in_flight_count },
+        "cas_loss",
+      );
+    }
+  }
+  if (seatDecision && after && (after.status === "approved" || after.status === "redirected")) {
+    const in_flight_count = countProviderInFlight(services, [seatDecision.seat]);
+    if (in_flight_count >= seatDecision.max_in_flight) {
+      return seatConcurrencyCapResponse(
+        services,
+        handoff_id,
+        worker_id,
+        { ...seatDecision, in_flight_count },
         "cas_loss",
       );
     }
@@ -1185,15 +1270,16 @@ export async function handoffsClaimRoute(
   if (cap.response) return cap.response;
   const spreadDecision = cap.decision;
 
-  const providerCap = enforceProviderConcurrencyCap(services, cur, handoff_id, body.data.worker_id);
-  if (providerCap.response) return providerCap.response;
-  const providerDecision = providerCap.decision;
+  const caps = enforceClaimCaps(services, cur, handoff_id, body.data.worker_id);
+  if (caps.response) return caps.response;
+  const { providerDecision, seatDecision } = caps;
 
   const won = services.handoffWriter.claimDispatch(handoff_id, body.data.worker_id, {
     workflow_run_id: spreadDecision?.workflow_run_id,
     maxWorkflowSiblingsPerWorker: spreadDecision?.max_per_worker,
     providerSeatNames: providerDecision?.providerSeatNames,
     maxProviderInFlight: providerDecision?.max_in_flight,
+    maxSeatInFlight: seatDecision?.max_in_flight,
   });
   if (!won) {
     return (
@@ -1204,6 +1290,7 @@ export async function handoffsClaimRoute(
         body.data.worker_id,
         spreadDecision,
         providerDecision,
+        seatDecision,
       )
     );
   }

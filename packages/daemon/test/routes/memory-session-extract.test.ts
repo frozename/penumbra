@@ -76,7 +76,8 @@ function makeDaemon(): {
     services,
     db,
     root,
-    fetch: (input, init) => handler(input instanceof Request ? input : new Request(input, init)),
+    fetch: (input, init) =>
+      handler(input instanceof Request ? input : new Request(input.toString(), init)),
   };
 }
 

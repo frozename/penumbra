@@ -83,7 +83,11 @@ test.each(["tick-first", "dispatch-first"])(
         sharedBearer: "test-token",
         worker_id: "w1",
         fetcher: ((input: string | URL | Request, init?: RequestInit) =>
-          handler(new Request(input, init))) as typeof fetch,
+          handler(
+            input instanceof Request
+              ? new Request(input, init)
+              : new Request(input.toString(), init),
+          )) as typeof fetch,
       });
       const tickReconcile = async (): Promise<void> => {
         const res = longLivedReconcileOrphansRoute(new Request("http://x"), services);
