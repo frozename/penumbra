@@ -14,6 +14,7 @@ import { TestEmbedder } from "@penumbra/core/testing";
 import {
   buildRegistry,
   type Registry,
+  type RegistryEntry,
   type WorkflowFn,
   type WorkflowSpec,
 } from "@penumbra/workflows";
@@ -198,14 +199,19 @@ function registryFromEntries(
     fn: WorkflowFn;
   }[],
 ): Registry {
+  const toEntry = (entry: { spec: WorkflowSpec; fn: WorkflowFn }): RegistryEntry => ({
+    spec: entry.spec,
+    fn: entry.fn as RegistryEntry["fn"],
+    source: "ts" as const,
+    path: entry.spec.name,
+  });
   return {
     list: () => entries.map((entry) => entry.spec),
-    entries: () =>
-      entries.map((entry) => ({ ...entry, source: "ts" as const, path: entry.spec.name })),
+    entries: () => entries.map(toEntry),
     get: (name) => entries.find((entry) => entry.spec.name === name)?.spec,
     getEntry: (name): ReturnType<Registry["getEntry"]> => {
       const entry = entries.find((candidate) => candidate.spec.name === name);
-      return entry ? { ...entry, source: "ts" as const, path: entry.spec.name } : undefined;
+      return entry ? toEntry(entry) : undefined;
     },
     findByTrigger: () => entries.map((entry) => entry.spec),
     errors: [],
