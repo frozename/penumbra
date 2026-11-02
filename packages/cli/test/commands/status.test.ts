@@ -9,6 +9,7 @@ const TOKEN = "fixture-token-259";
 const METRICS = { embedder: { name: "test-embedder", dim: 384 } };
 const HANDOFFS_URL = "http://127.0.0.1:4242/handoffs?status=dispatched,approved";
 const QUOTAS_URL = "http://127.0.0.1:4242/usage/provider_quotas";
+const LAST_CLAIM_URL = "http://127.0.0.1:4242/dispatch/events/last_claim";
 const LOCAL_QUOTA = { provider: "local", max_in_flight: 2, in_flight: 1 };
 
 type HandoffsReply = () => Promise<Response>;
@@ -23,6 +24,7 @@ function fakeDaemon(
   handoffs: HandoffsReply,
   metricsStatus = 200,
   quotas?: HandoffsReply,
+  lastClaim?: HandoffsReply,
 ): FakeDaemon {
   const calls: { url: string; auth: string }[] = [];
   const fetchImpl: FakeFetch = (url, init) => {
@@ -30,6 +32,9 @@ function fakeDaemon(
     const path = new URL(url).pathname;
     if (path === "/metrics") {
       return Promise.resolve(Response.json(METRICS, { status: metricsStatus }));
+    }
+    if (path === "/dispatch/events/last_claim" && lastClaim !== undefined) {
+      return lastClaim();
     }
     if (path === "/dispatch/events") {
       return Promise.resolve(Response.json({ events: [] }));
@@ -219,6 +224,95 @@ describe("penumbra status provider quotas (#259)", () => {
     const r = await runStatus({ storageRoot: dir, fetchImpl: daemon.fetchImpl });
     expect(r.status).toBe("stale");
     expect(r.provider_quotas).toBeUndefined();
+    expect(daemon.calls.map((c) => new URL(c.url).pathname)).toEqual(["/metrics"]);
+  });
+});
+
+describe("penumbra status last claim (#259)", () => {
+  test("a running daemon reports the last claim timestamp", async () => {
+    const daemon = fakeDaemon(handoffRows([]), 200, undefined, () =>
+      Promise.resolve(Response.json({ last_claim_at: "2026-05-01T00:00:05.000Z" })),
+    );
+    const r = await runStatus({ storageRoot: dir, fetchImpl: daemon.fetchImpl });
+    expect(r.status).toBe("running");
+    expect(r.last_claim).toEqual({ ok: true, last_claim_at: "2026-05-01T00:00:05.000Z" });
+    const lastClaimCall = daemon.calls.find((c) => c.url === LAST_CLAIM_URL);
+    expect(lastClaimCall?.auth).toBe(`Bearer ${TOKEN}`);
+    expect(JSON.stringify(r)).not.toContain(TOKEN);
+  });
+
+  test("a daemon with no claims yet reports last_claim_at null", async () => {
+    const daemon = fakeDaemon(handoffRows([]), 200, undefined, () =>
+      Promise.resolve(Response.json({ last_claim_at: null })),
+    );
+    const r = await runStatus({ storageRoot: dir, fetchImpl: daemon.fetchImpl });
+    expect(r.status).toBe("running");
+    expect(r.last_claim).toEqual({ ok: true, last_claim_at: null });
+  });
+
+  test("a daemon without the route (HTTP 404) keeps status running and reports last_claim.ok false", async () => {
+    const daemon = fakeDaemon(handoffRows([]));
+    const r = await runStatus({ storageRoot: dir, fetchImpl: daemon.fetchImpl });
+    expect(r.status).toBe("running");
+    expect(r.last_claim).toEqual({
+      ok: false,
+      error: "GET /dispatch/events/last_claim returned HTTP 404",
+    });
+    expect(JSON.stringify(r)).not.toContain(TOKEN);
+  });
+
+  test("a malformed /dispatch/events/last_claim body keeps status running and reports last_claim.ok false", async () => {
+    const notJson = fakeDaemon(handoffRows([]), 200, undefined, () =>
+      Promise.resolve(new Response("not json", { status: 200 })),
+    );
+    const r1 = await runStatus({ storageRoot: dir, fetchImpl: notJson.fetchImpl });
+    expect(r1.status).toBe("running");
+    expect(r1.last_claim).toEqual({
+      ok: false,
+      error: "daemon returned invalid JSON for /dispatch/events/last_claim",
+    });
+
+    const missing = fakeDaemon(handoffRows([]), 200, undefined, () =>
+      Promise.resolve(Response.json({ ts: 1 })),
+    );
+    const r2 = await runStatus({ storageRoot: dir, fetchImpl: missing.fetchImpl });
+    expect(r2.status).toBe("running");
+    expect(r2.last_claim).toEqual({
+      ok: false,
+      error: "daemon /dispatch/events/last_claim response has no last_claim_at",
+    });
+
+    const wrongType = fakeDaemon(handoffRows([]), 200, undefined, () =>
+      Promise.resolve(Response.json({ last_claim_at: 5 })),
+    );
+    const r3 = await runStatus({ storageRoot: dir, fetchImpl: wrongType.fetchImpl });
+    expect(r3.status).toBe("running");
+    expect(r3.last_claim).toEqual({
+      ok: false,
+      error: "daemon /dispatch/events/last_claim response has no last_claim_at",
+    });
+  });
+
+  test("a rejected /dispatch/events/last_claim request keeps status running and does not leak the token", async () => {
+    const daemon = fakeDaemon(handoffRows([]), 200, undefined, () =>
+      Promise.reject(new Error("ECONNREFUSED")),
+    );
+    const r = await runStatus({ storageRoot: dir, fetchImpl: daemon.fetchImpl });
+    expect(r.status).toBe("running");
+    expect(r.last_claim).toEqual({
+      ok: false,
+      error: "GET /dispatch/events/last_claim failed: ECONNREFUSED",
+    });
+    expect(JSON.stringify(r)).not.toContain(TOKEN);
+  });
+
+  test("a stale daemon gets no last_claim and the route is never requested", async () => {
+    const daemon = fakeDaemon(handoffRows([]), 503, undefined, () =>
+      Promise.resolve(Response.json({ last_claim_at: "2026-05-01T00:00:05.000Z" })),
+    );
+    const r = await runStatus({ storageRoot: dir, fetchImpl: daemon.fetchImpl });
+    expect(r.status).toBe("stale");
+    expect(r.last_claim).toBeUndefined();
     expect(daemon.calls.map((c) => new URL(c.url).pathname)).toEqual(["/metrics"]);
   });
 });

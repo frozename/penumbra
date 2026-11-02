@@ -204,7 +204,7 @@ Two commit-integrity statuses are also part of the taxonomy:
 - `base_not_ancestor`: the branch head does not descend from the dispatch base recorded when the worktree was created.
 - `commit_identity_mismatch`: commits on the branch since the base were not authored and committed as the identity the worktree was provisioned with.
 
-Both are reported only for terminal handoffs whose worker `dispatch.end` carries commit-integrity evidence, with `trustworthy: false` and `recommended_action: review_manually`. The evidence lives at `report.evidence.commit_integrity` (`base_sha`, `head_sha`, `base_is_ancestor`, `identity`, `mismatched_commits`, `mismatched_total`). `mismatched_commits` lists at most 10 SHAs; `mismatched_total` is the full count — `null` when the identity check could not run, and absent on evidence written before the count existed. The classifier counts the larger of `mismatched_total` and the list length.
+Both are reported only for terminal handoffs whose worker `dispatch.end` carries commit-integrity evidence, with `trustworthy: false` and `recommended_action: review_manually`. The evidence lives at `report.evidence.commit_integrity` (`base_sha`, `head_sha`, `base_is_ancestor`, `identity`, `mismatched_commits`, `mismatched_total`). `mismatched_commits` lists at most 10 SHAs; `mismatched_total` is the full count — `null` when the identity check could not run, and absent on evidence written before the count existed. The classifier counts the larger of `mismatched_total` and the list length. The classifier also records these statuses in `agent_performance.reliability_status` at capture time, so workflow reports surface them via `reliability_complete`.
 
 ### The sweepers
 
