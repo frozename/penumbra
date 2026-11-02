@@ -631,6 +631,7 @@ export {
   type OrphanWorktreeHandle,
   prepareEscapingFileDependencyLinks,
   provisionLocalCache,
+  runHookInstaller,
   runIsolatedInstall,
   type WorktreeCommandRunner,
   type WorktreeCommandRunnerOptions,

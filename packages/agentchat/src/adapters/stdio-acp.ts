@@ -10,10 +10,10 @@ import {
 import path from "node:path";
 
 import type { Adapter, DispatchEvent, DispatchInput, DispatchOutput } from "../sdk/adapter.js";
-import type { CapturePort } from "../worker/capture-port.js";
 import type { McpServer } from "./acp-types.js";
 
 import { type ClassifierDeclineMeta, detectClassifierDecline } from "../classifier-decline.js";
+import { type CapturePort, classifyToolFailure } from "../worker/capture-port.js";
 import { SandboxUnavailableError } from "../worker/sandbox-spawn.js";
 import { registerSession, unregisterSession } from "../worker/session-registry.js";
 import {
@@ -1344,6 +1344,7 @@ function handleToolCallUpdate(ctx: DispatchTurnContext, update: AcpSessionUpdate
       tool_call_id: update.toolCallId,
       tool_name: toolName,
       output_chars: toolOutputChars(output),
+      failure_kind: classifyToolFailure(output),
     });
   }
   killOnToolCallWhenNoCapability(ctx);
