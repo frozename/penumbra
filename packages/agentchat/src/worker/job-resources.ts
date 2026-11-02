@@ -16,7 +16,7 @@ export const ADMISSION_FLOOR_ABOVE_AVAILABLE_MSG =
   "host MemAvailable is below the derived claim admission floor; claims may never be admitted. Set PENUMBRA_JOB_ADMIT_MIN_GIB to change the floor";
 export const CLAIM_ADMISSION_TIMEOUT_MSG = "host memory admission timeout: claim not admitted";
 export const HEAVY_LOCK_IN_PROCESS_ONLY_MSG =
-  "heavy-job lock is in-process only (no flock(1) on PATH, /usr/bin or /bin): heavy stages are serialized only inside this worker process, not across workers or other penumbra processes";
+  'heavy-job lock is in-process only (no flock(1) on PATH, /usr/bin or /bin, and crossProcessFallback is "none"): heavy stages are serialized only inside this worker process, not across workers or other penumbra processes';
 
 export interface WorkerJobResources {
   scope: ResourceScopeDetection;
@@ -70,7 +70,8 @@ export async function setupWorkerJobResources(
     log.warn(
       {
         path: lock.path,
-        remedy: "install flock(1) (e.g. Homebrew flock) and restart the daemon",
+        remedy:
+          'in-process only because crossProcessFallback is "none" and no flock(1) binary was found; install flock(1) (e.g. Homebrew flock) and restart the daemon, or set crossProcessFallback to "sqlite" to enable the SQLite fallback',
       },
       HEAVY_LOCK_IN_PROCESS_ONLY_MSG,
     );
