@@ -15,8 +15,8 @@ function emptyDreamConfig(): DreamConfig {
 }
 
 interface ProjectRegistryStub {
-  get(id: string): unknown;
-  list(): unknown[];
+  get(id: string): { project_id: string; dreaming?: Record<string, unknown> } | undefined;
+  list(): { project_id: string; dreaming?: Record<string, unknown> }[];
 }
 
 interface EmbedderStub {
@@ -89,7 +89,7 @@ describe("buildDreamCycleDeps", () => {
     process.env.FIRECRAWL_API_KEY = "test-key-123";
 
     const fakeProjectRegistry: ProjectRegistryStub = {
-      get: (_id: string) => null,
+      get: (_id: string) => undefined,
       list: () => [],
     };
     const fakeEmbedder: EmbedderStub = {
@@ -101,7 +101,10 @@ describe("buildDreamCycleDeps", () => {
 
     expect(deps.projectRegistry).toBe(fakeProjectRegistry);
     expect(typeof deps.getResearchAdapter).toBe("function");
-    const adapter = deps.getResearchAdapter!({ dreaming: { research_provider: "firecrawl" } });
+    const adapter = deps.getResearchAdapter!({
+      project_id: "test",
+      dreaming: { research_provider: "firecrawl" },
+    });
     expect(typeof adapter?.search).toBe("function");
     expect(typeof adapter?.scrape).toBe("function");
     expect(typeof deps.memoryObserve).toBe("function");
@@ -186,7 +189,10 @@ describe("buildDreamCycleDeps", () => {
 
     const deps = buildDreamCycleDeps({}, db, emptyDreamConfig());
 
-    const adapter = deps.getResearchAdapter!({ dreaming: { research_provider: "webfetch" } });
+    const adapter = deps.getResearchAdapter!({
+      project_id: "test",
+      dreaming: { research_provider: "webfetch" },
+    });
     expect(typeof adapter?.search).toBe("function");
     expect(typeof adapter?.scrape).toBe("function");
   });
@@ -194,14 +200,17 @@ describe("buildDreamCycleDeps", () => {
   test("getResearchAdapter returns null when project has research_provider=off", () => {
     const deps = buildDreamCycleDeps({}, db, emptyDreamConfig());
 
-    const result = deps.getResearchAdapter!({ dreaming: { research_provider: "off" } });
+    const result = deps.getResearchAdapter!({
+      project_id: "test",
+      dreaming: { research_provider: "off" },
+    });
     expect(result).toBeNull();
   });
 
   test("getResearchAdapter returns null when project has no dreaming config", () => {
     const deps = buildDreamCycleDeps({}, db, emptyDreamConfig());
 
-    const result = deps.getResearchAdapter!({});
+    const result = deps.getResearchAdapter!({ project_id: "test" });
     expect(result).toBeNull();
   });
 
@@ -211,9 +220,11 @@ describe("buildDreamCycleDeps", () => {
     const deps = buildDreamCycleDeps({}, db, emptyDreamConfig());
 
     const firecrawlAdapter = deps.getResearchAdapter!({
+      project_id: "test",
       dreaming: { research_provider: "firecrawl" },
     });
     const webfetchAdapter = deps.getResearchAdapter!({
+      project_id: "test",
       dreaming: { research_provider: "webfetch" },
     });
 

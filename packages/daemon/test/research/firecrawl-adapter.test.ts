@@ -59,13 +59,15 @@ it("domain re-verification rejects URL resolving to disallowed domain after redi
 it("firecrawl 401 falls back to webfetch adapter", async () => {
   const adapter = createResearchAdapter({ provider: "firecrawl" }, stubFirecrawl401());
   const result = await adapter.search({ query: "test query" });
-  expect(result[0].source_provider).toBe("webfetch");
+  expect(result[0]).toBeDefined();
+  expect(result[0]?.source_provider).toBe("webfetch");
 });
 
 it("source_billed_usd captured from firecrawl provider response", async () => {
   const adapter = new FirecrawlAdapter({}, stubFirecrawlWithBilling({ billed_usd: 0.003 }));
   const results = await adapter.search({ query: "test" });
-  expect(results[0].source_billed_usd).toBe(0.003);
+  expect(results[0]).toBeDefined();
+  expect(results[0]?.source_billed_usd).toBe(0.003);
 });
 
 function stubFirecrawlMulti(): FirecrawlTransport {
@@ -92,8 +94,10 @@ it("search with allowed_domains rejects results from disallowed host", async () 
     allowed_domains: ["allowed.com"],
   });
   expect(results.length).toBe(2);
-  expect(results[0].url).toBe("https://allowed.com/result");
-  expect(results[1].url).toBe("https://sub.allowed.com/result");
+  expect(results[0]).toBeDefined();
+  expect(results[1]).toBeDefined();
+  expect(results[0]?.url).toBe("https://allowed.com/result");
+  expect(results[1]?.url).toBe("https://sub.allowed.com/result");
 });
 
 it("search with no allowed_domains returns all results", async () => {
@@ -118,8 +122,9 @@ it("FirecrawlWithFallbackAdapter forwards allowed_domains to fallback after 401"
     allowed_domains: ["duckduckgo.com"],
   });
   expect(results2.length).toBe(1);
-  expect(results2[0].url).toContain("duckduckgo.com");
-  expect(results2[0].source_provider).toBe("webfetch");
+  expect(results2[0]).toBeDefined();
+  expect(results2[0]?.url).toContain("duckduckgo.com");
+  expect(results2[0]?.source_provider).toBe("webfetch");
 });
 
 type SearchArgs = Parameters<FirecrawlTransport["search"]>[0];
