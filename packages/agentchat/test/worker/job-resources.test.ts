@@ -25,7 +25,12 @@ const hostMeminfo =
     );
 
 function lock(name: string): HeavyJobLock {
-  return new HeavyJobLock({ path: join(tmpdir(), `${name}.lock`), flockBin: null, log });
+  return new HeavyJobLock({
+    path: join(tmpdir(), `${name}.lock`),
+    flockBin: null,
+    crossProcessFallback: "none",
+    log,
+  });
 }
 
 test("claims wait for the PENUMBRA_JOB_ADMIT_MIN_GIB floor and give up after the wait", async () => {
@@ -178,7 +183,8 @@ test("boot warns once when the heavy-job lock is in-process only (#313)", async 
   expect(calls.length).toBe(1);
   expect(calls[0]?.[0]).toEqual({
     path: inProcess.path,
-    remedy: "install flock(1) (e.g. Homebrew flock) and restart the daemon",
+    remedy:
+      'in-process only because crossProcessFallback is "none" and no flock(1) binary was found; install flock(1) (e.g. Homebrew flock) and restart the daemon, or set crossProcessFallback to "sqlite" to enable the SQLite fallback',
   });
   expect(HEAVY_LOCK_IN_PROCESS_ONLY_MSG).toContain("serialized only inside this worker process");
 });
