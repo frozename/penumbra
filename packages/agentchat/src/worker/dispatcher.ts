@@ -7,6 +7,7 @@ import type { TerminalReport, TerminalReportStatus } from "./terminal-outbox.js"
 import { detectClassifierDecline } from "../classifier-decline.js";
 import { pendingObservationsOf } from "../cli/dispatch-handoff.js";
 import { isTerminalHttpStatus, PenumbraHttpError } from "../penumbra-client.js";
+import type { AutocommitResult } from "./autocommit-on-chain-end.js";
 
 /**
  * Minimal structural shape the dispatcher reads off a handoff row. Public
@@ -63,9 +64,10 @@ export interface WorkerDispatcherDeps<H extends DispatcherHandoff = DispatcherHa
   /**
    * Optional recovery hook invoked for completed chains that ended with a
    * dirty worktree but no explicit commit. The worker provides the concrete
-   * git add/commit implementation.
+   * git add/commit implementation; its outcome is stamped into dispatch.end
+   * meta so the dispatch record shows the round was autocommitted.
    */
-  autocommitOnChainEnd?: (handoff: H) => Promise<void>;
+  autocommitOnChainEnd?: (handoff: H) => Promise<AutocommitResult | void>;
   /**
    * Called when this worker did not win the row: retryable claim failure,
    * terminal 409 claim conflict, or barrier-failure markFailed fallback.
@@ -191,6 +193,7 @@ interface DispatchLifecycleContext {
   snapshot: DispatchSnapshotState;
   outcome: DispatchOutcomeState;
   progress: ProgressState;
+  autocommit: { committed: boolean; sha: string | null };
   /** Post-adapter observe envelopes salvaged from a thrown dispatch error. */
   pendingObservations: Record<string, unknown>[];
 }
@@ -729,10 +732,10 @@ function snapshotOrNull(snapshot: DispatchSnapshotState): SnapshotResult {
 async function maybeAutocommit(
   deps: WorkerDispatcherDeps,
   handoff: DispatcherHandoff,
-  snapshot: DispatchSnapshotState,
+  ctx: DispatchLifecycleContext,
   reason: string,
 ): Promise<void> {
-  const current = snapshotOrNull(snapshot);
+  const current = snapshotOrNull(ctx.snapshot);
   if (
     reason !== "completed" ||
     current.dirty !== true ||
@@ -742,8 +745,12 @@ async function maybeAutocommit(
     return;
   }
   try {
-    await deps.autocommitOnChainEnd(handoff);
-    await reprobeSnapshot(deps, handoff, snapshot);
+    const outcome = await deps.autocommitOnChainEnd(handoff);
+    await reprobeSnapshot(deps, handoff, ctx.snapshot);
+    if (outcome?.committed === true) {
+      ctx.autocommit.committed = true;
+      ctx.autocommit.sha = outcome.sha ?? null;
+    }
     deps.onDispatchEvent?.({
       kind: "autocommit_on_chain_end",
       handoff_id: handoff.handoff_id,
@@ -823,7 +830,7 @@ async function handleHopCompletion(
   // because the finally block re-reads ctx.snapshot, which maybeAutocommit
   // mutates in place.
   const preAutocommit = snapshotOrNull(ctx.snapshot);
-  await maybeAutocommit(deps, handoff, ctx.snapshot, reason);
+  await maybeAutocommit(deps, handoff, ctx, reason);
   deps.onChainEnd?.(
     handoff,
     reason,
@@ -1044,6 +1051,8 @@ function buildDispatchEndMeta(ctx: DispatchLifecycleContext): Record<string, unk
     ...(snap.dirty !== null ? { dirty: snap.dirty } : {}),
     ...(snap.committed !== null ? { committed: snap.committed } : {}),
     ...(snap.commitIntegrity ? { commit_integrity: snap.commitIntegrity } : {}),
+    ...(ctx.autocommit.committed ? { autocommitted: true } : {}),
+    ...(ctx.autocommit.sha !== null ? { autocommit_sha: ctx.autocommit.sha } : {}),
     ...(decline ?? {}),
     ...(terminalError !== null ? { terminal_error: terminalError } : {}),
   };
@@ -1262,6 +1271,7 @@ async function handleOne(state: DispatcherState, handoff: DispatcherHandoff): Pr
       dispatchStart: Date.now(),
       snapshot: { captured: null },
       outcome: { status: "ok", result: null, errorText: null },
+      autocommit: { committed: false, sha: null },
       pendingObservations: [],
       progress: {
         bufferParts: [],

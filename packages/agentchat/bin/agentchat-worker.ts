@@ -52,7 +52,10 @@ import { resolveUsageCursorPath, startUsagePoller } from "../src/usage-readers/p
 import { SakanaUsageSynth } from "../src/usage-readers/sakana-usage-synth.js";
 import { runWorkerBoot } from "../src/worker-boot.js";
 import { resolveWorkerId } from "../src/worker-id.js";
-import { autocommitOnChainEnd } from "../src/worker/autocommit-on-chain-end.js";
+import {
+  autocommitOnChainEnd,
+  type AutocommitResult,
+} from "../src/worker/autocommit-on-chain-end.js";
 import {
   computeClaimGraceMs,
   DEFAULT_CLAIM_AFFINITY_GRACE_MS,
@@ -1567,13 +1570,13 @@ const dispatcher = createWorkerDispatcher({
   markFailed: async (id, reason): Promise<void> => {
     await client.markFailed(id, reason, workerId);
   },
-  autocommitOnChainEnd: async (rawHandoff): Promise<void> => {
+  autocommitOnChainEnd: async (rawHandoff): Promise<AutocommitResult | void> => {
     const handoff = rawHandoff as HandoffRow;
     const wt = worktreeManager.getWorktree(handoff.handoff_id);
     if (!wt) {
       return;
     }
-    await autocommitOnChainEnd(handoff, wt, { log });
+    return await autocommitOnChainEnd(handoff, wt, { log });
   },
   onChainEnd: (
     handoff,
