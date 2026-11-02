@@ -113,7 +113,7 @@ test("laneOpenHandler surfaces daemon 400 errors", async () => {
 
 test("laneOpenHandler bounds its daemon POST with an AbortSignal deadline", async () => {
   let seenSignal: AbortSignal | undefined;
-  const { daemon, restore } = installFetchMock(((_input, init): Promise<Response> => {
+  const { daemon, restore } = installFetchMock((_input, init): Promise<Response> => {
     seenSignal = init?.signal ?? undefined;
     return Promise.resolve(
       Response.json({
@@ -130,7 +130,7 @@ test("laneOpenHandler bounds its daemon POST with an AbortSignal deadline", asyn
         metadata_json: "{}",
       }),
     );
-  }) as typeof fetch);
+  });
   try {
     await laneOpenHandler(daemon)({ implementer_handoff_id: "handoff-1", task_class: "STANDARD" });
   } finally {
