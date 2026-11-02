@@ -1,6 +1,6 @@
 import type { AgentConfig } from "@penumbra/agentchat/config/types";
 
-import { loadSqliteVec } from "@penumbra/core";
+import { loadSqliteVec, type McpPoolLike } from "@penumbra/core";
 import { applySchema } from "@penumbra/core/db/schema";
 import { Database } from "bun:sqlite";
 import { describe, expect, mock, type Mock, test } from "bun:test";
@@ -26,33 +26,43 @@ function makeLog(): {
   };
 }
 
+function fakeMcpPool(callTool: McpPoolLike["callTool"]): McpPoolLike {
+  return {
+    callTool,
+    listTools: () => Promise.resolve([]),
+    getFederationHealth: () => ({ registered: [], skipped: [] }),
+    shutdown: () => Promise.resolve(),
+  };
+}
+
 function seedAgent(
   db: Database,
   allowlist: string[],
   approval_required_globs: string[] = [],
   opts: { snapshot_tool?: string | null; require_snapshot?: boolean } = {},
 ): void {
-  reconcileLongLivedAgents(
-    db,
-    [
-      {
-        name: "home",
-        long_lived: true,
-        long_lived_config: {
-          schedule_cron: "*/15 * * * *",
-          subscriptions: [],
-          mcp_allowlist: allowlist,
-          snapshot_tool: opts.snapshot_tool ?? null,
-          require_snapshot: opts.require_snapshot ?? false,
-          bounds: { wall_clock_ms: 1000, cost_cents: 1, max_sub_dispatches: 0 },
-          circuit_breaker_threshold: 3,
-          action_tiers: { approval_required_globs, cooldown_overrides: {} },
-          standing_brief: "x",
-        },
-      } as AgentConfig,
-    ],
-    { now: 1 },
-  );
+  const agent: AgentConfig = {
+    name: "home",
+    adapter: "test",
+    options: {},
+    roles: [],
+    auto_approve_to: [],
+    pricing_mode: "api",
+    long_lived: true,
+    long_lived_config: {
+      schedule_cron: "*/15 * * * *",
+      subscriptions: [],
+      hosted_mcp_servers: [],
+      mcp_allowlist: allowlist,
+      snapshot_tool: opts.snapshot_tool ?? undefined,
+      require_snapshot: opts.require_snapshot ?? false,
+      bounds: { wall_clock_ms: 1000, cost_cents: 1, max_sub_dispatches: 0 },
+      circuit_breaker_threshold: 3,
+      action_tiers: { approval_required_globs, cooldown_overrides: {} },
+      standing_brief: "x",
+    },
+  };
+  reconcileLongLivedAgents(db, [agent], { now: 1 });
   db.query(
     "INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES ('t1', 'home', 'manual', 1)",
   ).run();
@@ -66,11 +76,7 @@ describe("action gate pool integration", () => {
     const fakeLog = makeLog();
     const callbacks = buildActionGateCallbacks({
       db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
+      mcpPool: fakeMcpPool(callTool),
       log: fakeLog,
     });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
@@ -98,11 +104,7 @@ describe("action gate pool integration", () => {
     const fakeLog = makeLog();
     const callbacks = buildActionGateCallbacks({
       db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
+      mcpPool: fakeMcpPool(callTool),
       log: fakeLog,
     });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
@@ -130,11 +132,7 @@ describe("action gate pool integration", () => {
     const fakeLog = makeLog();
     const callbacks = buildActionGateCallbacks({
       db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
+      mcpPool: fakeMcpPool(callTool),
       log: fakeLog,
     });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
@@ -175,11 +173,7 @@ describe("action gate pool integration", () => {
     const fakeLog = makeLog();
     const callbacks = buildActionGateCallbacks({
       db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
+      mcpPool: fakeMcpPool(callTool),
       log: fakeLog,
     });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
@@ -208,11 +202,7 @@ describe("action gate pool integration", () => {
     const fakeLog = makeLog();
     const callbacks = buildActionGateCallbacks({
       db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
+      mcpPool: fakeMcpPool(callTool),
       log: fakeLog,
     });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
@@ -233,11 +223,7 @@ describe("action gate pool integration", () => {
     const fakeLog = makeLog();
     const callbacks = buildActionGateCallbacks({
       db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
+      mcpPool: fakeMcpPool(callTool),
       log: fakeLog,
     });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
@@ -258,11 +244,7 @@ describe("action gate pool integration", () => {
     const fakeLog = makeLog();
     const callbacks = buildActionGateCallbacks({
       db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
+      mcpPool: fakeMcpPool(callTool),
       log: fakeLog,
     });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
@@ -298,11 +280,7 @@ describe("action gate pool integration", () => {
     const fakeLog = makeLog();
     const callbacks = buildActionGateCallbacks({
       db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
+      mcpPool: fakeMcpPool(callTool),
       log: fakeLog,
     });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
@@ -329,11 +307,7 @@ describe("action gate pool integration", () => {
     const fakeLog = makeLog();
     const callbacks = buildActionGateCallbacks({
       db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
+      mcpPool: fakeMcpPool(callTool),
       log: fakeLog,
     });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
@@ -362,11 +336,7 @@ describe("action gate pool integration", () => {
     const fakeLog = makeLog();
     const callbacks = buildActionGateCallbacks({
       db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
+      mcpPool: fakeMcpPool(callTool),
       log: fakeLog,
     });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
@@ -389,11 +359,7 @@ describe("action gate pool integration", () => {
     const fakeLog = makeLog();
     const callbacks = buildActionGateCallbacks({
       db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
+      mcpPool: fakeMcpPool(callTool),
       log: fakeLog,
     });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
@@ -424,11 +390,7 @@ describe("action gate pool integration", () => {
     const fakeLog = makeLog();
     const callbacks = buildActionGateCallbacks({
       db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
+      mcpPool: fakeMcpPool(callTool),
       log: fakeLog,
     });
     let threw: Error | null = null;
@@ -451,11 +413,7 @@ describe("action gate pool integration", () => {
     const fakeLog = makeLog();
     const callbacks = buildActionGateCallbacks({
       db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
+      mcpPool: fakeMcpPool(callTool),
       log: fakeLog,
     });
     const result = await callbacks.takeSnapshot("home");

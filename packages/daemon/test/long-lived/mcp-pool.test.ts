@@ -417,7 +417,7 @@ test("callTool round-trips to the server", async () => {
 });
 
 test("callTool forwards params._meta when provided", async () => {
-  let seenCallParams: Record<string, unknown> | null = null;
+  let seenCallParams: Record<string, unknown> | null = null as Record<string, unknown> | null;
   const { proc } = makeFakeProc((req, stdout) => {
     if (req.method === "initialize") {
       emitJson(stdout, {
@@ -453,6 +453,8 @@ test("callTool forwards params._meta when provided", async () => {
     { _meta: { origin: "claude-code" } },
   );
   expect(result).toEqual({ ok: true });
+  expect(seenCallParams).not.toBeNull();
+  if (seenCallParams === null) throw new Error("expected tools/call params");
   expect(seenCallParams).toEqual({
     name: "echo",
     arguments: { hello: "world" },
@@ -462,7 +464,7 @@ test("callTool forwards params._meta when provided", async () => {
 });
 
 test("_meta array is not forwarded to outgoing params._meta", async () => {
-  let seenCallParams: Record<string, unknown> | null = null;
+  let seenCallParams: Record<string, unknown> | null = null as Record<string, unknown> | null;
   const { proc } = makeFakeProc((req, stdout) => {
     if (req.method === "initialize") {
       emitJson(stdout, {
@@ -499,6 +501,8 @@ test("_meta array is not forwarded to outgoing params._meta", async () => {
     [],
   );
   expect(result).toEqual({ ok: true });
+  expect(seenCallParams).not.toBeNull();
+  if (seenCallParams === null) throw new Error("expected tools/call params");
   expect(seenCallParams).toEqual({
     name: "echo",
     arguments: { hello: "world" },

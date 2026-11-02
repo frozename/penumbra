@@ -1,4 +1,4 @@
-import type { AgentConfig } from "@penumbra/agentchat/config";
+import type { AgentConfig } from "@penumbra/agentchat/config/types";
 
 import { loadSqliteVec } from "@penumbra/core";
 import { applySchema } from "@penumbra/core/db/schema";
@@ -159,7 +159,7 @@ describe("tick-gate", () => {
       now: (() => {
         const times = [100, 200, 300];
         let i = 0;
-        return (): number => times[i++] ?? times[times.length - 1];
+        return (): number => times[i++] ?? 300;
       })(),
     });
 

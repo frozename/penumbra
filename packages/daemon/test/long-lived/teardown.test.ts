@@ -24,20 +24,32 @@ interface PerfRow {
   count: number;
 }
 
-// AgentConfig requires many Zod-default fields the test seed doesn't supply; one factory cast per gap.
 function makeTestAgent(): AgentConfig {
   return {
     name: "a",
+    adapter: "test",
+    options: {},
+    roles: [],
+    auto_approve_to: [],
+    pricing_mode: "api",
     long_lived: true,
     long_lived_config: {
       schedule_cron: "*/15 * * * *",
       subscriptions: [],
+      hosted_mcp_servers: [],
       mcp_allowlist: [],
+      require_snapshot: false,
       bounds: { wall_clock_ms: 1000, cost_cents: 1, max_sub_dispatches: 0 },
       circuit_breaker_threshold: 3,
       standing_brief: "x",
     },
-  } as unknown as AgentConfig;
+  };
+}
+
+function expectRow<T>(row: T | null): T {
+  expect(row).not.toBeNull();
+  if (row === null) throw new Error("expected database row");
+  return row;
 }
 
 function seed(): Database {
@@ -64,20 +76,26 @@ describe("handleTickTeardown", () => {
       now: 100,
     });
 
-    const tick = db
-      .query<TickRow>(
-        "SELECT outcome, cost_cents, completed_at FROM long_lived_ticks WHERE id='t1'",
-      )
-      .get()!;
+    const tick = expectRow(
+      db
+        .query<
+          TickRow,
+          []
+        >("SELECT outcome, cost_cents, completed_at FROM long_lived_ticks WHERE id='t1'")
+        .get(),
+    );
     expect(tick.outcome).toBe("success");
     expect(tick.cost_cents).toBe(7);
     expect(tick.completed_at).toBe(100);
 
-    const agent = db
-      .query<AgentRow>(
-        "SELECT consecutive_failures, last_tick_outcome FROM long_lived_agents WHERE id='a'",
-      )
-      .get()!;
+    const agent = expectRow(
+      db
+        .query<
+          AgentRow,
+          []
+        >("SELECT consecutive_failures, last_tick_outcome FROM long_lived_agents WHERE id='a'")
+        .get(),
+    );
     expect(agent.consecutive_failures).toBe(0);
     expect(agent.last_tick_outcome).toBe("success");
   });
@@ -93,9 +111,14 @@ describe("handleTickTeardown", () => {
       now: 100,
     });
 
-    const agent = db
-      .query<AgentRow>("SELECT consecutive_failures, status FROM long_lived_agents WHERE id='a'")
-      .get()!;
+    const agent = expectRow(
+      db
+        .query<
+          AgentRow,
+          []
+        >("SELECT consecutive_failures, status FROM long_lived_agents WHERE id='a'")
+        .get(),
+    );
     expect(agent.consecutive_failures).toBe(1);
     expect(agent.status).toBe("active");
   });
@@ -112,11 +135,14 @@ describe("handleTickTeardown", () => {
       now: 100,
     });
 
-    const agent = db
-      .query<AgentRow>(
-        "SELECT consecutive_failures, status, degraded_reason FROM long_lived_agents WHERE id='a'",
-      )
-      .get()!;
+    const agent = expectRow(
+      db
+        .query<
+          AgentRow,
+          []
+        >("SELECT consecutive_failures, status, degraded_reason FROM long_lived_agents WHERE id='a'")
+        .get(),
+    );
     expect(agent.consecutive_failures).toBe(1);
     expect(agent.status).toBe("active");
     expect(agent.degraded_reason).toBeNull();
@@ -136,9 +162,11 @@ describe("handleTickTeardown", () => {
       now: 100,
     });
 
-    const agent = db
-      .query<AgentRow>("SELECT status, degraded_reason FROM long_lived_agents WHERE id='a'")
-      .get()!;
+    const agent = expectRow(
+      db
+        .query<AgentRow, []>("SELECT status, degraded_reason FROM long_lived_agents WHERE id='a'")
+        .get(),
+    );
     expect(agent.status).toBe("degraded");
     expect(agent.degraded_reason).toContain("boom");
   });
@@ -148,9 +176,11 @@ describe("handleTickTeardown", () => {
 
     handleTickTeardown(db, { tick_id: "t1", agent_id: "a", outcome: "bound_exceeded", now: 100 });
 
-    const agent = db
-      .query<AgentRow>("SELECT consecutive_failures FROM long_lived_agents WHERE id='a'")
-      .get()!;
+    const agent = expectRow(
+      db
+        .query<AgentRow, []>("SELECT consecutive_failures FROM long_lived_agents WHERE id='a'")
+        .get(),
+    );
     expect(agent.consecutive_failures).toBe(1);
   });
 
@@ -177,24 +207,34 @@ describe("handleTickTeardown", () => {
       });
     }).toThrow("boom");
 
-    const tick = db
-      .query<TickRow>(
-        "SELECT outcome, cost_cents, completed_at FROM long_lived_ticks WHERE id='t1'",
-      )
-      .get()!;
+    const tick = expectRow(
+      db
+        .query<
+          TickRow,
+          []
+        >("SELECT outcome, cost_cents, completed_at FROM long_lived_ticks WHERE id='t1'")
+        .get(),
+    );
     expect(tick.outcome).toBeNull();
     expect(tick.cost_cents).toBeNull();
     expect(tick.completed_at).toBeNull();
 
-    const agent = db
-      .query<AgentRow>("SELECT consecutive_failures, status FROM long_lived_agents WHERE id='a'")
-      .get()!;
+    const agent = expectRow(
+      db
+        .query<
+          AgentRow,
+          []
+        >("SELECT consecutive_failures, status FROM long_lived_agents WHERE id='a'")
+        .get(),
+    );
     expect(agent.consecutive_failures).toBe(0);
     expect(agent.status).toBe("active");
 
-    const perf = db
-      .query<PerfRow>("SELECT COUNT(*) AS count FROM agent_performance WHERE handoff_id='t1'")
-      .get()!;
+    const perf = expectRow(
+      db
+        .query<PerfRow, []>("SELECT COUNT(*) AS count FROM agent_performance WHERE handoff_id='t1'")
+        .get(),
+    );
     expect(perf.count).toBe(0);
   });
 });
