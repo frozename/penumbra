@@ -113,6 +113,7 @@ function writePassingVerdict(svc: Services, handoffId: string, conversationId: s
     cost_usd: null,
     latency_ms: null,
     request_id: null,
+    origin: null,
     payload_json: {
       handoff_id: handoffId,
       conversation_id: conversationId,

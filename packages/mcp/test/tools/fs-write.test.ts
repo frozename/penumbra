@@ -39,20 +39,16 @@ describe("fs.write handler", () => {
   });
 
   it("forwards path + content + handoff_id to daemon and returns result", async () => {
-    let receivedId: string | null = null;
-    let receivedPath: string | null = null;
-    let receivedContent: string | null = null;
+    const calls: { id: string; path: string; content: string }[] = [];
     const daemon = fakeDaemon((id, args) => {
-      receivedId = id;
-      receivedPath = args.path;
-      receivedContent = args.content;
+      calls.push({ id, path: args.path, content: args.content });
       return Promise.resolve({ path: "hello.txt", bytes_written: 11, created: true });
     });
     const handler = fsWriteHandler(daemon);
     const out = await handler({ path: "hello.txt", content: "hello world", handoff_id: "H1" });
-    expect(receivedId).toBe("H1");
-    expect(receivedPath).toBe("hello.txt");
-    expect(receivedContent).toBe("hello world");
+    expect(calls[0]?.id).toBe("H1");
+    expect(calls[0]?.path).toBe("hello.txt");
+    expect(calls[0]?.content).toBe("hello world");
     const text = parseText(out) as { bytes_written: number; created: boolean };
     expect(text.bytes_written).toBe(11);
     expect(text.created).toBe(true);
@@ -60,14 +56,14 @@ describe("fs.write handler", () => {
 
   it("defaults handoff_id from PENUMBRA_HANDOFF_ID env when arg absent", async () => {
     process.env.PENUMBRA_HANDOFF_ID = "H_ENV";
-    let receivedId: string | null = null;
+    const calls: { id: string }[] = [];
     const daemon = fakeDaemon((id) => {
-      receivedId = id;
+      calls.push({ id });
       return Promise.resolve({ path: "f.txt", bytes_written: 2, created: true });
     });
     const handler = fsWriteHandler(daemon);
     await handler({ path: "f.txt", content: "hi" });
-    expect(receivedId).toBe("H_ENV");
+    expect(calls[0]?.id).toBe("H_ENV");
   });
 
   it("returns no_handoff_context error when neither arg nor env set", async () => {
