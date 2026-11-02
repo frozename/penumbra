@@ -192,6 +192,7 @@ describe("memory schema enrichment", () => {
       project_id: "p1",
       limit: 10,
       include_raw: false,
+      include_untrusted: false,
       min_score: 0,
     });
 

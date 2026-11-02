@@ -188,32 +188,42 @@ function emptyProviderAgg(provider: string | null): ProviderAgg {
   };
 }
 
+// Exported so tests can pin the text against the covering partial index
+// t0_events_usage_cost_rollup: SQLite only treats that index as covering when
+// every payload expression below matches an index column verbatim, and a bare
+// (non-aggregate) expression in an aggregate query's result list is never
+// index-covered — so handoff_key is wrapped in MAX(), which is the group's
+// constant key either way. The json_valid guards keep malformed payloads from
+// aborting the read (the index build uses the same guards).
+export const PER_HANDOFF_COST_ROLLUP_SQL = `
+    SELECT
+      MAX(CASE WHEN json_valid(payload_json) THEN COALESCE(json_extract(payload_json, '$.handoff_id'), event_id) ELSE event_id END) AS handoff_key,
+      provider,
+      model,
+      MAX(cost_usd) AS handoff_cost_usd,
+      MAX(CASE WHEN lane = 'cloud' THEN cost_usd END) AS handoff_cost_usd_billed,
+      MAX(CASE WHEN lane = 'cli-subscription' THEN cost_usd END) AS handoff_cost_usd_synth,
+      MAX(CASE WHEN json_valid(payload_json) THEN CAST(json_extract(payload_json, '$.used') AS INTEGER) END) AS handoff_tokens,
+      MAX(CASE WHEN json_valid(payload_json) THEN COALESCE(CAST(json_extract(payload_json, '$.tokens_input') AS INTEGER), tokens_in, 0) ELSE COALESCE(tokens_in, 0) END) AS handoff_input_tokens,
+      MAX(CASE WHEN json_valid(payload_json) THEN COALESCE(CAST(json_extract(payload_json, '$.tokens_cache_read') AS INTEGER), 0) ELSE 0 END) AS handoff_tokens_cache_read,
+      MAX(CASE WHEN json_valid(payload_json) THEN COALESCE(CAST(json_extract(payload_json, '$.tokens_cache_write') AS INTEGER), 0) ELSE 0 END) AS handoff_tokens_cache_write
+    FROM t0_events
+    WHERE event_type = 'usage-update'
+      AND ts >= ?
+      AND (? IS NULL OR project_id = ?)
+    GROUP BY
+      CASE WHEN json_valid(payload_json) THEN COALESCE(json_extract(payload_json, '$.handoff_id'), event_id) ELSE event_id END,
+      provider,
+      model
+  `;
+
 function fetchPerHandoffModelRows(
   db: Database,
   since: string,
   projectId: string | null,
 ): (PerHandoffModelRow & { handoff_key: string })[] {
   return db
-    .prepare(
-      `
-    SELECT
-      COALESCE(json_extract(payload_json, '$.handoff_id'), event_id) AS handoff_key,
-      provider,
-      model,
-      MAX(cost_usd) AS handoff_cost_usd,
-      MAX(CASE WHEN lane = 'cloud' THEN cost_usd END) AS handoff_cost_usd_billed,
-      MAX(CASE WHEN lane = 'cli-subscription' THEN cost_usd END) AS handoff_cost_usd_synth,
-      MAX(CAST(json_extract(payload_json, '$.used') AS INTEGER)) AS handoff_tokens,
-      MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_input') AS INTEGER), tokens_in, 0)) AS handoff_input_tokens,
-      MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_cache_read') AS INTEGER), 0)) AS handoff_tokens_cache_read,
-      MAX(COALESCE(CAST(json_extract(payload_json, '$.tokens_cache_write') AS INTEGER), 0)) AS handoff_tokens_cache_write
-    FROM t0_events
-    WHERE event_type = 'usage-update'
-      AND ts >= ?
-      AND (? IS NULL OR project_id = ?)
-    GROUP BY handoff_key, provider, model
-  `,
-    )
+    .prepare(PER_HANDOFF_COST_ROLLUP_SQL)
     .all(since, projectId, projectId) as (PerHandoffModelRow & { handoff_key: string })[];
 }
 

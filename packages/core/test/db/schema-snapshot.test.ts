@@ -4,8 +4,6 @@ import { expect, test } from "bun:test";
 import { applySchema, SCHEMA_VERSION } from "@src/db/schema.js";
 import { loadSqliteVec } from "@src/db/sqlite-vec.js";
 
-import snapshot from "./fixtures/schema-snapshot.json";
-
 // See schema.test.ts — macOS Bun ships an SQLite without extension loading.
 if (process.platform === "darwin") {
   try {
@@ -61,7 +59,9 @@ test("a fresh applySchema database matches the committed schema snapshot", async
     return;
   }
 
-  const expected = snapshot as SchemaSnapshot;
+  const expected = JSON.parse(
+    await Bun.file(new URL("fixtures/schema-snapshot.json", import.meta.url)).text(),
+  ) as SchemaSnapshot;
   // A drift here means the programmatic schema changed: bump SCHEMA_VERSION,
   // add the matching addColumnIfMissing/CREATE ... IF NOT EXISTS upgrade path
   // for legacy databases, then refresh the fixture with
