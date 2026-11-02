@@ -86,6 +86,7 @@ describe("RecallReader — t2 why/source_quote/learned_at/last_verified_at", () 
       project_id: "p1",
       limit: 10,
       include_raw: false,
+      include_untrusted: false,
       min_score: 0,
       sources: ["t2"],
     });
@@ -133,6 +134,7 @@ describe("RecallReader — t2 why/source_quote/learned_at/last_verified_at", () 
       project_id: "p1",
       limit: 10,
       include_raw: false,
+      include_untrusted: false,
       min_score: 0,
       strategy_hint: "hybrid",
     });
