@@ -146,6 +146,26 @@ function redactToolName(
   return result.content.slice(0, TOOL_NAME_LIMIT);
 }
 
+export type ToolFailureKind = "policy" | "error";
+
+// #341: OpenCode/ACP permission denials arrive as ordinary failed outputs with these
+// phrasings in the error or content text; anything else is a real tool error.
+const POLICY_DENIAL_PATTERNS = [
+  "permission denied",
+  "rejected permission",
+  "prevents you from using this specific tool call",
+];
+
+export function classifyToolFailure(output: unknown): ToolFailureKind {
+  if (output === undefined || output === null) return "error";
+  try {
+    const text = JSON.stringify(output).toLowerCase();
+    return POLICY_DENIAL_PATTERNS.some((p) => text.includes(p)) ? "policy" : "error";
+  } catch {
+    return "error";
+  }
+}
+
 export class CapturePort {
   private readonly opts: CapturePortOpts;
   private chunkBuffer: ChunkBuffer | null = null;
@@ -410,6 +430,7 @@ export class CapturePort {
       status,
     };
     if (orphaned) payload.lifecycle = "orphaned";
+    if (status === "failed") payload.failure_kind = classifyToolFailure(output);
     const anyTruncated = inputResult.truncated || outputResult.truncated;
     if (anyTruncated) {
       payload.truncated = true;

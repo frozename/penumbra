@@ -4,7 +4,7 @@ import type { Database } from "bun:sqlite";
 import { quotaStatus, readSubscriptionPressure, recentCost } from "@penumbra/core";
 import { z } from "zod";
 
-import { listProviderQuotaStatus } from "../services/provider-concurrency.js";
+import { listProviderQuotaStatus, listSeatQuotaStatus } from "../services/provider-concurrency.js";
 import { json } from "./_helpers.js";
 const RecentInputSchema = z.object({
   since: z.iso.datetime().optional(),
@@ -102,5 +102,9 @@ export function usageSubscriptionPressureRoute(req: Request, services: Services)
 // #259: read-only view of the provider-wide in-flight caps in effect, with live counts.
 // `penumbra status` reads it; POST /agentchat/reload returns the same rows after a reload.
 export function usageProviderQuotasRoute(services: Services): Response {
-  return json({ provider_quotas: listProviderQuotaStatus(services) });
+  return json({
+    provider_quotas: listProviderQuotaStatus(services),
+    // #257: capped seats ride the same read-only view as provider caps.
+    seat_quotas: listSeatQuotaStatus(services),
+  });
 }

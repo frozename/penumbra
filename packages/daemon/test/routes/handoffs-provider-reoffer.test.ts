@@ -274,6 +274,78 @@ test("a 429-refused claim is re-offered over GET /handoffs/events when the provi
   await requireBody(sse).cancel();
 });
 
+test("a 429-refused claim on a seat-capped agent is re-offered when the seat's dispatch completes, and the re-claim succeeds (#257)", async () => {
+  const services = tempServices();
+  services.agentchatConfig = {
+    agents: [
+      {
+        name: "claude-a",
+        roles: [],
+        adapter: "stdio-acp",
+        pricing_mode: "subscription",
+        subscription_provider: "anthropic",
+        max_in_flight: 1,
+      },
+      {
+        name: "claude-b",
+        roles: [],
+        adapter: "stdio-acp",
+        pricing_mode: "subscription",
+        subscription_provider: "anthropic",
+      },
+    ],
+  };
+  services.providerQuotas = [];
+  const log = { info: mock(), warn: mock(), debug: mock(), error: mock() };
+  services.log = log as unknown as Services["log"];
+  const fetchHandler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
+  seedApprovedHandoff(services, "seat-running", { to: "claude-a" });
+  seedApprovedHandoff(services, "seat-next", { to: "claude-a", tsOffsetMs: 1 });
+  const reoffer = createProviderCapacityReoffer({ services });
+  reoffer.start();
+  const { tokenA, tokenB } = await registerWorkers(fetchHandler);
+
+  const runningClaim = await claim(fetchHandler, "seat-running", "W-A", tokenA);
+  expect(runningClaim.status).toBe(200);
+  const refused = await claim(fetchHandler, "seat-next", "W-B", tokenB);
+  expect(refused.status).toBe(429);
+  expect((await refused.json()) as ErrorResponse & { seat: string }).toMatchObject({
+    error: { code: "seat_concurrency_cap" },
+    seat: "claude-a",
+    max_in_flight: 1,
+    in_flight_count: 1,
+  });
+  expect(countEvents(services, "seat-next", "claim.seat_cap_refused")).toBe(1);
+
+  const sse = await fetchHandler(
+    new Request("http://x/handoffs/events", {
+      headers: { authorization: `Bearer ${SHARED_TOKEN}` },
+    }),
+  );
+  expect(sse.status).toBe(200);
+  const done = await complete(fetchHandler, "seat-running", tokenA);
+  expect(done.status).toBe(200);
+
+  const events = await readSseEvents(requireBody(sse), 1);
+  expect(events).toHaveLength(1);
+  expect(events[0]).toMatchObject({ handoff_id: "seat-next", status: "approved" });
+  expect(countEvents(services, "seat-next", "claim.reoffer")).toBe(1);
+
+  const reclaimed = await claim(fetchHandler, "seat-next", "W-B", tokenB);
+  expect(reclaimed.status).toBe(200);
+  expect(services.handoffReader.get("seat-next")).toMatchObject({
+    status: "dispatched",
+    worker_id: "W-B",
+  });
+  expect(eventKinds(services, "seat-next")).toEqual([
+    "claim.seat_cap_refused",
+    "claim.reoffer",
+    "claim",
+  ]);
+  reoffer.stop();
+  await requireBody(sse).cancel();
+});
+
 test("sweep() re-offers a still-waiting refused row when the transition signal was missed", async () => {
   const { services, fetchHandler } = setup();
   const { tokenA, tokenB } = await registerWorkers(fetchHandler);
