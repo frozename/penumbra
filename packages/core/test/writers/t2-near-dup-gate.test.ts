@@ -32,6 +32,9 @@ type Extraction = {
 };
 
 class DeterministicEmbedder {
+  readonly name = "deterministic";
+  readonly dim = 4;
+
   constructor(private readonly vectors: Map<string, Float32Array>) {}
 
   embed(input: string[]): Promise<Float32Array[]> {
@@ -411,15 +414,18 @@ describe("T2Promotion creation gate + near-dup gate", () => {
         "SELECT action_type, phase, status, target_ids, confidence FROM dream_actions WHERE action_type = 'retire' ORDER BY rowid DESC LIMIT 1",
       )
       .get();
+    if (retireAction === null) {
+      throw new Error("expected a queued retire dream_action row");
+    }
     expect(retireAction).toEqual({
       action_type: "retire",
       phase: "P3",
       status: "queued",
       target_ids: JSON.stringify([existingWeak?.memory_id]),
-      confidence: retireAction?.confidence,
+      confidence: retireAction.confidence,
     });
-    expect(retireAction?.confidence).toBeGreaterThan(0.95);
-    expect(retireAction?.confidence).toBeLessThan(1);
+    expect(retireAction.confidence).toBeGreaterThan(0.95);
+    expect(retireAction.confidence).toBeLessThan(1);
 
     const cycle = db
       .query<
