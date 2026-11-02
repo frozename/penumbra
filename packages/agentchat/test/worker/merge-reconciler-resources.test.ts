@@ -220,7 +220,12 @@ test("an admission timeout skips the stage and reports a resource environment fa
 });
 
 test("heavy stages are serialized across concurrent reconciles", async () => {
-  const lock = new HeavyJobLock({ path: join(root, "heavy.lock"), flockBin: null, log: quietLog });
+  const lock = new HeavyJobLock({
+    path: join(root, "heavy.lock"),
+    flockBin: null,
+    crossProcessFallback: "none",
+    log: quietLog,
+  });
   const gate = createHeavyJobGate({ lock, admitMinGiB: 0, waitMs: 10_000, log: quietLog });
   let inFlight = 0;
   let maxInFlight = 0;

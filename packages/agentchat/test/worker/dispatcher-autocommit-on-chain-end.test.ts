@@ -221,6 +221,103 @@ test("dirty uncommitted completed dispatch autocommits before onChainEnd", async
   });
 });
 
+const AUTOCOMMIT_SHA = "c".repeat(40);
+
+test("dispatch.end meta stamps autocommitted flag and sha when recovery commits", async () => {
+  const onEvent = mock();
+  const autocommitOnChainEnd = mock().mockResolvedValue({
+    committed: true,
+    sha: AUTOCOMMIT_SHA,
+  });
+  const snapshot = mock()
+    .mockResolvedValueOnce({ worktreeChanged: true, dirty: true, committed: false })
+    .mockResolvedValueOnce({ worktreeChanged: false, dirty: false, committed: true });
+  const d = deps({ onEvent, autocommitOnChainEnd, getWorktreeSnapshot: snapshot });
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(handoff);
+  await dispatcher.idle();
+
+  const dispatchEnd = mockCalls<[DispatchEventLike]>(onEvent).find(
+    (call) => call[0].kind === "dispatch.end",
+  )?.[0];
+  expect(dispatchEnd?.meta).toEqual(
+    expect.objectContaining({
+      autocommitted: true,
+      autocommit_sha: AUTOCOMMIT_SHA,
+    }) as Record<string, unknown>,
+  );
+});
+
+test("dispatch.end meta stamps autocommitted without a sha when none is reported", async () => {
+  const onEvent = mock();
+  const autocommitOnChainEnd = mock().mockResolvedValue({ committed: true, sha: null });
+  const snapshot = mock()
+    .mockResolvedValueOnce({ worktreeChanged: true, dirty: true, committed: false })
+    .mockResolvedValueOnce({ worktreeChanged: false, dirty: false, committed: true });
+  const d = deps({ onEvent, autocommitOnChainEnd, getWorktreeSnapshot: snapshot });
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(handoff);
+  await dispatcher.idle();
+
+  const dispatchEnd = mockCalls<[DispatchEventLike]>(onEvent).find(
+    (call) => call[0].kind === "dispatch.end",
+  )?.[0];
+  expect(dispatchEnd?.meta?.autocommitted).toBe(true);
+  expect(dispatchEnd?.meta).not.toHaveProperty("autocommit_sha");
+});
+
+test("dispatch.end meta omits autocommit flags when the agent committed itself", async () => {
+  const onEvent = mock();
+  const autocommitOnChainEnd = mock();
+  const d = deps({
+    onEvent,
+    autocommitOnChainEnd,
+    getWorktreeSnapshot: mock().mockResolvedValue({
+      worktreeChanged: true,
+      dirty: false,
+      committed: true,
+    }),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(handoff);
+  await dispatcher.idle();
+
+  const dispatchEnd = mockCalls<[DispatchEventLike]>(onEvent).find(
+    (call) => call[0].kind === "dispatch.end",
+  )?.[0];
+  expect(dispatchEnd).toBeDefined();
+  expect(dispatchEnd?.meta).not.toHaveProperty("autocommitted");
+  expect(dispatchEnd?.meta).not.toHaveProperty("autocommit_sha");
+});
+
+test("dispatch.end meta omits autocommit flags when recovery commits nothing", async () => {
+  const onEvent = mock();
+  const autocommitOnChainEnd = mock().mockResolvedValue({ committed: false, sha: null });
+  const d = deps({
+    onEvent,
+    autocommitOnChainEnd,
+    getWorktreeSnapshot: mock().mockResolvedValue({
+      worktreeChanged: true,
+      dirty: true,
+      committed: false,
+    }),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+
+  await dispatcher.handle(handoff);
+  await dispatcher.idle();
+
+  const dispatchEnd = mockCalls<[DispatchEventLike]>(onEvent).find(
+    (call) => call[0].kind === "dispatch.end",
+  )?.[0];
+  expect(dispatchEnd).toBeDefined();
+  expect(dispatchEnd?.meta).not.toHaveProperty("autocommitted");
+  expect(dispatchEnd?.meta).not.toHaveProperty("autocommit_sha");
+});
+
 test("dispatch.end meta reflects post-recovery snapshot after autocommit", async () => {
   const onChainEnd = mock();
   const onEvent = mock();
@@ -437,8 +534,9 @@ test("autocommit warns with dropped_paths when some paths are filtered out", asy
       stdout: " M packages/app/src/index.ts\n M .env\n?? node_modules/foo/x.js\n",
     })
     .mockResolvedValueOnce({ stdout: "" })
-    .mockResolvedValueOnce({ stdout: "" });
-  const committed = await autocommitOnChainEnd(
+    .mockResolvedValueOnce({ stdout: "" })
+    .mockResolvedValueOnce({ stdout: `${AUTOCOMMIT_SHA}\n` });
+  const result = await autocommitOnChainEnd(
     {
       handoff_id: "123e4567-e89b-12d3-a456-426614174777",
       conversation_id: "conv-1",
@@ -448,7 +546,8 @@ test("autocommit warns with dropped_paths when some paths are filtered out", asy
     { execFile: asExecFile(execFile), log: { warn, debug: mock() } },
   );
 
-  expect(committed).toBe(true);
+  expect(result.committed).toBe(true);
+  expect(result.sha).toBe(AUTOCOMMIT_SHA);
   const droppedWarn = mockCalls<[Record<string, unknown>, string]>(warn).find(
     (call) => call[1] === "autocommit on chain end dropped paths",
   );
@@ -464,13 +563,14 @@ test("autocommit warns with dropped_paths when some paths are filtered out", asy
 test("autocommit skips malformed handoff ids", async () => {
   const warn = mock();
   const execFile = mock();
-  const committed = await autocommitOnChainEnd(
+  const result = await autocommitOnChainEnd(
     { handoff_id: "../../etc/passwd", conversation_id: "conv-1", to_agent: "executor" },
     { path: "/tmp/repo" },
     { execFile: asExecFile(execFile), log: { warn, debug: mock() } },
   );
 
-  expect(committed).toBe(false);
+  expect(result.committed).toBe(false);
+  expect(result.sha).toBeNull();
   expect(execFile).not.toHaveBeenCalled();
   expect(warn).toHaveBeenCalledWith(
     expect.objectContaining({
@@ -487,8 +587,10 @@ test("autocommit stages only allowed paths and skips empty filtered sets", async
   const execFile = mock()
     .mockResolvedValueOnce({ stdout: " M packages/app/src/index.ts\n M .env\n?? docs/notes.md\n" })
     .mockResolvedValueOnce({ stdout: "" })
-    .mockResolvedValueOnce({ stdout: "" });
-  const committed = await autocommitOnChainEnd(
+    .mockResolvedValueOnce({ stdout: "" })
+    .mockResolvedValueOnce({ stdout: "" })
+    .mockResolvedValueOnce({ stdout: `${AUTOCOMMIT_SHA}\n` });
+  const result = await autocommitOnChainEnd(
     {
       handoff_id: "123e4567-e89b-12d3-a456-426614174000",
       conversation_id: "conv-1",
@@ -498,7 +600,8 @@ test("autocommit stages only allowed paths and skips empty filtered sets", async
     { execFile: asExecFile(execFile), log: { warn, debug: mock() } },
   );
 
-  expect(committed).toBe(true);
+  expect(result.committed).toBe(true);
+  expect(result.sha).toBe(AUTOCOMMIT_SHA);
   expect(callArg(execFile, 0, 1)).toEqual([
     "-C",
     "/tmp/repo",
@@ -530,7 +633,8 @@ test("autocommit stages only allowed paths and skips empty filtered sets", async
     { execFile: asExecFile(emptyExecFile), log: { warn, debug: mock() } },
   );
 
-  expect(skipped).toBe(false);
+  expect(skipped.committed).toBe(false);
+  expect(skipped.sha).toBeNull();
   expect(mockCalls<[string, string[]]>(emptyExecFile).some((call) => call[1][2] === "commit")).toBe(
     false,
   );
