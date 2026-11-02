@@ -66,8 +66,8 @@ test("POST /tasks/sync-gh-now with task_id uses pushStatusNow and returns post-p
   expect(res.status).toBe(200);
   const body = (await res.json()) as SyncBody;
   expect(syncCalled).toBe(false);
-  expect(pushedTaskId).toBe("task-1");
-  expect(body.results[0].gh_state).toBe("CLOSED");
+  expect<string | null>(pushedTaskId).toBe("task-1");
+  expect(body.results[0]?.gh_state).toBe("CLOSED");
   expect(body.pushed).toBe(1);
 });
 

@@ -14,9 +14,15 @@ try {
 }
 
 interface HandoffStatusResponse {
+  handoff_id?: string;
+  status?: string;
   message?: string;
   branch_name?: string | null;
   error_summary?: string | null;
+  worker_id?: string | null;
+  started_at?: string | null;
+  resolved_at?: string | null;
+  latency_seconds?: number | null;
   reliability?: {
     status: string;
     trustworthy: boolean;

@@ -2,7 +2,9 @@ import type { DaemonServices } from "../serve.js";
 
 import {
   listProviderQuotaStatus,
+  listSeatQuotaStatus,
   type ProviderQuotaStatus,
+  type SeatQuotaStatus,
 } from "../services/provider-concurrency.js";
 import { json } from "./_helpers.js";
 import {
@@ -58,6 +60,27 @@ export function reloadConfigRoute(req: Request, services: DaemonServices): Promi
     ),
   );
   return run;
+}
+
+// Quota listing is best-effort: a services regression must not fail the reload.
+function reloadQuotaStatus(services: DaemonServices): {
+  provider_quotas?: ProviderQuotaStatus[];
+  seat_quotas?: SeatQuotaStatus[];
+} {
+  const quotaStatus: {
+    provider_quotas?: ProviderQuotaStatus[];
+    seat_quotas?: SeatQuotaStatus[];
+  } = {};
+  try {
+    quotaStatus.provider_quotas = listProviderQuotaStatus(services);
+    quotaStatus.seat_quotas = listSeatQuotaStatus(services);
+  } catch (err) {
+    services.log.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      "reload-provider-quotas-unavailable",
+    );
+  }
+  return quotaStatus;
 }
 
 async function reloadConfigRouteUnlocked(
@@ -118,15 +141,7 @@ async function reloadConfigRouteUnlocked(
             errors: [],
           };
 
-  let providerQuotas: ProviderQuotaStatus[] | undefined;
-  try {
-    providerQuotas = listProviderQuotaStatus(services);
-  } catch (err) {
-    services.log.warn(
-      { err: err instanceof Error ? err.message : String(err) },
-      "reload-provider-quotas-unavailable",
-    );
-  }
+  const quotaStatus = reloadQuotaStatus(services);
 
   const agentCount = services.agentRegistry?.length ?? 0;
   const workflowCount = services.workflowRegistry?.list().length ?? 0;
@@ -154,7 +169,7 @@ async function reloadConfigRouteUnlocked(
     reactor_status: reactorStatus,
     worker_extras: workerExtras,
     ...(reactorError ? { reactor_error: reactorError } : {}),
-    ...(providerQuotas ? { provider_quotas: providerQuotas } : {}),
+    ...quotaStatus,
     reloaded_at: services.clock().toISOString(),
   });
 }

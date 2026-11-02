@@ -35,6 +35,8 @@ export const DispatchEventKindSchema = z.enum([
   "watchdog.auto_fail",
   "claim",
   "claim.provider_cap_refused",
+  // #257: emitted when a claim is refused by a seat's own max_in_flight.
+  "claim.seat_cap_refused",
   // claim.reoffer meta varies by cause: provider-capacity causes include capacity fields,
   // while orphan_requeue includes recovery fields such as from_worker_id/attempt/max_attempts.
   "claim.reoffer",

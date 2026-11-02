@@ -7,6 +7,14 @@ import {
   recentCost,
 } from "@src/readers/cost.js";
 
+function must<T>(value: T | undefined, what: string): T {
+  expect(value, what).toBeDefined();
+  if (value === undefined) {
+    throw new Error(`missing ${what}`);
+  }
+  return value;
+}
+
 function makeDb(): Database {
   const db = new Database(":memory:");
   db.run(`
@@ -152,10 +160,11 @@ describe("recentCost", () => {
     expect(out.total_tokens_used).toBe(3000);
     expect(out.handoff_count).toBe(2);
     expect(out.by_provider).toHaveLength(1);
-    expect(out.by_provider[0].provider).toBe("anthropic");
-    expect(out.by_provider[0].cost_usd).toBe(1.5);
-    expect(out.by_provider[0].cost_usd_billed).toBeNull();
-    expect(out.by_provider[0].cost_usd_synth).toBe(1.5);
+    const anthropic = must(out.by_provider[0], "anthropic provider row");
+    expect(anthropic.provider).toBe("anthropic");
+    expect(anthropic.cost_usd).toBe(1.5);
+    expect(anthropic.cost_usd_billed).toBeNull();
+    expect(anthropic.cost_usd_synth).toBe(1.5);
   });
 
   it("groups by provider and sorts descending by cost", () => {

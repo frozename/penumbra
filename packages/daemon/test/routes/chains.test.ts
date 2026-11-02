@@ -15,6 +15,7 @@ import {
   type RecallResult,
   type Services,
   setRoutingBias,
+  type T0Event,
   type Watchdog,
   type WorkflowRunsRegistry,
 } from "@penumbra/core";
@@ -78,6 +79,13 @@ type ChainResponseBody = {
     hint?: string;
   };
   routing_advisory?: { code: string; project_id?: string; known_project_ids?: string[] };
+  responses?: {
+    agent: string;
+    text: string;
+    ts: string;
+    handoff_id: string | null;
+    error?: { message: string };
+  }[];
   error?: {
     code?: string;
     agent?: string;
@@ -399,7 +407,7 @@ function writeAgentResponse(
     event_id: string;
     ts: string;
     ingest_ts?: string;
-    source?: string;
+    source?: T0Event["source"];
     source_detail?: string | null;
     user_id?: string;
     session_id: string;
@@ -427,6 +435,7 @@ function writeAgentResponse(
     request_id: null,
     payload_json: input.payload_json,
     payload_summary: "response",
+    origin: null,
   });
 }
 
@@ -452,6 +461,7 @@ function writeConversationMarker(services: Services, session_id: string): void {
     request_id: null,
     payload_json: { prompt: "hi" },
     payload_summary: "hi",
+    origin: null,
   });
 }
 
@@ -485,9 +495,9 @@ test("POST /chains/start returns 400 if initial_agent is not in registry", async
   );
   expect(res.status).toBe(400);
   const body = await readJsonBody<ChainResponseBody>(res);
-  expect(body.error.code).toBe("unknown_agent");
-  expect(body.error.agent).toBe("bogus-agent");
-  expect(body.error.hint).toBe("use chain.list_agents to enumerate valid agents");
+  expect(body.error?.code).toBe("unknown_agent");
+  expect(body.error?.agent).toBe("bogus-agent");
+  expect(body.error?.hint).toBe("use chain.list_agents to enumerate valid agents");
   expect(warnSpy).toHaveBeenCalledWith(
     expect.objectContaining({
       initial_agent: "bogus-agent",
@@ -527,8 +537,12 @@ test("POST /chains/start clears auto-recall timeout when recall wins race", asyn
   const originalClearTimeout = globalThis.clearTimeout;
   const armed: { handle: ReturnType<typeof setTimeout>; timeout: number | undefined }[] = [];
   const cleared: ReturnType<typeof setTimeout>[] = [];
-  globalThis.setTimeout = ((callback: TimerHandler, timeout?: number, ...args: unknown[]) => {
-    const handle = originalSetTimeout(callback as (...args: never[]) => void, timeout, ...args);
+  globalThis.setTimeout = ((
+    callback: Parameters<typeof setTimeout>[0],
+    timeout?: number,
+    ...args: unknown[]
+  ) => {
+    const handle = originalSetTimeout(callback, timeout, ...args);
     armed.push({ handle, timeout });
     return handle;
   }) as typeof setTimeout;
@@ -2385,11 +2399,11 @@ test("chain-start warns and dispatches for strict long-lived tick hops", async (
 
 test("chain-start attaches a routing advisory when the registry cannot be loaded", async () => {
   const services = tempServices({ agentRegistry: ["planner"] });
-  services.projectRegistry = {
-    list: () => {
+  services.projectRegistry = new (class extends ProjectRegistry {
+    override list(): ReturnType<ProjectRegistry["list"]> {
       throw new Error("registry unavailable");
-    },
-  } as ProjectRegistry;
+    }
+  })(new Map());
 
   const req = new Request("http://t/chains/start", {
     method: "POST",
@@ -2612,8 +2626,8 @@ test("POST /chains/start distinguishes stale workers from no registered workers"
   );
   expect(res.status).toBe(503);
   const body = await readJsonBody<ChainResponseBody>(res);
-  expect(body.error.code).toBe("worker_heartbeats_stale");
-  expect(body.error.workers).toEqual([
+  expect(body.error?.code).toBe("worker_heartbeats_stale");
+  expect(body.error?.workers).toEqual([
     { worker_id: "worker-a", last_seen_age_ms: 92_000 },
     { worker_id: "worker-b", last_seen_age_ms: 125_000 },
   ]);
@@ -2658,7 +2672,7 @@ test("POST /chains/start writes user-prompt event + approved handoff and returns
   expect(handoff.resolved_at).toBeNull();
   expect(handoff.chain_max_hops).toBe(5);
   expect(handoff.chain_trust_mode).toBe("all");
-  expect(handoff.conversation_id).toBe(body.conversation_id);
+  expect<string | undefined>(handoff.conversation_id).toBe(body.conversation_id);
 });
 
 test("POST /chains/start respects use_worktree: false", async () => {
@@ -3256,7 +3270,7 @@ test("POST /chains/start returns unknown_long_lived_agent when long-lived dispat
   );
   expect(res.status).toBe(400);
   const body = await readJsonBody<ChainResponseBody>(res);
-  expect(body.error.code).toBe("unknown_long_lived_agent");
+  expect(body.error?.code).toBe("unknown_long_lived_agent");
 });
 
 test("POST /chains/start rejects mismatched long-lived agent/tick identity", async () => {
@@ -3327,9 +3341,9 @@ test("POST /chains/start rejects mismatched long-lived agent/tick identity", asy
 
   expect(res.status).toBe(400);
   const body = await readJsonBody<ChainResponseBody>(res);
-  expect(body.error.code).toBe("cross_identity_long_lived");
-  expect(body.error.long_lived_agent_id).toBe("agent-b");
-  expect(body.error.long_lived_tick_id).toBe("tick-a");
+  expect(body.error?.code).toBe("cross_identity_long_lived");
+  expect(body.error?.long_lived_agent_id).toBe("agent-b");
+  expect(body.error?.long_lived_tick_id).toBe("tick-a");
 });
 
 test("POST /chains/start honors caller-supplied conversation_id", async () => {
@@ -3387,8 +3401,8 @@ test("POST /chains/start still returns schema validation_error for empty initial
   );
   expect(res.status).toBe(400);
   const body = await readJsonBody<ChainResponseBody>(res);
-  expect(body.error.code).toBe("validation_error");
-  expect(body.error.field_errors).toContainEqual({
+  expect(body.error?.code).toBe("validation_error");
+  expect(body.error?.field_errors ?? []).toContainEqual({
     path: ["initial_agent"],
     message: "Too small: expected string to have >=1 characters",
   });
@@ -3410,7 +3424,7 @@ test("POST /chains/start emits exactly one handoff-events event for the new appr
   );
 
   expect(seen.length).toBe(1);
-  expect(seen[0].status).toBe("approved");
+  expect(seen[0]?.status).toBe("approved");
 });
 
 test("GET /chains/history returns chain-terminated events for a conversation", async () => {
@@ -3437,6 +3451,7 @@ test("GET /chains/history returns chain-terminated events for a conversation", a
     request_id: null,
     payload_json: { reason: "max_hops reached", hop_count: 5, terminal_handoff_id: "h1" },
     payload_summary: "terminated",
+    origin: null,
   });
 
   const res = chainsHistoryRoute(
@@ -3910,7 +3925,15 @@ test("GET /chains/responses orders same-ts rows deterministically by ingest_ts t
     services,
   );
   expect(resFinal.status).toBe(200);
-  const bodyFinal = await resFinal.json();
+  const bodyFinal = (await resFinal.json()) as {
+    responses?: {
+      agent: string;
+      text: string;
+      ts: string;
+      handoff_id: string | null;
+      error?: { message: string };
+    }[];
+  };
   expect(bodyFinal.responses).toEqual([
     {
       agent: "reviewer",
@@ -3959,10 +3982,10 @@ test("GET /chains/messages returns all events for a conversation chronologically
   expect(res.status).toBe(200);
   const body = await readJsonBody<ChainMessagesBody>(res);
   expect(body.events.length).toBe(2);
-  expect(body.events[0].event_type).toBe("user-prompt");
-  expect(body.events[0].payload).toEqual({ prompt: "hi" });
-  expect(body.events[1].event_type).toBe("agent-response");
-  expect(body.events[1].payload).toEqual({ response: "hello" });
+  expect(body.events[0]?.event_type).toBe("user-prompt");
+  expect(body.events[0]?.payload).toEqual({ prompt: "hi" });
+  expect(body.events[1]?.event_type).toBe("agent-response");
+  expect(body.events[1]?.payload).toEqual({ response: "hello" });
 });
 
 test("GET /chains/messages filters by types array", async () => {
@@ -3985,7 +4008,7 @@ test("GET /chains/messages filters by types array", async () => {
   expect(res.status).toBe(200);
   const body = await readJsonBody<ChainMessagesBody>(res);
   expect(body.events.length).toBe(1);
-  expect(body.events[0].event_type).toBe("agent-response");
+  expect(body.events[0]?.event_type).toBe("agent-response");
 });
 
 test("GET /chains/messages parses malformed JSON safely as null", async () => {
@@ -4007,7 +4030,7 @@ test("GET /chains/messages parses malformed JSON safely as null", async () => {
   expect(res.status).toBe(200);
   const body = await readJsonBody<ChainMessagesBody>(res);
   expect(body.events.length).toBe(1);
-  expect(body.events[0].payload).toBeNull();
+  expect(body.events[0]?.payload).toBeNull();
 });
 
 test("GET /chains/messages returns 400 if conversation_id is missing", async () => {
@@ -4230,9 +4253,9 @@ test("chain_start with taskRouterConfig mode:'shadow' keeps the legacy route and
 
   const decisions = readRoutingDecisions(services.db, { handoffId: body.handoff_id! });
   expect(decisions).toHaveLength(1);
-  expect(decisions[0].mode).toBe("shadow");
-  expect(decisions[0].applied).toBe(false);
-  expect(decisions[0].handoffId).toBe(body.handoff_id);
+  expect(decisions[0]?.mode).toBe("shadow");
+  expect(decisions[0]?.applied).toBe(false);
+  expect(decisions[0]?.handoffId).toBe(body.handoff_id);
 });
 
 test("chain_start with taskRouterConfig mode:'auto' applies the router's own selection and records applied:true", async () => {
@@ -4264,9 +4287,9 @@ test("chain_start with taskRouterConfig mode:'auto' applies the router's own sel
 
   const decisions = readRoutingDecisions(services.db, { handoffId: body.handoff_id! });
   expect(decisions).toHaveLength(1);
-  expect(decisions[0].mode).toBe("auto");
-  expect(decisions[0].applied).toBe(true);
-  expect(decisions[0].selectedAgent).toBe("codex-mini");
+  expect(decisions[0]?.mode).toBe("auto");
+  expect(decisions[0]?.applied).toBe(true);
+  expect(decisions[0]?.selectedAgent).toBe("codex-mini");
 });
 
 test("chain_start auto routing fails closed when provider-scoped biases exist but provider facts are unavailable", async () => {
@@ -4645,8 +4668,8 @@ test("chain_start forwards tool_free through the request schema into auto-router
   expect(body.routed_agent).toBe("http-seat");
   const decisions = readRoutingDecisions(services.db, { handoffId: body.handoff_id! });
   expect(decisions).toHaveLength(1);
-  expect(decisions[0].selectedAgent).toBe("http-seat");
-  expect(decisions[0].alternatives).not.toContainEqual(
+  expect(decisions[0]?.selectedAgent).toBe("http-seat");
+  expect(decisions[0]?.alternatives ?? []).not.toContainEqual(
     expect.objectContaining({
       routeId: "openai:http-seat",
       excluded: true,

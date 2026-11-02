@@ -1,6 +1,9 @@
 import type { HandoffRow, Services } from "@penumbra/core";
 
-import { resolveProviderConcurrencyDecision } from "./provider-concurrency.js";
+import {
+  resolveProviderConcurrencyDecision,
+  resolveSeatConcurrencyDecision,
+} from "./provider-concurrency.js";
 
 // Post-dispatch.start handoffs only recover when the worker's staleness is
 // this many multiples of the base threshold — deep enough that a transient
@@ -208,7 +211,10 @@ export class OrphanHandoffRecoveryService {
         requeued++;
         _requeuedRows.push(row);
         requeuedRowIds.push(orphan.handoff_id);
-        if (!resolveProviderConcurrencyDecision(this.services, { to_agent: row.to_agent })) {
+        if (
+          !resolveProviderConcurrencyDecision(this.services, { to_agent: row.to_agent }) &&
+          !resolveSeatConcurrencyDecision(this.services, { to_agent: row.to_agent })
+        ) {
           reoffers.push({
             row,
             from_worker_id: orphan.worker_id,

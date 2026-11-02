@@ -29,7 +29,9 @@ function tempServices(): Services {
 }
 
 function makeFetcher(handler: (req: Request) => Promise<Response>): typeof fetch {
-  return (input, init): Promise<Response> => handler(new Request(input, init));
+  const impl = (input: string | Request | URL, init?: RequestInit): Promise<Response> =>
+    handler(new Request(input as string, init));
+  return Object.assign(impl, { preconnect: (): void => undefined });
 }
 
 function makeWorkerHealthProbe(
@@ -77,7 +79,10 @@ test("POST /worker/probe-ack records ACK and returns 200", async () => {
 
   expect(res.status).toBe(200);
   expect(recordAck).toHaveBeenCalledTimes(1);
-  expect(calledWith).toEqual({ worker_id: "w1", probe_id: "p-1" });
+  expect<{ worker_id: string; probe_id: string } | null>(calledWith).toEqual({
+    worker_id: "w1",
+    probe_id: "p-1",
+  });
 });
 
 test("POST /worker/probe-ack rejects mismatched worker auth", async () => {
