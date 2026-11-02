@@ -86,6 +86,8 @@ export type FanoutTaskResult = CancelOutcome & {
   latest_reliability_status: DispatchReliabilityStatus | null;
   latest_reliability_trustworthy: boolean | null;
   latest_reliability_action: DispatchRecommendedAction | null;
+  autocommitted?: boolean;
+  autocommit_sha?: string;
   retry_count: number;
   error_code: string | null;
   error_summary: string | null;

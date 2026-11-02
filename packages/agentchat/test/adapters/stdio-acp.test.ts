@@ -580,12 +580,14 @@ describe("stdio-acp ACP tool payload capture (#341)", () => {
       tool_call_id: "tu_leak",
       tool_name: "bash",
       output_chars: 36,
+      failure_kind: "error",
     });
     expect(failedEvents[1]?.meta).toEqual({
       adapter: "stdio-acp",
       tool_call_id: "tu_none",
       tool_name: "bash",
       output_chars: null,
+      failure_kind: "error",
     });
     expect(captured[1]).toEqual({
       kind: "tool_call_update",
@@ -594,6 +596,77 @@ describe("stdio-acp ACP tool payload capture (#341)", () => {
       status: "failed",
       output: rawOutput,
     });
+  });
+
+  it("labels a permission-denied tool call as a policy failure on the lifecycle event", async () => {
+    const { adapter } = createRawToolPayloadHarness([
+      {
+        sessionUpdate: "tool_call",
+        toolCallId: "tu_deny",
+        title: "bash",
+        status: "pending",
+        rawInput: { command: "rm -rf x" },
+      },
+      {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tu_deny",
+        status: "failed",
+        rawOutput: {
+          error:
+            "The user has specified a rule which prevents you from using this specific tool call.",
+        },
+      },
+    ]);
+    const events: DispatchEventInput[] = [];
+    await dispatch(adapter, {
+      prompt: "hello",
+      signal: new AbortController().signal,
+      eventContext: { handoffId: "h-acp-341-deny", workerId: "w-acp-341-deny" },
+      onEvent: (event: DispatchEventInput): void => {
+        events.push(event);
+      },
+    });
+    const failedEvents = events.filter((event) => event.kind === "agent.tool_call.failed");
+    expect(failedEvents).toHaveLength(1);
+    expect(failedEvents[0]?.meta).toMatchObject({
+      tool_call_id: "tu_deny",
+      failure_kind: "policy",
+    });
+    expect(failedEvents[0]?.meta).not.toHaveProperty("output");
+  });
+
+  it("labels an ordinary tool failure as an error on the lifecycle event", async () => {
+    const { adapter } = createRawToolPayloadHarness([
+      {
+        sessionUpdate: "tool_call",
+        toolCallId: "tu_deny",
+        title: "bash",
+        status: "pending",
+        rawInput: { command: "rm -rf x" },
+      },
+      {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tu_deny",
+        status: "failed",
+        rawOutput: { error: "oldString not found" },
+      },
+    ]);
+    const events: DispatchEventInput[] = [];
+    await dispatch(adapter, {
+      prompt: "hello",
+      signal: new AbortController().signal,
+      eventContext: { handoffId: "h-acp-341-deny", workerId: "w-acp-341-deny" },
+      onEvent: (event: DispatchEventInput): void => {
+        events.push(event);
+      },
+    });
+    const failedEvents = events.filter((event) => event.kind === "agent.tool_call.failed");
+    expect(failedEvents).toHaveLength(1);
+    expect(failedEvents[0]?.meta).toMatchObject({
+      tool_call_id: "tu_deny",
+      failure_kind: "error",
+    });
+    expect(failedEvents[0]?.meta).not.toHaveProperty("output");
   });
 });
 

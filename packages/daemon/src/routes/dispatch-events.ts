@@ -151,3 +151,13 @@ export function dispatchEventsStreamRoute(req: Request, services: Services): Res
           },
   });
 }
+
+export function dispatchEventsLastClaimRoute(req: Request, services: Services): Response {
+  const row = services.db
+    .query<
+      { ts: string | null },
+      []
+    >("SELECT MAX(ts) AS ts FROM dispatch_events WHERE kind = 'claim'")
+    .get();
+  return json({ last_claim_at: row?.ts ?? null });
+}
