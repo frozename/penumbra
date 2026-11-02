@@ -4,6 +4,8 @@ import {
   loadSqliteVec,
   migrate,
   type Services,
+  WorkerControlBus,
+  type WorkerControlStreamEvent,
 } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { expect, mock, test } from "bun:test";
@@ -59,6 +61,7 @@ function makeServices(db: Database): Services {
     db,
     handoffWriter: new HandoffWriter({ db }),
     handoffReader: new HandoffReader({ db }),
+    workerControl: new WorkerControlBus(),
     t0Writer: { write: noop },
     machineId: { get: () => "machine-test" },
     uuid: (() => {
@@ -117,6 +120,12 @@ function insertMemory(db: Database, memoryId: string): void {
       "2026-05-04T11:50:00.000Z",
     ],
   );
+}
+
+function captureWorkerControlEvents(services: Services): WorkerControlStreamEvent[] {
+  const events: WorkerControlStreamEvent[] = [];
+  services.workerControl.subscribe((event) => events.push(event));
+  return events;
 }
 
 function makeOpts(services: Services): StaleHandoffSweeperOpts {
@@ -769,4 +778,109 @@ test("REGRESSION: barely-stale SHORT-TTL handoff is still swept", () => {
   expect(result.resolved).toEqual(["h-regress-short"]);
   const handoff = services.handoffReader.get("h-regress-short");
   expect(handoff?.status).toBe("failed");
+});
+
+test("force-resolve emits a worker cancel control event for the handoff", () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  const controlEvents = captureWorkerControlEvents(services);
+  insertDispatchedHandoff(db, "h-wedged", "2026-05-04T11:50:00.000Z");
+  insertEvent(db, "h-wedged", "dispatch.start", "2026-05-04T11:50:01.000Z");
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    makeOpts(services),
+    state,
+    () => new Date("2026-05-04T12:00:00.000Z"),
+  );
+
+  expect(result.resolved).toEqual(["h-wedged"]);
+  expect(controlEvents).toEqual([
+    { type: "cancel", conversation_id: "c-h-wedged", handoff_id: "h-wedged" },
+  ]);
+});
+
+test("force-resolve stamps cancel_requested_at", () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  insertDispatchedHandoff(db, "h-wedged", "2026-05-04T11:50:00.000Z");
+  insertEvent(db, "h-wedged", "dispatch.start", "2026-05-04T11:50:01.000Z");
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    makeOpts(services),
+    state,
+    () => new Date("2026-05-04T12:00:00.000Z"),
+  );
+
+  expect(result.resolved).toEqual(["h-wedged"]);
+  const handoff = services.handoffReader.get("h-wedged");
+  expect(handoff?.cancel_requested_at).toBe("2026-05-04T12:00:00.000Z");
+  expect(handoff?.status).toBe("failed");
+});
+
+test("no cancel when the handoff is not resolved (recent activity)", () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  const controlEvents = captureWorkerControlEvents(services);
+  insertDispatchedHandoff(db, "h-busy", "2026-05-04T11:50:00.000Z");
+  insertEvent(db, "h-busy", "dispatch.start", "2026-05-04T11:50:01.000Z");
+  insertEvent(db, "h-busy", "tool.call", "2026-05-04T11:58:00.000Z");
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    makeOpts(services),
+    state,
+    () => new Date("2026-05-04T12:00:00.000Z"),
+  );
+
+  expect(result.resolved).toEqual([]);
+  expect(controlEvents).toEqual([]);
+  expect(services.handoffReader.get("h-busy")?.cancel_requested_at).toBeNull();
+});
+
+test("cancel is not emitted when the transaction rolls back", () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  const controlEvents = captureWorkerControlEvents(services);
+  services.handoffWriter.markFailed = mock(() => {
+    throw new Error("markFailed crashed");
+  });
+
+  insertDispatchedHandoff(db, "h-rollback", "2026-05-04T11:50:00.000Z");
+  insertEvent(db, "h-rollback", "dispatch.start", "2026-05-04T11:50:01.000Z");
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    makeOpts(services),
+    state,
+    () => new Date("2026-05-04T12:00:00.000Z"),
+  );
+
+  expect(result.resolved).toEqual([]);
+  expect(controlEvents).toEqual([]);
+  expect(services.handoffReader.get("h-rollback")?.cancel_requested_at).toBeNull();
+});
+
+test("two stale handoffs each get exactly one cancel", () => {
+  const db = setupDb();
+  const services = makeServices(db);
+  const controlEvents = captureWorkerControlEvents(services);
+  insertDispatchedHandoff(db, "h-a", "2026-05-04T11:50:00.000Z");
+  insertDispatchedHandoff(db, "h-b", "2026-05-04T11:50:00.000Z");
+  insertEvent(db, "h-a", "dispatch.start", "2026-05-04T11:50:01.000Z");
+  insertEvent(db, "h-b", "dispatch.start", "2026-05-04T11:50:01.000Z");
+
+  const state = { lastSwept: new Map<string, number>() };
+  const result = runStaleHandoffSweep(
+    makeOpts(services),
+    state,
+    () => new Date("2026-05-04T12:00:00.000Z"),
+  );
+
+  expect(result.resolved).toEqual(["h-a", "h-b"]);
+  expect(controlEvents).toEqual([
+    { type: "cancel", conversation_id: "c-h-a", handoff_id: "h-a" },
+    { type: "cancel", conversation_id: "c-h-b", handoff_id: "h-b" },
+  ]);
 });
