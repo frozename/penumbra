@@ -223,6 +223,38 @@ test("makeRoundRecord defaults ci_parity to false and honours an explicit true",
   expect(makeRoundRecord({ ...base, ciParity: true }).ci_parity).toBe(true);
 });
 
+test("makeRoundRecord surfaces autocommit flags from the fanout result", () => {
+  const sha = "c".repeat(40);
+  const result = fakeFanoutResult({ autocommitted: true, autocommit_sha: sha });
+  const record = makeRoundRecord({
+    round: 1,
+    agent: "executor",
+    result,
+    dispatchOk: true,
+    reason: "check_passed",
+    checkPassed: true,
+    checkVerifyStatus: "skipped",
+    passed: true,
+  });
+  expect(record.autocommitted).toBe(true);
+  expect(record.autocommit_sha).toBe(sha);
+});
+
+test("makeRoundRecord omits autocommit flags when the fanout result has none", () => {
+  const record = makeRoundRecord({
+    round: 1,
+    agent: "executor",
+    result: fakeFanoutResult(),
+    dispatchOk: true,
+    reason: "check_passed",
+    checkPassed: true,
+    checkVerifyStatus: "skipped",
+    passed: true,
+  });
+  expect(record).not.toHaveProperty("autocommitted");
+  expect(record).not.toHaveProperty("autocommit_sha");
+});
+
 test("makeRoundRecord does not leak response body", () => {
   const result = fakeFanoutResult({ response_text: "secret response body" });
   const record: RoundRecord = makeRoundRecord({

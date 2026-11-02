@@ -32,6 +32,7 @@ function seedHandoff(
     triggeredByEventId?: string | null;
     ts?: string;
     trustworthy?: boolean;
+    autocommit?: { sha?: string };
   },
 ): void {
   const handoffs = new HandoffWriter({ db });
@@ -91,6 +92,14 @@ function seedHandoff(
       meta: {
         committed: input.trustworthy !== false,
         worktree_changed: input.trustworthy !== false,
+        ...(input.autocommit
+          ? {
+              autocommitted: true,
+              ...(input.autocommit.sha !== undefined
+                ? { autocommit_sha: input.autocommit.sha }
+                : {}),
+            }
+          : {}),
       },
     },
   ]);
@@ -727,6 +736,121 @@ test("does not choose between ambiguous descendant tips", () => {
       latest_reliability_trustworthy: null,
       latest_reliability_action: null,
     });
+  } finally {
+    db.close();
+  }
+});
+
+const AUTOCOMMIT_SHA = "c".repeat(40);
+
+test("surfaces the autocommitted flag and sha from the root dispatch.end meta", async () => {
+  const db = freshDb();
+  try {
+    seedHandoff(db, { handoffId: "root-h", autocommit: { sha: AUTOCOMMIT_SHA } });
+    seedResponse(db);
+
+    const fanout = await runFanout(
+      {
+        dispatch: async () => ({ conversation_id: "unused", handoff_id: "unused" }),
+        awaitChain: async () => ({
+          status: "completed",
+          final_agent: "root-agent",
+          response_text: "authoritative root output",
+        }),
+        cancel: async () => {},
+        fileWrite: async (path) => path,
+        db: () => db,
+        config: {},
+        cwd: "/repo",
+        storageRoot: "/storage",
+        project: "project-one",
+        args: {},
+        chainStart: async () =>
+          Response.json({
+            conversation_id: "conversation-1",
+            handoff_id: "root-h",
+            branch_name: "stale-provisional",
+          }),
+      },
+      { defaults: { timeout_ms: 10_000 }, tasks: [{ message: "review" }] },
+    );
+
+    expect(fanout.results[0]).toMatchObject({
+      ok: true,
+      autocommitted: true,
+      autocommit_sha: AUTOCOMMIT_SHA,
+    });
+  } finally {
+    db.close();
+  }
+});
+
+test("surfaces autocommitted without a sha when the meta carries none", () => {
+  const db = freshDb();
+  try {
+    seedHandoff(db, { handoffId: "root-h", autocommit: {} });
+    seedResponse(db);
+
+    const result = read(db);
+    expect(result.autocommitted).toBe(true);
+    expect(result).not.toHaveProperty("autocommit_sha");
+  } finally {
+    db.close();
+  }
+});
+
+test("omits autocommit fields when dispatch.end did not autocommit", () => {
+  const db = freshDb();
+  try {
+    seedHandoff(db, { handoffId: "root-h" });
+    seedResponse(db);
+
+    const result = read(db);
+    expect(result).not.toHaveProperty("autocommitted");
+    expect(result).not.toHaveProperty("autocommit_sha");
+  } finally {
+    db.close();
+  }
+});
+
+test("reads the autocommit flag from the terminal hop's dispatch.end", () => {
+  const db = freshDb();
+  try {
+    seedHandoff(db, { handoffId: "root-h" });
+    seedHandoff(db, {
+      handoffId: "child-h",
+      parentHandoffId: "root-h",
+      autocommit: { sha: AUTOCOMMIT_SHA },
+      ts: "2026-09-12T10:01:00.000Z",
+    });
+    seedResponse(db);
+
+    const result = read(db);
+    expect(result).toMatchObject({
+      latest_handoff_id: "child-h",
+      autocommitted: true,
+      autocommit_sha: AUTOCOMMIT_SHA,
+    });
+  } finally {
+    db.close();
+  }
+});
+
+test("omits autocommit fields when no hop in a multi-hop chain carries the flag", () => {
+  const db = freshDb();
+  try {
+    seedHandoff(db, { handoffId: "root-h" });
+    seedHandoff(db, {
+      handoffId: "child-h",
+      parentHandoffId: "root-h",
+      ts: "2026-09-12T10:01:00.000Z",
+    });
+    seedResponse(db);
+
+    const result = read(db);
+    expect(result.latest_handoff_id).toBe("child-h");
+    expect(result).not.toHaveProperty("autocommitted");
+    expect(result).not.toHaveProperty("autocommit_sha");
   } finally {
     db.close();
   }

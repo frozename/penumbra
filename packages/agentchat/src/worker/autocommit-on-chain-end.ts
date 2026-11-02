@@ -124,11 +124,16 @@ export function filterAutocommitPaths(paths: string[]): string[] {
   return partitionAutocommitPaths(paths).kept;
 }
 
+export interface AutocommitResult {
+  committed: boolean;
+  sha: string | null;
+}
+
 export async function autocommitOnChainEnd(
   handoff: { handoff_id: string; conversation_id: string; to_agent: string },
   wt: WorktreeHandle,
   deps: AutocommitDeps,
-): Promise<boolean> {
+): Promise<AutocommitResult> {
   if (!AUTOCOMMIT_HANOFF_ID_RE.test(handoff.handoff_id)) {
     deps.log.warn(
       {
@@ -138,7 +143,7 @@ export async function autocommitOnChainEnd(
       },
       "autocommit on chain end skipped",
     );
-    return false;
+    return { committed: false, sha: null };
   }
 
   const execFile = deps.execFile ?? promisify(execFileCb);
@@ -172,7 +177,7 @@ export async function autocommitOnChainEnd(
       },
       "autocommit on chain end skipped",
     );
-    return false;
+    return { committed: false, sha: null };
   }
 
   for (const path of filtered) {
@@ -191,5 +196,25 @@ export async function autocommitOnChainEnd(
     { maxBuffer: 1024 * 1024 },
   );
 
-  return true;
+  let sha: string | null = null;
+  try {
+    const revParse = await execFile("git", ["-C", wt.path, "rev-parse", "HEAD"], {
+      maxBuffer: 1024 * 1024,
+    });
+    const stdout = revParse.stdout;
+    const text =
+      typeof stdout === "string" ? stdout : Buffer.isBuffer(stdout) ? stdout.toString("utf8") : "";
+    sha = text.trim() || null;
+  } catch (err: unknown) {
+    deps.log.debug(
+      {
+        component: "autocommit-on-chain-end",
+        handoff_id: handoff.handoff_id,
+        err: String(err),
+      },
+      "autocommit sha lookup failed",
+    );
+  }
+
+  return { committed: true, sha };
 }
