@@ -121,11 +121,14 @@ describe("SessionEventLog", () => {
     `);
     const log = new SessionEventLog(db);
 
-    expect(log.listRecent({ kind_prefix: "%" }).map((row) => row.kind)).toEqual(["%literal"]);
-    expect(log.listRecent({ kind_prefix: "_" }).map((row) => row.kind)).toEqual(["_literal"]);
-    expect(log.listRecent({ kind_prefix: "continuity." }).map((row) => row.kind)).toEqual([
-      "continuity.boot_pickup",
-    ]);
+    const percentKinds: string[] = log.listRecent({ kind_prefix: "%" }).map((row) => row.kind);
+    const underscoreKinds: string[] = log.listRecent({ kind_prefix: "_" }).map((row) => row.kind);
+    const continuityKinds: string[] = log
+      .listRecent({ kind_prefix: "continuity." })
+      .map((row) => row.kind);
+    expect(percentKinds).toEqual(["%literal"]);
+    expect(underscoreKinds).toEqual(["_literal"]);
+    expect(continuityKinds).toEqual(["continuity.boot_pickup"]);
   });
 
   test("listBySession defaults to 500 rows", () => {
