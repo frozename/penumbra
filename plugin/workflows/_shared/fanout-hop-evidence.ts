@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite";
 import {
   buildDispatchAuditReport,
   ChainReader,
+  type DispatchAuditSources,
   dispatchAuditSourcesFromDb,
   type DispatchRecommendedAction,
   type DispatchReliabilityStatus,
@@ -35,6 +36,8 @@ export type FanoutHopEvidence = {
   latest_reliability_status: DispatchReliabilityStatus | null;
   latest_reliability_trustworthy: boolean | null;
   latest_reliability_action: DispatchRecommendedAction | null;
+  autocommitted?: boolean;
+  autocommit_sha?: string;
 };
 
 type HandoffEvidenceRow = {
@@ -59,6 +62,11 @@ type ReliabilityEvidence = {
   status: DispatchReliabilityStatus | null;
   trustworthy: boolean | null;
   action: DispatchRecommendedAction | null;
+};
+
+type AutocommitEvidence = {
+  committed: boolean;
+  sha: string | null;
 };
 
 export function unknownFanoutHopEvidence(provisionalBranchName: string | null): FanoutHopEvidence {
@@ -113,9 +121,9 @@ function readRetryPrompts(db: Database, conversationId: string): RetryPrompt[] {
   });
 }
 
-function readReliability(db: Database, handoffId: string): ReliabilityEvidence {
+function readReliability(sources: DispatchAuditSources, handoffId: string): ReliabilityEvidence {
   try {
-    const report = buildDispatchAuditReport(dispatchAuditSourcesFromDb(db), handoffId);
+    const report = buildDispatchAuditReport(sources, handoffId);
     return {
       status: report?.status ?? null,
       trustworthy: report?.trustworthy ?? null,
@@ -124,6 +132,54 @@ function readReliability(db: Database, handoffId: string): ReliabilityEvidence {
   } catch {
     return { status: null, trustworthy: null, action: null };
   }
+}
+
+// Same read path the audit report's commit_integrity takes: the last
+// dispatch.end meta on the handoff's dispatch_events rows. A worker that
+// recovery-committed the agent's dirty worktree stamps autocommitted there.
+function readAutocommit(sources: DispatchAuditSources, handoffId: string): AutocommitEvidence {
+  try {
+    const metaJson = sources.dispatchEventLog
+      .listByHandoff(handoffId)
+      .filter((event) => event.kind === "dispatch.end")
+      .at(-1)?.meta_json;
+    const meta: unknown = metaJson ? JSON.parse(metaJson) : null;
+    if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
+      return { committed: false, sha: null };
+    }
+    const record = meta as Record<string, unknown>;
+    if (record.autocommitted !== true) {
+      return { committed: false, sha: null };
+    }
+    return {
+      committed: true,
+      sha: typeof record.autocommit_sha === "string" ? record.autocommit_sha : null,
+    };
+  } catch {
+    return { committed: false, sha: null };
+  }
+}
+
+// The recovery commit is stamped on the dispatch.end of whichever hop the
+// chain terminated on — the tip, not the root — so the terminal hop is
+// authoritative. When its meta lacks the flag, another descendant may still
+// carry it (e.g. an earlier terminal dispatch on a retried chain).
+function readAutocommitEvidence(
+  sources: DispatchAuditSources,
+  rootHandoffId: string,
+  latestHandoffId: string | null,
+  descendantRows: readonly HandoffEvidenceRow[],
+): AutocommitEvidence {
+  const primaryId = latestHandoffId ?? rootHandoffId;
+  const primary = readAutocommit(sources, primaryId);
+  if (primary.committed) return primary;
+  for (let index = descendantRows.length - 1; index >= 0; index -= 1) {
+    const row = descendantRows[index];
+    if (row === undefined || row.handoff_id === primaryId) continue;
+    const candidate = readAutocommit(sources, row.handoff_id);
+    if (candidate.committed) return candidate;
+  }
+  return primary;
 }
 
 function toHop(row: HandoffEvidenceRow, retryPromptEventIds: ReadonlySet<string>): FanoutHop {
@@ -262,7 +318,8 @@ export function readFanoutHopEvidence(
     (row) =>
       row.triggered_by_event_id !== null && scopedRetryEventIds.has(row.triggered_by_event_id),
   ).length;
-  const rootReliability = readReliability(db, input.rootHandoffId);
+  const sources = dispatchAuditSourcesFromDb(db);
+  const rootReliability = readReliability(sources, input.rootHandoffId);
   const rootOwnsTree = root.root_handoff_id === input.rootHandoffId;
   const invalidOwnedRows = rootOwnsTree
     ? rows.some(
@@ -295,7 +352,13 @@ export function readFanoutHopEvidence(
       ? { status: null, trustworthy: null, action: null }
       : latestHandoffId === input.rootHandoffId
         ? rootReliability
-        : readReliability(db, latestHandoffId);
+        : readReliability(sources, latestHandoffId);
+  const autocommit = readAutocommitEvidence(
+    sources,
+    input.rootHandoffId,
+    latestHandoffId,
+    descendantRows,
+  );
   return {
     latest_handoff_id: latestHandoffId,
     hop_count: hops.length,
@@ -312,5 +375,7 @@ export function readFanoutHopEvidence(
     latest_reliability_status: latestReliability.status,
     latest_reliability_trustworthy: latestReliability.trustworthy,
     latest_reliability_action: latestReliability.action,
+    ...(autocommit.committed ? { autocommitted: true } : {}),
+    ...(autocommit.sha !== null ? { autocommit_sha: autocommit.sha } : {}),
   };
 }

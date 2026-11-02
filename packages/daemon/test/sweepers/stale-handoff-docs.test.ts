@@ -15,21 +15,23 @@ test("AGENTS.md documents the stale-sweep liveness switches", async () => {
   expect(missing).toEqual([]);
 });
 
-test("AGENTS.md says a force-fail leaves the adapter session running and names the drain-hold exits", async () => {
+test("AGENTS.md says a force-fail sends the worker a cancel and names the drain-hold exits", async () => {
   const agents = await readDoc("../../../../AGENTS.md");
-  expect(agents).toContain("does not stop the adapter session");
+  expect(agents).toContain("sends the worker a cancel");
+  expect(agents).not.toContain("sends no cancel");
   expect(agents).toContain("STALE_SWEEP_DRAIN_MAX_HOLD_MS");
   expect(agents).toContain("worker.recovery.drain_released");
   expect(agents).toContain(`${String(STALE_SWEEP_DRAIN_MAX_HOLD_MS / 60_000)} min`);
 });
 
-test("architecture.md and concepts.md point at the force-fail and liveness behaviour", async () => {
+test("architecture.md and concepts.md point at the force-fail cancel and liveness behaviour", async () => {
   const [architecture, concepts] = await Promise.all([
     readDoc("../../../../docs/architecture.md"),
     readDoc("../../../../docs/concepts.md"),
   ]);
   for (const doc of [architecture, concepts]) {
-    expect(doc).toContain("does not stop the adapter session");
+    expect(doc).toContain("sends the worker a cancel");
+    expect(doc).not.toContain("sends no cancel");
     expect(doc).toContain("PENUMBRA_STALE_SWEEP_LIVENESS_CHECK");
   }
 });

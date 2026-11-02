@@ -124,6 +124,45 @@ async function rebaseOntoFetchedMain(repoDir: string, wtPath: string): Promise<[
   return upstream;
 }
 
+// #238: a stacked dispatch whose child started from the tip of a parent
+// branch. The parent commits carry real files and are made as Repo Owner
+// (the repo-level identity). The worktree's dispatch base is repointed at
+// the parent tip the way a stacked dispatch records it.
+async function stackOnParent(
+  repoDir: string,
+  wtPath: string,
+): Promise<{ parentWt: string; parentTip: string }> {
+  await git(repoDir, ["branch", "agent/parent", "main"]);
+  const parentWt = path.join(repoDir, "parent-wt");
+  await git(repoDir, ["worktree", "add", "-q", parentWt, "agent/parent"]);
+  await commitIn(parentWt);
+  const parentTip = await commitIn(parentWt);
+  await git(wtPath, ["reset", "-q", "--hard", parentTip]);
+  await git(wtPath, ["config", "--worktree", DISPATCH_BASE_CONFIG_KEY, parentTip]);
+  return { parentWt, parentTip };
+}
+
+// #238: squash-landing leaves no merge edge, so the recorded dispatch base
+// (the parent tip) is not a literal ancestor of a branch rebased onto main.
+async function squashLandParent(repoDir: string, parentWt: string): Promise<void> {
+  await git(repoDir, ["worktree", "remove", "--force", parentWt]);
+  await git(repoDir, ["merge", "--squash", "agent/parent"]);
+  await git(repoDir, ["commit", "-q", "-m", "squash parent"]);
+  await git(repoDir, ["branch", "-D", "agent/parent"]);
+}
+
+// merge-base --is-ancestor prints nothing; its exit code is the verdict.
+async function ancestorExitCode(
+  cwd: string,
+  candidateRef: string,
+  baseRef: string,
+): Promise<number> {
+  return await git(cwd, ["merge-base", "--is-ancestor", candidateRef, baseRef]).then(
+    () => 0,
+    (err: unknown) => (err as { code?: number }).code ?? 128,
+  );
+}
+
 describe("probeCommitIntegrity", () => {
   it("reports clean evidence for a commit made with the worktree identity", async () => {
     const { wtPath, baseSha } = await setupFixture();
@@ -272,6 +311,95 @@ describe("probeCommitIntegrity", () => {
     const evidence = await probe(wtPath);
     expect(evidence?.base_is_ancestor).toBe(true);
     expect(evidence?.mismatched_commits).toEqual([]);
+  });
+
+  it("does not report base_not_ancestor for a child rebased onto main after its parent was squash-landed", async () => {
+    const { repoDir, wtPath } = await setupFixture();
+    const { parentWt, parentTip } = await stackOnParent(repoDir, wtPath);
+    await commitIn(wtPath);
+    await squashLandParent(repoDir, parentWt);
+    await git(wtPath, ["rebase", "-q", "--onto", "main", parentTip]);
+    expect(await ancestorExitCode(wtPath, parentTip, "HEAD")).toBe(1);
+
+    const evidence = await probe(wtPath);
+    expect(evidence?.base_sha).toBe(parentTip);
+    expect(evidence?.base_is_ancestor).toBe(true);
+    expect(evidence?.mismatched_total).toBe(0);
+    expect(evidence?.mismatched_commits).toEqual([]);
+
+    const input: DispatchReliabilityInput = {
+      handoff: {
+        handoff_id: "h-1",
+        status: "completed",
+        ts: "2026-05-01T00:00:00.000Z",
+        resolved_at: "2026-05-01T00:00:10.000Z",
+        cancel_requested_at: null,
+        chain_task_type: "implement_small",
+        use_worktree: 1,
+      },
+      events: [
+        { kind: "dispatch.start", ts: "2026-05-01T00:00:01.000Z" },
+        { kind: "proc.spawn", ts: "2026-05-01T00:00:02.000Z" },
+        { kind: "proc.exited.resolved", ts: "2026-05-01T00:00:08.000Z" },
+        { kind: "dispatch.end", ts: "2026-05-01T00:00:09.000Z", meta: { status: "ok" } },
+      ],
+      responseCount: 1,
+      finalResponseText: "DONE",
+      worktreeChanged: true,
+      dispatchEndCommitted: true,
+      reconciled: true,
+      adapterStreaming: true,
+      now: new Date("2026-05-01T00:00:20.000Z"),
+      staleAfterMs: 120_000,
+      commitIntegrity: evidence,
+    };
+
+    const report = classifyDispatchReliability(input);
+    expect(report.status).not.toBe("base_not_ancestor");
+  });
+
+  it("accepts the squash-landed parent when main moved before the land", async () => {
+    const { repoDir, wtPath } = await setupFixture();
+    const { parentWt, parentTip } = await stackOnParent(repoDir, wtPath);
+    await commitIn(wtPath);
+    // A different file than the parent's or child's, so the squash commit's
+    // tree is not the parent tip's tree.
+    await commitIn(repoDir);
+    await squashLandParent(repoDir, parentWt);
+    await git(wtPath, ["rebase", "-q", "--onto", "main", parentTip]);
+    expect(await ancestorExitCode(wtPath, parentTip, "HEAD")).toBe(1);
+
+    const evidence = await probe(wtPath);
+    expect(evidence?.base_is_ancestor).toBe(true);
+    expect(evidence?.mismatched_total).toBe(0);
+    expect(evidence?.mismatched_commits).toEqual([]);
+  });
+
+  it("still flags a foreign child commit after the parent was squash-landed", async () => {
+    const { repoDir, wtPath } = await setupFixture();
+    const { parentWt, parentTip } = await stackOnParent(repoDir, wtPath);
+    await commitIn(wtPath, { args: FOREIGN_AUTHOR });
+    await squashLandParent(repoDir, parentWt);
+    await git(wtPath, ["rebase", "-q", "--onto", "main", parentTip]);
+    expect(await ancestorExitCode(wtPath, parentTip, "HEAD")).toBe(1);
+    const headSha = await git(wtPath, ["rev-parse", "HEAD"]);
+
+    const evidence = await probe(wtPath);
+    expect(evidence?.base_is_ancestor).toBe(true);
+    expect(evidence?.mismatched_commits).toEqual([headSha]);
+  });
+
+  it("reports base_is_ancestor false when the child is rebased onto main without its parent landed", async () => {
+    const { repoDir, wtPath } = await setupFixture();
+    const { parentWt, parentTip } = await stackOnParent(repoDir, wtPath);
+    await commitIn(wtPath);
+    await git(repoDir, ["worktree", "remove", "--force", parentWt]);
+    await git(repoDir, ["branch", "-D", "agent/parent"]);
+    await git(wtPath, ["rebase", "-q", "--onto", "main", parentTip]);
+    expect(await ancestorExitCode(wtPath, parentTip, "HEAD")).toBe(1);
+
+    const evidence = await probe(wtPath);
+    expect(evidence?.base_is_ancestor).toBe(false);
   });
 
   it("does not flag upstream commits after a rebase onto FETCH_HEAD", async () => {

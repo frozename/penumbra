@@ -196,6 +196,13 @@ function makeResolveStaleHandoff(
 
     if (activeCheck) return false;
 
+    services.db
+      .query<
+        unknown,
+        [string, string]
+      >(`UPDATE handoffs SET cancel_requested_at=? WHERE handoff_id=? AND status='dispatched' AND cancel_requested_at IS NULL`)
+      .run(tsIso, handoffId);
+
     const markedFailed = services.handoffWriter.markFailed(handoffId, {
       reason: "stale_force_resolve",
       ts: tsIso,
@@ -301,6 +308,20 @@ export function runStaleHandoffSweep(
       const didResolve = resolveStaleHandoff(candidate.handoff_id, tsIso);
       if (didResolve) {
         resolved.push(candidate.handoff_id);
+        // Emit only after the transaction commits, as the explicit cancel route
+        // does, so the worker aborts the adapter session the row no longer owns.
+        try {
+          opts.services.workerControl.emit({
+            type: "cancel",
+            conversation_id: candidate.handoff.conversation_id,
+            handoff_id: candidate.handoff_id,
+          });
+        } catch (emitErr) {
+          opts.log?.warn?.(
+            { handoff_id: candidate.handoff_id, err: String(emitErr) },
+            "stale-handoff cancel emit failed",
+          );
+        }
       }
     } catch (err) {
       opts.log?.warn?.(
