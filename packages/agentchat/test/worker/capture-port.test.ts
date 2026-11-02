@@ -653,6 +653,54 @@ describe("CapturePort — tool failure classification (#341)", () => {
     expect(observed(f.calls, 0).payload_json?.failure_kind).toBe("error");
   });
 
+  it("a failed update with an OS EACCES permission-denied output is classified as an error (#400)", async () => {
+    const f = makeFakeObserve();
+    const port = new CapturePort({ ...baseOpts, observe: f.observe });
+    emitToolCallSequence(port, "failed", {
+      error: "EACCES: permission denied, open '/x/y.txt'",
+    });
+    await closeAndResolve(port, f);
+    expect(observed(f.calls, 0).payload_json?.failure_kind).toBe("error");
+  });
+
+  it("classifyToolFailure separates the OpenCode denial forms from OS permission errors (#400)", () => {
+    expect(classifyToolFailure("Permission denied: external_directory")).toBe("policy");
+    expect(classifyToolFailure("Permission denied: external_directory /tmp")).toBe("policy");
+    expect(
+      classifyToolFailure("The user rejected permission to use this specific tool call."),
+    ).toBe("policy");
+    expect(
+      classifyToolFailure(
+        "The user has specified a rule which prevents you from using this specific tool call.",
+      ),
+    ).toBe("policy");
+    expect(classifyToolFailure("permission denied")).toBe("error");
+    expect(classifyToolFailure("EACCES: permission denied, open '/x'")).toBe("error");
+  });
+
+  it("classifyToolFailure keeps OS permission errors with a trailing colon as errors (#400)", () => {
+    expect(
+      classifyToolFailure("PermissionError: [Errno 13] Permission denied: '/etc/shadow'"),
+    ).toBe("error");
+    expect(
+      classifyToolFailure({
+        error: "PermissionError: [Errno 13] Permission denied: '/etc/shadow'",
+      }),
+    ).toBe("error");
+    expect(classifyToolFailure("open /etc/shadow: permission denied")).toBe("error");
+    expect(classifyToolFailure("chmod: /x/y: Permission denied")).toBe("error");
+  });
+
+  it("a failed update with a Python PermissionError output is classified as an error (#400)", async () => {
+    const f = makeFakeObserve();
+    const port = new CapturePort({ ...baseOpts, observe: f.observe });
+    emitToolCallSequence(port, "failed", {
+      error: "PermissionError: [Errno 13] Permission denied: '/etc/shadow'",
+    });
+    await closeAndResolve(port, f);
+    expect(observed(f.calls, 0).payload_json?.failure_kind).toBe("error");
+  });
+
   it("a completed call carries no failure_kind", async () => {
     const f = makeFakeObserve();
     const port = new CapturePort({ ...baseOpts, observe: f.observe });
@@ -680,7 +728,7 @@ describe("CapturePort — tool failure classification (#341)", () => {
   });
 
   it("classifyToolFailure reads a policy denial out of any output shape", () => {
-    expect(classifyToolFailure("permission denied")).toBe("policy");
+    expect(classifyToolFailure("Permission denied: external_directory /tmp")).toBe("policy");
     expect(classifyToolFailure({ error: "ENOENT" })).toBe("error");
     expect(classifyToolFailure(null)).toBe("error");
     expect(

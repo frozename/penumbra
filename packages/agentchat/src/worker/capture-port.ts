@@ -150,8 +150,13 @@ export type ToolFailureKind = "policy" | "error";
 
 // #341: OpenCode/ACP permission denials arrive as ordinary failed outputs with these
 // phrasings in the error or content text; anything else is a real tool error.
+// #400: the `permission denied: <rule>` form must anchor on a bare rule identifier
+// (`external_directory`, not `'/etc/shadow'`), so OS errors like Python's
+// `[Errno 13] Permission denied: '/path'`, Go's `open /x: permission denied` and
+// `EACCES: permission denied, open '/x'` stay classified as "error".
+const PERMISSION_DENIED_RULE = /permission denied: [a-z_]+(?![^\s,."'])/;
 const POLICY_DENIAL_PATTERNS = [
-  "permission denied",
+  PERMISSION_DENIED_RULE,
   "rejected permission",
   "prevents you from using this specific tool call",
 ];
@@ -160,7 +165,11 @@ export function classifyToolFailure(output: unknown): ToolFailureKind {
   if (output === undefined || output === null) return "error";
   try {
     const text = JSON.stringify(output).toLowerCase();
-    return POLICY_DENIAL_PATTERNS.some((p) => text.includes(p)) ? "policy" : "error";
+    return POLICY_DENIAL_PATTERNS.some((p) =>
+      p instanceof RegExp ? p.test(text) : text.includes(p),
+    )
+      ? "policy"
+      : "error";
   } catch {
     return "error";
   }

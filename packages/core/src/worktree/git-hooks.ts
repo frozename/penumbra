@@ -10,13 +10,15 @@ export interface WorktreeGitHooks {
   configured: string | null;
 }
 
-const BARE_HUSKY_PREPARE = /^\s*husky(?:\s+install)?\s*$/;
+const BARE_HUSKY_PREPARE = /^\s*husky(?:\s+(install))?\s*$/;
 
 /**
  * Read a worktree's package.json and return the argv to run husky directly,
  * only when the `prepare` script is a bare husky bootstrap (`husky` or
- * `husky install`). Returns `null` when the file is missing, not valid JSON,
- * or the prepare script is anything else — including mixed scripts like
+ * `husky install`). The legacy v8 `husky install` form keeps its `install`
+ * argument, since husky run without it prints usage and installs no hooks.
+ * Returns `null` when the file is missing, not valid JSON, or the prepare
+ * script is anything else — including mixed scripts like
  * `husky && bun run build` — so callers never execute arbitrary user code.
  * Prefers the worktree's own `node_modules/.bin/husky` when present, since
  * the isolated install runs with `--ignore-scripts` and husky is then
@@ -28,9 +30,14 @@ export function detectHookInstallerArgv(wtPath: string): string[] | null {
     const raw = fs.readFileSync(packageJsonPath, "utf8");
     const pkg = JSON.parse(raw) as { scripts?: { prepare?: unknown } };
     const prepare = pkg.scripts?.prepare;
-    if (typeof prepare !== "string" || !BARE_HUSKY_PREPARE.test(prepare)) return null;
+    if (typeof prepare !== "string") return null;
+    const match = BARE_HUSKY_PREPARE.exec(prepare);
+    if (match === null) return null;
+    const legacyArgs: string[] = match[1] === "install" ? ["install"] : [];
     const localBin = path.join(wtPath, "node_modules", ".bin", "husky");
-    return isExecutableFile(localBin) ? [localBin] : ["bun", "x", "husky"];
+    return isExecutableFile(localBin)
+      ? [localBin, ...legacyArgs]
+      : ["bun", "x", "husky", ...legacyArgs];
   } catch {
     return null;
   }

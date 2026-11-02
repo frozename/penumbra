@@ -979,6 +979,56 @@ describe("captureAgentPerformanceFromReconciler", () => {
       reason: "completed",
       silent_failure: false,
       tool_failure_count: 2,
+      tool_failure_kinds: { policy: 0, error: 2 },
+    });
+  });
+
+  it("breaks failed tool calls down by failure_kind in the dispatch metadata (#400)", () => {
+    const insertEvt = db.prepare(`
+      INSERT INTO dispatch_events (handoff_id, worker_id, source, kind, ts, meta_json)
+      VALUES (?, ?, 'worker', ?, ?, ?)
+    `);
+    insertEvt.run(
+      "h1",
+      "w",
+      "agent.tool_call.failed",
+      "2026-04-30T12:00:30Z",
+      JSON.stringify({ tool_name: "bash", failure_kind: "policy" }),
+    );
+    insertEvt.run(
+      "h1",
+      "w",
+      "agent.tool_call.failed",
+      "2026-04-30T12:01:00Z",
+      JSON.stringify({ tool_name: "edit", failure_kind: "error" }),
+    );
+    insertEvt.run(
+      "h1",
+      "w",
+      "agent.tool_call.failed",
+      "2026-04-30T12:01:30Z",
+      JSON.stringify({ tool_name: "edit" }),
+    );
+    insertEvt.run(
+      "h1",
+      "w",
+      "dispatch.end",
+      "2026-04-30T12:02:00Z",
+      JSON.stringify({ status: "ok", worktree_changed: true }),
+    );
+
+    const row = captureAgentPerformanceFromDispatch({
+      db,
+      uuid: () => "perf-tool-kinds",
+      clock: () => new Date("2026-04-30T12:03:00Z"),
+      input: { handoff_id: "h1", reason: "completed" },
+    });
+
+    expect(JSON.parse(row.metadata_json)).toEqual({
+      reason: "completed",
+      silent_failure: false,
+      tool_failure_count: 3,
+      tool_failure_kinds: { policy: 1, error: 2 },
     });
   });
 
@@ -1699,6 +1749,7 @@ describe("captureAgentPerformanceFromReconciler", () => {
       reason: "completed",
       silent_failure: false,
       tool_failure_count: 2,
+      tool_failure_kinds: { policy: 0, error: 2 },
     });
     expect(row.exec_ms).toBe(5000);
     expect(row.framework_overhead_ms).toBe(100);
