@@ -142,6 +142,7 @@ describe("StdioAcpAdapter options.model selection (#328)", () => {
       "session/set_model",
       "session/prompt",
     ]);
+    expect(calls[1]?.params).toMatchObject({ model: "p/wanted" });
     expect(calls[2]?.params).toEqual({ sessionId: "s1", modelId: "p/wanted" });
     const selected = kindsOf(events, "acp.model_selected");
     expect(selected).toHaveLength(1);
@@ -165,37 +166,22 @@ describe("StdioAcpAdapter options.model selection (#328)", () => {
     expect(selected[0]?.meta).toMatchObject({ model: "p/wanted", set_model_sent: false });
   });
 
-  it("records acp.model_unavailable without set_model when the agent advertises no models", async () => {
-    const { calls, events } = await runOnce("p/wanted", undefined);
-    expect(methodsOf(calls)).toEqual(["initialize", "session/new", "session/prompt"]);
-    const unavailable = kindsOf(events, "acp.model_unavailable");
-    expect(unavailable).toHaveLength(1);
-    expect(unavailable[0]?.meta).toMatchObject({
-      adapter: "stdio-acp",
-      session_id: "s1",
-      model: "p/wanted",
-      advertised: false,
-    });
+  it.each([
+    ["absent", undefined, false],
+    ["unlisted", ADVERTISED, true],
+    ["malformed", { availableModels: "p/wanted" }, false],
+  ])("refuses a %s legacy model pin before any prompt", async (_label, models, advertised) => {
+    const calls: RecordedCall[] = [];
+    const events: DispatchEventInput[] = [];
+    const adapter = makeAdapter("p/other", makeRequest(calls, models), makeServer());
+    const outcome = await adapter.dispatch(dispatchInput("task", events)).then(
+      () => null,
+      (err: unknown) => String(err),
+    );
+    expect(methodsOf(calls)).not.toContain("session/prompt");
+    expect(outcome).toContain("model");
+    expect(kindsOf(events, "acp.model_unavailable")[0]?.meta).toMatchObject({ advertised });
     expect(kindsOf(events, "acp.model_selected")).toHaveLength(0);
-  });
-
-  it("records acp.model_unavailable with advertised true when the model is not listed", async () => {
-    const { calls, events } = await runOnce("p/other", ADVERTISED);
-    expect(methodsOf(calls)).toEqual(["initialize", "session/new", "session/prompt"]);
-    const unavailable = kindsOf(events, "acp.model_unavailable");
-    expect(unavailable).toHaveLength(1);
-    expect(unavailable[0]?.meta).toMatchObject({ model: "p/other", advertised: true });
-  });
-
-  it("treats a malformed models field as not advertised", async () => {
-    const { calls, events } = await runOnce("p/wanted", {
-      currentModelId: "p/default",
-      availableModels: "p/wanted",
-    });
-    expect(methodsOf(calls)).toEqual(["initialize", "session/new", "session/prompt"]);
-    const unavailable = kindsOf(events, "acp.model_unavailable");
-    expect(unavailable).toHaveLength(1);
-    expect(unavailable[0]?.meta).toMatchObject({ advertised: false });
   });
 
   it("sends nothing extra and records no model event when options.model is unset", async () => {
@@ -204,18 +190,21 @@ describe("StdioAcpAdapter options.model selection (#328)", () => {
     expect(events.filter((e) => MODEL_KINDS.has(e.kind))).toEqual([]);
   });
 
-  it("still sends the prompt when session/set_model is rejected", async () => {
-    const { calls, events } = await runOnce("p/wanted", ADVERTISED, "reject");
-    expect(methodsOf(calls)).toEqual([
-      "initialize",
-      "session/new",
-      "session/set_model",
-      "session/prompt",
-    ]);
-    const failed = kindsOf(events, "acp.model_select_failed");
-    expect(failed).toHaveLength(1);
-    expect(failed[0]?.meta).toMatchObject({ session_id: "s1", model: "p/wanted" });
-    expect(failed[0]?.meta?.error).toBe("Error: set_model refused");
+  it("refuses a rejected legacy model pin before any prompt", async () => {
+    const calls: RecordedCall[] = [];
+    const events: DispatchEventInput[] = [];
+    const adapter = makeAdapter("p/wanted", makeRequest(calls, ADVERTISED, "reject"), makeServer());
+    const outcome = await adapter.dispatch(dispatchInput("task", events)).then(
+      () => null,
+      (err: unknown) => String(err),
+    );
+    expect(methodsOf(calls)).not.toContain("session/prompt");
+    expect(outcome).toContain("set_model refused");
+    expect(kindsOf(events, "acp.model_select_failed")[0]?.meta).toMatchObject({
+      session_id: "s1",
+      model: "p/wanted",
+      error: "Error: set_model refused",
+    });
     expect(kindsOf(events, "acp.model_selected")).toHaveLength(0);
   });
 

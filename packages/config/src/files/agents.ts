@@ -55,6 +55,10 @@ export const AgentOptionsSchema = z.strictObject({
   maxTokens: z.number().int().optional(),
   mcpServers: z.unknown().optional(),
   model: z.string().optional(),
+  modelConfigOptions: z
+    .record(z.string().min(1), z.string().min(1))
+    .refine((value) => Object.keys(value).length > 0, "must contain at least one config-option pin")
+    .optional(),
   modelWarmupPrompt: z.string().optional(),
   model_warmup_prompt: z.string().optional(),
   openSessionTimeoutMs: z.number().int().positive().optional(),
@@ -197,6 +201,7 @@ export const ADAPTER_SPECIFIC_OPTION_KEYS = {
     "claudeCodeTools",
     "framing",
     "hostEnvPolicy",
+    "modelConfigOptions",
     "repoRoot",
     "sanitizeClaudeHostEnv",
     ...STDIO_ACP_WARM_OPTION_KEYS,

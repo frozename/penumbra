@@ -15,6 +15,8 @@ import type { StdioAcpHandle } from "@src/adapters/stdio-acp-server.js";
 import { AcpSessionEvictedError, StdioAcpAdapter } from "@src/adapters/stdio-acp.js";
 import type { DispatchInput } from "@src/sdk/adapter.js";
 
+import { advertisedCurrentModel } from "../helpers/stdio-acp-fixtures.js";
+
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((r) => {
@@ -93,7 +95,10 @@ function createClient(
           return Promise.resolve({ protocolVersion: 1, authMethods: [] });
         }
         if (method === "session/new") {
-          return Promise.resolve({ sessionId: "session-123" });
+          return Promise.resolve({
+            sessionId: "session-123",
+            models: advertisedCurrentModel(params),
+          });
         }
         if (method === "session/prompt") {
           promptCount++;

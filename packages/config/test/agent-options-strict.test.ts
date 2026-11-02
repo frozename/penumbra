@@ -42,6 +42,7 @@ const fullAgentOptions = {
   mcpServers: [{ name: "penumbra", command: "bun", args: ["penumbra-mcp.ts"] }],
   mcpWriteTools: true,
   model: "test-model",
+  modelConfigOptions: { model: "family", effort: "high" },
   modelWarmupPrompt: "Reply READY.",
   model_warmup_prompt: "Reply READY.",
   openSessionTimeoutMs: 60000,
@@ -136,6 +137,23 @@ describe("AgentOptionsSchema strict key coverage", () => {
 });
 
 describe("AgentConfigSchema adapter-aware options", () => {
+  test("accepts config-option pins only on stdio-acp", () => {
+    const options = { modelConfigOptions: { family: "wanted", effort: "high" } };
+    expect(() =>
+      AgentConfigSchema.parse({ name: "stdio", adapter: "stdio-acp", options }),
+    ).not.toThrow();
+    expect(() => AgentConfigSchema.parse({ name: "cli", adapter: "claude-cli", options })).toThrow(
+      /modelConfigOptions/,
+    );
+  });
+
+  test.each([{}, { model: "" }, { "": "wanted" }, { model: true }])(
+    "rejects invalid config-option pin maps %j",
+    (modelConfigOptions) => {
+      expect(() => AgentOptionsSchema.parse({ modelConfigOptions })).toThrow();
+    },
+  );
+
   test("accepts agent on opencode-acp", () => {
     expect(() =>
       AgentConfigSchema.parse({

@@ -112,7 +112,7 @@ export function makeStandardClientRequest(opts: StandardClientRequestOpts = {}):
     if (method === "session/new") {
       await opts.beforeSessionNew?.();
       opts.onSessionNew?.(params);
-      return { sessionId };
+      return { sessionId, models: advertisedCurrentModel(params) };
     }
     if (method === "session/prompt") {
       if (opts.onSessionPrompt) return await opts.onSessionPrompt(params);
@@ -121,6 +121,17 @@ export function makeStandardClientRequest(opts: StandardClientRequestOpts = {}):
     return {};
   });
   return fn;
+}
+
+export function advertisedCurrentModel(params: unknown): unknown {
+  if (
+    typeof params !== "object" ||
+    params === null ||
+    !("model" in params) ||
+    typeof params.model !== "string"
+  )
+    return undefined;
+  return { currentModelId: params.model, availableModels: [{ modelId: params.model }] };
 }
 
 export type PenumbraMcpServer = McpServerStdio;

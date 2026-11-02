@@ -28,6 +28,7 @@ interface AcpMcpServer {
 }
 interface AcpRequestParams {
   sessionId?: unknown;
+  model?: unknown;
   cwd?: unknown;
   mcpServers?: unknown;
 }
@@ -73,7 +74,12 @@ function handleSessionNew(request: JsonRpcRequest): void {
     processStorageRoot: process.env.PENUMBRA_STORAGE_ROOT,
     sessionId,
   });
-  send({ jsonrpc: "2.0", id: request.id, result: { sessionId } });
+  const model = request.params?.model;
+  const models =
+    typeof model === "string"
+      ? { currentModelId: model, availableModels: [{ modelId: model }] }
+      : undefined;
+  send({ jsonrpc: "2.0", id: request.id, result: { sessionId, models } });
 }
 
 function handleSessionPrompt(request: JsonRpcRequest): void {

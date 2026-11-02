@@ -32,6 +32,7 @@ import {
   poolKeyFor,
 } from "./acp-warm-pool.js";
 import { StdioAcpClient } from "./stdio-acp-client.js";
+import { AcpModelUnavailableError, selectAcpSessionModel } from "./stdio-acp-model-selection.js";
 import {
   type AcpPermissionRequest,
   handleStdioAcpPermissionRequest,
@@ -380,6 +381,7 @@ export interface StdioAcpOptions {
   args?: string[];
   agentName?: string;
   model?: string;
+  modelConfigOptions?: Record<string, string>;
   cwd?: string;
   /**
    * Repository root shared across this agent's per-dispatch worktrees. The warm
@@ -576,9 +578,8 @@ interface AcpInitializeResponse {
 
 interface AcpSessionNewResponse {
   sessionId: string;
-  // #328: ACP session model state ({ currentModelId, availableModels: [{ modelId }] }) from
-  // agents that support session/set_model. Untrusted wire data; read only via decideSessionModel.
   models?: unknown;
+  configOptions?: unknown;
 }
 
 interface AcpPromptResponse {
@@ -857,25 +858,6 @@ function isAuthenticationRequiredError(err: unknown): boolean {
     err instanceof Error &&
     /^stdio-acp-client: Authentication required(?:|: .+) \(code: -32000\)$/.test(err.message)
   );
-}
-
-// #328: how to apply options.model given the session/new `models` field.
-// "unadvertised": no usable availableModels list; "unlisted": listed, but not this id.
-type SessionModelAction = "current" | "select" | "unadvertised" | "unlisted";
-
-function decideSessionModel(model: string, models: unknown): SessionModelAction {
-  if (!models || typeof models !== "object") return "unadvertised";
-  const state = models as { availableModels?: unknown; currentModelId?: unknown };
-  const available = state.availableModels;
-  if (!Array.isArray(available)) return "unadvertised";
-  if (state.currentModelId === model) return "current";
-  const listed = available.some(
-    (entry: unknown): boolean =>
-      typeof entry === "object" &&
-      entry !== null &&
-      (entry as { modelId?: unknown }).modelId === model,
-  );
-  return listed ? "select" : "unlisted";
 }
 
 interface DispatchTurnContext {
@@ -1694,7 +1676,9 @@ export class StdioAcpAdapter implements Adapter {
       cwd,
       mcpServers: mcpServersWithEnv,
     };
-    if (this.opts.model !== undefined) sessionParams.model = this.opts.model;
+    if (this.opts.model !== undefined && this.opts.modelConfigOptions === undefined) {
+      sessionParams.model = this.opts.model;
+    }
     const meta: SessionParamsMeta = buildClaudeCodeMeta(this.opts) ?? {};
     const mode = resolvePermissionMode(this.opts, input);
     if (mode !== undefined) {
@@ -1725,15 +1709,15 @@ export class StdioAcpAdapter implements Adapter {
         sessionParams,
       );
     }
-    if (this.opts.model !== undefined && this.opts.model.length > 0) {
+    if (
+      (this.opts.model !== undefined && this.opts.model.length > 0) ||
+      this.opts.modelConfigOptions !== undefined
+    ) {
       await this.applySessionModel(server, client, bootDeadline, session, input);
     }
     return session.sessionId;
   }
 
-  // #328: select options.model through ACP session/set_model when the agent advertises it.
-  // A rejected set_model is recorded and the dispatch continues on the agent's default model.
-  // A boot-deadline timeout has already killed the server, so it fails the dispatch.
   private async applySessionModel(
     server: StdioAcpHandle,
     client: StdioAcpClient,
@@ -1741,29 +1725,28 @@ export class StdioAcpAdapter implements Adapter {
     session: AcpSessionNewResponse,
     input: DispatchInput,
   ): Promise<void> {
-    const model = this.opts.model;
-    if (model === undefined || model.length === 0) return;
-    const meta = { adapter: this.kind, session_id: session.sessionId, model };
-    const action = decideSessionModel(model, session.models);
-    if (action === "unadvertised" || action === "unlisted") {
-      emitLifecycle(input, "acp.model_unavailable", { ...meta, advertised: action === "unlisted" });
-      return;
-    }
-    if (action === "current") {
-      emitLifecycle(input, "acp.model_selected", { ...meta, set_model_sent: false });
-      return;
-    }
+    const meta = {
+      adapter: this.kind,
+      session_id: session.sessionId,
+      model: this.opts.model ?? null,
+    };
     try {
-      await this.requestWithBootDeadline(server, client, bootDeadline, "session/set_model", {
-        sessionId: session.sessionId,
-        modelId: model,
+      const selection = await selectAcpSessionModel({
+        model: this.opts.model,
+        requestedConfig: this.opts.modelConfigOptions,
+        session,
+        request: (method, params) =>
+          this.requestWithBootDeadline(server, client, bootDeadline, method, params),
       });
+      emitLifecycle(input, "acp.model_selected", { ...meta, ...selection });
     } catch (err) {
-      emitLifecycle(input, "acp.model_select_failed", { ...meta, error: String(err) });
-      if (err instanceof Error && err.message.startsWith("stdio-acp: boot timed out")) throw err;
-      return;
+      if (err instanceof AcpModelUnavailableError) {
+        emitLifecycle(input, "acp.model_unavailable", { ...meta, advertised: err.advertised });
+      } else {
+        emitLifecycle(input, "acp.model_select_failed", { ...meta, error: String(err) });
+      }
+      throw err;
     }
-    emitLifecycle(input, "acp.model_selected", { ...meta, set_model_sent: true });
   }
 
   private async runModelWarmup(
