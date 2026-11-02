@@ -20,7 +20,7 @@ describe("backfillRecallFields", () => {
     const db = new Database(":memory:");
     loadSqliteVec(db);
     migrate(db, { embeddingDim: 4 });
-    const samples = [
+    const samples: [string, string | null][] = [
       ["🔴 Bug in foo", "bugfix"],
       ["🟣 New feature bar", "feature"],
       ["🔄 Refactor baz", "refactor"],
@@ -50,7 +50,7 @@ describe("backfillRecallFields", () => {
         []
       >(`SELECT memory_id, obs_type FROM t2_memories ORDER BY memory_id`)
       .all();
-    expect(rows.map((r) => r.obs_type)).toEqual(samples.map((s) => s[1]));
+    expect(rows.map((r) => r.obs_type)).toEqual(samples.map(([, expected]) => expected));
   });
 
   test("metadata_json.concepts[] is hoisted into concepts column", () => {

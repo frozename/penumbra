@@ -52,6 +52,7 @@ test("returns T1 rollups ranked by vector similarity", async () => {
     project_id: "p1",
     limit: 10,
     include_raw: false,
+    include_untrusted: false,
     min_score: 0,
   });
   expect(results[0]!.id).toBe("a");
@@ -80,6 +81,7 @@ test("recall query path embeds raw query text even when t2 title recipe is enabl
       project_id: "p1",
       limit: 10,
       include_raw: false,
+      include_untrusted: false,
       min_score: 0,
     });
     expect(seen[0]).toEqual(["RAW QUERY STRING"]);
@@ -98,6 +100,7 @@ test("honors project_id filter", async () => {
     project_id: "p1",
     limit: 10,
     include_raw: false,
+    include_untrusted: false,
     min_score: 0,
   });
   expect(results.length).toBe(0);
@@ -110,6 +113,7 @@ test("empty DB returns empty array", async () => {
     project_id: null,
     limit: 10,
     include_raw: false,
+    include_untrusted: false,
     min_score: 0,
   });
   expect(results).toEqual([]);
@@ -178,6 +182,7 @@ test("returns T0 hits using FTS5 when include_raw is true", async () => {
     project_id: "p1",
     limit: 10,
     include_raw: true,
+    include_untrusted: false,
     min_score: 0,
   });
   expect(results.length).toBe(1);
@@ -200,6 +205,7 @@ test("fuses multiple tiers and ranks items appearing in multiple tiers higher", 
     project_id: "p1",
     limit: 10,
     include_raw: false,
+    include_untrusted: false,
     min_score: 0,
   });
 
@@ -220,6 +226,7 @@ test("fuses multiple tiers and ranks items appearing in multiple tiers higher", 
     project_id: "p1",
     limit: 10,
     include_raw: true,
+    include_untrusted: false,
     min_score: 0,
   });
 
@@ -243,6 +250,7 @@ test("sources filter overrides include_raw", async () => {
     project_id: "p1",
     limit: 10,
     include_raw: true,
+    include_untrusted: false,
     min_score: 0,
     sources: ["t0"],
   });
@@ -263,6 +271,7 @@ test("excludes retired t2 memories from results", async () => {
     project_id: "p1",
     limit: 10,
     include_raw: false,
+    include_untrusted: false,
     min_score: 0,
     sources: ["t2"],
   });
@@ -284,6 +293,7 @@ test("oversample factor default is inert: unset and explicit 1 return byte-ident
       project_id: "p1",
       limit: 20,
       include_raw: false,
+      include_untrusted: false,
       min_score: 0,
     });
 
@@ -294,6 +304,7 @@ test("oversample factor default is inert: unset and explicit 1 return byte-ident
       project_id: "p1",
       limit: 20,
       include_raw: false,
+      include_untrusted: false,
       min_score: 0,
     });
 
@@ -344,6 +355,7 @@ test("oversampling retrieves a crowded-out t2 row and lets it survive fusion", a
       project_id: "p1",
       limit: 20,
       include_raw: false,
+      include_untrusted: false,
       min_score: 0,
     });
     expect(factorOne.some((r) => r.id === "shared-crowded")).toBeFalse();
@@ -355,6 +367,7 @@ test("oversampling retrieves a crowded-out t2 row and lets it survive fusion", a
       project_id: "p1",
       limit: 20,
       include_raw: false,
+      include_untrusted: false,
       min_score: 0,
     });
     const rescued = factorThree.find((r) => r.id === "shared-crowded");
@@ -404,6 +417,7 @@ test("verified t2 boost is flag-gated and preserves default RRF ordering", async
       project_id: "p1",
       limit: 10,
       include_raw: false,
+      include_untrusted: false,
       min_score: 0,
     });
     expect(baseline.map((r) => r.id).slice(0, 2)).toEqual(["unverified-t1", "verified-t2"]);
@@ -415,6 +429,7 @@ test("verified t2 boost is flag-gated and preserves default RRF ordering", async
       project_id: "p1",
       limit: 10,
       include_raw: false,
+      include_untrusted: false,
       min_score: 0,
     });
 
@@ -472,6 +487,7 @@ test("verification_count is computed per-row (no cross-row contamination from th
       project_id: "p1",
       limit: 10,
       include_raw: false,
+      include_untrusted: false,
       min_score: 0,
       sources: ["t2"],
     });
@@ -510,6 +526,7 @@ test("hybrid strategy returns persisted source_session_ids from t2 rows", async 
     project_id: "p1",
     limit: 5,
     include_raw: false,
+    include_untrusted: false,
     min_score: 0,
     strategy_hint: "hybrid",
   });
