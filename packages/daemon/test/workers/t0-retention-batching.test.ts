@@ -1,5 +1,5 @@
 import { loadSqliteVec, migrate, type Services } from "@penumbra/core";
-import { Database } from "bun:sqlite";
+import { type Changes, Database, type SQLQueryBindings, type Statement } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
 import { createT0RetentionWorker } from "@src/workers/t0-retention.js";
@@ -143,20 +143,25 @@ test("t0 retention bounds every DELETE by batchSize and splits the scan across s
     for (let i = 0; i < 4; i++) insertRollup(db, `s_live_${String(i)}`, null);
 
     const deletedPerStatement: number[] = [];
+    const observe = <T>(fn: () => T): T => {
+      const before = rowCount(db);
+      const out = fn();
+      deletedPerStatement.push(before - rowCount(db));
+      return out;
+    };
+    const instrument = (stmt: Statement<unknown, SQLQueryBindings[]>): void => {
+      const origRun = stmt.run.bind(stmt);
+      stmt.run = (...params: SQLQueryBindings[]): Changes => observe(() => origRun(...params));
+      const origAll = stmt.all.bind(stmt);
+      stmt.all = (...params: SQLQueryBindings[]): unknown[] => observe(() => origAll(...params));
+      const origGet = stmt.get.bind(stmt);
+      stmt.get = (...params: SQLQueryBindings[]): unknown => observe(() => origGet(...params));
+    };
     const origQuery = db.query.bind(db);
-    db.query = ((sql: string, ...rest: unknown[]): ReturnType<typeof origQuery> => {
-      const stmt = origQuery(sql, ...(rest as never[]));
+    db.query = ((sql: string): Statement<unknown, SQLQueryBindings[]> => {
+      const stmt = origQuery<unknown, SQLQueryBindings[]>(sql);
       if (!/^\s*DELETE\s+FROM\s+t0_events/i.test(sql)) return stmt;
-      const wrapped = stmt as unknown as Record<string, (...args: unknown[]) => unknown>;
-      for (const method of ["run", "all", "get"] as const) {
-        const orig = wrapped[method].bind(stmt);
-        wrapped[method] = (...args: unknown[]): unknown => {
-          const before = rowCount(db);
-          const out = orig(...args);
-          deletedPerStatement.push(before - rowCount(db));
-          return out;
-        };
-      }
+      instrument(stmt);
       return stmt;
     }) as typeof db.query;
 
