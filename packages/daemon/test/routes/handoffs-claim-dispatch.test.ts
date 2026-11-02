@@ -116,8 +116,6 @@ function configureProviderCap(services: Services, max_in_flight: number): void {
         subscription_provider: "anthropic",
       },
     ],
-    default_roles: {},
-    providers: [],
   };
   services.providerQuotas = [{ provider: "anthropic", max_in_flight }];
 }
@@ -517,8 +515,6 @@ test("/handoffs/:id/claim uses provider-wide max_in_flight regardless of quota r
         subscription_model: "gemini-y",
       },
     ],
-    default_roles: {},
-    providers: [],
   };
   services.providerQuotas = [
     { provider: "google", model: "gemini-x", max_in_flight: 1 },
@@ -592,8 +588,6 @@ function configureSeatCap(services: Services, seatCap: number, providerCap?: num
         subscription_provider: "anthropic",
       },
     ],
-    default_roles: {},
-    providers: [],
   };
   services.providerQuotas =
     providerCap === undefined ? [] : [{ provider: "anthropic", max_in_flight: providerCap }];
