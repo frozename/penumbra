@@ -1,4 +1,9 @@
-import { type AaSnapshotStore, type AaTransport, createAaSnapshotStore } from "@penumbra/core";
+import {
+  type AaFetchFailureKind,
+  type AaSnapshotStore,
+  type AaTransport,
+  createAaSnapshotStore,
+} from "@penumbra/core";
 import { describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -49,13 +54,27 @@ function aaResponseBody(data: Record<string, unknown>[] = [aaModel()]): Record<s
   };
 }
 
-function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
+function aaFreeResponseBody(data: Record<string, unknown>[]): Record<string, unknown> {
+  return {
+    tier: "free",
+    intelligence_index_version: 5,
+    pagination: { page: 1, page_size: 200, total_pages: 1, has_more: false },
+    data,
+  };
+}
+
+function jsonResponse(
+  body: unknown,
+  init: { status?: number; headers?: Record<string, string> } = {},
+): Promise<Response> {
   const headers = new Headers(init.headers);
   if (!headers.has("content-type")) headers.set("content-type", "application/json");
-  return new Response(JSON.stringify(body), {
-    status: init.status ?? 200,
-    headers,
-  });
+  return Promise.resolve(
+    new Response(JSON.stringify(body), {
+      status: init.status ?? 200,
+      headers,
+    }),
+  );
 }
 
 function withTempDir<T>(prefix: string, fn: (dir: string) => Promise<T>): Promise<T> {
@@ -218,7 +237,7 @@ describe("aa-snapshot-refresh sweeper", () => {
           return jsonResponse({ error: "server exploded" }, { status: 500 });
         },
       };
-      const warn = mock(() => undefined);
+      const warn = mock((_obj: Record<string, unknown>, _msg: string) => undefined);
 
       const result = await runAaSnapshotRefreshSweep(
         {
@@ -241,6 +260,78 @@ describe("aa-snapshot-refresh sweeper", () => {
       expect(read.state).toBe("available");
       if (read.state !== "available") throw new Error("expected available snapshot");
       expect(read.snapshot.models[0]?.slug).toBe("model-1");
+    });
+  });
+
+  test("a refresh that fails with gone/forbidden/invalid_response keeps the last-known-good snapshot and never retries the request", async () => {
+    await withTempDir("aa-refresh-fatal-", async (dir) => {
+      const keyPath = keyFilePath(dir);
+      await Bun.write(keyPath, "test-aa-key\n");
+      const cases: {
+        name: string;
+        expectedKind: AaFetchFailureKind;
+        respond: () => Promise<Response>;
+      }[] = [
+        {
+          name: "410 retired endpoint",
+          expectedKind: "gone",
+          respond: () => jsonResponse({ error: "endpoint retired" }, { status: 410 }),
+        },
+        {
+          name: "403 tier lacks access",
+          expectedKind: "forbidden",
+          respond: () => jsonResponse({ error: "API key tier lacks access" }, { status: 403 }),
+        },
+        {
+          name: "all-invalid free-envelope rows",
+          expectedKind: "invalid_response",
+          respond: () =>
+            jsonResponse(aaFreeResponseBody([{ not_a_model: true }, { also_bad: 42 }])),
+        },
+      ];
+
+      for (const entry of cases) {
+        const snapshotPath = join(dir, `aa-snapshot-${entry.expectedKind}.json`);
+        const store = createAaSnapshotStore({
+          path: snapshotPath,
+          ttlSeconds: 1,
+          now: () => new Date("2026-08-25T12:00:00.000Z"),
+        });
+        await store.write(
+          { provenance: { collectedAt: "2026-08-25T10:00:00.000Z" }, models: [aaModel()] as never },
+          { fetchedAtIso: "2026-08-25T10:00:00.000Z" },
+        );
+
+        let requestCount = 0;
+        const transport: AaTransport = {
+          fetch() {
+            requestCount += 1;
+            return entry.respond();
+          },
+        };
+        const warn = mock(() => undefined);
+
+        const result = await runAaSnapshotRefreshSweep(
+          {
+            aaSnapshotStore: store,
+            transport,
+            apiKeyPath: keyPath,
+            now: () => new Date("2026-08-25T12:00:00.000Z"),
+            log: { warn },
+            fetchOptions: { maxAttempts: 3, sleep: () => Promise.resolve() },
+          },
+          createAaSnapshotRefreshSweepState(),
+        );
+
+        expect(result.action).toBe("fetch_failed");
+        expect(result.failureKind).toBe(entry.expectedKind);
+        expect(requestCount).toBe(1);
+
+        const read = await store.read();
+        expect(read.state).toBe("available");
+        if (read.state !== "available") throw new Error("expected available snapshot");
+        expect(read.snapshot.models[0]?.slug).toBe("model-1");
+      }
     });
   });
 
@@ -402,7 +493,7 @@ describe("aa-snapshot-refresh sweeper", () => {
       return timerId;
     }) as unknown as typeof global.setInterval;
     global.clearInterval = mock((id: { unref: () => void }) => {
-      expect<{ unref: () => void } | null>(id).toBe(timerId);
+      expect(id).toBe(timerId!);
     }) as unknown as typeof global.clearInterval;
 
     try {

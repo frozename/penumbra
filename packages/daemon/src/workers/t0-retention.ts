@@ -33,27 +33,55 @@ export function createT0RetentionWorker(opts: RetentionWorkerOpts): T0RetentionW
         ).toISOString();
         const batchSize = opts.batchSize ?? 500;
 
-        let totalPruned = 0;
-        const stmt = opts.services.db.query(`
+        // bun:sqlite is synchronous: one statement blocks the event loop. The
+        // retention predicate inside a LIMIT'd subquery makes SQLite search
+        // the whole prunable index space for `batchSize` matches per
+        // statement (multi-index OR over t0_by_session_type_ts probing every
+        // ended session's rows — ~25 s stalls observed on a 480k-row table).
+        // Paginate a bounded candidate window over the ingest_ts index with a
+        // keyset (ingest_ts, rowid) cursor instead: the SELECT visits at most
+        // batchSize index entries, and the unchanged predicate decides which
+        // of those candidates are deleted. The cursor advances past
+        // non-deleted candidates too, so every batch makes progress and the
+        // union of batches covers exactly the rows the old statement deleted.
+        const selectBatch = opts.services.db.query<
+          { rowid: number; ingest_ts: string },
+          [string, string, number, number]
+        >(`
+          SELECT rowid, ingest_ts FROM t0_events
+          WHERE ingest_ts < ?1
+            AND (ingest_ts > ?2 OR (ingest_ts = ?2 AND rowid > ?3))
+          ORDER BY ingest_ts, rowid
+          LIMIT ?4
+        `);
+        const deleteBatch = opts.services.db.query<{ rowid: number }, [string]>(`
           DELETE FROM t0_events
-          WHERE event_id IN (
-            SELECT event_id FROM t0_events
-            WHERE ingest_ts < ?1
-              AND ${cachedCondition}
-            LIMIT ?2
-          )
+          WHERE rowid IN (SELECT CAST(value AS INTEGER) FROM json_each(?1))
+            AND ${cachedCondition}
+          RETURNING rowid
         `);
 
-        const deleteBatch = opts.services.db.transaction((thresh: string, limit: number) => {
-          return stmt.run(thresh, limit).changes;
-        });
+        const runBatch = opts.services.db.transaction(
+          (thresh: string, cursorTs: string, cursorRowid: number, limit: number) => {
+            const candidates = selectBatch.all(thresh, cursorTs, cursorRowid, limit);
+            if (candidates.length === 0) return { deleted: 0, candidates };
+            const deleted = deleteBatch.all(JSON.stringify(candidates.map((c) => c.rowid))).length;
+            return { deleted, candidates };
+          },
+        );
 
+        let totalPruned = 0;
+        let cursorTs = "";
+        let cursorRowid = -1;
         for (;;) {
-          const changes = deleteBatch(threshold, batchSize);
-          if (changes === 0) break;
-          totalPruned += changes;
-          if (changes < batchSize) break;
-          await new Promise((resolve) => setTimeout(resolve, 0));
+          const { deleted, candidates } = runBatch(threshold, cursorTs, cursorRowid, batchSize);
+          const last = candidates.at(-1);
+          if (last === undefined) break;
+          totalPruned += deleted;
+          cursorTs = last.ingest_ts;
+          cursorRowid = last.rowid;
+          if (candidates.length < batchSize) break;
+          await new Promise((resolve) => setImmediate(resolve));
         }
 
         if (totalPruned > 0) {

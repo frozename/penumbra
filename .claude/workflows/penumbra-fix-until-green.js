@@ -159,6 +159,9 @@ const rubricBase = input.base || (typeof defaults.branch_base === 'string' && de
 const rubric = Array.isArray(input.rubric) ? input.rubric.filter((c) => typeof c === 'string' && c.trim().length > 0) : []
 const PROXY_NOT_INSTALLED_HINT = "The fanout proxy agent penumbra:penumbra-fanout-proxy is not available in this session (the Penumbra Claude Code plugin ships it as plugin/agents/penumbra-fanout-proxy.md). Install or enable that plugin and start a new Claude Code session, or pass agentType: 'inherit' to opt in to the generic proxy, which can run Bash."
 
+const CHECK_RESULT_BLOCKED_INSTRUCTION = 'If the task or check is impossible to satisfy as specified (a contract defect rather than a fixable failure), instead BEGIN your FINAL message with `CHECK_RESULT: BLOCKED` followed by a one-line reason.'
+const CHECK_RESULT_ANY_MARKER = /^ {0,3}CHECK_RESULT:[ \t]*(PASS|FAIL|BLOCKED)\b[ \t]*(.*)$/i
+
 const RUBRIC_RESULT = {
   type: 'object',
   additionalProperties: false,
@@ -241,8 +244,26 @@ function roundMessage(roundIndex, prevBranch, prevOutput) {
     parityCheck !== null
       ? 'IMPORTANT: BEGIN your FINAL message with a line that is exactly `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL`. Report PASS only when BOTH commands exit 0; when either fails report FAIL and follow it with the last ~50 lines of the failing output inside a fenced ``` block.'
       : 'IMPORTANT: BEGIN your FINAL message with a line that is exactly `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL`. If FAIL, follow it with the last ~50 lines of the check output inside a fenced ``` block.',
+    CHECK_RESULT_BLOCKED_INSTRUCTION,
   )
   return lines.join('\n')
+}
+
+// A worker may quote the BLOCKED instruction itself; only the LAST unfenced
+// CHECK_RESULT marker is the reply's verdict.
+function detectBlockedContract(sources) {
+  let lastKind = ''
+  let last = { reason: '' }
+  for (const source of sources) {
+    if (typeof source !== 'string') continue
+    for (const line of stripFencedBlocks(source).split('\n')) {
+      const marker = CHECK_RESULT_ANY_MARKER.exec(line)
+      if (!marker) continue
+      lastKind = marker[1].toUpperCase()
+      last = { reason: (marker[2] || '').trim() }
+    }
+  }
+  return lastKind === 'BLOCKED' ? last : null
 }
 
 function parseCheck(result, responseMode = 'first_line') {
@@ -529,8 +550,9 @@ let prevBranch = null
 let prevOutput = null
 let consecutiveVerifyNotRun = 0
 
+let roundAgent = baseAgent
 for (let i = 0; i < maxRounds; i++) {
-  const agentForRound = i === maxRounds - 1 && escalateTo ? escalateTo : baseAgent
+  const agentForRound = i === maxRounds - 1 && escalateTo ? escalateTo : roundAgent
   const responseMode = task.response_mode || defaults.response_mode || 'first_line'
   const t = {
     label: `fix#${i + 1}:${agentForRound}`,
@@ -553,6 +575,7 @@ for (let i = 0; i < maxRounds; i++) {
     { tasks: [t], defaults: fanoutDefaults, dispatcherModel, ...(input.agentType !== undefined ? { agentType: input.agentType } : {}), ...(input.repo !== undefined ? { repo: input.repo } : {}) },
   )
   const r = ((fan && fan.results) || [])[0]
+  const blocked = r ? detectBlockedContract([r.check_line, r.response, r.failure_tail]) : null
   let dispatchFailure = null
   if (!r) {
     dispatchFailure = 'agent_dropped'
@@ -560,6 +583,8 @@ for (let i = 0; i < maxRounds; i++) {
     dispatchFailure = 'proxy_not_installed'
   } else if (![r.conversation_id, r.root_handoff_id || r.handoff_id].some((id) => typeof id === 'string' && id.trim())) {
     dispatchFailure = 'no_dispatch'
+  } else if (blocked) {
+    dispatchFailure = 'contract_defect'
   } else if (r.status === 'completed' && r.reliability_trustworthy !== true) {
     // Fanout forces ok=false when its trust gate closes, so a completed chain
     // that is distrusted or never audited must be named before !r.ok flattens
@@ -577,6 +602,30 @@ for (let i = 0; i < maxRounds; i++) {
     const hint = dispatchFailure === 'proxy_not_installed' ? PROXY_NOT_INSTALLED_HINT : ''
     rounds.push({ round: i + 1, agent: agentForRound, dispatch_ok: false, reason: dispatchFailure, ...(hint ? { hint } : {}), result: r || null, ...hopFields(r), ci_parity: false })
     if (hint) prevOutput = hint
+    if (dispatchFailure === 'contract_defect') {
+      log(`fix-until-green round ${i + 1}: worker reported a contract defect (${blocked.reason || 'no reason given'}); stopping without escalating.`)
+      return {
+        ok: false,
+        green: false,
+        outcome: 'contract_defect',
+        contract_defect_reason: blocked.reason,
+        rounds_used: rounds.length,
+        final_branch: prevBranch,
+        last_output: prevOutput,
+        rounds,
+        check,
+        rubric,
+        ci_parity: false,
+      }
+    }
+    if (dispatchFailure === 'untrustworthy_dispatch' && escalateTo && i < maxRounds - 1) {
+      // #378: an untrustworthy non-final round is not a verdict on the task;
+      // escalate on the next round instead of ending the run.
+      if (typeof r.branch === 'string' && r.branch) prevBranch = r.branch
+      roundAgent = escalateTo
+      log(`fix-until-green round ${i + 1}: ${dispatchFailure}${detail ? ` (${detail})` : ''}${summary}; continuing on the escalation round with ${escalateTo}.`)
+      continue
+    }
     log(`fix-until-green round ${i + 1}: ${dispatchFailure}${detail ? ` (${detail})` : ''}${status}${summary}${hint ? ` ${hint}` : ''}; stopping.`)
     break
   }

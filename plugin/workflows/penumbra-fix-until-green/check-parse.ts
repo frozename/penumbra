@@ -10,6 +10,9 @@ export type ResponseMode = "first_line" | "full" | "none";
 
 const OUTPUT_TAIL_MAX = 4000;
 
+export const CHECK_RESULT_BLOCKED_INSTRUCTION =
+  "If the task or check is impossible to satisfy as specified (a contract defect rather than a fixable failure), instead BEGIN your FINAL message with `CHECK_RESULT: BLOCKED` followed by a one-line reason.";
+
 export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
@@ -56,6 +59,29 @@ export function stripFencedBlocks(text: string): string {
   }
 
   return visibleLines.join("\n");
+}
+
+const ANY_CHECK_MARKER = /^ {0,3}CHECK_RESULT:[ \t]*(PASS|FAIL|BLOCKED)\b(.*)$/i;
+
+export type BlockedContract = { reason: string };
+
+// A worker may quote the BLOCKED instruction itself; only the LAST unfenced
+// CHECK_RESULT marker is the reply's verdict.
+export function detectBlockedContract(
+  sources: (string | null | undefined)[],
+): BlockedContract | null {
+  let lastKind = "";
+  let last: BlockedContract = { reason: "" };
+  for (const source of sources) {
+    if (typeof source !== "string") continue;
+    for (const line of stripFencedBlocks(source).split("\n")) {
+      const marker = ANY_CHECK_MARKER.exec(line);
+      if (marker?.[1] === undefined) continue;
+      lastKind = marker[1].toUpperCase();
+      last = { reason: (marker[2] ?? "").trim() };
+    }
+  }
+  return lastKind === "BLOCKED" ? last : null;
 }
 
 function scanForMarker(text: string): { sawPass: boolean; sawFail: boolean } {
@@ -173,6 +199,7 @@ export function roundMessage(
     parityCheck !== undefined
       ? "IMPORTANT: BEGIN your FINAL message with a line that is exactly `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL`. Report PASS only when BOTH commands exit 0; when either fails report FAIL and follow it with the last ~50 lines of the failing output inside a fenced ``` block."
       : "IMPORTANT: BEGIN your FINAL message with a line that is exactly `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL`. If FAIL, follow it with the last ~50 lines of the check output inside a fenced ``` block.",
+    CHECK_RESULT_BLOCKED_INSTRUCTION,
   );
   return lines.join("\n");
 }
