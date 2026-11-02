@@ -74,7 +74,7 @@ function makeHandlerFetcher(handler: (req: Request) => Promise<Response>): typeo
     const req = input instanceof Request ? input : new Request(input.toString(), init);
     return handler(req);
   };
-  return Object.assign(impl, { preconnect: (): void => undefined }) as typeof fetch;
+  return Object.assign(impl, { preconnect: (): void => undefined });
 }
 
 describe("agent routes", () => {

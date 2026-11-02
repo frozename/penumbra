@@ -248,7 +248,8 @@ test("POST /registrar as the shared principal creates the entry and its phases i
     expect(daemon.services.registrarReader.getEntry(body.registrar_id)?.title).toBe(
       "Registrar rollout",
     );
-    expect(daemon.services.registrarReader.listPhases(body.registrar_id)).toEqual([
+    const phases: unknown = daemon.services.registrarReader.listPhases(body.registrar_id);
+    expect(phases).toEqual([
       expect.objectContaining({ phase_no: 1, title: "Domain", status: "active" }),
       expect.objectContaining({ phase_no: 2, title: "HTTP routes", status: "pending" }),
     ]);
@@ -580,7 +581,8 @@ test("GET /registrar returns open_blockers/open_followups/phase progress matchin
     expect(detail.status).toBe(200);
     const detailBody = RegistrarDetailSchema.parse(await detail.json());
     expect(detailBody.rollup).toEqual({ open_blockers: 1, open_follow_ups: 1 });
-    expect(detailBody.phases).toEqual([
+    const detailPhases: unknown = detailBody.phases;
+    expect(detailPhases).toEqual([
       expect.objectContaining({ phase_no: 1, status: "complete" }),
       expect.objectContaining({ phase_no: 2, status: "pending" }),
     ]);

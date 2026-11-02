@@ -4216,7 +4216,7 @@ test("handoffs create chain-hop returns 4xx without persisting when routing bias
 
   expect(res.status).toBe(422);
   const body = await readJsonBody<HandoffCreateErrorBody>(res);
-  expect(body.error?.code).toBe("routing_bias_exhausted");
+  expect(body.error.code).toBe("routing_bias_exhausted");
 
   const handoffRows = services.db
     .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM handoffs")

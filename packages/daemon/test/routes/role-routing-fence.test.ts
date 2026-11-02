@@ -117,7 +117,8 @@ describe("role routing hard fences", () => {
 
       expect(route?.agent).toBe("executor-seat");
       const decision = RoutingDecisionSchema.parse(sink.decision);
-      expect(decision.alternatives).toContainEqual(
+      const alternatives: unknown = decision.alternatives;
+      expect(alternatives).toContainEqual(
         expect.objectContaining({
           routeId: "openai:fenced",
           excluded: true,
@@ -202,7 +203,8 @@ describe("role routing hard fences", () => {
 
     expect(route?.agent).toBe("tool-seat");
     const decision = RoutingDecisionSchema.parse(sink.decision);
-    expect(decision.alternatives).toContainEqual(
+    const alternatives: unknown = decision.alternatives;
+    expect(alternatives).toContainEqual(
       expect.objectContaining({
         routeId: "openai:http-seat",
         excluded: true,

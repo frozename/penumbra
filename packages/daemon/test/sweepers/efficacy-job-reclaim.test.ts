@@ -75,7 +75,7 @@ test("efficacy job reclaim sweeper survives a tick failure and unrefs its timer"
     return timer as unknown as ReturnType<typeof setInterval>;
   }) as typeof setInterval;
   globalThis.clearInterval = ((handle: Parameters<typeof clearInterval>[0]): void => {
-    expect<unknown>(handle).toBe(timer);
+    expect(handle).toBe(timer);
   }) as typeof clearInterval;
 
   try {
