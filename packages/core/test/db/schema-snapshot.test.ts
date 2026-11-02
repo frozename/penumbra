@@ -59,9 +59,9 @@ test("a fresh applySchema database matches the committed schema snapshot", async
     return;
   }
 
-  const expected: SchemaSnapshot = JSON.parse(
+  const expected = JSON.parse(
     await Bun.file(new URL("fixtures/schema-snapshot.json", import.meta.url)).text(),
-  );
+  ) as SchemaSnapshot;
   // A drift here means the programmatic schema changed: bump SCHEMA_VERSION,
   // add the matching addColumnIfMissing/CREATE ... IF NOT EXISTS upgrade path
   // for legacy databases, then refresh the fixture with
