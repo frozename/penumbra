@@ -164,7 +164,7 @@ describe("runWorktreeGcTick", () => {
     const teardownCalls: string[] = [];
     const svc = makeServices(db, [makeHandle("h-recent")], (id) => {
       teardownCalls.push(id);
-      return Promise.resolve();
+      return Promise.resolve(undefined);
     });
 
     const result = await runWorktreeGcTick(
@@ -186,7 +186,7 @@ describe("runWorktreeGcTick", () => {
     const teardownCalls: string[] = [];
     const svc = makeServices(db, [makeHandle("h-old")], (id) => {
       teardownCalls.push(id);
-      return Promise.resolve();
+      return Promise.resolve(undefined);
     });
 
     const result = await runWorktreeGcTick(
@@ -211,7 +211,7 @@ describe("runWorktreeGcTick", () => {
       const teardownCalls: string[] = [];
       const svc = makeServices(db, [makeHandle("h-deferred")], (id) => {
         teardownCalls.push(id);
-        return Promise.resolve();
+        return Promise.resolve(undefined);
       });
 
       const result = await runWorktreeGcTick(
@@ -237,7 +237,7 @@ describe("runWorktreeGcTick", () => {
     const teardownCalls: string[] = [];
     const svc = makeServices(db, [makeHandle("h-live")], (id) => {
       teardownCalls.push(id);
-      return Promise.resolve();
+      return Promise.resolve(undefined);
     });
 
     const result = await runWorktreeGcTick(
@@ -257,7 +257,7 @@ describe("runWorktreeGcTick", () => {
     const teardownCalls: string[] = [];
     const svc = makeServices(db, [makeHandle("h-expired")], (id) => {
       teardownCalls.push(id);
-      return Promise.resolve();
+      return Promise.resolve(undefined);
     });
 
     const result = await runWorktreeGcTick(
@@ -274,7 +274,7 @@ describe("runWorktreeGcTick", () => {
     const resolvedAt = new Date(NOW.getTime() - 3 * 60 * 60_000).toISOString();
     insertHandoff(db, "h-ev", "completed", resolvedAt);
 
-    const svc = makeServices(db, [makeHandle("h-ev")], () => Promise.resolve());
+    const svc = makeServices(db, [makeHandle("h-ev")], () => Promise.resolve(undefined));
 
     const result = await runWorktreeGcTick(
       { services: svc, gracePeriodMs: GRACE_MS, branchLandedCheck: ALWAYS_LANDED },
@@ -311,7 +311,7 @@ describe("runWorktreeGcTick", () => {
       [],
       (id) => {
         teardownCalls.push(id);
-        return Promise.resolve();
+        return Promise.resolve(undefined);
       },
       [makeOrphan("h-orphan-old")],
     );
@@ -338,7 +338,7 @@ describe("runWorktreeGcTick", () => {
       [],
       (id) => {
         teardownCalls.push(id);
-        return Promise.resolve();
+        return Promise.resolve(undefined);
       },
       [makeOrphan("h-orphan-recent")],
     );
@@ -363,7 +363,7 @@ describe("runWorktreeGcTick", () => {
       [],
       (id) => {
         teardownCalls.push(id);
-        return Promise.resolve();
+        return Promise.resolve(undefined);
       },
       [makeOrphan("h-orphan-live")],
     );
@@ -392,7 +392,7 @@ describe("runWorktreeGcTick", () => {
       [makeHandle("h-unlanded-a"), makeHandle("h-unlanded-b"), makeHandle("h-unlanded-c")],
       (id) => {
         teardownCalls.push(id);
-        return Promise.resolve();
+        return Promise.resolve(undefined);
       },
     );
 
@@ -518,7 +518,7 @@ describe("runWorktreeGcTick", () => {
     const svc = makeServices(
       db,
       ids.map((id) => makeHandle(id)),
-      () => Promise.resolve(),
+      () => Promise.resolve(undefined),
     );
 
     const result = await runWorktreeGcTick(
@@ -554,7 +554,7 @@ describe("runWorktreeGcTick", () => {
     const teardownCalls: string[] = [];
     const svc = makeServices(db, [makeHandle("h-landed")], (id) => {
       teardownCalls.push(id);
-      return Promise.resolve();
+      return Promise.resolve(undefined);
     });
 
     const result = await runWorktreeGcTick(
@@ -589,7 +589,7 @@ describe("runWorktreeGcTick", () => {
     const teardownCalls: string[] = [];
     const svc = makeServices(db, [makeHandle("h-noref")], (id) => {
       teardownCalls.push(id);
-      return Promise.resolve();
+      return Promise.resolve(undefined);
     });
 
     const result = await runWorktreeGcTick(
@@ -666,7 +666,7 @@ describe("runWorktreeGcTick", () => {
 
   test("returns empty stage_reaped/stage_deferred when no stage/* refs exist", async () => {
     const db = setupDb();
-    const svc = makeServices(db, [], () => Promise.resolve());
+    const svc = makeServices(db, [], () => Promise.resolve(undefined));
     // Point at a directory that isn't a git repo so for-each-ref fails; the
     // stage reaper must fail-closed to empty (no throw, no fabricated ref).
     const result = await runWorktreeGcTick(
@@ -685,7 +685,7 @@ describe("runWorktreeGcTick", () => {
     const teardownCalls: string[] = [];
     const svc = makeServices(db, [makeHandle("h-probe-err")], (id) => {
       teardownCalls.push(id);
-      return Promise.resolve();
+      return Promise.resolve(undefined);
     });
 
     const result = await runWorktreeGcTick(
