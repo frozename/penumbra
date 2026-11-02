@@ -31,7 +31,7 @@ function freshDb(path: string): Database {
 }
 
 async function expectResolvesEqual<T>(promise: Promise<T>, expected: unknown): Promise<void> {
-  expect(await promise).toEqual(expected);
+  expect(await promise).toEqual(expected as T);
 }
 
 async function expectResolvesMatchObject<T>(promise: Promise<T>, expected: object): Promise<void> {

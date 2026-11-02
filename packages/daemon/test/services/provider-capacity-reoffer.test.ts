@@ -113,7 +113,9 @@ function claimReofferRows(services: Services, handoff_id: string): { meta_json: 
     .all(handoff_id);
 }
 
-function expectSummary(outcome: ReofferOutcome): ReofferSummary {
+function expectSummary(outcome: ReofferOutcome | undefined): ReofferSummary {
+  expect(outcome).toBeDefined();
+  if (outcome === undefined) throw new Error("expected a re-offer outcome");
   if ("skipped" in outcome) throw new Error(`expected summary, got ${outcome.skipped}`);
   return outcome;
 }
@@ -368,7 +370,7 @@ test("sweep() warns when a capped provider resolves to no seats", () => {
 // #257: drops the provider cap and puts max_in_flight: 1 on claude-a itself.
 function configureSeatCapOnly(services: Services): void {
   services.providerQuotas = [];
-  const seat = services.agentchatConfig?.agents.find((agent) => agent.name === "claude-a");
+  const seat = services.agentchatConfig?.agents?.find((agent) => agent.name === "claude-a");
   if (!seat) throw new Error("missing test seat claude-a");
   seat.max_in_flight = 1;
 }
@@ -440,7 +442,7 @@ test("sweep() re-offers waiting rows for capped seats and skips seats still at c
 
 test("onLeftDispatched does not re-emit a row the provider pass already re-offered for the same seat (#257)", () => {
   const { services, emitted } = setup();
-  const seat = services.agentchatConfig?.agents.find((agent) => agent.name === "claude-a");
+  const seat = services.agentchatConfig?.agents?.find((agent) => agent.name === "claude-a");
   if (!seat) throw new Error("missing test seat claude-a");
   seat.max_in_flight = 1;
   seedApprovedHandoff(services, "running", { to: "claude-a" });

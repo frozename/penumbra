@@ -3,6 +3,7 @@ import {
   type AaSnapshotStore,
   AgentPerformanceWriter,
   type AgentRoutingConfig,
+  createLogger,
   loadSqliteVec,
   migrate,
   RoutingDecisionSchema,
@@ -73,7 +74,7 @@ function services(db: Database, agentRouting: AgentRoutingConfig): Services {
     agentRouting,
     agentRegistry: agentRouting.agents.map((agent) => agent.name),
     clock: () => new Date(NOW),
-    log: { warn: () => undefined } as Services["log"],
+    log: createLogger({ component: "test", level: "silent" }),
     aaSnapshotStore: missingAaSnapshotStore(),
     taskRouterConfig: routerConfig("auto"),
     modelAliasMap: {},
@@ -121,7 +122,7 @@ describe("role routing hard fences", () => {
           routeId: "openai:fenced",
           excluded: true,
           reasons: ["role_routing_roles_empty"],
-        }) as unknown,
+        }),
       );
       expect(decision.alternatives).not.toContainEqual(
         expect.objectContaining({
@@ -206,7 +207,7 @@ describe("role routing hard fences", () => {
         routeId: "openai:http-seat",
         excluded: true,
         reasons: ["requires_tools_text_only_adapter"],
-      }) as unknown,
+      }),
     );
     expect(decision.fallbackChain).not.toContain("http-seat");
   });

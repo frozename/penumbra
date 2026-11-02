@@ -611,9 +611,9 @@ test("OrphanHandoffRecoveryService lists orphans ordered by ts ASC", async () =>
   const orphans = services.handoffReader.listOrphanedDispatches([w1]);
 
   expect(orphans.length).toBe(3);
-  expect(orphans[0].handoff_id).toBe(c2.handoff_id); // 00:00:01
-  expect(orphans[1].handoff_id).toBe(c3.handoff_id); // 00:00:02
-  expect(orphans[2].handoff_id).toBe(c1.handoff_id); // 00:00:03
+  expect(orphans[0]?.handoff_id).toBe(c2.handoff_id); // 00:00:01
+  expect(orphans[1]?.handoff_id).toBe(c3.handoff_id); // 00:00:02
+  expect(orphans[2]?.handoff_id).toBe(c1.handoff_id); // 00:00:03
 });
 
 test("OrphanHandoffRecoveryService re-offers requeued rows for non-capped providers on the worker bus", async () => {

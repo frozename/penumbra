@@ -141,7 +141,7 @@ test("reading provider quotas leaves the quota config and the in-flight count un
 
 test("usageProviderQuotasRoute reports capped seats alongside provider caps (#257)", async () => {
   const services = servicesWithOneDispatched();
-  const seat = services.agentchatConfig?.agents.find((agent) => agent.name === "claude-a");
+  const seat = services.agentchatConfig?.agents?.find((agent) => agent.name === "claude-a");
   if (!seat) throw new Error("missing test seat claude-a");
   seat.max_in_flight = 1;
 

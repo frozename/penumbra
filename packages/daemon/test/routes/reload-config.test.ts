@@ -43,10 +43,10 @@ function asDaemonServices(services: Services): DaemonServices {
 type LogFnKey = "info" | "warn" | "error" | "debug" | "trace" | "fatal";
 
 /** Logger.info/warn/error are pino overloads; mockImplementation requires the union signature.
- *  Centralized cast satisfies the overload set without leaking `any` to callers. */
-function noopLogFn(key: LogFnKey): (...args: never[]) => void {
+ *  A zero-parameter function satisfies every overload without leaking `any` to callers. */
+function noopLogFn(key: LogFnKey): () => void {
   void key;
-  return (..._args: never[]): void => undefined;
+  return (): void => undefined;
 }
 
 /** ExtraWorkerSupervisor is a class with many private fields; tests only need `reconcile`. */
@@ -84,6 +84,7 @@ interface ReloadBody {
   ok?: boolean;
   agent_count?: number;
   workflow_count?: number;
+  project_registry_count?: number;
   reloaded_at?: string;
   reactor_status?: string;
   reactor_error?: string;
@@ -122,7 +123,7 @@ afterEach(() => {
 function tempServices(opts?: {
   agentRegistry?: string[] | null;
   workflowDirs?: { playbooksDir: string; workflowsDir: string };
-}): Services {
+}): DaemonServices {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
@@ -150,7 +151,7 @@ function tempServices(opts?: {
       return { playbooksDir: join(root, "playbooks"), workflowsDir: join(root, "workflows") };
     })();
   asDaemonServices(services).workflowDirs = dirs;
-  return services;
+  return asDaemonServices(services);
 }
 
 async function withTempHome<T>(fn: (home: string) => T | Promise<T>): Promise<T> {
@@ -806,7 +807,7 @@ test("POST /agentchat/reload rebuilds workflow registry from disk", async () => 
   const services = tempServices({ workflowDirs: { playbooksDir, workflowsDir } });
   // Pre-populate registry as the daemon would at boot, then mutate disk.
   services.workflowRegistry = await buildWorkflowRegistry({ playbooksDir, workflowsDir });
-  expect(services.workflowRegistry.get("alpha")?.description).toBe("v1");
+  expect(asNamedWorkflowRegistry(services.workflowRegistry).get("alpha")?.description).toBe("v1");
 
   // Add a second playbook + edit the first.
   mkdirSync(join(playbooksDir, "beta"), { recursive: true });
@@ -855,7 +856,7 @@ test("POST /agentchat/reload returns 500 and keeps old workflow registry on rebu
     workflowsDir,
   });
   const originalRegistry = services.workflowRegistry;
-  expect(originalRegistry.get("alpha")?.description).toBe("v1");
+  expect(asNamedWorkflowRegistry(originalRegistry).get("alpha")?.description).toBe("v1");
   const yamlPath = join(root, "agentchat.yaml");
   writeAgentchat(
     yamlPath,
@@ -868,7 +869,7 @@ agents:
   expect(loadAgentChatConfigFromDir(yamlPath).agents[0]?.name).toBe("old-agent");
   services.agentRegistry = ["old-agent"];
   runtime.agentchatConfig = {
-    agents: [{ name: "old-agent", adapter: "mock" }],
+    agents: [{ name: "old-agent", adapter: "mock", roles: [] }],
   };
   const originalAgentchatConfig = runtime.agentchatConfig;
   const emitSpy = vi.fn();
@@ -906,7 +907,7 @@ agents:
     const body = await readJson<ReloadBody>(res);
     expect(body.error).toContain("workflow registry rebuild failed");
     expect(services.workflowRegistry).toBe(originalRegistry);
-    expect(services.workflowRegistry.get("alpha")?.description).toBe("v1");
+    expect(asNamedWorkflowRegistry(services.workflowRegistry).get("alpha")?.description).toBe("v1");
     expect(services.agentRegistry).toEqual(["old-agent"]);
     expect(runtime.agentchatConfig).toBe(originalAgentchatConfig);
     expect(loadAgentChatConfigFromDir(yamlPath).agents[0]?.name).toBe("old-agent");

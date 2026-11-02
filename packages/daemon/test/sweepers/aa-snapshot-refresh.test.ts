@@ -402,7 +402,7 @@ describe("aa-snapshot-refresh sweeper", () => {
       return timerId;
     }) as unknown as typeof global.setInterval;
     global.clearInterval = mock((id: { unref: () => void }) => {
-      expect(id).toBe(timerId);
+      expect<{ unref: () => void } | null>(id).toBe(timerId);
     }) as unknown as typeof global.clearInterval;
 
     try {

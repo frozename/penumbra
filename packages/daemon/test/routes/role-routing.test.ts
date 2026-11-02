@@ -5,6 +5,7 @@ import {
   AgentPerformanceWriter,
   type AgentRoutingConfig,
   createAaSnapshotStore,
+  createLogger,
   loadSqliteVec,
   migrate,
   type Services,
@@ -140,7 +141,7 @@ function services(db: Database, agentRouting: AgentRoutingConfig | null = routin
     agentRouting,
     agentRegistry: ["alpha", "beta"],
     clock: () => new Date(NOW),
-    log: { warn: () => undefined } as Services["log"],
+    log: createLogger({ component: "test", level: "silent" }),
     aaSnapshotStore: missingAaSnapshotStore(),
   } as Services;
 }
