@@ -1,6 +1,10 @@
 import { describe, expect, it, spyOn, test } from "bun:test";
 
-import { CapturePort, type NotificationEvent } from "@src/worker/capture-port.js";
+import {
+  CapturePort,
+  classifyToolFailure,
+  type NotificationEvent,
+} from "@src/worker/capture-port.js";
 import { MaestroOutputRedactor } from "@src/worker/maestro-output-redactor.js";
 
 interface ObservedHit {
@@ -31,6 +35,7 @@ interface ObservedPayload {
   provider?: string;
   model?: string | null;
   raw?: string;
+  failure_kind?: string;
 }
 
 interface ObservedEvent {
@@ -571,6 +576,125 @@ test("maestro redactor — no redactor option preserves prior behavior (back-com
   expect(resp).toBeDefined();
   expect(resp!.payload_json?.text).toBe("rm -rf /Volumes/WorkSSD");
   expect(f.calls.find((c) => (c.event_type ?? "").startsWith("agent-response-"))).toBeUndefined();
+});
+
+describe("CapturePort — tool failure classification (#341)", () => {
+  function emitToolCallSequence(
+    port: CapturePort,
+    status: "completed" | "failed" | "canceled",
+    output?: unknown,
+  ): void {
+    port.emit({
+      kind: "tool_call",
+      toolCallId: "t1",
+      toolName: "bash",
+      input: { command: "git stash" },
+    });
+    port.emit({ kind: "tool_call_update", toolCallId: "t1", status, output });
+  }
+
+  async function closeAndResolve(port: CapturePort, f: FakeObserve): Promise<void> {
+    const closing = port.close();
+    f.resolveAll();
+    await closing;
+  }
+
+  it("a failed update carrying a permission-denial message is classified as a policy denial", async () => {
+    const f = makeFakeObserve();
+    const port = new CapturePort({ ...baseOpts, observe: f.observe });
+    emitToolCallSequence(port, "failed", [
+      {
+        type: "content",
+        content: {
+          type: "text",
+          text: "The user has specified a rule which prevents you from using this specific tool call. Here are some of the relevant rules [...]",
+        },
+      },
+    ]);
+    await closeAndResolve(port, f);
+    const p = observed(f.calls, 0).payload_json;
+    expect(p?.status).toBe("failed");
+    expect(p?.failure_kind).toBe("policy");
+  });
+
+  it("a failed update with a rawOutput permission-denial object is classified as a policy denial", async () => {
+    const f = makeFakeObserve();
+    const port = new CapturePort({ ...baseOpts, observe: f.observe });
+    emitToolCallSequence(port, "failed", {
+      error: "Permission denied: external_directory /tmp",
+    });
+    await closeAndResolve(port, f);
+    expect(observed(f.calls, 0).payload_json?.failure_kind).toBe("policy");
+  });
+
+  it("a failed update with a rejected-permission output is classified as a policy denial", async () => {
+    const f = makeFakeObserve();
+    const port = new CapturePort({ ...baseOpts, observe: f.observe });
+    emitToolCallSequence(port, "failed", {
+      error: "The user rejected permission to use this specific tool call.",
+    });
+    await closeAndResolve(port, f);
+    expect(observed(f.calls, 0).payload_json?.failure_kind).toBe("policy");
+  });
+
+  it("a failed update with an ordinary error output is classified as an error", async () => {
+    const f = makeFakeObserve();
+    const port = new CapturePort({ ...baseOpts, observe: f.observe });
+    emitToolCallSequence(port, "failed", { error: "oldString not found in content" });
+    await closeAndResolve(port, f);
+    expect(observed(f.calls, 0).payload_json?.failure_kind).toBe("error");
+  });
+
+  it("a failed update with no output is classified as an error", async () => {
+    const f = makeFakeObserve();
+    const port = new CapturePort({ ...baseOpts, observe: f.observe });
+    emitToolCallSequence(port, "failed");
+    await closeAndResolve(port, f);
+    expect(observed(f.calls, 0).payload_json?.failure_kind).toBe("error");
+  });
+
+  it("a completed call carries no failure_kind", async () => {
+    const f = makeFakeObserve();
+    const port = new CapturePort({ ...baseOpts, observe: f.observe });
+    emitToolCallSequence(port, "completed", { stdout: "permission denied" });
+    await closeAndResolve(port, f);
+    const p = observed(f.calls, 0).payload_json;
+    expect(p?.status).toBe("completed");
+    expect(p).not.toHaveProperty("failure_kind");
+  });
+
+  it("an orphaned call carries no failure_kind", async () => {
+    const f = makeFakeObserve();
+    const port = new CapturePort({ ...baseOpts, observe: f.observe });
+    port.emit({
+      kind: "tool_call",
+      toolCallId: "t1",
+      toolName: "bash",
+      input: { command: "git stash" },
+    });
+    await closeAndResolve(port, f);
+    const p = observed(f.calls, 0).payload_json;
+    expect(p?.status).toBe("canceled");
+    expect(p?.lifecycle).toBe("orphaned");
+    expect(p).not.toHaveProperty("failure_kind");
+  });
+
+  it("classifyToolFailure reads a policy denial out of any output shape", () => {
+    expect(classifyToolFailure("permission denied")).toBe("policy");
+    expect(classifyToolFailure({ error: "ENOENT" })).toBe("error");
+    expect(classifyToolFailure(null)).toBe("error");
+    expect(
+      classifyToolFailure([
+        {
+          type: "content",
+          content: {
+            type: "text",
+            text: "The user rejected permission to use this specific tool call.",
+          },
+        },
+      ]),
+    ).toBe("policy");
+  });
 });
 
 test("maestro redactor — agent-thought is NEVER redacted", async () => {
