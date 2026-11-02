@@ -61,6 +61,8 @@ export type RoundRecord = {
   ci_parity: boolean;
   passed: boolean;
   hops: HopFields;
+  autocommitted?: boolean;
+  autocommit_sha?: string;
 };
 
 export type FixUntilGreenResult = {
@@ -116,5 +118,9 @@ export function makeRoundRecord(opts: {
     ci_parity: opts.ciParity ?? false,
     passed: opts.passed,
     hops: hopFields(opts.result),
+    ...(opts.result?.autocommitted === true ? { autocommitted: true } : {}),
+    ...(opts.result?.autocommit_sha !== undefined
+      ? { autocommit_sha: opts.result.autocommit_sha }
+      : {}),
   };
 }
