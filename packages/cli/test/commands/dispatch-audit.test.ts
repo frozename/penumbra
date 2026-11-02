@@ -21,6 +21,7 @@ const report = {
     event_count: 3,
     response_count: 0,
     worktree_changed: null,
+    dispatch_end_committed: null,
     reconciled: null,
     watchdog_failed: true,
     cancel_requested: false,

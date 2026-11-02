@@ -8,6 +8,7 @@ import {
 
 type FetchInput = Parameters<typeof fetch>[0];
 type FetchInit = Parameters<typeof fetch>[1];
+type FetchHandler = (input: FetchInput, init?: FetchInit) => Promise<Response>;
 
 const originalFetch = globalThis.fetch;
 
@@ -15,8 +16,8 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-function mockFetch(handler: typeof fetch): void {
-  globalThis.fetch = handler;
+function mockFetch(handler: FetchHandler): void {
+  globalThis.fetch = Object.assign(handler, { preconnect: originalFetch.preconnect });
 }
 
 function readUrl(input: FetchInput): string {
@@ -38,14 +39,14 @@ function readJsonBody(init?: FetchInit): unknown {
 }
 
 test("observe POSTs to /observations with bearer token", async () => {
-  let received: { url: string; headers: HeadersInit; body: unknown } | null = null;
+  const received: { url: string; headers: Headers; body: unknown }[] = [];
   mockFetch(
     mock((input: FetchInput, init?: FetchInit) => {
-      received = {
+      received.push({
         url: readUrl(input),
-        headers: init?.headers ?? {},
+        headers: new Headers(init?.headers),
         body: readJsonBody(init),
-      };
+      });
       return Promise.resolve(Response.json({ event_id: "x" }));
     }),
   );
@@ -60,10 +61,9 @@ test("observe POSTs to /observations with bearer token", async () => {
     machine_id: "m1",
   });
   expect(r.event_id).toBe("x");
-  expect(received).not.toBeNull();
-  const captured = received as unknown as { url: string; headers: Record<string, string> };
-  expect(captured.url).toBe("http://localhost:1234/observations");
-  expect(captured.headers.authorization).toBe("Bearer tk");
+  expect(received).toHaveLength(1);
+  expect(received[0]?.url).toBe("http://localhost:1234/observations");
+  expect(received[0]?.headers.get("authorization")).toBe("Bearer tk");
 });
 
 test("recall POSTs to /recall and returns results", async () => {
@@ -126,30 +126,29 @@ test("resolves baseUrl/token lazily so daemon restarts at a new port stay reacha
 });
 
 test("endSession POSTs to /sessions/end with session_id body", async () => {
-  let received: { url: string; body: { session_id: string } } | null = null;
+  const received: { url: string; body: unknown }[] = [];
   mockFetch(
     mock((input: FetchInput, init?: FetchInit) => {
-      received = {
+      received.push({
         url: new URL(readUrl(input)).pathname,
-        body: readJsonBody(init) as { session_id: string },
-      };
+        body: readJsonBody(init),
+      });
       return Promise.resolve(Response.json({ ok: true }));
     }),
   );
   const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
   const r = await c.endSession("sess-123");
-  expect(received).not.toBeNull();
-  const captured = received as unknown as { url: string; body: { session_id: string } };
-  expect(captured.url).toBe("/sessions/end");
-  expect(captured.body.session_id).toBe("sess-123");
+  expect(received).toHaveLength(1);
+  expect(received[0]?.url).toBe("/sessions/end");
+  expect(received[0]?.body).toEqual({ session_id: "sess-123" });
   expect(r.ok).toBe(true);
 });
 
 test("listChainAgents GETs /chains/agents and returns ordered names", async () => {
-  let receivedPath: string | null = null;
+  const receivedPaths: string[] = [];
   mockFetch(
     mock((input: FetchInput) => {
-      receivedPath = new URL(readUrl(input)).pathname;
+      receivedPaths.push(new URL(readUrl(input)).pathname);
       return Promise.resolve(
         Response.json({ agents: [{ name: "planner" }, { name: "executor" }] }),
       );
@@ -157,17 +156,17 @@ test("listChainAgents GETs /chains/agents and returns ordered names", async () =
   );
   const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
   const r = await c.listChainAgents();
-  expect(receivedPath).toBe("/chains/agents");
+  expect(receivedPaths).toEqual(["/chains/agents"]);
   expect(r).toEqual({ agents: [{ name: "planner" }, { name: "executor" }] });
 });
 
 test("workflowReport GETs /workflows/report with encoded filters", async () => {
   const received: { path: string; search: string }[] = [];
-  mockFetch(((input: FetchInput) => {
+  mockFetch((input: FetchInput) => {
     const url = new URL(readUrl(input));
     received.push({ path: url.pathname, search: url.search });
     return Promise.resolve(Response.json({ window: {}, rows: [] }));
-  }) as typeof fetch);
+  });
   const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
   const result = await c.workflowReport({ window_hours: 24, project_id: "proj/a b" });
 
@@ -270,10 +269,10 @@ test("workflowReport propagates the exact TimeoutError from an aborted request",
 });
 
 test("reconcilerSweepOrphanPrs POSTs to /reconciler/sweep-orphan-prs", async () => {
-  let received: { path: string; body: unknown } | null = null;
+  const received: { path: string; body: unknown }[] = [];
   mockFetch(
     mock((input: FetchInput, init?: FetchInit) => {
-      received = { path: new URL(readUrl(input)).pathname, body: readJsonBody(init) };
+      received.push({ path: new URL(readUrl(input)).pathname, body: readJsonBody(init) });
       return Promise.resolve(
         Response.json({ scanned: 3, superseded: 1, stale: 1, errored: 0, actions: [] }),
       );
@@ -281,17 +280,17 @@ test("reconcilerSweepOrphanPrs POSTs to /reconciler/sweep-orphan-prs", async () 
   );
   const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
   const result = await c.reconcilerSweepOrphanPrs({ dry_run: true, max_close: 5 });
-  expect(received?.path).toBe("/reconciler/sweep-orphan-prs");
-  expect(received?.body).toEqual({ dry_run: true, max_close: 5 });
+  expect(received[0]?.path).toBe("/reconciler/sweep-orphan-prs");
+  expect(received[0]?.body).toEqual({ dry_run: true, max_close: 5 });
   expect(result).toEqual({ scanned: 3, superseded: 1, stale: 1, errored: 0, actions: [] });
 });
 
 test("reconcilerVerdicts GETs /reconciler/verdicts with filters", async () => {
-  let received: { path: string; search: string } | null = null;
+  const received: { path: string; search: string }[] = [];
   mockFetch(
     mock((input: FetchInput) => {
       const url = new URL(readUrl(input));
-      received = { path: url.pathname, search: url.search };
+      received.push({ path: url.pathname, search: url.search });
       return Promise.resolve(Response.json({ verdicts: [] }));
     }),
   );
@@ -301,18 +300,21 @@ test("reconcilerVerdicts GETs /reconciler/verdicts with filters", async () => {
     limit: 5,
     only_unverified: true,
   });
-  expect(received?.path).toBe("/reconciler/verdicts");
-  expect(received?.search).toContain("since=2026-05-07T00%3A00%3A00.000Z");
-  expect(received?.search).toContain("limit=5");
-  expect(received?.search).toContain("only_unverified=true");
+  expect(received[0]?.path).toBe("/reconciler/verdicts");
+  expect(received[0]?.search).toContain("since=2026-05-07T00%3A00%3A00.000Z");
+  expect(received[0]?.search).toContain("limit=5");
+  expect(received[0]?.search).toContain("only_unverified=true");
   expect(result).toEqual({ verdicts: [] });
 });
 
 test("getFederationTools GETs the agent federation tools route with bearer auth", async () => {
-  let received: { path: string; headers: Headers } | null = null;
+  const received: { path: string; headers: Headers }[] = [];
   mockFetch(
     mock((input: FetchInput, init?: FetchInit) => {
-      received = { path: new URL(readUrl(input)).pathname, headers: new Headers(init?.headers) };
+      received.push({
+        path: new URL(readUrl(input)).pathname,
+        headers: new Headers(init?.headers),
+      });
       return Promise.resolve(
         Response.json({ tools: [{ name: "ha:state_get", description: "x" }] }),
       );
@@ -320,25 +322,24 @@ test("getFederationTools GETs the agent federation tools route with bearer auth"
   );
   const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
   const result = await c.getFederationTools("agent-1");
-  expect(received).not.toBeNull();
-  const captured = received as unknown as { path: string; headers: Headers };
-  expect(captured.path).toBe("/long-lived/agents/agent-1/federation-tools");
-  expect(captured.headers.get("authorization")).toBe("Bearer tk");
+  expect(received).toHaveLength(1);
+  expect(received[0]?.path).toBe("/long-lived/agents/agent-1/federation-tools");
+  expect(received[0]?.headers.get("authorization")).toBe("Bearer tk");
   expect(result).toEqual({ tools: [{ name: "ha:state_get", description: "x" }] });
 });
 
 test("longLivedStateSet POSTs to /long-lived/<id>/state with body wrapped under partial", async () => {
-  let received: { path: string; body: unknown } | null = null;
+  const received: { path: string; body: unknown }[] = [];
   mockFetch(
     mock((input: FetchInput, init?: FetchInit) => {
-      received = { path: new URL(readUrl(input)).pathname, body: readJsonBody(init) };
+      received.push({ path: new URL(readUrl(input)).pathname, body: readJsonBody(init) });
       return Promise.resolve(Response.json({ ok: true }));
     }),
   );
   const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
   await c.longLivedStateSet("home-mgmt", { intent_summary: "probe" });
-  expect(received?.path).toBe("/long-lived/home-mgmt/state");
-  expect(received?.body).toEqual({ partial: { intent_summary: "probe" } });
+  expect(received[0]?.path).toBe("/long-lived/home-mgmt/state");
+  expect(received[0]?.body).toEqual({ partial: { intent_summary: "probe" } });
 });
 
 test("dispatchLand throws DaemonHttpError when the async task reports status=failed", async () => {
@@ -379,7 +380,7 @@ test("dispatchLand throws DaemonHttpError when the async task reports status=fai
 
 test("dispatchLand returns the completed async task result", async () => {
   const expected = { commit_sha: "abc123", branch_deleted: true, pr_closed: false };
-  mockFetch(((input: FetchInput, init?: FetchInit) => {
+  mockFetch((input: FetchInput, init?: FetchInit) => {
     const url = new URL(readUrl(input));
     if (init?.method === "POST" && url.pathname === "/dispatch/land") {
       return Promise.resolve(Response.json({ task_id: "task-complete-1" }, { status: 202 }));
@@ -388,7 +389,7 @@ test("dispatchLand returns the completed async task result", async () => {
       return Promise.resolve(Response.json({ status: "done", result: expected }));
     }
     throw new Error(`unexpected fetch: ${url.pathname}`);
-  }) as typeof fetch);
+  });
   const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
   expect(
     await c.dispatchLand({ handoff_id: "h-complete", commit_message: "feat: complete" }),
@@ -464,7 +465,7 @@ test("dispatchLand resolves { status: 'still_running', task_id } instead of thro
 });
 
 test("dispatchLand bounds slow polling by the elapsed timeout", async () => {
-  mockFetch((async (input: FetchInput, init?: FetchInit) => {
+  mockFetch(async (input: FetchInput, init?: FetchInit) => {
     const url = new URL(readUrl(input));
     if (init?.method === "POST" && url.pathname === "/dispatch/land") {
       return Response.json({ task_id: "task-slow-polls" }, { status: 202 });
@@ -474,7 +475,7 @@ test("dispatchLand bounds slow polling by the elapsed timeout", async () => {
       return Response.json({ status: "running" });
     }
     throw new Error(`unexpected fetch: ${url.pathname}`);
-  }) as typeof fetch);
+  });
   const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
   const started = Date.now();
   const out = await c.dispatchLand({
@@ -492,7 +493,7 @@ test("dispatchLand bounds slow polling by the elapsed timeout", async () => {
 });
 
 test("dispatchLand resolves still_running when a poll reaches its request deadline", async () => {
-  mockFetch(((input: FetchInput, init?: FetchInit) => {
+  mockFetch((input: FetchInput, init?: FetchInit) => {
     const url = new URL(readUrl(input));
     if (init?.method === "POST" && url.pathname === "/dispatch/land") {
       return Promise.resolve(Response.json({ task_id: "task-poll-timeout" }, { status: 202 }));
@@ -503,7 +504,7 @@ test("dispatchLand resolves still_running when a poll reaches its request deadli
       return Promise.reject(error);
     }
     throw new Error(`unexpected fetch: ${url.pathname}`);
-  }) as typeof fetch);
+  });
   const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
   const out = await c.dispatchLand({
     handoff_id: "h-poll-timeout",
@@ -519,7 +520,7 @@ test("dispatchLand resolves still_running when a poll reaches its request deadli
 
 test("dispatchLand propagates non-timeout poll transport errors", async () => {
   const expected = new TypeError("connection reset");
-  mockFetch(((input: FetchInput, init?: FetchInit) => {
+  mockFetch((input: FetchInput, init?: FetchInit) => {
     const url = new URL(readUrl(input));
     if (init?.method === "POST" && url.pathname === "/dispatch/land") {
       return Promise.resolve(Response.json({ task_id: "task-network-error" }, { status: 202 }));
@@ -528,7 +529,7 @@ test("dispatchLand propagates non-timeout poll transport errors", async () => {
       return Promise.reject(expected);
     }
     throw new Error(`unexpected fetch: ${url.pathname}`);
-  }) as typeof fetch);
+  });
   const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
   let thrown: unknown = null;
   try {
@@ -599,14 +600,14 @@ test("getLatestHandoff attaches an AbortSignal deadline when the caller passes t
   };
   let seenSignal: AbortSignal | undefined;
   try {
-    mockFetch(((_input: FetchInput, init?: FetchInit) => {
+    mockFetch((_input: FetchInput, init?: FetchInit) => {
       seenSignal = init?.signal ?? undefined;
       return Promise.resolve(
         Response.json({
           handoff: { handoff_id: "h1", status: "running", conversation_id: "c1" },
         }),
       );
-    }) as typeof fetch);
+    });
     const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
     await c.getLatestHandoff("conv-1", { timeoutMs: 5000 });
     expect(seenSignal).toBe(controller.signal);
@@ -622,11 +623,11 @@ test("getLatestHandoff attaches an AbortSignal deadline when the caller passes t
 test("workflowWait sends no AbortSignal so long-poll routes keep owning their own budget", async () => {
   let called = false;
   let seenSignal: AbortSignal | undefined;
-  mockFetch(((_input: FetchInput, init?: FetchInit) => {
+  mockFetch((_input: FetchInput, init?: FetchInit) => {
     called = true;
     seenSignal = init?.signal ?? undefined;
     return Promise.resolve(Response.json({ status: "completed" }));
-  }) as typeof fetch);
+  });
   const c = new DaemonClient({ baseUrl: "http://localhost:1234", token: "tk" });
   await c.workflowWait({ workflow_run_id: "r1", timeout_ms: 1_800_000 });
   expect(called).toBe(true);
