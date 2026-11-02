@@ -297,6 +297,8 @@ export interface Services {
       subscription_model?: string;
       api_provider?: string;
       pricing_mode?: "api" | "subscription";
+      max_in_flight?: number;
+      auto_approve_to?: string[];
       enforces_permission_profiles?: readonly string[];
     }[];
   };

@@ -93,7 +93,9 @@ function createTerminalHandoff(
     resolved_at: "t",
     chain_max_hops: null,
     chain_trust_mode: null,
+    chain_task_type: null,
     use_worktree: null,
+    parent_handoff_id: null,
   });
   services.handoffWriter.claimDispatch(handoff_id, "w1");
   services.handoffWriter.markCompleted(handoff_id);
@@ -172,8 +174,8 @@ test("POST /handoffs/:id/progress resolves conversation_id and emits to stream",
   expect(progressRes.status).toBe(200);
 
   // 4. Verify emission
-  expect(emittedConv).toBe("conv-123");
-  expect(emittedEvent).toEqual({
+  expect<string | null>(emittedConv).toBe("conv-123");
+  expect<ConversationStreamEvent | null>(emittedEvent).toEqual({
     type: "token",
     handoff_id,
     seq: 1,
@@ -182,7 +184,7 @@ test("POST /handoffs/:id/progress resolves conversation_id and emits to stream",
 
   // 5. Verify cache
   const history = services.conversationStream.getHistory("conv-123");
-  expect(history).toContainEqual(emittedEvent);
+  expect(history).toContainEqual<ConversationStreamEvent | null>(emittedEvent);
 });
 
 test("POST /handoffs/:id/progress accepts terminal handoff progress and emits to stream", async () => {
@@ -204,8 +206,13 @@ test("POST /handoffs/:id/progress accepts terminal handoff progress and emits to
   // 2. Push progress
   const res = await postProgress(services, handoff_id, { type: "token", seq: 1, delta: "..." });
   expect(res.status).toBe(200);
-  expect(emittedConv).toBe("c1");
-  expect(emittedEvent).toEqual({ type: "token", handoff_id, seq: 1, delta: "..." });
+  expect<string | null>(emittedConv).toBe("c1");
+  expect<ConversationStreamEvent | null>(emittedEvent).toEqual({
+    type: "token",
+    handoff_id,
+    seq: 1,
+    delta: "...",
+  });
 });
 
 test("POST /handoffs/:id/progress accepts merge-result progress for all statuses", async () => {
@@ -229,6 +236,9 @@ test("POST /handoffs/:id/progress accepts merge-result progress for all statuses
     resolved_at: "t",
     chain_max_hops: null,
     chain_trust_mode: null,
+    chain_task_type: null,
+    use_worktree: null,
+    parent_handoff_id: null,
   });
 
   const cases = [

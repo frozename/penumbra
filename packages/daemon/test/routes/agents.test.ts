@@ -70,10 +70,11 @@ interface DispatchCaptureResponse {
 }
 
 function makeHandlerFetcher(handler: (req: Request) => Promise<Response>): typeof fetch {
-  return (input, init): Promise<Response> => {
-    const req = input instanceof Request ? input : new Request(input, init);
+  const impl = (input: string | Request | URL, init?: RequestInit): Promise<Response> => {
+    const req = input instanceof Request ? input : new Request(input.toString(), init);
     return handler(req);
   };
+  return Object.assign(impl, { preconnect: (): void => undefined });
 }
 
 describe("agent routes", () => {

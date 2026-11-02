@@ -10,7 +10,7 @@ const expectedStringContaining = (str: string): string => {
   const match: unknown = expect.stringContaining(str);
   return match as string;
 };
-const expectedObjectContaining = <T>(obj: T): T => {
+const expectedObjectContaining = <T extends object>(obj: T): T => {
   const match: unknown = expect.objectContaining(obj);
   return match as T;
 };
@@ -40,8 +40,8 @@ test("TRIVIAL class uses top_k=3", async () => {
     ),
   });
   expect(calls).toHaveLength(1);
-  expect(calls[0].top_k).toBe(3);
-  expect(calls[0].query).toContain("task_class:TRIVIAL");
+  expect(calls[0]?.top_k).toBe(3);
+  expect(calls[0]?.query).toContain("task_class:TRIVIAL");
 });
 
 test("STANDARD recalls top 5 and injects a markdown block", async () => {
@@ -107,9 +107,11 @@ test("STANDARD with zero hits returns empty recall ids and null injection", asyn
 
 test("STANDARD swallows memory recall errors and logs a warning", async () => {
   const memoryRecall = mock((): Promise<RecallResult> => Promise.reject(new Error("boom")));
-  const logger = mock((): void => {
-    return;
-  });
+  const logger = mock(
+    (_level: "debug" | "warn", _msg: string, _meta?: Record<string, unknown>): void => {
+      return;
+    },
+  );
 
   const result = await autoRecallForDispatch(
     { prompt: "broken", task_class: "STANDARD" },
@@ -132,7 +134,7 @@ test("STANDARD swallows memory recall errors and logs a warning", async () => {
 
 test("project_id passes through only when provided", async () => {
   const memoryRecall = mock(
-    (): Promise<RecallResult> =>
+    (_args: RecallArgs): Promise<RecallResult> =>
       Promise.resolve({
         hits: [{ id: "m", title: "a" }],
       }),
@@ -147,12 +149,12 @@ test("project_id passes through only when provided", async () => {
     { memoryRecall },
   );
 
-  expect(memoryRecall.mock.calls[0][0]).toEqual({
+  expect(memoryRecall.mock.calls[0]?.[0]).toEqual({
     query: "with project task_class:STANDARD",
     top_k: 5,
     project_id: "p-1",
   });
-  expect(memoryRecall.mock.calls[1][0]).toEqual({
+  expect(memoryRecall.mock.calls[1]?.[0]).toEqual({
     query: "without project task_class:STANDARD",
     top_k: 5,
   });
@@ -193,8 +195,8 @@ test("falls back to cross-project recall when project-scoped returns zero hits",
     { id: "cross-1", title: "global", obs_type: "memory", snippet_head: undefined },
   ]);
   expect(calls).toHaveLength(2);
-  expect(calls[0].project_id).toBe("penumbra");
-  expect(calls[1].project_id).toBeUndefined();
+  expect(calls[0]?.project_id).toBe("penumbra");
+  expect(calls[1]?.project_id).toBeUndefined();
 });
 
 test("cross-project fallback forwards the recall signal", async () => {
