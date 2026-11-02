@@ -6,6 +6,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { formatDispatchAudit, runDispatchAudit } from "../src/commands/dispatch-audit.js";
+import { urlToString } from "./commands/_helpers.js";
+
+// Bun's `typeof fetch` carries a static `preconnect` that bare mock functions
+// lack; Object.assign closes the structural gap without laundering the type.
+function asFetchMock(
+  impl: (url: string | URL | Request, init?: RequestInit) => Promise<Response>,
+): typeof fetch {
+  return Object.assign(impl, { preconnect: (): void => undefined });
+}
 
 const report = {
   handoff_id: "h-1",
@@ -65,8 +74,8 @@ describe("runDispatchAudit", () => {
   test("fetches the dispatch audit and prints the formatted report", async () => {
     const calls: { url: string; init?: RequestInit }[] = [];
     const printed: string[] = [];
-    const fetch = mock((url: string | URL, init?: RequestInit) => {
-      calls.push({ url: String(url), init });
+    const fetchMock = mock((url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: urlToString(url), init });
       return Promise.resolve(
         new Response(JSON.stringify({ report }), {
           status: 200,
@@ -79,13 +88,13 @@ describe("runDispatchAudit", () => {
       handoffId: "handoff-1",
       json: false,
       storageRoot,
-      fetch,
+      fetch: asFetchMock(fetchMock),
       print: (line) => {
         printed.push(line);
       },
     });
 
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(calls[0]?.url).toBe("http://127.0.0.1:4242/dispatch/audit?handoff_id=handoff-1");
     expect(new Headers(calls[0]?.init?.headers).get("authorization")).toBe("Bearer tok");
     expect(printed).toHaveLength(1);
@@ -102,13 +111,14 @@ describe("runDispatchAudit", () => {
       handoffId: "handoff-2",
       json: true,
       storageRoot,
-      fetch: () =>
+      fetch: asFetchMock(() =>
         Promise.resolve(
           new Response(JSON.stringify({ report }), {
             status: 200,
             headers: { "content-type": "application/json" },
           }),
         ),
+      ),
       print: (line) => {
         printed = line;
       },
@@ -127,13 +137,14 @@ describe("runDispatchAudit", () => {
         handoffId: "missing-handoff",
         json: false,
         storageRoot,
-        fetch: () =>
+        fetch: asFetchMock(() =>
           Promise.resolve(
             new Response(JSON.stringify({ error: { code: "not_found", message: "missing" } }), {
               status: 404,
               headers: { "content-type": "application/json" },
             }),
           ),
+        ),
         print: (line) => {
           printed.push(line);
         },

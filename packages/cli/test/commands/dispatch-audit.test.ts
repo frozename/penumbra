@@ -9,6 +9,14 @@ import { formatDispatchAudit, runDispatchAudit } from "@src/commands/dispatch-au
 
 import { urlToString } from "./_helpers.js";
 
+// Bun's `typeof fetch` carries a static `preconnect` that bare mock functions
+// lack; Object.assign closes the structural gap without laundering the type.
+function asFetchMock(
+  impl: (url: string | URL | Request, init?: RequestInit) => Promise<Response>,
+): typeof fetch {
+  return Object.assign(impl, { preconnect: (): void => undefined });
+}
+
 const report = {
   handoff_id: "h-1",
   status: "watchdog_only",
@@ -89,7 +97,7 @@ describe("runDispatchAudit", () => {
       handoffId: "handoff-1",
       json: false,
       storageRoot,
-      fetch: (url, init) => {
+      fetch: asFetchMock((url, init) => {
         calls.push({ url: urlToString(url), init });
         return Promise.resolve(
           new Response(JSON.stringify({ report }), {
@@ -97,7 +105,7 @@ describe("runDispatchAudit", () => {
             headers: { "content-type": "application/json" },
           }),
         );
-      },
+      }),
       print: (line) => {
         printed.push(line);
       },
@@ -118,13 +126,14 @@ describe("runDispatchAudit", () => {
       handoffId: "handoff-2",
       json: true,
       storageRoot,
-      fetch: () =>
+      fetch: asFetchMock(() =>
         Promise.resolve(
           new Response(JSON.stringify({ report }), {
             status: 200,
             headers: { "content-type": "application/json" },
           }),
         ),
+      ),
       print: (line) => {
         printed = line;
       },
