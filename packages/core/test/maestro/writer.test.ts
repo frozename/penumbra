@@ -30,6 +30,7 @@ function seedTask(db: Database, taskId: string): void {
       string,
       string,
       string | null,
+      string | null,
       string,
       string,
       string,
@@ -41,7 +42,15 @@ function seedTask(db: Database, taskId: string): void {
       number | null,
       number | null,
       number | null,
+      number | null,
+      string | null,
       string,
+      string | null,
+      string | null,
+      string | null,
+      string | null,
+      string | null,
+      string | null,
       string | null,
       string | null,
       string | null,
@@ -50,19 +59,21 @@ function seedTask(db: Database, taskId: string): void {
     ]
   >(
     `INSERT INTO tasks (
-      id, created_at, updated_at, created_by_kind, created_by_id,
+      id, created_at, updated_at, created_by_kind, created_by_id, project_id,
       parent_task_id, kind, priority, prompt, acceptance_criteria,
       expected_artifacts, eligibility, review_eligibility, requires_review,
       bounds_wall_clock_ms, bounds_cost_cents, bounds_max_sub_dispatches,
-      bounds_started_at, status, result_summary, result_artifacts,
-      failure_reason, chain_id, origin
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      bounds_started_at, branch_base, status, result_summary, result_artifacts,
+      failure_reason, chain_id, origin, gh_issue_number, gh_issue_repo,
+      gh_last_comment_id, gh_comments_synced_at, gh_create_status, gh_create_error
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     taskId,
     1,
     1,
     "workflow",
     "test-suite",
+    null,
     null,
     "orchestrate",
     "normal",
@@ -76,7 +87,14 @@ function seedTask(db: Database, taskId: string): void {
     null,
     null,
     null,
+    null,
     "pending",
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
     null,
     null,
     null,
@@ -316,7 +334,7 @@ describe("MaestroSessionWriter", () => {
 
     writer.terminate(tasks[1]!, "completed");
 
-    expect(writer.listLive().map((row) => row.task_id)).toEqual([tasks[0], tasks[2]]);
+    expect(writer.listLive().map((row) => row.task_id)).toEqual([tasks[0]!, tasks[2]!]);
   });
 
   test("incrementSubDispatch is atomic across concurrent calls", async () => {

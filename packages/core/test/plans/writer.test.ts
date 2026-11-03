@@ -194,12 +194,12 @@ test("register transactional rollback on mid-task INSERT failure", () => {
   // that collides with the second task we'll try to register.
   db.query<unknown, [string, string, string, number, string]>(
     `INSERT INTO plans (plan_id, file_path, home_project, registered_at, status)
-     VALUES (?, ?, ?, ?, 'running')`,
-  ).run("plan-rollback", "pre.md", "penumbra", 1_699_000_000);
-  db.query<unknown, [string, string, string, string]>(
-    `INSERT INTO plan_tasks (plan_id, task_meta_id, project_id, status)
-     VALUES (?, ?, ?, 'pending')`,
-  ).run("plan-rollback", "1.2", "penumbra");
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run("plan-rollback", "pre.md", "penumbra", 1_699_000_000, "running");
+  db.query<unknown, [string, string, string, string | null, string, number | null]>(
+    `INSERT INTO plan_tasks (plan_id, task_meta_id, project_id, task_id_in_board, status, last_event_ts)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  ).run("plan-rollback", "1.2", "penumbra", null, "pending", null);
 
   // Now delete the placeholder plan row so the register() call's collision check
   // on plans passes — but the orphaned plan_tasks row remains to collide later.

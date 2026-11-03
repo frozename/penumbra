@@ -1,6 +1,6 @@
-export { serve, createDaemonFetchHandler, type ServeOpts, type DaemonHandle } from "./src/serve.js";
-export { ShellSessionPool } from "./src/services/shell-session-pool.js";
+export { createDaemonFetchHandler, type DaemonHandle, serve, type ServeOpts } from "./src/serve.js";
 export { OrphanHandoffRecoveryService } from "./src/services/orphan-handoff-recovery.js";
+export { ShellSessionPool } from "./src/services/shell-session-pool.js";
 export { WatchdogService } from "./src/services/watchdog.js";
 
 export interface RegisterWorkerForTestArgs {
@@ -30,7 +30,9 @@ export async function registerWorkerForTest(
   });
   if (!res.ok) {
     const errorBody = await res.json().catch(() => null);
-    throw new Error(`registerWorkerForTest: HTTP ${res.status}: ${JSON.stringify(errorBody)}`);
+    throw new Error(
+      `registerWorkerForTest: HTTP ${String(res.status)}: ${JSON.stringify(errorBody)}`,
+    );
   }
   return (await res.json()) as RegisterWorkerForTestResult;
 }
