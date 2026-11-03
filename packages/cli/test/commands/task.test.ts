@@ -12,6 +12,13 @@ import {
   runTaskWatch,
 } from "@src/commands/task.js";
 
+import { urlToString } from "./_helpers.js";
+
+// Bun's `typeof fetch` requires a static `preconnect` member that a bare stub lacks.
+function fetchStub(impl: (...args: Parameters<typeof fetch>) => Promise<Response>): typeof fetch {
+  return Object.assign(impl, { preconnect: fetch.preconnect.bind(fetch) });
+}
+
 let storageRoot = "";
 
 beforeEach(() => {
@@ -28,8 +35,8 @@ test("task new/list/show/cancel/list filter", async () => {
   const requests: { url: string; init?: RequestInit }[] = [];
   let taskId = "";
   let taskStatus = "pending";
-  const fetch = (url: string | URL, init?: RequestInit): Promise<Response> => {
-    const urlStr = typeof url === "string" ? url : url.toString();
+  const fetch = fetchStub((url, init) => {
+    const urlStr = urlToString(url);
     requests.push({ url: urlStr, init });
     const parsed = new URL(urlStr, "http://127.0.0.1:4242");
     const pathname = `${parsed.pathname}${parsed.search}`;
@@ -100,7 +107,7 @@ test("task new/list/show/cancel/list filter", async () => {
       );
     }
     throw new Error(`unexpected ${pathname}`);
-  };
+  });
 
   const created: string[] = [];
   await runTaskNew({
@@ -173,13 +180,14 @@ test("task watch prints filed events", async () => {
   const lines: string[] = [];
   await runTaskWatch({
     storageRoot,
-    fetch: () =>
+    fetch: fetchStub(() =>
       Promise.resolve(
         new Response(stream, {
           status: 200,
           headers: { "content-type": "text/event-stream" },
         }),
       ),
+    ),
     print: (line) => lines.push(line),
   });
   expect(lines).toContain("[2026-05-05T12:00:00.000Z] filed task=task_abc actor=cli");
@@ -205,8 +213,8 @@ test("task review writes scaffold to a private mkdtemp dir, not a predictable sh
     const id = "task_review_1";
     const predictablePath = join(process.env.TMPDIR ?? "/tmp", `penumbra-task-review-${id}.yaml`);
 
-    const fetch = (url: string | URL, init?: RequestInit): Promise<Response> => {
-      const urlStr = typeof url === "string" ? url : url.toString();
+    const fetch = fetchStub((url, init) => {
+      const urlStr = urlToString(url);
       const pathname = new URL(urlStr, "http://127.0.0.1:4242").pathname;
       if (pathname === "/tasks/lease" && init?.method === "POST") {
         return Promise.resolve(
@@ -248,7 +256,7 @@ test("task review writes scaffold to a private mkdtemp dir, not a predictable sh
         return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200 }));
       }
       throw new Error(`unexpected ${pathname}`);
-    };
+    });
 
     await runTaskReview({
       id,
@@ -283,7 +291,7 @@ test("task new with gh_create prints task id and queued status", async () => {
     gh_labels: ["tasks", "phase-2"],
     gh_assignees: ["frozename"],
     storageRoot,
-    fetch: (_url, init) => {
+    fetch: fetchStub((_url, init) => {
       const bodyStr = typeof init?.body === "string" ? init.body : "{}";
       postedBody = JSON.parse(bodyStr);
       return Promise.resolve(
@@ -296,7 +304,7 @@ test("task new with gh_create prints task id and queued status", async () => {
           { status: 201 },
         ),
       );
-    },
+    }),
     print: (line) => lines.push(line),
   });
 
