@@ -1,6 +1,6 @@
 import type { SessionNoteApproveResponse } from "@penumbra/api-contract";
 
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import { ZodError } from "zod";
 
 import type { DaemonClient } from "@src/daemon-client.js";
@@ -75,11 +75,7 @@ test("sessionNoteApproveHandler rejects missing approve before calling the daemo
 });
 
 test("sessionNoteApproveHandler forwards approve:true verbatim", async () => {
-  let received: SessionNoteApproveBody | null = null;
-  const sessionNoteApprove: SessionNoteApproveFn = (body) => {
-    received = body;
-    return Promise.resolve(validResponse);
-  };
+  const sessionNoteApprove = mock<SessionNoteApproveFn>(() => Promise.resolve(validResponse));
   const daemon = fakeDaemon({
     sessionNoteApprove,
   });
@@ -87,6 +83,8 @@ test("sessionNoteApproveHandler forwards approve:true verbatim", async () => {
 
   await handler({ draft_id: "draft-1", approve: true, body: "edited\n", overwrite: true });
 
+  const received: SessionNoteApproveBody | undefined = sessionNoteApprove.mock.calls[0]?.[0];
+  if (received === undefined) throw new Error("expected daemon sessionNoteApprove to be called");
   expect(received).toEqual({
     draft_id: "draft-1",
     approve: true,

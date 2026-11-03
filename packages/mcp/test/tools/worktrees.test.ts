@@ -285,11 +285,8 @@ test("chain.start tool passes use_worktree", async () => {
     use_worktree: false,
     task_class: "STANDARD",
   });
-  expect(mocks.startChain).toHaveBeenCalledWith(
-    expect.objectContaining<Partial<StartChainBody>>({
-      use_worktree: false,
-    }),
-  );
+  const expectedBody: Partial<StartChainBody> = { use_worktree: false };
+  expect(mocks.startChain).toHaveBeenCalledWith(expect.objectContaining(expectedBody));
 });
 
 test("chain.start tool passes open_pr_on_review", async () => {
@@ -301,9 +298,6 @@ test("chain.start tool passes open_pr_on_review", async () => {
     open_pr_on_review: true,
     task_class: "STANDARD",
   });
-  expect(mocks.startChain).toHaveBeenCalledWith(
-    expect.objectContaining<Partial<StartChainBody>>({
-      open_pr_on_review: true,
-    }),
-  );
+  const expectedBody: Partial<StartChainBody> = { open_pr_on_review: true };
+  expect(mocks.startChain).toHaveBeenCalledWith(expect.objectContaining(expectedBody));
 });

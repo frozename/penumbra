@@ -121,7 +121,7 @@ test("runHook posts to /observations on the live daemon", async () => {
     expect(exit).toBe(0);
     expect(received).not.toBeNull();
     expect(received!.headers.get("authorization")).toBe("Bearer tk");
-    expect(received!.body.event_type).toBe("agent-prompt");
+    expect(received!.body).toHaveProperty("event_type", "agent-prompt");
     expect(received!.body.source).toBe("claude-code");
   } finally {
     void server.stop(true);
@@ -666,9 +666,9 @@ test("runHook forwards transcript_path for Stop lifecycle events", async () => {
     });
     expect(exit).toBe(0);
     expect(triggerCalls).toHaveLength(1);
-    expect(triggerCalls[0]!.transcript_path).toBe("/tmp/cc-session-transcript.log");
-    expect(triggerCalls[0]!.session_id).toBe("cc-stop-1");
-    expect(triggerCalls[0]!.event.event).toBe("stop");
+    expect(triggerCalls[0]?.transcript_path).toBe("/tmp/cc-session-transcript.log");
+    expect(triggerCalls[0]?.session_id).toBe("cc-stop-1");
+    expect(triggerCalls[0]?.event?.event).toBe("stop");
   } finally {
     if (oldEntrypoint === undefined) delete process.env.CLAUDE_CODE_ENTRYPOINT;
     else process.env.CLAUDE_CODE_ENTRYPOINT = oldEntrypoint;
