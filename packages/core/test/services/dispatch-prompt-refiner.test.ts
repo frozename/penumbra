@@ -77,14 +77,15 @@ test("refineDispatchPrompt wraps upstream errors with upstream_failed code", asy
 });
 
 test("refineDispatchPrompt passes system + user roles to chat fn", async () => {
-  let captured: { role: string; content: string }[] | null = null;
+  const captured: { messages: { role: string; content: string }[] | null } = { messages: null };
   const chat = mock((opts: { messages: { role: string; content: string }[] }) => {
-    captured = opts.messages;
+    captured.messages = opts.messages;
     return Promise.resolve("ok");
   });
   await refineDispatchPrompt({ message: "real input", chat, model: "haiku-test" });
-  expect(captured).not.toBeNull();
-  expect(captured!.length).toBe(2);
-  expect(captured![0].role).toBe("system");
-  expect(captured![1]).toEqual({ role: "user", content: "real input" });
+  expect(captured.messages).not.toBeNull();
+  if (captured.messages === null) throw new Error("expected chat messages to be captured");
+  expect(captured.messages.length).toBe(2);
+  expect(captured.messages[0]?.role).toBe("system");
+  expect(captured.messages[1]).toEqual({ role: "user", content: "real input" });
 });
