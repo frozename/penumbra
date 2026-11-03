@@ -33,12 +33,13 @@ function setupRoot(): string {
 }
 
 function mockFetch(expectedPath: string, fixture: unknown): typeof fetch {
-  return (path: string | URL | Request) => {
+  const fn = (path: string | URL | Request): Promise<Response> => {
     const asStr =
       typeof path === "string" ? path : path instanceof URL ? path.toString() : path.url;
     expect(asStr).toBe(expectedPath);
     return Promise.resolve(Response.json(fixture));
   };
+  return Object.assign(fn, { preconnect: fetch.preconnect.bind(fetch) });
 }
 
 function parseJson(s: string): unknown {

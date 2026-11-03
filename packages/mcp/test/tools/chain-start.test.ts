@@ -161,10 +161,12 @@ test("chain.start handler proxies to daemon.startChain and returns conversation_
     max_hops: 5,
     trust_mode: "all",
   });
-  expect(res.content[0].type).toBe("text");
-  expect(res.content[0].text).toMatch(/^◌ chain_start {2}/);
-  expect(res.content[0].text).toContain('"conversation_id": "conv-1"');
-  expect(res.content[0].text).toContain('"handoff_id": "h-1"');
+  const block = res.content[0];
+  if (block === undefined) throw new Error("expected content[0]");
+  expect(block.type).toBe("text");
+  expect(block.text).toMatch(/^◌ chain_start {2}/);
+  expect(block.text).toContain('"conversation_id": "conv-1"');
+  expect(block.text).toContain('"handoff_id": "h-1"');
 });
 
 test("chain.start handler forwards task_type hints for routing", async () => {

@@ -118,7 +118,7 @@ describe("WorktreeManager.createWorktree — concurrent TOCTOU guard", () => {
     const existingRefs = new Set(["refs/heads/feat/full-task-pool"]);
     const checkouts: string[] = [];
     // eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the concurrent-worktree test runner fixture while grandfathering its pre-existing complexity.
-    const runner: WorktreeCommandRunner = (_cmd, args) => {
+    const runGitCommand = (args: string[]): { stdout: string; stderr: string } => {
       if (args[0] === "worktree" && args[1] === "add") {
         const wtPath = args[3];
         if (!wtPath) throw new Error("missing worktree path");
@@ -150,6 +150,7 @@ describe("WorktreeManager.createWorktree — concurrent TOCTOU guard", () => {
       }
       return { stdout: "", stderr: "" };
     };
+    const runner: WorktreeCommandRunner = (_cmd, args) => Promise.resolve(runGitCommand(args));
     const manager = new WorktreeManager({
       rootDir: homeRoot,
       mainRepoDir: homeRepo,
@@ -169,7 +170,7 @@ describe("WorktreeManager.createWorktree — concurrent TOCTOU guard", () => {
     const existingRefs = new Set<string>();
     const checkouts: string[] = [];
     // eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the concurrent-worktree test runner fixture while grandfathering its pre-existing complexity.
-    const runner: WorktreeCommandRunner = (_cmd, args) => {
+    const runGitCommand = (args: string[]): { stdout: string; stderr: string } => {
       if (args[0] === "worktree" && args[1] === "add") {
         const wtPath = args[3];
         if (!wtPath) throw new Error("missing worktree path");
@@ -205,6 +206,7 @@ describe("WorktreeManager.createWorktree — concurrent TOCTOU guard", () => {
       }
       return { stdout: "", stderr: "" };
     };
+    const runner: WorktreeCommandRunner = (_cmd, args) => Promise.resolve(runGitCommand(args));
     const manager = new WorktreeManager({
       rootDir: homeRoot,
       mainRepoDir: homeRepo,

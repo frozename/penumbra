@@ -39,10 +39,11 @@ describe("DispatchEventLog", () => {
       meta_json: string;
     }[];
     expect(rows).toHaveLength(1);
-    expect(rows[0].handoff_id).toBe("h-1");
-    expect(rows[0].worker_id).toBe("w-1");
-    expect(rows[0].kind).toBe("dispatch.start");
-    expect(JSON.parse(rows[0].meta_json)).toEqual(sampleEvent.meta);
+    const row = rows[0]!;
+    expect(row.handoff_id).toBe("h-1");
+    expect(row.worker_id).toBe("w-1");
+    expect(row.kind).toBe("dispatch.start");
+    expect(JSON.parse(row.meta_json)).toEqual(sampleEvent.meta);
   });
 
   test("recordBatch inserts many events in one call", () => {

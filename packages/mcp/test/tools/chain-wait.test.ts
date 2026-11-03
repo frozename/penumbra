@@ -9,9 +9,11 @@ import { fakeDaemon } from "../helpers.js";
 type GetLatestHandoffFn = DaemonClient["getLatestHandoff"];
 
 function textOf(res: { content: { text?: unknown }[] }): string {
-  const text = res.content[0].text;
-  if (typeof text !== "string") throw new Error("expected text content");
-  return text;
+  const block = res.content[0];
+  if (block === undefined || typeof block.text !== "string") {
+    throw new Error("expected text content");
+  }
+  return block.text;
 }
 
 test("ChainWaitInputShape requires conversation_id", () => {
@@ -43,7 +45,7 @@ test("chainWaitHandler polls until completed", async () => {
   const res = await handler({ conversation_id: "conv1", timeout_ms: 1000 });
 
   expect(calls).toBe(2);
-  expect(res.content[0].type).toBe("text");
+  expect(res.content[0]?.type).toBe("text");
   const text = textOf(res);
   expect(text).toMatch(/^[●◑] chain_wait {2}/);
   expect(text).toContain('"status": "completed"');
@@ -61,7 +63,7 @@ test("chainWaitHandler returns timeout if timeout_ms is reached", async () => {
   const handler = chainWaitHandler(daemon);
   const res = await handler({ conversation_id: "conv1", timeout_ms: 100 });
 
-  expect(res.content[0].type).toBe("text");
+  expect(res.content[0]?.type).toBe("text");
   const text = textOf(res);
   expect(text).toMatch(/^◑ chain_wait {2}/);
   expect(text).toContain('"status": "timeout"');
@@ -85,7 +87,7 @@ test("chainWaitHandler surfaces 5xx as a structured error, not a timeout", async
   // Must fail fast, not wait near the timeout.
   expect(elapsed).toBeLessThan(2000);
   expect(calls).toBe(1);
-  expect(res.content[0].type).toBe("text");
+  expect(res.content[0]?.type).toBe("text");
   const text = textOf(res);
   expect(text).toContain('"status": "error"');
   expect(text).toContain('"code": 503');
