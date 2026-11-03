@@ -79,7 +79,18 @@ export function firstJson(result: CallToolResult): unknown {
   return JSON.parse(firstText(result));
 }
 
-export type FetchImpl = typeof fetch;
+// Mocks are typed by their call signature; bun's `typeof fetch` carries
+// statics (e.g. `preconnect`) that test mocks have no reason to stub.
+export type FetchImpl = (input: Request | URL | string, init?: RequestInit) => Promise<Response>;
+
+// Bridges a mock onto the global by borrowing the statics off the fetch being
+// replaced, so call sites never cast into `typeof fetch`.
+export function asGlobalFetch(mock: FetchImpl): typeof fetch {
+  return Object.assign(
+    (input: Request | URL | string, init?: RequestInit): Promise<Response> => mock(input, init),
+    globalThis.fetch,
+  );
+}
 
 export interface FetchHarness {
   daemon: DaemonClient;
@@ -91,7 +102,7 @@ export interface FetchHarness {
 // destructure it without losing `this` and tripping `@typescript-eslint/unbound-method`.
 export function installFetchMock(fetchImpl: FetchImpl): FetchHarness {
   const original = globalThis.fetch;
-  globalThis.fetch = fetchImpl;
+  globalThis.fetch = asGlobalFetch(fetchImpl);
   const daemon = new DaemonClient({ baseUrl: "http://daemon", token: "t" });
   return {
     daemon,

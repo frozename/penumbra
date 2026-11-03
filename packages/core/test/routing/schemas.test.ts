@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 
 import {
   AaModelSchema,
@@ -10,7 +11,11 @@ import {
   TaskProfileSchema,
 } from "@src/routing/schemas.js";
 
-import aaLiveSample from "./fixtures/aa-live-sample.json";
+type LiveSample = { data: unknown[] };
+
+const aaLiveSample: LiveSample = JSON.parse(
+  readFileSync(new URL("./fixtures/aa-live-sample.json", import.meta.url), "utf8"),
+) as LiveSample;
 
 function validTaskProfile(): TaskProfile {
   return {
@@ -259,12 +264,12 @@ describe("routing domain schemas", () => {
       ],
     });
 
-    expect(parsed.models[0].evaluations.artificial_analysis_coding_index).toBeUndefined();
-    expect(Object.hasOwn(parsed.models[0].evaluations, "artificial_analysis_coding_index")).toBe(
-      false,
-    );
-    expect(parsed.models[0].pricing.price_1m_input_tokens).toBeUndefined();
-    expect(Object.hasOwn(parsed.models[0].pricing, "price_1m_input_tokens")).toBe(false);
+    const liveModel = parsed.models[0];
+    expect(liveModel).toBeDefined();
+    expect(liveModel!.evaluations.artificial_analysis_coding_index).toBeUndefined();
+    expect(Object.hasOwn(liveModel!.evaluations, "artificial_analysis_coding_index")).toBe(false);
+    expect(liveModel!.pricing.price_1m_input_tokens).toBeUndefined();
+    expect(Object.hasOwn(liveModel!.pricing, "price_1m_input_tokens")).toBe(false);
   });
 
   test("AaModelSchema tolerates an unknown extra field", () => {
@@ -291,12 +296,14 @@ describe("routing domain schemas", () => {
       models: aaLiveSample.data,
     });
 
-    expect(parsed.models[0].evaluations.terminalbench_hard).toBe(0.659090909090909);
-    expect(parsed.models[0].evaluations.tau2).toBe(0.850877192982456);
-    expect(parsed.models[0].evaluations.ifbench).toBe(0.726530612244898);
-    expect(parsed.models[0].evaluations.lcr).toBe(0.776666666666667);
-    expect(parsed.models[0].release_date).toBe("2026-07-09");
-    expect(Object.hasOwn(parsed.models[0].evaluations, "aime_25")).toBe(true);
-    expect(parsed.models[0].evaluations.aime_25).toBeNull();
+    const liveModel = parsed.models[0];
+    expect(liveModel).toBeDefined();
+    expect(liveModel!.evaluations.terminalbench_hard).toBe(0.659090909090909);
+    expect(liveModel!.evaluations.tau2).toBe(0.850877192982456);
+    expect(liveModel!.evaluations.ifbench).toBe(0.726530612244898);
+    expect(liveModel!.evaluations.lcr).toBe(0.776666666666667);
+    expect(liveModel!.release_date).toBe("2026-07-09");
+    expect(Object.hasOwn(liveModel!.evaluations, "aime_25")).toBe(true);
+    expect(liveModel!.evaluations.aime_25).toBeNull();
   });
 });
