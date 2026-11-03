@@ -1,6 +1,6 @@
-import type { AgentConfig } from "@penumbra/agentchat/config/types";
+import type { AgentConfig, LongLivedConfig } from "@penumbra/agentchat/config/types";
 
-import { loadSqliteVec } from "@penumbra/core";
+import { loadSqliteVec, type McpPoolLike } from "@penumbra/core";
 import { applySchema } from "@penumbra/core/db/schema";
 import { Database } from "bun:sqlite";
 import { describe, expect, mock, type Mock, test } from "bun:test";
@@ -14,6 +14,17 @@ function setup(): Database {
   loadSqliteVec(db);
   applySchema(db, { embeddingDim: 384 });
   return db;
+}
+
+type FakeCallTool = NonNullable<McpPoolLike["callTool"]>;
+
+function makePool(callTool: FakeCallTool): McpPoolLike {
+  return {
+    callTool,
+    listTools: () => Promise.resolve([]),
+    getFederationHealth: () => ({ registered: [], skipped: [] }),
+    shutdown: () => Promise.resolve(),
+  };
 }
 
 function makeLog(): {
@@ -30,29 +41,31 @@ function seedAgent(
   db: Database,
   allowlist: string[],
   approval_required_globs: string[] = [],
-  opts: { snapshot_tool?: string | null; require_snapshot?: boolean } = {},
+  opts: { snapshot_tool?: string; require_snapshot?: boolean } = {},
 ): void {
-  reconcileLongLivedAgents(
-    db,
-    [
-      {
-        name: "home",
-        long_lived: true,
-        long_lived_config: {
-          schedule_cron: "*/15 * * * *",
-          subscriptions: [],
-          mcp_allowlist: allowlist,
-          snapshot_tool: opts.snapshot_tool ?? null,
-          require_snapshot: opts.require_snapshot ?? false,
-          bounds: { wall_clock_ms: 1000, cost_cents: 1, max_sub_dispatches: 0 },
-          circuit_breaker_threshold: 3,
-          action_tiers: { approval_required_globs, cooldown_overrides: {} },
-          standing_brief: "x",
-        },
-      } as AgentConfig,
-    ],
-    { now: 1 },
-  );
+  const long_lived_config: LongLivedConfig = {
+    schedule_cron: "*/15 * * * *",
+    subscriptions: [],
+    hosted_mcp_servers: [],
+    mcp_allowlist: allowlist,
+    ...(opts.snapshot_tool !== undefined ? { snapshot_tool: opts.snapshot_tool } : {}),
+    require_snapshot: opts.require_snapshot ?? false,
+    bounds: { wall_clock_ms: 1000, cost_cents: 1, max_sub_dispatches: 0 },
+    circuit_breaker_threshold: 3,
+    action_tiers: { approval_required_globs, cooldown_overrides: {} },
+    standing_brief: "x",
+  };
+  const agent: AgentConfig = {
+    name: "home",
+    adapter: "test",
+    options: {},
+    roles: [],
+    auto_approve_to: [],
+    pricing_mode: "api",
+    long_lived: true,
+    long_lived_config,
+  };
+  reconcileLongLivedAgents(db, [agent], { now: 1 });
   db.query(
     "INSERT INTO long_lived_ticks (id, agent_id, trigger_kind, started_at) VALUES ('t1', 'home', 'manual', 1)",
   ).run();
@@ -62,17 +75,9 @@ describe("action gate pool integration", () => {
   test("tier 1 executed", async () => {
     const db = setup();
     seedAgent(db, ["ha:ha_get_state"]);
-    const callTool = mock(() => Promise.resolve({ state: "on" }));
+    const callTool = mock<FakeCallTool>((): Promise<unknown> => Promise.resolve({ state: "on" }));
     const fakeLog = makeLog();
-    const callbacks = buildActionGateCallbacks({
-      db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
-      log: fakeLog,
-    });
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: makePool(callTool), log: fakeLog });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
     const result = await gate.handleCall({
       agent_id: "home",
@@ -90,21 +95,13 @@ describe("action gate pool integration", () => {
     seedAgent(db, ["ha:automation.set", "ha:ha_backup_create"], [], {
       snapshot_tool: "ha:ha_backup_create",
     });
-    const callTool = mock((server: string, tool: string) => {
+    const callTool = mock<FakeCallTool>((server, tool): Promise<unknown> => {
       if (server === "ha" && tool === "ha_backup_create")
         return Promise.resolve({ snapshot_id: "snap-123" });
       return Promise.resolve({ ok: true });
     });
     const fakeLog = makeLog();
-    const callbacks = buildActionGateCallbacks({
-      db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
-      log: fakeLog,
-    });
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: makePool(callTool), log: fakeLog });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
     const result = await gate.handleCall({
       agent_id: "home",
@@ -126,17 +123,9 @@ describe("action gate pool integration", () => {
   test("tier 2 without snapshot tool in allowlist still executes and audits sentinel snapshot id", async () => {
     const db = setup();
     seedAgent(db, ["ha:automation.set"], [], { snapshot_tool: "ha:ha_backup_create" });
-    const callTool = mock(() => Promise.resolve({ ok: true }));
+    const callTool = mock<FakeCallTool>((): Promise<unknown> => Promise.resolve({ ok: true }));
     const fakeLog = makeLog();
-    const callbacks = buildActionGateCallbacks({
-      db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
-      log: fakeLog,
-    });
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: makePool(callTool), log: fakeLog });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
     const result = await gate.handleCall({
       agent_id: "home",
@@ -168,20 +157,12 @@ describe("action gate pool integration", () => {
     seedAgent(db, ["ha:automation.set", "ha:ha_backup_create"], [], {
       snapshot_tool: "ha:ha_backup_create",
     });
-    const callTool = mock((server: string, tool: string) => {
+    const callTool = mock<FakeCallTool>((server, tool): Promise<unknown> => {
       if (server === "ha" && tool === "ha_backup_create") return Promise.reject(new Error("boom"));
       return Promise.resolve({ ok: true });
     });
     const fakeLog = makeLog();
-    const callbacks = buildActionGateCallbacks({
-      db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
-      log: fakeLog,
-    });
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: makePool(callTool), log: fakeLog });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
     const result = await gate.handleCall({
       agent_id: "home",
@@ -204,17 +185,9 @@ describe("action gate pool integration", () => {
   test("tier 3 queued", async () => {
     const db = setup();
     seedAgent(db, ["ha:ha_config_set_automation"], ["ha:ha_config_*"]);
-    const callTool = mock(() => Promise.resolve({ ok: true }));
+    const callTool = mock<FakeCallTool>((): Promise<unknown> => Promise.resolve({ ok: true }));
     const fakeLog = makeLog();
-    const callbacks = buildActionGateCallbacks({
-      db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
-      log: fakeLog,
-    });
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: makePool(callTool), log: fakeLog });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
     const result = await gate.handleCall({
       agent_id: "home",
@@ -229,17 +202,9 @@ describe("action gate pool integration", () => {
   test("rejected not in allowlist", async () => {
     const db = setup();
     seedAgent(db, ["ha:ha_get_state"]);
-    const callTool = mock(() => Promise.resolve({ ok: true }));
+    const callTool = mock<FakeCallTool>((): Promise<unknown> => Promise.resolve({ ok: true }));
     const fakeLog = makeLog();
-    const callbacks = buildActionGateCallbacks({
-      db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
-      log: fakeLog,
-    });
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: makePool(callTool), log: fakeLog });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
     const result = await gate.handleCall({
       agent_id: "home",
@@ -254,17 +219,11 @@ describe("action gate pool integration", () => {
   test("mcpPool.callTool fails for executed path", async () => {
     const db = setup();
     seedAgent(db, ["ha:ha_get_state"]);
-    const callTool = mock(() => Promise.reject(new Error("tool broke")));
+    const callTool = mock<FakeCallTool>(
+      (): Promise<unknown> => Promise.reject(new Error("tool broke")),
+    );
     const fakeLog = makeLog();
-    const callbacks = buildActionGateCallbacks({
-      db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
-      log: fakeLog,
-    });
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: makePool(callTool), log: fakeLog });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
     const result = await gate.handleCall({
       agent_id: "home",
@@ -290,21 +249,13 @@ describe("action gate pool integration", () => {
     db.query(
       "UPDATE long_lived_agents SET mcp_allowlist_json = '[1, \"ha:automation.set\", \"ha:ha_backup_create\", null]' WHERE id = 'home'",
     ).run();
-    const callTool = mock((server: string, tool: string) => {
+    const callTool = mock<FakeCallTool>((server, tool): Promise<unknown> => {
       if (server === "ha" && tool === "ha_backup_create")
         return Promise.resolve({ snapshot_id: "snap-malformed-allowlist" });
       return Promise.resolve({ ok: true });
     });
     const fakeLog = makeLog();
-    const callbacks = buildActionGateCallbacks({
-      db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
-      log: fakeLog,
-    });
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: makePool(callTool), log: fakeLog });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
     const result = await gate.handleCall({
       agent_id: "home",
@@ -325,17 +276,9 @@ describe("action gate pool integration", () => {
   test("tier 2 with no snapshot_tool configured and require_snapshot=false executes with sentinel", async () => {
     const db = setup();
     seedAgent(db, ["ha:automation.set"]);
-    const callTool = mock(() => Promise.resolve({ ok: true }));
+    const callTool = mock<FakeCallTool>((): Promise<unknown> => Promise.resolve({ ok: true }));
     const fakeLog = makeLog();
-    const callbacks = buildActionGateCallbacks({
-      db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
-      log: fakeLog,
-    });
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: makePool(callTool), log: fakeLog });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
     const result = await gate.handleCall({
       agent_id: "home",
@@ -358,17 +301,9 @@ describe("action gate pool integration", () => {
   test("tier 2 with no snapshot_tool configured and require_snapshot=true rejected with snapshot_failed", async () => {
     const db = setup();
     seedAgent(db, ["ha:automation.set"], [], { require_snapshot: true });
-    const callTool = mock(() => Promise.resolve({ ok: true }));
+    const callTool = mock<FakeCallTool>((): Promise<unknown> => Promise.resolve({ ok: true }));
     const fakeLog = makeLog();
-    const callbacks = buildActionGateCallbacks({
-      db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
-      log: fakeLog,
-    });
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: makePool(callTool), log: fakeLog });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
     const result = await gate.handleCall({
       agent_id: "home",
@@ -385,17 +320,9 @@ describe("action gate pool integration", () => {
       snapshot_tool: "ha:ha_backup_create",
       require_snapshot: true,
     });
-    const callTool = mock(() => Promise.resolve({ ok: true }));
+    const callTool = mock<FakeCallTool>((): Promise<unknown> => Promise.resolve({ ok: true }));
     const fakeLog = makeLog();
-    const callbacks = buildActionGateCallbacks({
-      db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
-      log: fakeLog,
-    });
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: makePool(callTool), log: fakeLog });
     const gate = createActionGate({ db, ...callbacks, now: () => 100 });
     const result = await gate.handleCall({
       agent_id: "home",
@@ -420,17 +347,9 @@ describe("action gate pool integration", () => {
     db.query(
       "UPDATE long_lived_agents SET mcp_allowlist_json = 'not-valid-json' WHERE id = 'home'",
     ).run();
-    const callTool = mock(() => Promise.resolve({ ok: true }));
+    const callTool = mock<FakeCallTool>((): Promise<unknown> => Promise.resolve({ ok: true }));
     const fakeLog = makeLog();
-    const callbacks = buildActionGateCallbacks({
-      db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
-      log: fakeLog,
-    });
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: makePool(callTool), log: fakeLog });
     let threw: Error | null = null;
     try {
       await callbacks.takeSnapshot("home");
@@ -447,17 +366,9 @@ describe("action gate pool integration", () => {
     db.query(
       "UPDATE long_lived_agents SET mcp_allowlist_json = 'not-valid-json' WHERE id = 'home'",
     ).run();
-    const callTool = mock(() => Promise.resolve({ ok: true }));
+    const callTool = mock<FakeCallTool>((): Promise<unknown> => Promise.resolve({ ok: true }));
     const fakeLog = makeLog();
-    const callbacks = buildActionGateCallbacks({
-      db,
-      mcpPool: {
-        callTool,
-        listTools: mock(() => Promise.resolve([])),
-        shutdown: mock(() => Promise.resolve()),
-      },
-      log: fakeLog,
-    });
+    const callbacks = buildActionGateCallbacks({ db, mcpPool: makePool(callTool), log: fakeLog });
     const result = await callbacks.takeSnapshot("home");
     expect(result).toBe("snapshot_skipped_bad_allowlist");
   });

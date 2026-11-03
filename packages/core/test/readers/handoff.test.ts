@@ -603,8 +603,10 @@ test("claimDispatch remains atomic for the row returned first by listByStatus", 
   seedChainA();
   seedChainB();
 
-  const row = reader.listByStatus({ statuses: ["approved"] })[0];
+  const rows = reader.listByStatus({ statuses: ["approved"] });
+  const row = rows[0];
   expect(row?.handoff_id).toBe("A.1");
+  if (!row) throw new Error("expected listByStatus to return the first approved row");
   expect(writer.claimDispatch(row.handoff_id, "worker-1")).toBe(true);
   expect(writer.claimDispatch(row.handoff_id, "worker-2")).toBe(false);
 });

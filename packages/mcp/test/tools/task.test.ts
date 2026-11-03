@@ -66,7 +66,7 @@ function sampleTask(taskId: string): z.infer<typeof TaskRecordSchema> {
 
 describe("task.* handlers", () => {
   test("task.file forwards FileTaskInput and origin, returns {task_id}", async () => {
-    const calls: { input: unknown; opts: { origin?: string } }[] = [];
+    const calls: { input: unknown; opts?: { origin?: string } }[] = [];
     const handler = taskFileHandler({
       taskFile: (input, opts) => {
         calls.push({ input, opts });
@@ -86,7 +86,7 @@ describe("task.* handlers", () => {
         assignees: ["frozename"],
       },
       eligibility: { required_tags: ["typescript"] },
-      review_eligibility: { min_tier: "premium" },
+      review_eligibility: { min_tier: "premium" as const },
       priority: "high" as const,
       kind: "work" as const,
       requires_review: true,
@@ -133,7 +133,7 @@ describe("task.* handlers", () => {
   test("task.get forwards task_id/include and returns task payload", async () => {
     const calls: {
       taskId: string;
-      opts: { include?: ("lease" | "events" | "descendants")[] };
+      opts?: { include?: ("lease" | "events" | "descendants")[] };
     }[] = [];
     const handler = taskGetHandler({
       taskGet: (taskId, opts) => {
@@ -242,7 +242,7 @@ describe("task.* handlers", () => {
       max_cost_cents: 42,
     };
 
-    const out = await handler(input);
+    const out = await handler(input, undefined);
 
     expect(calls[0]?.input).toEqual(input);
     expect(parseToolResult(out)).toBeNull();
@@ -454,7 +454,7 @@ describe("task.* handlers", () => {
   });
 
   test("task.sync_gh_now forwards optional task_id and returns summary", async () => {
-    const calls: { input: { task_id?: string } }[] = [];
+    const calls: { input?: { task_id?: string } }[] = [];
     const handler = taskSyncGhNowHandler({
       taskSyncGhNow: (input) => {
         calls.push({ input });

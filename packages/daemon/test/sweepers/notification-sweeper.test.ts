@@ -39,6 +39,13 @@ function writeDraftEvent(
   );
 }
 
+// `typeof fetch` requires `preconnect`; bare mock functions don't satisfy it.
+function stubFetch(status: number, body: string): typeof fetch {
+  return Object.assign(() => Promise.resolve(new Response(body, { status })), {
+    preconnect: (): void => undefined,
+  });
+}
+
 function insertAgent(db: Database, agentId: string, projectId: string | null = null): void {
   db.prepare(
     `INSERT INTO long_lived_agents (id, display_name, project_id, schedule_cron, standing_brief, mcp_allowlist_json, working_memory_json, created_at, updated_at)
@@ -158,7 +165,7 @@ describe("notification-sweeper: discovery", () => {
       >("SELECT summary FROM notification_outbox WHERE kind='task_draft' AND reference_id=?")
       .all("evt-summary");
     expect(rows.length).toBe(1);
-    expect(rows[0].summary).toBe("Fix the login bug");
+    expect(rows[0]?.summary).toBe("Fix the login bug");
   });
 
   it("handles null project_id with _default coalesce key", () => {
@@ -173,7 +180,7 @@ describe("notification-sweeper: discovery", () => {
       >("SELECT coalesce_key FROM notification_outbox WHERE reference_id=?")
       .all("evt-no-proj");
     expect(rows.length).toBe(1);
-    expect(rows[0].coalesce_key).toBe("_default");
+    expect(rows[0]?.coalesce_key).toBe("_default");
   });
 
   it("starts first-run discovery from a bounded lookback instead of epoch", () => {
@@ -368,8 +375,7 @@ describe("notification-sweeper: delivery", () => {
     });
 
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (): Promise<Response> =>
-      Promise.resolve(new Response("ok", { status: 204 }));
+    globalThis.fetch = stubFetch(204, "ok");
     let result: Awaited<ReturnType<typeof runNotificationDelivery>>;
     try {
       result = await runNotificationDelivery({
@@ -400,8 +406,7 @@ describe("notification-sweeper: delivery", () => {
     });
 
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (): Promise<Response> =>
-      Promise.resolve(new Response("bad gateway", { status: 502 }));
+    globalThis.fetch = stubFetch(502, "bad gateway");
     try {
       const result = await runNotificationDelivery({
         db,
@@ -449,8 +454,7 @@ describe("notification-sweeper: delivery", () => {
     });
 
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (): Promise<Response> =>
-      Promise.resolve(new Response("bad gateway", { status: 502 }));
+    globalThis.fetch = stubFetch(502, "bad gateway");
     try {
       const result = await runNotificationDelivery({
         db,
@@ -492,8 +496,7 @@ describe("notification-sweeper: delivery", () => {
     });
 
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (): Promise<Response> =>
-      Promise.resolve(new Response("invalid webhook", { status: 400 }));
+    globalThis.fetch = stubFetch(400, "invalid webhook");
     try {
       const result = await runNotificationDelivery({
         db,
@@ -530,12 +533,14 @@ describe("notification-sweeper: delivery", () => {
       summary: "test",
       created_at: now - 10 * 60 * 1000,
     });
-    const id = outbox.listPending(10)[0].id;
+    const staleEntry = outbox.listPending(10)[0];
+    expect(staleEntry).toBeDefined();
+    if (staleEntry === undefined) throw new Error("expected a pending outbox entry");
+    const id = staleEntry.id;
     expect(outbox.markProcessing(id, now - 10 * 60 * 1000)).toBe(true);
 
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (): Promise<Response> =>
-      Promise.resolve(new Response("ok", { status: 204 }));
+    globalThis.fetch = stubFetch(204, "ok");
     try {
       const result = await runNotificationDelivery({
         db,
@@ -583,8 +588,7 @@ describe("notification-sweeper: delivery", () => {
     }
 
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (): Promise<Response> =>
-      Promise.resolve(new Response("ok", { status: 204 }));
+    globalThis.fetch = stubFetch(204, "ok");
     try {
       await runNotificationDelivery({
         db,
@@ -647,8 +651,7 @@ describe("notification-sweeper: round-trip", () => {
     expect(outboxRows.length).toBe(2);
 
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = (): Promise<Response> =>
-      Promise.resolve(new Response("ok", { status: 204 }));
+    globalThis.fetch = stubFetch(204, "ok");
     try {
       const deliveredResult = await runNotificationDelivery({
         db,

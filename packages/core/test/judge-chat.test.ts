@@ -7,26 +7,36 @@ import {
   resolveJudgeConfig,
 } from "../src/services/judge-chat.js";
 
+type FetchArgs = Parameters<typeof fetch>;
+
+// `typeof fetch` requires `preconnect`; bare mock functions don't satisfy it.
+function asFetch(fn: (...args: FetchArgs) => Promise<Response>): typeof fetch {
+  return Object.assign(fn, {
+    preconnect: (_url: string | URL, _options?: unknown): void => undefined,
+  });
+}
+
 test("createJudgeChat omits authorization when token is empty", async () => {
-  const fetchMock = mock(() =>
-    Promise.resolve(
-      new Response(
-        JSON.stringify({
-          choices: [{ message: { content: "ok" } }],
-        }),
-        { status: 200 },
+  const fetchMock = mock(
+    (_input: FetchArgs[0], _init?: FetchArgs[1]): Promise<Response> =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "ok" } }],
+          }),
+          { status: 200 },
+        ),
       ),
-    ),
   );
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = fetchMock as typeof fetch;
+  globalThis.fetch = asFetch(fetchMock);
 
   try {
     const chat = createJudgeChat({ baseUrl: "http://127.0.0.1:7944" });
     await chat({ model: "local", messages: [{ role: "user", content: "hi" }] });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [, init] = fetchMock.mock.calls[0]!;
+    const init = fetchMock.mock.calls[0]?.[1];
     const headers = init?.headers as Record<string, string> | undefined;
     expect(headers).toBeDefined();
     expect(headers).not.toHaveProperty("authorization");
@@ -37,25 +47,26 @@ test("createJudgeChat omits authorization when token is empty", async () => {
 });
 
 test("createJudgeChat includes bearer authorization when token is set", async () => {
-  const fetchMock = mock(() =>
-    Promise.resolve(
-      new Response(
-        JSON.stringify({
-          choices: [{ message: { content: "ok" } }],
-        }),
-        { status: 200 },
+  const fetchMock = mock(
+    (_input: FetchArgs[0], _init?: FetchArgs[1]): Promise<Response> =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: "ok" } }],
+          }),
+          { status: 200 },
+        ),
       ),
-    ),
   );
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = fetchMock as typeof fetch;
+  globalThis.fetch = asFetch(fetchMock);
 
   try {
     const chat = createJudgeChat({ baseUrl: "http://127.0.0.1:7944", token: "secret" });
     await chat({ model: "local", messages: [{ role: "user", content: "hi" }] });
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [, init] = fetchMock.mock.calls[0]!;
+    const init = fetchMock.mock.calls[0]?.[1];
     const headers = init?.headers as Record<string, string> | undefined;
     expect(headers).toMatchObject({
       "content-type": "application/json",
@@ -174,20 +185,25 @@ test("createJudgeChat aborts with the configured per-instance timeout", async ()
 });
 
 test("createJudgeChat advances past whitespace-only content to the cloud rung", async () => {
-  const fetchMock = mock((url: string) =>
-    Promise.resolve(
+  const fetchMock = mock((input: FetchArgs[0], _init?: FetchArgs[1]): Promise<Response> => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    return Promise.resolve(
       new Response(
         JSON.stringify({
           choices: [
-            { message: { content: url.startsWith("http://127.0.0.1:7944") ? " \n\t " : "cloud" } },
+            {
+              message: {
+                content: url.startsWith("http://127.0.0.1:7944") ? " \n\t " : "cloud",
+              },
+            },
           ],
         }),
         { status: 200 },
       ),
-    ),
-  );
+    );
+  });
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = fetchMock as typeof fetch;
+  globalThis.fetch = asFetch(fetchMock);
 
   try {
     const chat = createJudgeChat({
@@ -202,7 +218,7 @@ test("createJudgeChat advances past whitespace-only content to the cloud rung", 
           auth: { source: "bearer", token: "test-token" },
         },
       ],
-      fetchFn: fetchMock as typeof fetch,
+      fetchFn: asFetch(fetchMock),
     });
 
     const result = await chat({ model: "local", messages: [{ role: "user", content: "hi" }] });
