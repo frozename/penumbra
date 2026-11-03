@@ -71,8 +71,9 @@ test("permission.created payload includes routing fields", async () => {
   await createPending(services, now);
 
   expect(seen).toHaveLength(1);
-  expect(seen[0].kind).toBe("permission.created");
-  expect(seen[0].payload).toMatchObject({
+  const createdEvent = seen[0];
+  expect(createdEvent?.kind).toBe("permission.created");
+  expect(createdEvent?.payload).toMatchObject({
     permission_id: "p-1",
     parent_handoff_id: "h-1",
     conversation_id: "c-1",
@@ -101,8 +102,9 @@ test("permission.decided payload includes routing fields", async () => {
   );
 
   expect(seen).toHaveLength(1);
-  expect(seen[0].kind).toBe("permission.decided");
-  expect(seen[0].payload).toMatchObject({
+  const decidedEvent = seen[0];
+  expect(decidedEvent?.kind).toBe("permission.decided");
+  expect(decidedEvent?.payload).toMatchObject({
     permission_id: "p-1",
     parent_handoff_id: "h-1",
     conversation_id: "c-1",
@@ -127,8 +129,9 @@ test("permission.expired payload includes routing fields", async () => {
 
   expect(transitioned).toBe(1);
   expect(seen).toHaveLength(1);
-  expect(seen[0].kind).toBe("permission.expired");
-  expect(seen[0].payload).toMatchObject({
+  const expiredEvent = seen[0];
+  expect(expiredEvent?.kind).toBe("permission.expired");
+  expect(expiredEvent?.payload).toMatchObject({
     permission_id: "p-1",
     parent_handoff_id: "h-1",
     conversation_id: "c-1",
