@@ -640,6 +640,32 @@ describe("agent_performance field ownership (#390)", () => {
     expect(proj(rcl)).toEqual(proj(crl));
   });
 
+  it("a held quota class survives a same-attempt worker class write and a land (W14b)", () => {
+    writer.upsert(
+      row({
+        handoff_id: "h-qw",
+        outcome: "failed",
+        environment_failure: "y",
+        failure_class: "quota",
+      }),
+      { identity: { dispatch_attempt: 1 } },
+    );
+    writer.upsert(
+      row({ handoff_id: "h-qw", ts: T2, outcome: "failed", failure_class: "tool_error" }),
+      { identity: { dispatch_attempt: 1 } },
+    );
+    const afterWorker = persisted("h-qw");
+    expect(afterWorker.failure_class).toBe("quota");
+    expect(afterWorker.environment_failure).toBe("y");
+
+    writer.upsert(row({ handoff_id: "h-qw", source: "reconciler", ts: T3, outcome: "merged" }), {
+      identity: { dispatch_attempt: 1 },
+    });
+    const afterLand = persisted("h-qw");
+    expect(afterLand.failure_class).toBe("quota");
+    expect(afterLand.environment_failure).toBe("y");
+  });
+
   it("an environment failure without a quota/resource class is not sticky from either side", () => {
     writer.upsert(
       row({

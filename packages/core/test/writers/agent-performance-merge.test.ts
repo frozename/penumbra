@@ -15,14 +15,10 @@ type MergeFn = (
 const MERGE_URL = new URL("../../src/writers/agent-performance-merge.ts", import.meta.url).href;
 
 async function loadMerge(): Promise<MergeFn | null> {
-  try {
-    const mod = (await import(MERGE_URL)) as Record<string, unknown>;
-    return typeof mod["mergeAgentPerformance"] === "function"
-      ? (mod["mergeAgentPerformance"] as MergeFn)
-      : null;
-  } catch {
-    return null;
-  }
+  const mod = (await import(MERGE_URL)) as Record<string, unknown>;
+  return typeof mod["mergeAgentPerformance"] === "function"
+    ? (mod["mergeAgentPerformance"] as MergeFn)
+    : null;
 }
 
 let merge: MergeFn | null = null;
@@ -534,6 +530,20 @@ describe("mergeAgentPerformance guard matrix (#390)", () => {
     );
     expect(q9.outcome).toBe("test_failed");
     expect(q9.failure_class).toBeNull();
+  });
+
+  it("the held quota class survives a worker-owned incoming class and a land (U11)", () => {
+    const held = m()(
+      seed({ outcome: "failed", environment_failure: "y", failure_class: "quota" }, at(1)),
+      r({ ts: T2, outcome: "failed", failure_class: "tool_error" }),
+      at(1),
+    );
+    expect(held.failure_class).toBe("quota");
+    expect(held.environment_failure).toBe("y");
+
+    const landed = m()(held, r({ ts: T3, source: "reconciler", outcome: "merged" }), at(1));
+    expect(landed.failure_class).toBe("quota");
+    expect(landed.environment_failure).toBe("y");
   });
 
   it("notes ownership", () => {
