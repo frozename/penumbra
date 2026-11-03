@@ -19,6 +19,12 @@ try {
   /* loaded */
 }
 
+interface CreateBody {
+  permission_id: string;
+  status: string;
+  ttl_at: string;
+}
+
 function makeServices(db: Database): Services {
   return {
     db,
@@ -54,7 +60,7 @@ test("POST /permissions creates a pending row", async () => {
   });
   const res = await permissionsCreateRoute(req, services);
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = (await res.json()) as CreateBody;
   expect(body.permission_id).toBe("perm-1");
   expect(body.status).toBe("pending");
   expect(body.ttl_at).toBe("2026-04-28T12:05:00.000Z");
@@ -111,7 +117,7 @@ test("POST /permissions is idempotent on permission_id", async () => {
   );
   expect(r1.status).toBe(200);
   expect(r2.status).toBe(200);
-  expect((await r2.json()).status).toBe("pending");
+  expect(((await r2.json()) as CreateBody).status).toBe("pending");
   expect(seen).toEqual(["permission.created"]);
 });
 
@@ -144,7 +150,7 @@ test("POST /permissions defaults ttl_seconds from settings", async () => {
   });
   const res = await permissionsCreateRoute(req, services);
   expect(res.status).toBe(200);
-  const body = await res.json();
+  const body = (await res.json()) as CreateBody;
   // 12:00:00 + 300s = 12:05:00
   expect(body.ttl_at).toBe("2026-04-28T12:05:00.000Z");
 });

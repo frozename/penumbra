@@ -59,18 +59,17 @@ describe("agy model discovery", () => {
   });
 
   test("discoverAgyModels reports malformed rows while preserving valid rows", async () => {
-    const result = (await discoverAgyModels({
+    const result = await discoverAgyModels({
       runAgyModels: () =>
-        [
-          "no-tab-row",
-          "first-tab\tName\twith tab",
-          "empty-name\t   ",
-          " clean-id \t Clean Name ",
-        ].join("\n"),
-    })) as unknown as {
-      models: ReturnType<typeof parseAgyModelsOutput>;
-      diagnostics: { row: string; reason: string }[];
-    };
+        Promise.resolve(
+          [
+            "no-tab-row",
+            "first-tab\tName\twith tab",
+            "empty-name\t   ",
+            " clean-id \t Clean Name ",
+          ].join("\n"),
+        ),
+    });
 
     expect(result.models).toEqual([
       {
@@ -93,12 +92,12 @@ describe("agy model discovery", () => {
   test("discoverAgyModels uses the injected model runner", async () => {
     let runCount = 0;
 
-    const result = (await discoverAgyModels({
+    const result = await discoverAgyModels({
       runAgyModels: () => {
         runCount += 1;
-        return fixtureText;
+        return Promise.resolve(fixtureText);
       },
-    })) as unknown as { models: ReturnType<typeof parseAgyModelsOutput> };
+    });
 
     expect(runCount).toBe(1);
     expect(result.models).toEqual(parseAgyModelsOutput(fixtureText));
@@ -107,9 +106,7 @@ describe("agy model discovery", () => {
   test("discoverAgyModels closes stdin for the real agy CLI runner", async () => {
     const startedAt = Date.now();
 
-    const result = (await withFakeDiscoveryCli(async () => await discoverAgyModels())) as {
-      models: ReturnType<typeof parseAgyModelsOutput>;
-    };
+    const result = await withFakeDiscoveryCli(async () => await discoverAgyModels());
 
     expect(Date.now() - startedAt).toBeLessThan(1_500);
     expect(result.models).toEqual([

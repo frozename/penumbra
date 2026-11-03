@@ -44,10 +44,10 @@ describe("fs.grep handler", () => {
   });
 
   it("forwards all relevant fields to daemon", async () => {
-    let receivedId: string | null = null;
+    const receivedIds: string[] = [];
     let receivedArgs: CapturedGrepArgs | null = null;
     const daemon = fakeDaemon((id, args) => {
-      receivedId = id;
+      receivedIds.push(id);
       receivedArgs = {
         pattern: args.pattern,
         glob: args.glob ?? null,
@@ -64,7 +64,7 @@ describe("fs.grep handler", () => {
       case_insensitive: true,
       handoff_id: "H1",
     });
-    expect(receivedId).toBe("H1");
+    expect(receivedIds).toEqual(["H1"]);
     expect(receivedArgs).toMatchObject({
       pattern: "TODO",
       glob: "*.ts",
@@ -75,14 +75,14 @@ describe("fs.grep handler", () => {
 
   it("defaults handoff_id from env", async () => {
     process.env.PENUMBRA_HANDOFF_ID = "H_ENV";
-    let receivedId: string | null = null;
+    const receivedIds: string[] = [];
     const daemon = fakeDaemon((id) => {
-      receivedId = id;
+      receivedIds.push(id);
       return Promise.resolve({ results: [], truncated: false });
     });
     const handler = fsGrepHandler(daemon);
     await handler({ pattern: "TODO" });
-    expect(receivedId).toBe("H_ENV");
+    expect(receivedIds).toEqual(["H_ENV"]);
   });
 
   it("returns no_handoff_context error when neither arg nor env set", async () => {

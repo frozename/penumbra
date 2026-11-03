@@ -9,7 +9,7 @@ describe("runSnapshotPurge", () => {
     const db = new Database(":memory:");
     loadSqliteVec(db);
     applySchema(db, { embeddingDim: 384 });
-    const log = mock(() => undefined);
+    const log = mock<(message: string) => void>(() => undefined);
 
     const result = await runSnapshotPurge({
       db,
@@ -26,7 +26,10 @@ describe("runSnapshotPurge", () => {
 
     expect(result.candidates).toEqual(["snap-old"]);
     expect(log).toHaveBeenCalledTimes(1);
-    expect(log.mock.calls[0][0]).toContain("snap-old");
-    expect(log.mock.calls[0][0]).not.toContain("snap-young");
+    const firstCall = log.mock.calls[0];
+    expect(firstCall).toBeDefined();
+    if (firstCall === undefined) throw new Error("expected one log call");
+    expect(firstCall[0]).toContain("snap-old");
+    expect(firstCall[0]).not.toContain("snap-young");
   });
 });

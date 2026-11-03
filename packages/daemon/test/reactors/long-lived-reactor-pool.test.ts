@@ -317,17 +317,18 @@ type AgentRecord = Awaited<
 >["agents"][number];
 
 function agentWithMcpServers(name: string, mcpServers: { name: string }[]): AgentRecord {
+  const longLivedConfig = {
+    subscriptions: [],
+    hosted_mcp_servers: [],
+    mcp_allowlist: [],
+    bounds: { wall_clock_ms: 1000, cost_cents: 1, max_sub_dispatches: 0 },
+    circuit_breaker_threshold: 3,
+    standing_brief: "x",
+  };
   return {
     name,
     long_lived: true,
-    long_lived_config: {
-      subscriptions: [],
-      hosted_mcp_servers: [],
-      mcp_allowlist: [],
-      bounds: { wall_clock_ms: 1000, cost_cents: 1, max_sub_dispatches: 0 },
-      circuit_breaker_threshold: 3,
-      standing_brief: "x",
-    },
+    long_lived_config: longLivedConfig,
     mcpServers,
   };
 }

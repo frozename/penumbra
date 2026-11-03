@@ -4,11 +4,26 @@ import { OpenAICompatEmbedder } from "@src/embedder/openai-compat.js";
 
 const originalFetch = globalThis.fetch;
 
-function mockFetch(fn: typeof fetch): () => void {
-  globalThis.fetch = fn;
+type MockFetchFn = (
+  input: string | URL | Request,
+  init?: RequestInit | BunFetchRequestInit,
+) => Promise<Response>;
+
+function mockFetch(fn: MockFetchFn): () => void {
+  const fetchImpl: typeof fetch = Object.assign(
+    (input: string | URL | Request, init?: RequestInit | BunFetchRequestInit) => fn(input, init),
+    { preconnect: () => void 0 },
+  );
+  globalThis.fetch = fetchImpl;
   return () => {
     globalThis.fetch = originalFetch;
   };
+}
+
+function inputUrl(input: string | URL | Request): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
 }
 
 const catchRejection = async (promise: Promise<unknown>): Promise<unknown> => {
@@ -22,7 +37,7 @@ const catchRejection = async (promise: Promise<unknown>): Promise<unknown> => {
 
 test("POSTs to /v1/embeddings and parses the OpenAI-compat response", async () => {
   const restoreFetch = mockFetch(async (url, init) => {
-    const req = new Request(url, init);
+    const req = new Request(inputUrl(url), init);
     expect(new URL(req.url).pathname).toBe("/v1/embeddings");
     expect(req.headers.get("authorization")).toBe("Bearer test-token");
     const body = (await req.json()) as { input: string[] };
@@ -51,7 +66,7 @@ test("POSTs to /v1/embeddings and parses the OpenAI-compat response", async () =
 
 test("assertLive passes after a real embeddings round-trip with the configured dimension", async () => {
   const restoreFetch = mockFetch(async (url, init) => {
-    const req = new Request(url, init);
+    const req = new Request(inputUrl(url), init);
     expect(new URL(req.url).pathname).toBe("/v1/embeddings");
     expect(req.headers.get("authorization")).toBe("Bearer test-token");
     const body = (await req.json()) as { input: string[]; model: string };
@@ -121,7 +136,7 @@ test("assertLive fails gracefully when the embeddings endpoint does not respond"
 
 test("omits Authorization header when token is not configured", async () => {
   const restoreFetch = mockFetch((url, init) => {
-    const req = new Request(url, init);
+    const req = new Request(inputUrl(url), init);
     expect(req.headers.has("authorization")).toBe(false);
     return Promise.resolve(
       Response.json({ data: [{ embedding: [0, 1, 2, 3], index: 0, object: "embedding" }] }),
@@ -143,7 +158,7 @@ test("omits Authorization header when token is not configured", async () => {
 
 test("honors custom authHeader/authScheme", async () => {
   const restoreFetch = mockFetch((url, init) => {
-    const req = new Request(url, init);
+    const req = new Request(inputUrl(url), init);
     expect(req.headers.get("x-api-key")).toBe("ApiKey test-token");
     expect(req.headers.has("authorization")).toBe(false);
     return Promise.resolve(

@@ -57,7 +57,7 @@ function mockServices(partial: Record<string, unknown>): Services {
       ? (partial.log as Record<string, unknown>)
       : {};
   const merged: Record<string, unknown> = { ...partial, log: { ...noopLog, ...partialLog } };
-  return merged as Services;
+  return merged as unknown as Services;
 }
 
 function mockRegistry(partial: Record<string, unknown>): Registry {
@@ -153,7 +153,8 @@ test("GET /workflows/list returns registry list", async () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { workflows: { name: string; description: string }[] };
     expect(body.workflows.map((w) => w.name)).toEqual(["x"]);
-    expect(body.workflows[0].description).toBe("D");
+    const firstWorkflow = body.workflows[0];
+    expect(firstWorkflow?.description).toBe("D");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -375,10 +376,11 @@ export const fn: WorkflowFn = async () => ({ outcome: 'sync', payload: { real: t
       },
       recordError: (): Promise<void> => {
         recordErrorCalls += 1;
+        return Promise.resolve();
       },
-      getStatus: (): Promise<null> => null,
-      getStatusLight: (): Promise<null> => null,
-      waitForResult: (): Promise<null> => null,
+      getStatus: (): Promise<null> => Promise.resolve(null),
+      getStatusLight: (): Promise<null> => Promise.resolve(null),
+      waitForResult: (): Promise<null> => Promise.resolve(null),
       setPersistenceStatus: (
         _id: string,
         status: "pending" | "persisted" | "persistence_failed",

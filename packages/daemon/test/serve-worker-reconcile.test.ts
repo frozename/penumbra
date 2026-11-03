@@ -1,6 +1,11 @@
-import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import {
+  buildServices,
+  loadSqliteVec,
+  migrate,
+  type Services,
+  WorkerTokenStore,
+} from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { registerWorkerForTest } from "@penumbra/daemon/test-utils";
 import { Database } from "bun:sqlite";
 import { expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -27,13 +32,15 @@ function seedDispatch(services: Services, id: string, claimedAt: string): void {
     to: "b",
     message: "recover previous incarnation",
     conversation_id: id,
-    max_dispatch_attempts: 3,
+    triggered_by_event_id: `seed-${id}`,
   });
   services.handoffWriter.approve(id, { resolved_by: "test", resolved_at: claimedAt });
   expect(services.handoffWriter.claimDispatch(id, "w1")).toBe(true);
   services.db
-    .query("UPDATE handoffs SET last_dispatch_started_at=? WHERE handoff_id=?")
-    .run(claimedAt, id);
+    .query(
+      "UPDATE handoffs SET last_dispatch_started_at=?, max_dispatch_attempts=? WHERE handoff_id=?",
+    )
+    .run(claimedAt, 3, id);
   services.dispatchEventLog.record({
     handoff_id: id,
     worker_id: "w1",
@@ -51,10 +58,11 @@ test("serve exposes bounded worker orphan recovery after startup", async () => {
     "PENUMBRA_WORKERS_CONFIG_PATH",
   ] as const;
   const previous = envKeys.map((key) => process.env[key]);
+  const workersConfigPath = join(root, "workers.yaml");
   process.env[envKeys[0]] = "0";
   process.env[envKeys[1]] = root;
-  process.env[envKeys[2]] = join(root, "workers.yaml");
-  writeFileSync(process.env[envKeys[2]], "extras: []\n");
+  process.env[envKeys[2]] = workersConfigPath;
+  writeFileSync(workersConfigPath, "extras: []\n");
   const db = new Database(":memory:");
   let handle: ReturnType<typeof serve> | undefined;
   let start: { mockRestore(): void } | undefined;
@@ -77,14 +85,13 @@ test("serve exposes bounded worker orphan recovery after startup", async () => {
     seedDispatch(services, "after", "2026-10-07T12:01:00.000Z");
     handle = serve({ services, token: "test-token", port: 0, hostname: "127.0.0.1" });
     const baseUrl = `http://127.0.0.1:${String(handle.port)}`;
-    const { worker_token } = await registerWorkerForTest({
-      baseUrl,
-      sharedBearer: "test-token",
-      worker_id: "w1",
-    });
+    const { token: workerToken } = new WorkerTokenStore(db).issue(
+      { worker_id: "w1" },
+      services.clock().getTime(),
+    );
     const response = await fetch(`${baseUrl}/worker/reconcile-orphans`, {
       method: "POST",
-      headers: { authorization: `Bearer ${worker_token}`, "content-type": "application/json" },
+      headers: { authorization: `Bearer ${workerToken}`, "content-type": "application/json" },
       body: JSON.stringify({ worker_id: "w1", claimed_before: BOOT }),
     });
     const body: unknown = await response.json();
