@@ -1,17 +1,25 @@
-import type { LlamactlInventory, Logger } from "@penumbra/core";
+import type {
+  DispatchEventInput,
+  LlamactlInventory,
+  LlmServingCandidate,
+  Logger,
+} from "@penumbra/core";
 
 import { DispatchEventKindSchema } from "@penumbra/api-contract";
 import { applySchema, buildT2EmbedText, loadSqliteVec } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, expect, it } from "bun:test";
+import { z } from "zod";
 
 import type { DreamConfig } from "@src/dreaming/config.js";
-import { P1_CLAIM_TTL_MS, runDreamCycle } from "@src/dreaming/cycle.js";
+import { P1_CLAIM_TTL_MS, type ProjectRegistryEntry, runDreamCycle } from "@src/dreaming/cycle.js";
+import type { RewriteResponse } from "@src/dreaming/dream-rewriter-prompt-content.js";
 import { createDreamingJudgePool } from "@src/dreaming/dreaming-judge-pool.js";
 import { type JudgePool, type JudgeVote, makeFakeJudgePool } from "@src/dreaming/judge-pool.js";
 import { setRewriteForMemory } from "@src/dreaming/query-rewriter-cache.js";
 import { sanitizeTitleForQuery } from "@src/dreaming/query-sanitize.js";
 import { hashQuery } from "@src/dreaming/research.js";
+import type { LlmInvokeInput, LlmInvokeResult } from "@src/services/llm-invoke.js";
 import { readSubsystemHealth } from "@src/services/subsystem-health.js";
 
 try {
@@ -82,7 +90,41 @@ function testConfig(overrides?: Partial<DreamConfig>): DreamConfig {
     rewriterCacheTtlMs: 30 * 24 * 60 * 60 * 1000,
     rewriterConcurrency: 4,
     skipPhases: new Set(),
+    contentQualityThreshold: 0.5,
+    reembedBatchSize: 100,
+    eventTriggerEnabled: false,
+    idleMinutes: 10,
+    triggerCooldownMinutes: 5,
+    briefRefreshHours: 0,
+    pc1BatchSize: 100,
+    pc2MinClusterSize: 3,
+    pc2ClusterLinkThreshold: 0.85,
+    pc2AutoThreshold: 0.97,
     ...overrides,
+  };
+}
+
+type RewriteLlmInvoker = <T extends z.ZodType>(
+  input: LlmInvokeInput<T>,
+) => Promise<LlmInvokeResult<T>>;
+
+type RewriteLlmFailure = Extract<LlmInvokeResult<z.ZodType>, { ok: false }>;
+
+type RewriteLlmOutcome =
+  | RewriteLlmFailure
+  | { verdict: RewriteResponse; raw?: string; candidate?: LlmServingCandidate };
+
+function rewriteInvokerForTest(
+  respond: (input: LlmInvokeInput<z.ZodType>) => RewriteLlmOutcome,
+): RewriteLlmInvoker {
+  return <T extends z.ZodType>(input: LlmInvokeInput<T>): Promise<LlmInvokeResult<T>> => {
+    const outcome = respond(input);
+    if ("ok" in outcome) return Promise.resolve(outcome);
+    const value = input.schema.parse(outcome.verdict);
+    const raw = outcome.raw ?? JSON.stringify(outcome.verdict);
+    const candidate = outcome.candidate;
+    if (candidate) return Promise.resolve({ ok: true, value, raw, candidate });
+    return Promise.resolve({ ok: true, value, raw } as LlmInvokeResult<T>);
   };
 }
 
@@ -593,6 +635,7 @@ function seedNegativeResearchCache(
   opts: { project_id: string; title: string; expiresAt: number; isNegative?: number },
 ): void {
   const query = sanitizeTitleForQuery(opts.title);
+  if (query === null) throw new Error(`expected searchable title: ${opts.title}`);
   const negKey = hashQuery(query, query);
   db.prepare(
     `INSERT INTO dream_research_cache(cache_key, provider, project_id, url, query_hash, markdown, fetched_at, expires_at, is_negative)
@@ -709,15 +752,16 @@ it("P1 auto-promote inserts t2 memory + vector and uses buildT2EmbedText input",
     embedding_model_version: string | null;
   } | null;
   expect(promoted).toBeTruthy();
-  expect(promoted?.embedding_model_version).toBe("embed-model-v2");
+  if (!promoted) throw new Error("expected promoted memory row");
+  expect(promoted.embedding_model_version).toBe("embed-model-v2");
   expect(seen).toHaveLength(1);
   expect(promotedCountDuringEmbed).toEqual([0]);
-  expect(seen[0]?.memory_id).toBe(promoted?.memory_id);
-  expect(seen[0]?.text).toBe(buildT2EmbedText(promoted!.title, promoted!.body));
+  expect(seen[0]?.memory_id).toBe(promoted.memory_id);
+  expect(seen[0]?.text).toBe(buildT2EmbedText(promoted.title, promoted.body));
 
-  const vecRow = db
-    .prepare(`SELECT embedding FROM t2_vec WHERE rowid = ?`)
-    .get(promoted?.rowid) as { embedding: Uint8Array } | null;
+  const vecRow = db.prepare(`SELECT embedding FROM t2_vec WHERE rowid = ?`).get(promoted.rowid) as {
+    embedding: Uint8Array;
+  } | null;
   expect(vecRow).toBeTruthy();
 });
 
@@ -768,9 +812,10 @@ it("P1 embed failure rolls back candidate promotion and continues to next rollup
     .prepare(`SELECT rowid FROM t2_memories WHERE kind='promoted' AND body = ? LIMIT 1`)
     .get(succeedingBody) as { rowid: number } | null;
   expect(successPromoted).toBeTruthy();
+  if (!successPromoted) throw new Error("expected promoted memory row");
   const successVec = db
     .prepare(`SELECT 1 AS ok FROM t2_vec WHERE rowid = ? LIMIT 1`)
-    .get(successPromoted?.rowid) as { ok: number } | null;
+    .get(successPromoted.rowid) as { ok: number } | null;
   expect(successVec?.ok).toBe(1);
 
   const failedRollupRow = db
@@ -1340,7 +1385,10 @@ it("P1 queues queued auto-promote when title already exists in active t2 memory"
     )
     .get() as { status: string; payload_json: string } | null;
   expect(action?.status).toBe("queued");
-  const payload = JSON.parse(action?.payload_json ?? "{}") as { dedup_against?: string };
+  const payload = JSON.parse(action?.payload_json ?? "{}") as {
+    dedup_against?: string;
+    project_id?: string;
+  };
   expect(payload.dedup_against).toBe(existingMemoryId);
   const t2Count = (db.prepare("SELECT COUNT(*) as n FROM t2_memories").get() as { n: number }).n;
   expect(t2Count).toBe(1);
@@ -1963,17 +2011,14 @@ function getT2UpdatedAtMs(db: Database, memoryId: string): number {
   return row ? Date.parse(row.updated_at) : NaN;
 }
 
-type TestProject = {
-  project_id: string;
-  dreaming?: { research_provider?: string; allowed_domains?: string[] };
-};
-function makeProjectRegistry(projects: TestProject[]): {
-  get: (id: string) => TestProject | null;
-  list: () => TestProject[];
+function makeProjectRegistry(projects: ProjectRegistryEntry[]): {
+  get: (id: string) => ProjectRegistryEntry | undefined;
+  list: () => ProjectRegistryEntry[];
 } {
   return {
-    get: (id: string): TestProject | null => projects.find((p) => p.project_id === id) ?? null,
-    list: (): TestProject[] => projects,
+    get: (id: string): ProjectRegistryEntry | undefined =>
+      projects.find((p) => p.project_id === id),
+    list: (): ProjectRegistryEntry[] => projects,
   };
 }
 
@@ -2235,7 +2280,7 @@ it("P4 query gate logs structured rejection with title_hash", async () => {
     project_id: projectId,
     title: gateTitle,
   });
-  const events: { kind: string; meta: unknown }[] = [];
+  const events: DispatchEventInput[] = [];
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
   ]);
@@ -2271,20 +2316,21 @@ it("P4 uses cached rewriter skip verdict and does not call llmInvoke", async () 
   });
 
   const llmCalls: number[] = [];
-  const events: { kind: string; meta: unknown }[] = [];
+  const events: DispatchEventInput[] = [];
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
   ]);
   await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
     projectRegistry,
-    llmInvoke: () => {
+    llmInvoke: rewriteInvokerForTest(() => {
       llmCalls.push(1);
-      return Promise.resolve({
-        ok: false as const,
+      return {
+        ok: false,
         reason: "http_error",
+        status: 500,
         failureMessage: "should not happen",
-      });
-    },
+      };
+    }),
     dispatchEventLog: {
       record(event) {
         events.push(event);
@@ -2333,14 +2379,10 @@ it("P4 uses cached rewriter query verdict when available", async () => {
   ]);
   await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
     projectRegistry,
-    llmInvoke: () => {
+    llmInvoke: rewriteInvokerForTest(() => {
       llmCalls.push(1);
-      return Promise.resolve({
-        ok: true as const,
-        value: { kind: "query", query: "should-not-be-used" },
-        raw: '{"kind":"query","query":"should-not-be-used"}',
-      });
-    },
+      return { verdict: { kind: "query", query: "should-not-be-used" } };
+    }),
   });
 
   expect(llmCalls.length).toBe(0);
@@ -2363,7 +2405,7 @@ it("P4 writes cache on rewriter fresh skip and skips action minting", async () =
     title: "A stable architecture question with human language",
   });
   const memoryUpdatedAtMs = getT2UpdatedAtMs(db, memoryId);
-  const events: { kind: string; meta: unknown }[] = [];
+  const events: DispatchEventInput[] = [];
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
   ]);
@@ -2374,12 +2416,7 @@ it("P4 writes cache on rewriter fresh skip and skips action minting", async () =
         events.push(event);
       },
     },
-    llmInvoke: () =>
-      Promise.resolve({
-        ok: true as const,
-        value: { kind: "skip", reason: "too-internal" },
-        raw: '{"kind":"skip","reason":"too-internal"}',
-      }),
+    llmInvoke: rewriteInvokerForTest(() => ({ verdict: { kind: "skip", reason: "too-internal" } })),
   });
 
   const actionCount = (
@@ -2414,7 +2451,7 @@ it("P4 writes cache on rewriter fresh query and mints action with rewritten quer
     project_id: projectId,
     title: "A stable architecture question with human language",
   });
-  const events: { kind: string; meta: unknown }[] = [];
+  const events: DispatchEventInput[] = [];
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
   ]);
@@ -2425,12 +2462,9 @@ it("P4 writes cache on rewriter fresh query and mints action with rewritten quer
         events.push(event);
       },
     },
-    llmInvoke: () =>
-      Promise.resolve({
-        ok: true as const,
-        value: { kind: "query", query: "something searchable and useful query terms" },
-        raw: '{"kind":"query","query":"something searchable and useful query terms"}',
-      }),
+    llmInvoke: rewriteInvokerForTest(() => ({
+      verdict: { kind: "query", query: "something searchable and useful query terms" },
+    })),
   });
 
   const action = db
@@ -2468,7 +2502,7 @@ it("P4 skips rewriter candidates absent from llamactl inventory and attempts an 
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
   ]);
-  let invokeInput: Record<string, unknown> | undefined;
+  let invokeInput: LlmInvokeInput<z.ZodType> | undefined;
 
   await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
     projectRegistry,
@@ -2500,14 +2534,10 @@ it("P4 skips rewriter candidates absent from llamactl inventory and attempts an 
           ]),
         ),
     },
-    llmInvoke: (input) => {
-      invokeInput = input as unknown as Record<string, unknown>;
-      return Promise.resolve({
-        ok: true as const,
-        value: { kind: "query" as const, query: "searchable rewritten stability query" },
-        raw: '{"kind":"query","query":"searchable rewritten stability query"}',
-      });
-    },
+    llmInvoke: rewriteInvokerForTest((input) => {
+      invokeInput = input;
+      return { verdict: { kind: "query", query: "searchable rewritten stability query" } };
+    }),
   });
 
   expect(invokeInput?.candidateName).toBe("local-lfm2-generator");
@@ -2526,7 +2556,7 @@ it("P4 degrades to configured rewriter candidates when llamactl inventory is una
     { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
   ]);
   let inventoryCalls = 0;
-  let invokeInput: Record<string, unknown> | undefined;
+  let invokeInput: LlmInvokeInput<z.ZodType> | undefined;
 
   const cycleId = await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
     projectRegistry,
@@ -2552,14 +2582,10 @@ it("P4 degrades to configured rewriter candidates when llamactl inventory is una
         throw new Error("proxy down");
       },
     },
-    llmInvoke: (input) => {
-      invokeInput = input as unknown as Record<string, unknown>;
-      return Promise.resolve({
-        ok: false as const,
-        reason: "timeout" as const,
-        failureMessage: "Request timed out",
-      });
-    },
+    llmInvoke: rewriteInvokerForTest((input) => {
+      invokeInput = input;
+      return { ok: false, reason: "timeout", failureMessage: "Request timed out" };
+    }),
   });
 
   expect(getCycleOutcome(db, cycleId)).toBe("completed");
@@ -2624,14 +2650,10 @@ it("P4 reuses one llamactl inventory collection for every memory in a cycle", as
         );
       },
     },
-    llmInvoke: () => {
+    llmInvoke: rewriteInvokerForTest(() => {
       llmCalls += 1;
-      return Promise.resolve({
-        ok: true as const,
-        value: { kind: "query" as const, query: "searchable rewritten stability query" },
-        raw: '{"kind":"query","query":"searchable rewritten stability query"}',
-      });
-    },
+      return { verdict: { kind: "query", query: "searchable rewritten stability query" } };
+    }),
   });
 
   expect(inventoryCalls).toBe(1);
@@ -2673,14 +2695,10 @@ it("P4 never selects a candidate whose advertised llamactl model is owned by a c
           ]),
         ),
     },
-    llmInvoke: () => {
+    llmInvoke: rewriteInvokerForTest(() => {
       llmCalls += 1;
-      return Promise.resolve({
-        ok: true as const,
-        value: { kind: "query" as const, query: "should not be used" },
-        raw: '{"kind":"query","query":"should not be used"}',
-      });
-    },
+      return { verdict: { kind: "query", query: "should not be used" } };
+    }),
   });
 
   expect(getCycleOutcome(db, cycleId)).toBe("completed");
@@ -2709,7 +2727,7 @@ it("P4 wires the subscription HTTP rung and records the fallback candidate that 
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
   ]);
-  let invokeInput: Record<string, unknown> | undefined;
+  let invokeInput: LlmInvokeInput<z.ZodType> | undefined;
 
   await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
     projectRegistry,
@@ -2729,22 +2747,20 @@ it("P4 wires the subscription HTTP rung and records the fallback candidate that 
         auth: { source: "bearer", token: "test-sakana-token" },
       },
     ],
-    llmInvoke: (input) => {
-      invokeInput = input as unknown as Record<string, unknown>;
-      return Promise.resolve({
-        ok: true as const,
-        value: { kind: "query" as const, query: "something searchable and useful query terms" },
-        raw: '{"kind":"query","query":"something searchable and useful query terms"}',
+    llmInvoke: rewriteInvokerForTest((input) => {
+      invokeInput = input;
+      return {
+        verdict: { kind: "query", query: "something searchable and useful query terms" },
         candidate: {
           name: "sakana-rewriter",
           baseUrl: "https://api.sakana.ai/v1",
           model: "sakana-rewriter",
-          provider: "sakana" as const,
-          authSource: "bearer" as const,
-          tier: "fallback" as const,
+          provider: "sakana",
+          authSource: "bearer",
+          tier: "fallback",
         },
-      });
-    },
+      };
+    }),
   });
 
   expect(invokeInput?.fallbackCandidates).toEqual([
@@ -2782,7 +2798,7 @@ it("P4 falls back to title when rewriter fails and does not cache on failure", a
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
   ]);
-  const events: { kind: string; meta: unknown }[] = [];
+  const events: DispatchEventInput[] = [];
   await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
     projectRegistry,
     dispatchEventLog: {
@@ -2901,7 +2917,7 @@ it("P4 falls back to title when the rewriter returns an empty response", async (
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
   ]);
-  const events: { kind: string; meta: unknown }[] = [];
+  const events: DispatchEventInput[] = [];
   await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
     projectRegistry,
     dispatchEventLog: {
@@ -2943,7 +2959,7 @@ it("P4 rewritten query rejected by guard is tracked as unsearchable content, not
     project_id: projectId,
     title: "TypeScript strict null checks in async systems",
   });
-  const events: { kind: string; meta: unknown }[] = [];
+  const events: DispatchEventInput[] = [];
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
   ]);
@@ -2954,12 +2970,9 @@ it("P4 rewritten query rejected by guard is tracked as unsearchable content, not
         events.push(event);
       },
     },
-    llmInvoke: () =>
-      Promise.resolve({
-        ok: true as const,
-        value: { kind: "query", query: "parseUpdatedAtMs stable input handling behavior" },
-        raw: '{"kind":"query","query":"parseUpdatedAtMs stable input handling behavior"}',
-      }),
+    llmInvoke: rewriteInvokerForTest(() => ({
+      verdict: { kind: "query", query: "parseUpdatedAtMs stable input handling behavior" },
+    })),
   });
 
   const action = db
@@ -3043,12 +3056,7 @@ it("P4 fresh skip is recorded as a neutral subsystem outcome, not a success", as
   ]);
   await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
     projectRegistry,
-    llmInvoke: () =>
-      Promise.resolve({
-        ok: true as const,
-        value: { kind: "skip", reason: "too-internal" },
-        raw: '{"kind":"skip","reason":"too-internal"}',
-      }),
+    llmInvoke: rewriteInvokerForTest(() => ({ verdict: { kind: "skip", reason: "too-internal" } })),
   });
 
   const healthRow = db
@@ -3094,20 +3102,17 @@ it("P4 primary failure keeps an established fallback clock running", async () =>
 
   await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
     projectRegistry,
-    llmInvoke: () =>
-      Promise.resolve({
-        ok: true as const,
-        value: { kind: "query" as const, query: "searchable rewritten stability query" },
-        raw: '{"kind":"query","query":"searchable rewritten stability query"}',
-        candidate: {
-          name: "sakana-rewriter",
-          baseUrl: "https://api.sakana.ai/v1",
-          model: "sakana-rewriter",
-          provider: "sakana" as const,
-          authSource: "bearer" as const,
-          tier: "fallback" as const,
-        },
-      }),
+    llmInvoke: rewriteInvokerForTest(() => ({
+      verdict: { kind: "query", query: "searchable rewritten stability query" },
+      candidate: {
+        name: "sakana-rewriter",
+        baseUrl: "https://api.sakana.ai/v1",
+        model: "sakana-rewriter",
+        provider: "sakana",
+        authSource: "bearer",
+        tier: "fallback",
+      },
+    })),
   });
 
   await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
@@ -3148,7 +3153,7 @@ it("P4 rewrite failure with a malformed candidate baseUrl does not crash the cyc
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
   ]);
-  const events: { kind: string; meta: unknown }[] = [];
+  const events: DispatchEventInput[] = [];
   const cycleId = await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
     projectRegistry,
     dispatchEventLog: {
@@ -3198,20 +3203,17 @@ it("P4 fresh skip with a malformed candidate baseUrl does not crash the cycle", 
   ]);
   const cycleId = await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
     projectRegistry,
-    llmInvoke: () =>
-      Promise.resolve({
-        ok: true as const,
-        value: { kind: "skip", reason: "too-internal" },
-        raw: '{"kind":"skip","reason":"too-internal"}',
-        candidate: {
-          name: "local-rewriter",
-          baseUrl: "not-a-valid-url",
-          model: "local-rewriter",
-          provider: "local" as const,
-          authSource: "none" as const,
-          tier: "primary" as const,
-        },
-      }),
+    llmInvoke: rewriteInvokerForTest(() => ({
+      verdict: { kind: "skip", reason: "too-internal" },
+      candidate: {
+        name: "local-rewriter",
+        baseUrl: "not-a-valid-url",
+        model: "local-rewriter",
+        provider: "local",
+        authSource: "none",
+        tier: "primary",
+      },
+    })),
   });
 
   expect(getCycleOutcome(db, cycleId)).toBe("completed");

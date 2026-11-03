@@ -222,22 +222,16 @@ describe("MaestroSessionWriter", () => {
     });
     writer.terminate(taskId, "completed");
 
-    let secondSession: ReturnType<typeof writer.start> | null = null;
-    expect(() => {
-      secondSession = writer.start({
-        task_id: taskId,
-        chain_handoff_id: "handoff-second",
-        agent_id: "agent-b",
-        wall_clock_budget_ms: 3_000,
-        cost_budget_cents: 250,
-        sub_dispatch_budget: 5,
-      });
-    }).not.toThrow();
-    expect(secondSession).not.toBeNull();
-    expect((secondSession as NonNullable<typeof secondSession>).chain_handoff_id).toBe(
-      "handoff-second",
-    );
-    expect((secondSession as NonNullable<typeof secondSession>).agent_id).toBe("agent-b");
+    const secondSession = writer.start({
+      task_id: taskId,
+      chain_handoff_id: "handoff-second",
+      agent_id: "agent-b",
+      wall_clock_budget_ms: 3_000,
+      cost_budget_cents: 250,
+      sub_dispatch_budget: 5,
+    });
+    expect(secondSession.chain_handoff_id).toBe("handoff-second");
+    expect(secondSession.agent_id).toBe("agent-b");
     const live = writer.get(taskId);
     expect(live?.chain_handoff_id).toBe("handoff-second");
     expect(live?.terminated_at).toBeNull();
