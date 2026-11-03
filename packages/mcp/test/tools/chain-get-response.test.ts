@@ -6,27 +6,32 @@ import {
   chainGetResponseHandler,
   ChainGetResponseInputShape,
 } from "@src/tools/chain-get-response.js";
+import type { ToolResult } from "@src/tools/context.js";
 
 import { fakeDaemon, installFetchMock, requestUrl } from "../helpers.js";
 
 type GetChainResponsesFn = DaemonClient["getChainResponses"];
 
-function textOf(res: { content: { text?: unknown }[] }): string {
-  const text = res.content[0].text;
-  if (typeof text !== "string") throw new Error("expected text content");
-  return text;
+// Bun's `typeof fetch` carries a `preconnect` static that bare mock
+// implementations lack; Object.assign supplies it without a cast.
+function asFetchMock(impl: (input: string | URL | Request) => Promise<Response>): typeof fetch {
+  return Object.assign(impl, { preconnect: (): void => undefined });
+}
+
+function textOf(res: ToolResult): string {
+  const block = res.content[0];
+  if (block === undefined || typeof block.text !== "string") {
+    throw new Error("expected text content");
+  }
+  return block.text;
 }
 
 test("ChainGetResponseInputShape requires conversation_id", () => {
-  const shape = ChainGetResponseInputShape as Record<
-    string,
-    { parse: (input: unknown) => unknown }
-  >;
   expect(() => ChainGetResponseInputShape.conversation_id.parse(undefined)).toThrow();
   expect(ChainGetResponseInputShape.which.parse(undefined)).toBe("final");
   expect(ChainGetResponseInputShape.which.parse("all")).toBe("all");
-  expect(shape.handoff_id.parse("h-1")).toBe("h-1");
-  expect(() => shape.handoff_id.parse("")).toThrow();
+  expect(ChainGetResponseInputShape.handoff_id.parse("h-1")).toBe("h-1");
+  expect(() => ChainGetResponseInputShape.handoff_id.parse("")).toThrow();
 });
 
 test("chainGetResponseHandler calls daemon.getChainResponses and formats output", async () => {
@@ -38,7 +43,9 @@ test("chainGetResponseHandler calls daemon.getChainResponses and formats output"
   const daemon = fakeDaemon({ getChainResponses });
   const handler = chainGetResponseHandler(daemon);
   const res = await handler({ conversation_id: "conv1", which: "all" });
-  expect(res.content[0].type).toBe("text");
+  const firstBlock = res.content[0];
+  if (firstBlock === undefined) throw new Error("expected content[0]");
+  expect(firstBlock.type).toBe("text");
   const text = textOf(res);
   expect(text).toMatch(/^● chain_get_response {2}/);
   expect(text).toContain('"agent": "a"');
@@ -51,7 +58,7 @@ test("chainGetResponseHandler forwards handoff_id to daemon.getChainResponses", 
     expect(handoff_id).toBe("h-first");
     return Promise.resolve({
       responses: [{ agent: "a", text: "hi", ts: "t", handoff_id: "h-first" }],
-    } as Awaited<ReturnType<GetChainResponsesFn>>);
+    });
   };
   const daemon = fakeDaemon({ getChainResponses });
   const handler = chainGetResponseHandler(daemon);
@@ -65,10 +72,12 @@ test("chainGetResponseHandler forwards handoff_id to daemon.getChainResponses", 
 
 test("DaemonClient.getChainResponses appends handoff_id only when provided", async () => {
   const seen: string[] = [];
-  const { daemon, restore } = installFetchMock((input) => {
-    seen.push(new URL(requestUrl(input)).pathname + new URL(requestUrl(input)).search);
-    return Promise.resolve(Response.json({ responses: [] }));
-  });
+  const { daemon, restore } = installFetchMock(
+    asFetchMock((input): Promise<Response> => {
+      seen.push(new URL(requestUrl(input)).pathname + new URL(requestUrl(input)).search);
+      return Promise.resolve(Response.json({ responses: [] }));
+    }),
+  );
   try {
     await daemon.getChainResponses("conv 1", "final", "h/first");
     await daemon.getChainResponses("conv 1", "all");
@@ -84,10 +93,12 @@ test("DaemonClient.getChainResponses appends handoff_id only when provided", asy
 
 test("DaemonClient.getChainResponses forwards an explicitly empty handoff_id", async () => {
   const seen: string[] = [];
-  const { daemon, restore } = installFetchMock((input) => {
-    seen.push(new URL(requestUrl(input)).pathname + new URL(requestUrl(input)).search);
-    return Promise.resolve(Response.json({ responses: [] }));
-  });
+  const { daemon, restore } = installFetchMock(
+    asFetchMock((input): Promise<Response> => {
+      seen.push(new URL(requestUrl(input)).pathname + new URL(requestUrl(input)).search);
+      return Promise.resolve(Response.json({ responses: [] }));
+    }),
+  );
   try {
     await daemon.getChainResponses("conv 1", "final", "");
   } finally {

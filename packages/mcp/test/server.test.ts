@@ -107,6 +107,18 @@ interface ToolCallResult {
 function asRegisteredServer(s: unknown): RegisteredServer {
   return s as RegisteredServer;
 }
+function requireRegisteredTool(server: RegisteredServer, name: string): RegisteredTool {
+  const tool = server._registeredTools[name];
+  expect(tool).toBeDefined();
+  if (!tool) throw new Error(`expected registered tool ${JSON.stringify(name)}`);
+  return tool;
+}
+function requireRegistryTool(name: string): ToolDef {
+  const tool = TOOL_REGISTRY[name];
+  expect(tool).toBeDefined();
+  if (!tool) throw new Error(`expected ${JSON.stringify(name)} in TOOL_REGISTRY`);
+  return tool;
+}
 function fakeDaemon(partial: Partial<DaemonClient> = {}): DaemonClient {
   // Test-only boundary: synthesize a structurally minimal DaemonClient. The
   // server only touches the methods overridden by each test, never the
@@ -171,14 +183,16 @@ describe("buildServer tool registration", () => {
     };
     try {
       const server = asRegisteredServer(await buildServer({ daemon: fakeDaemon() }));
-      const putOut = (await server._registeredTools.__ctx_handle_store_probe.handler({})) as {
+      const putOut = (await requireRegisteredTool(server, "__ctx_handle_store_probe").handler(
+        {},
+      )) as {
         handle_id?: string;
       };
       const handleId = putOut.handle_id;
       expect(typeof handleId).toBe("string");
 
       const readOut = asToolResult(
-        await server._registeredTools.read_handle.handler({ handle_id: handleId }),
+        await requireRegisteredTool(server, "read_handle").handler({ handle_id: handleId }),
       );
       expect(readOut.isError).toBeUndefined();
       expect(readOut.content?.[0]?.type).toBe("text");
@@ -353,7 +367,10 @@ describe("buildServer tool registration", () => {
     };
     try {
       const server = asRegisteredServer(await buildServer({ daemon: fakeDaemon() }));
-      const out = await server._registeredTools.__no_read_handle_budget_smoke_tool.handler({}, {});
+      const out = await requireRegisteredTool(server, "__no_read_handle_budget_smoke_tool").handler(
+        {},
+        {},
+      );
       // Budget should be disabled — result passes through untruncated, not wrapped.
       expect(isEnvelopeResult(out)).toBe(false);
       expect(out).toEqual(large);
@@ -523,7 +540,7 @@ describe("buildServer tool registration", () => {
         mcpCall: () => Promise.resolve({ action_status: "rejected", error: "unused" }),
       });
       await buildServer({ daemon });
-      const handler = TOOL_REGISTRY.long_lived_self_state_get.makeHandler(fakeDaemon());
+      const handler = requireRegistryTool("long_lived_self_state_get").makeHandler(fakeDaemon());
       const result = asToolResult(await handler({}));
       const text = result.content?.[0]?.text ?? "";
       const payload = JSON.parse(text) as {
@@ -562,7 +579,7 @@ describe("buildServer tool registration", () => {
       // @modelcontextprotocol/sdk internals. Acceptable for an integration smoke
       // until the SDK exposes a programmatic handler-invocation surface.
       const server = asRegisteredServer(await buildServer({ daemon: fakeDaemon() }));
-      await server._registeredTools.__invocation_log_smoke_tool.handler(
+      await requireRegisteredTool(server, "__invocation_log_smoke_tool").handler(
         {},
         { _meta: { origin: "test-suite" } },
       );
@@ -598,7 +615,7 @@ describe("buildServer tool registration", () => {
     };
     try {
       const server = asRegisteredServer(await buildServer({ daemon: fakeDaemon() }));
-      await server._registeredTools.__invocation_log_disabled_smoke_tool.handler(
+      await requireRegisteredTool(server, "__invocation_log_disabled_smoke_tool").handler(
         {},
         { _meta: { origin: "test-suite" } },
       );
@@ -626,7 +643,10 @@ describe("buildServer tool registration", () => {
     };
     try {
       const server = asRegisteredServer(await buildServer({ daemon: fakeDaemon() }));
-      const out = await server._registeredTools.__response_budget_smoke_tool.handler({}, {});
+      const out = await requireRegisteredTool(server, "__response_budget_smoke_tool").handler(
+        {},
+        {},
+      );
       expect(isEnvelopeResult(out)).toBe(true);
       const env = asEnvelope(out);
       expect(env._meta.handle_id).toBeTruthy();
@@ -634,7 +654,7 @@ describe("buildServer tool registration", () => {
       expect(env.content[0]?.type).toBe("text");
       expect((env.content[0]?.text ?? "").length).toBeGreaterThan(0);
       const readOut = asToolResult(
-        await server._registeredTools.read_handle.handler({
+        await requireRegisteredTool(server, "read_handle").handler({
           handle_id: env._meta.handle_id,
         }),
       );
@@ -660,12 +680,13 @@ describe("buildServer tool registration", () => {
     });
 
     const server = asRegisteredServer(await buildServer({ daemon }));
-    const out = await server._registeredTools.memory_search.handler({ query: "budget" }, {});
+    const out = await requireRegisteredTool(server, "memory_search").handler(
+      { query: "budget" },
+      {},
+    );
 
-    const memorySearchInputSchema = TOOL_REGISTRY.memory_search.descriptor.inputSchema as Record<
-      string,
-      unknown
-    >;
+    const memorySearchInputSchema = requireRegistryTool("memory_search").descriptor
+      .inputSchema as Record<string, unknown>;
     expect("envelope" in memorySearchInputSchema).toBe(false);
     expect(isEnvelopeResult(out)).toBe(true);
     const env = asEnvelope(out);
@@ -674,7 +695,7 @@ describe("buildServer tool registration", () => {
     expect(env.content[0]?.text).toContain(`read_handle ${env._meta.handle_id ?? ""}`);
 
     const readOut = asToolResult(
-      await server._registeredTools.read_handle.handler({
+      await requireRegisteredTool(server, "read_handle").handler({
         handle_id: env._meta.handle_id,
       }),
     );
@@ -773,7 +794,7 @@ describe("buildServer tool registration", () => {
     const huge = { payload: "x".repeat(DEFAULT_BUDGET * 6) };
     const store = new HandleStore();
     try {
-      const handler = TOOL_REGISTRY.workflow_wait.makeHandler(
+      const handler = requireRegistryTool("workflow_wait").makeHandler(
         fakeDaemon({
           workflowWait: () =>
             Promise.resolve({
@@ -800,7 +821,7 @@ describe("buildServer tool registration", () => {
     const daemon = fakeDaemon({
       workflowRun: workflowRunMock as unknown as DaemonClient["workflowRun"],
     });
-    const handler = TOOL_REGISTRY.workflow_run.makeHandler(daemon);
+    const handler = requireRegistryTool("workflow_run").makeHandler(daemon);
     const out = asToolResult(await handler({ name: "test-workflow" }));
     const body = JSON.parse(out.content?.[0]?.text ?? "") as Record<string, unknown>;
     expect(body.cwd).toBe(process.cwd());

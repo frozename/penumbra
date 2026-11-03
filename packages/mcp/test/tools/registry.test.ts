@@ -707,11 +707,16 @@ describe("TOOL_REGISTRY", () => {
       process.env.PENUMBRA_LONG_LIVED_TICK_ID = "registry-tick";
       setLongLivedRuntimeContextFromEnv(process.env);
       seedRuntimeDb(storageRoot);
-      globalThis.fetch = (): Promise<Response> =>
-        new Response(JSON.stringify(registryDaemonPayload()), {
-          headers: { "content-type": "application/json" },
-          status: 200,
-        });
+      globalThis.fetch = Object.assign(
+        (): Promise<Response> =>
+          Promise.resolve(
+            new Response(JSON.stringify(registryDaemonPayload()), {
+              headers: { "content-type": "application/json" },
+              status: 200,
+            }),
+          ),
+        { preconnect: originalFetch.preconnect },
+      );
       for (const [name, entry] of Object.entries(TOOL_REGISTRY)) {
         const handler = entry.makeHandler(daemon, { handleStore });
         let result: ToolResultEnvelope | undefined;

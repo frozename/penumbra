@@ -38,7 +38,7 @@ interface TestAgentchatAgent {
 interface TestAgentchatConfig {
   agents: TestAgentchatAgent[];
 }
-type TestServices = Services & {
+type TestServices = Omit<Services, "agentchatConfig"> & {
   shellSessionPool?: ShellSessionPool;
   shellConfig?: RuntimeShellConfig;
   agentchatConfig?: TestAgentchatConfig;
@@ -79,7 +79,6 @@ function makeShellConfig(): RuntimeShellConfig {
     outputByteLimit: 16384,
     redactOutput: true,
     unsetEnv: [],
-    dangerousCommands: [],
     dangerousCommandsForAgent: () => [],
     redactOutputForAgent: () => true,
   };
