@@ -1,4 +1,4 @@
-import type { AgentDescriptor, Services } from "@penumbra/core";
+import type { AgentDescriptor, Services, Watchdog } from "@penumbra/core";
 
 import {
   buildServices,
@@ -91,6 +91,7 @@ interface MaestroHarness {
 
 const MAESTRO_AGENT = {
   name: "e2e-maestro-stub",
+  roles: [],
   adapter: "noop",
   options: {},
   tier: "oc",
@@ -137,13 +138,18 @@ function createHarness(): MaestroHarness {
     hasActiveWorker(): boolean {
       return true;
     },
+    getStaleWorkers(): string[] {
+      return [];
+    },
+    getStaleHeartbeatAges(): { worker_id: string; last_seen_age_ms: number }[] {
+      return [];
+    },
     tick(): Promise<void> {
       return Promise.resolve();
     },
-  };
+  } satisfies Watchdog;
   (services as Services & { agentchatConfig?: unknown }).agentchatConfig = {
     agents: [MAESTRO_AGENT],
-    default_roles: {},
   };
 
   const resolveAgent = (name: string): AgentDescriptor | undefined =>
@@ -617,7 +623,12 @@ test("maestro board variant B: 100% wall-clock hard-kill fails task and cancels 
     expect(ended?.terminated_at).not.toBeNull();
     expect(ended?.termination_reason).toBe("bounds_exceeded:wall_clock");
 
-    expect(harness.chainCancelCalls).toContain(session?.chain_handoff_id);
+    const chainHandoffId = session?.chain_handoff_id;
+    expect(typeof chainHandoffId).toBe("string");
+    if (typeof chainHandoffId !== "string") {
+      throw new Error(`expected session chain_handoff_id, got ${String(chainHandoffId)}`);
+    }
+    expect(harness.chainCancelCalls).toContain(chainHandoffId);
 
     const terminated = harness.db
       .query<
