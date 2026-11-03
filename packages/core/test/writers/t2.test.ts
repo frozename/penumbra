@@ -143,7 +143,7 @@ test("promoteRollup extracts memories and marks as promoted", async () => {
 
   const memories = db.query<{ title: string }, []>("SELECT title FROM t2_memories").all();
   expect(memories.length).toBe(1);
-  expect(memories[0].title).toBe("Project Name");
+  expect(memories[0]?.title).toBe("Project Name");
 
   const rollup = db
     .query<
