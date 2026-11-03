@@ -1211,6 +1211,7 @@ function buildDispatchExecutor(
     handoffId: handoff.handoff_id,
     dispatchId: handoff.handoff_id,
     permissionProfile: handoff.permission_profile ?? null,
+    heavyJobGate: jobResources.heavyStageGate,
   });
 }
 
