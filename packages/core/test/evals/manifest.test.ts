@@ -8,6 +8,7 @@ import {
   AttemptSchema,
   EnvEvidenceSchema,
   EpisodeSchema,
+  FixtureRefSchema,
   GitShaSchema,
   IsoTsSchema,
   LineageUsageSchema,
@@ -958,4 +959,61 @@ test("case 49: ModelIdentity quant/engine/adapter are required", () => {
   for (const key of ["quant", "engine", "adapter"]) {
     rejects(ModelIdentitySchema, omit(modelIdentity(), key));
   }
+});
+
+test("case 51: null usage tokens require a missing_reason even when the key is absent", () => {
+  rejects(UsageSchema, { tokens: null, cost_usd: null, scope: "attempt" });
+  parses(UsageSchema, {
+    tokens: null,
+    cost_usd: null,
+    scope: "attempt",
+    missing_reason: "usage_events_missing",
+  });
+});
+
+test("case 52: model commit attribution needs a controlled episode with a harness sha", () => {
+  const modelCommits = commits("model", "controlled_harness_build", null);
+  rejects(
+    EpisodeSchema,
+    ep({
+      attempt_history: history("complete", null, 1, "claim_events"),
+      attempts: [att(1, SHA40, { commits: modelCommits })],
+      final_sha: SHA40,
+    }),
+  );
+  rejects(
+    EpisodeSchema,
+    epControlled({
+      harness_build: { sha: null, missing_reason: "x" },
+      attempts: [att(1, SHA40, { commits: modelCommits })],
+    }),
+  );
+});
+
+test("case 53: recovery attribution requires autocommit_flag true, not just the basis", () => {
+  const withCommits = (commitsField: JsonObject): JsonObject =>
+    ep({
+      attempt_history: history("complete", null, 1, "claim_events"),
+      attempts: [att(1, SHA40, { commits: commitsField })],
+      final_sha: SHA40,
+    });
+  rejects(EpisodeSchema, withCommits(commits("recovery", "dispatch_end_autocommitted", null)));
+  parses(EpisodeSchema, withCommits(commits("recovery", "dispatch_end_autocommitted", true)));
+});
+
+test("case 54: identityField rejects a null missing_reason", () => {
+  rejects(
+    ModelIdentitySchema,
+    modelIdentity({ effective: { value: null, provenance: "unknown", missing_reason: null } }),
+  );
+  rejects(
+    ModelIdentitySchema,
+    modelIdentity({ requested: { value: null, provenance: "unknown", missing_reason: null } }),
+  );
+});
+
+test("case 55: FixtureRefSchema.family_id accepts the empty string", () => {
+  parses(FixtureRefSchema, { family_id: "", variant_id: "v" });
+  parses(FixtureRefSchema, { family_id: "fam-390", variant_id: "v1" });
+  rejects(FixtureRefSchema, { family_id: "fam-390", variant_id: "V1" });
 });

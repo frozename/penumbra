@@ -355,6 +355,39 @@ test("case 32: bundle repo_files non-empty map of safe relative paths to strings
   parses(HoldoutBundleSchema, bundle({ repo_files: { "src/a.ts": "export const a = 1;\n" } }));
 });
 
+test("case 56: probe export and file_matches pattern accept the empty string", () => {
+  parses(HiddenAssertionSchema, {
+    id: "c4",
+    kind: "probe",
+    module: "src/a.ts",
+    export: "",
+    input: {},
+    expect: {},
+  });
+  parses(HiddenAssertionSchema, {
+    id: "c5",
+    kind: "file_matches",
+    path: "src/a.ts",
+    pattern: "",
+  });
+});
+
+test("case 57: invariant export accepts the empty string", () => {
+  parses(HiddenAssertionSchema, invariantAssertion({ export: "" }));
+});
+
+test("case 58: bundle accepts assertions with empty export and pattern fields", () => {
+  parses(
+    HoldoutBundleSchema,
+    bundle({
+      assertions: [
+        invariantAssertion({ export: "" }),
+        { id: "c2", kind: "file_matches", path: "src/a.ts", pattern: "" },
+      ],
+    }),
+  );
+});
+
 test("case 50: plan-exact bundle parses; assertion digest sorts by id", () => {
   parses(HoldoutBundleSchema, bundle({ mutants: ["m1"] }));
   rejects(HoldoutBundleSchema, omit(bundle({ mutants: ["m1"] }), "mutants"));

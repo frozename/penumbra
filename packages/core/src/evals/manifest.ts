@@ -424,7 +424,7 @@ export const LineageSchema = z.strictObject({
 });
 
 export const FixtureRefSchema = z.strictObject({
-  family_id: z.string().min(1),
+  family_id: z.string(),
   variant_id: z.string().regex(/^[a-z0-9-]+$/),
 });
 
