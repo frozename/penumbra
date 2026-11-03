@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 
 import { migrate } from "@src/db/migrations.js";
 import { loadSqliteVec } from "@src/db/sqlite-vec.js";
+import type { AgentRankOutput } from "@src/schemas/agent-performance.js";
 import type { AgentDescriptor } from "@src/tasks/eligibility.js";
 import type { FileTaskInput } from "@src/tasks/schema.js";
 import { TaskWriter } from "@src/tasks/writer.js";
@@ -28,6 +29,27 @@ function baseInput(overrides: Partial<FileTaskInput> = {}): FileTaskInput {
     created_by_kind: "human",
     created_by_id: "cli",
     ...overrides,
+  };
+}
+
+function rankCandidate(agent_name: string, score: number): AgentRankOutput["candidates"][number] {
+  return {
+    agent_name,
+    samples: 1,
+    successes: 1,
+    failures: 0,
+    neutral: 0,
+    success_rate: 1,
+    avg_rounds: null,
+    avg_latency_ms: null,
+    avg_exec_ms: null,
+    cost_per_success_usd: null,
+    avg_reviewer_findings: null,
+    avg_trust_score: null,
+    gate_verdict_coverage: 1,
+    gate_pass_rate: 1,
+    score,
+    last_outcome_at: "",
   };
 }
 
@@ -81,38 +103,7 @@ function makeAuctionWriter(db: Database, now: () => number): TaskWriter {
       candidates: {
         task_type: "implement_substantial",
         window: { from: null, to: "" },
-        candidates: [
-          {
-            agent_name: "A",
-            samples: 1,
-            successes: 1,
-            failures: 0,
-            neutral: 0,
-            success_rate: 1,
-            avg_rounds: null,
-            avg_latency_ms: null,
-            cost_per_success_usd: null,
-            avg_reviewer_findings: null,
-            avg_trust_score: null,
-            score: 90,
-            last_outcome_at: "",
-          },
-          {
-            agent_name: "B",
-            samples: 1,
-            successes: 1,
-            failures: 0,
-            neutral: 0,
-            success_rate: 1,
-            avg_rounds: null,
-            avg_latency_ms: null,
-            cost_per_success_usd: null,
-            avg_reviewer_findings: null,
-            avg_trust_score: null,
-            score: 20,
-            last_outcome_at: "",
-          },
-        ],
+        candidates: [rankCandidate("A", 90), rankCandidate("B", 20)],
       },
     }),
   });
