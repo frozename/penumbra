@@ -90,9 +90,9 @@ export const ModelIdentitySchema = z.strictObject({
     "unattested",
     "unknown",
   ]),
-  quant: identityField(["declared", "qualified_artifact", "unknown"]).optional(),
-  engine: identityField(["declared", "qualified_artifact", "unknown"]).optional(),
-  adapter: identityField(["declared", "qualified_artifact", "unknown"]).optional(),
+  quant: identityField(["declared", "qualified_artifact", "unknown"]),
+  engine: identityField(["declared", "qualified_artifact", "unknown"]),
+  adapter: identityField(["declared", "qualified_artifact", "unknown"]),
   config_sha256: Sha256HexSchema.nullable(),
   artifact_identity: z.string().nullable(),
 });
@@ -229,13 +229,13 @@ function isAtOrAfter(lhs: string, rhs: string): boolean {
 export const EnvEvidenceSchema = z
   .strictObject({
     source: EnvEvidenceSourceSchema,
-    ref: z.string().min(1).nullable(),
-    observed_at: IsoTsSchema.nullish(),
-    first_model_turn_at: IsoTsSchema.nullish(),
+    ref: z.string().min(1),
+    observed_at: IsoTsSchema.nullable(),
+    first_model_turn_at: IsoTsSchema.nullable(),
   })
   .superRefine((evidence, ctx) => {
     if (evidence.source !== "worktree_setup_failed") return;
-    if (evidence.observed_at === null || evidence.observed_at === undefined) {
+    if (evidence.observed_at === null) {
       ctx.addIssue({
         code: "custom",
         message: "worktree_setup_failed evidence requires observed_at",
@@ -244,7 +244,6 @@ export const EnvEvidenceSchema = z
     }
     if (
       evidence.first_model_turn_at !== null &&
-      evidence.first_model_turn_at !== undefined &&
       isAtOrAfter(evidence.observed_at, evidence.first_model_turn_at)
     ) {
       ctx.addIssue({
@@ -257,41 +256,26 @@ export const EnvEvidenceSchema = z
 const ModelFailureOutcomeSchema = z.strictObject({
   class: z.literal("model_failure"),
   reason: ModelFailureReasonSchema,
-  missing_reason: z.string().nullish(),
-  expectation_ref: z.string().nullish(),
-  env_evidence: EnvEvidenceSchema.nullish(),
 });
 
 const EnvironmentFailureOutcomeSchema = z.strictObject({
   class: z.literal("environment_failure"),
-  kind: z.enum(["environment", "baseline", "resource", "auth"]).nullable(),
-  missing_reason: z.string().nullish(),
+  kind: z.enum(["environment", "baseline", "resource", "auth"]),
   env_evidence: EnvEvidenceSchema,
-  expectation_ref: z.string().nullish(),
 });
 
 const BlockedCorrectOutcomeSchema = z.strictObject({
   class: z.literal("blocked_correct"),
   expectation_ref: z.string().min(1),
-  missing_reason: z.string().nullish(),
-  reason: z.string().nullish(),
-  env_evidence: EnvEvidenceSchema.nullish(),
 });
 
 const TerminalUnverifiedOutcomeSchema = z.strictObject({
   class: z.literal("terminal_unverified"),
-  missing_reason: z.string().nullish(),
-  reason: z.string().nullish(),
-  expectation_ref: z.string().nullish(),
-  env_evidence: EnvEvidenceSchema.nullish(),
 });
 
 const UnknownOutcomeSchema = z.strictObject({
   class: z.literal("unknown"),
   missing_reason: z.string().min(1),
-  reason: z.string().nullish(),
-  expectation_ref: z.string().nullish(),
-  env_evidence: EnvEvidenceSchema.nullish(),
 });
 
 export const ObservedOutcomeSchema = z.discriminatedUnion("class", [
@@ -353,22 +337,17 @@ export const UsageSchema = z
 
 export const AttemptSchema = z.strictObject({
   n: z.number().int().min(1),
-  handoff_id: z.string().min(1).nullable(),
+  handoff_id: z.string().min(1),
   dispatch_attempt: z.number().int().min(1).nullable(),
   head_sha: GitShaSchema.nullable(),
   commits: AttemptCommitsSchema,
   contract_flags: ContractFlagsSchema,
-  timings: z
-    .strictObject({
-      queue_ms: z.number().int().min(0).nullable(),
-      exec_ms: z.number().int().min(0).nullable(),
-      check_ms: z.number().int().min(0).nullable(),
-      e2e_ms: z.number().int().min(0).nullable(),
-    })
-    .nullable(),
-  started_at: IsoTsSchema.nullish(),
-  first_model_turn_at: IsoTsSchema.nullish(),
-  ended_at: IsoTsSchema.nullish(),
+  timings: z.strictObject({
+    queue_ms: z.number().int().min(0).nullable(),
+    exec_ms: z.number().int().min(0).nullable(),
+    check_ms: z.number().int().min(0).nullable(),
+    e2e_ms: z.number().int().min(0).nullable(),
+  }),
   usage: UsageSchema,
 });
 
@@ -385,7 +364,7 @@ export const AssistanceSchema = z.strictObject({
     "operator_note",
   ]),
   attempt_n: z.number().int().min(1).nullable(),
-  ref: z.string().nullish(),
+  ref: z.string().nullable(),
 });
 
 export const AttemptHistorySchema = z
@@ -498,17 +477,11 @@ export const RecipeComponentSchema = z.discriminatedUnion("status", [
 export const RecipeSchema = z
   .strictObject({
     recipe_id: z.string().min(1),
-    arm: RecipeArmSchema.optional(),
-    arms: z.array(RecipeArmSchema),
-    status: z.literal("ready").optional(),
-    blocked_on: z
-      .string()
-      .regex(/^#\d+$/)
-      .nullable(),
-    components: z.record(z.string(), RecipeComponentSchema).optional(),
+    arm: RecipeArmSchema,
+    components: z.record(z.string(), RecipeComponentSchema),
     limits: z.record(z.string(), z.number().int().min(1)),
-    seed: z.strictObject({ value: z.number().int().nullable(), supported: z.boolean() }).optional(),
-    notes: z.string().nullable(),
+    seed: z.strictObject({ value: z.number().int().nullable(), supported: z.boolean() }),
+    notes: z.string().optional(),
     created_at: z.string().nullable(),
   })
   .superRefine((recipe, ctx) => {

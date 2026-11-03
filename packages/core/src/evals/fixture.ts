@@ -9,8 +9,6 @@ import {
   Sha256HexSchema,
 } from "./manifest.js";
 
-export const SourceRepoSchema = z.string().regex(/^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9_.-]{1,100}$/);
-
 export const IssueRootSchema = z.strictObject({
   kind: z.literal("issue"),
   number: z.number().int().min(1),
@@ -40,23 +38,9 @@ export function familyIdForRoot(root: RootRef): string {
   return `fam-syn-${root.id}`;
 }
 
-interface FixtureRootFields {
-  root: RootRef;
-  reconstructs: RootRef | null;
-}
-
-export function canonicalRoot(fixture: FixtureRootFields): RootRef {
-  return fixture.reconstructs ?? fixture.root;
-}
-
-export function canonicalRootKey(fixture: FixtureRootFields): string {
-  return familyIdForRoot(canonicalRoot(fixture));
-}
-
 export const FixturePublicSchema = z
   .strictObject({
     schema_version: z.literal(1),
-    fixture_id: z.string().min(1).optional(),
     family_id: z.string().min(1),
     variant_id: z.string().regex(/^[a-z0-9-]+$/),
     root: FixtureRootSchema,
@@ -68,7 +52,7 @@ export const FixturePublicSchema = z
     task_digest: Sha256HexSchema,
     source_root_handoff_digests: z.array(Sha256HexSchema),
     expect_blocked: z.boolean(),
-    hidden_ref: z.strictObject({ assertion_set_digest: Sha256HexSchema }).nullable(),
+    hidden_ref: z.strictObject({ assertion_set_digest: Sha256HexSchema }),
     content_digest: Sha256HexSchema,
   })
   .superRefine((fixture, ctx) => {
@@ -129,7 +113,6 @@ const InvariantAssertionSchema = z.strictObject({
   export: z.string().min(1),
   inputs: z.array(z.json()).min(1),
   seed: z.number().int(),
-  expect: z.json().optional(),
 });
 
 export const HiddenAssertionSchema = z.discriminatedUnion("kind", [
@@ -153,39 +136,21 @@ function hasUniqueAssertionIds(assertions: readonly { id: string }[]): boolean {
 export const HoldoutBundleSchema = z
   .strictObject({
     schema_version: z.literal(1),
-    bundle_id: z.string().min(1).optional(),
     family_id: z.string().min(1),
     variant_id: z.string().regex(/^[a-z0-9-]+$/),
-    root: FixtureRootSchema,
-    source_repo: SourceRepoSchema,
-    synthetic: z.boolean(),
-    expect_blocked: z.boolean().optional(),
-    base_sha: GitShaSchema,
-    task_digest: Sha256HexSchema,
-    source_root_handoff_digests: z.array(Sha256HexSchema).optional(),
-    inputs: z.array(z.strictObject({ kind: z.literal("prompt"), text: z.string() })).min(1),
-    assertions: z.array(HiddenAssertionSchema).min(1),
-    patches: z.strictObject({
-      good: z.string().min(1),
-      bad: z.array(z.string().min(1)).min(1),
-    }),
-    mutants: z.array(z.string()).optional(),
     repo_files: z
       .record(RelPathSchema, z.string())
       .refine((files) => Object.keys(files).length >= 1, {
         message: "repo_files must contain at least one entry",
       }),
+    assertions: z.array(HiddenAssertionSchema).min(1),
+    patches: z.strictObject({
+      good: z.string().min(1),
+      bad: z.array(z.string().min(1)).min(1),
+    }),
+    mutants: z.array(z.string()),
   })
   .superRefine((bundle, ctx) => {
-    const report = (message: string): void => {
-      ctx.addIssue({ code: "custom", message });
-    };
-    if (bundle.family_id !== familyIdForRoot(bundle.root)) {
-      report("family_id must equal familyIdForRoot(root)");
-    }
-    if (bundle.synthetic !== (bundle.root.kind === "synthetic")) {
-      report("synthetic must be true exactly when root.kind is synthetic");
-    }
     if (!hasUniqueAssertionIds(bundle.assertions)) {
       ctx.addIssue({ code: "custom", message: "assertion ids must be unique" });
     }
@@ -195,20 +160,15 @@ export type HoldoutBundle = z.infer<typeof HoldoutBundleSchema>;
 
 export const HoldoutLockEntrySchema = z
   .strictObject({
-    schema_version: z.literal(1).optional(),
     family_id: z.string().min(1),
-    variant_id: z
-      .string()
-      .regex(/^[a-z0-9-]+$/)
-      .optional(),
+    variant_id: z.string().regex(/^[a-z0-9-]+$/),
     root: FixtureRootSchema,
-    source_repo: SourceRepoSchema,
     failure_type: FailureTypeSchema.nullable(),
     synthetic: z.boolean(),
     expect_blocked: z.boolean(),
     base_sha: GitShaSchema,
     task_digest: Sha256HexSchema,
-    source_root_handoff_digests: z.array(Sha256HexSchema).optional(),
+    source_root_handoff_digests: z.array(Sha256HexSchema),
     content_digest: Sha256HexSchema,
     assertion_set_digest: Sha256HexSchema,
   })
@@ -227,15 +187,15 @@ export const HoldoutLockEntrySchema = z
 export type HoldoutLockEntry = z.infer<typeof HoldoutLockEntrySchema>;
 
 export const HoldoutLockSchema = z.strictObject({
-  schema_version: z.literal(1).optional(),
+  schema_version: z.literal(1),
   entries: z.array(HoldoutLockEntrySchema),
   digest: Sha256HexSchema,
 });
 
 export type HoldoutLock = z.infer<typeof HoldoutLockSchema>;
 
-export function assertionSetDigest(assertions: readonly { id: string }[]): string {
-  const sorted = [...assertions].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+export function assertionSetDigest(bundle: { assertions: readonly { id: string }[] }): string {
+  const sorted = [...bundle.assertions].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   return digestOf(sorted);
 }
 

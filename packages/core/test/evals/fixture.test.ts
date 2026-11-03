@@ -3,8 +3,6 @@ import { expect, test } from "bun:test";
 import {
   assertionSetDigest,
   bundleContentDigest,
-  canonicalRoot,
-  canonicalRootKey,
   familyIdForRoot,
   FixturePublicSchema,
   FixtureRootSchema,
@@ -43,7 +41,6 @@ function omit(obj: JsonObject, key: string): JsonObject {
 function fx(overrides: JsonObject = {}): JsonObject {
   return {
     schema_version: 1,
-    fixture_id: "fx-390-v1",
     family_id: "fam-390",
     variant_id: "v1",
     root: { kind: "issue", number: 390 },
@@ -53,7 +50,7 @@ function fx(overrides: JsonObject = {}): JsonObject {
     split: "dev",
     source_root_handoff_digests: [],
     expect_blocked: false,
-    hidden_ref: null,
+    hidden_ref: { assertion_set_digest: HEX64_E },
     content_digest: HEX64_C,
     base_sha: SHA40,
     task_digest: HEX64_D,
@@ -63,7 +60,6 @@ function fx(overrides: JsonObject = {}): JsonObject {
 
 function fxSynthetic(overrides: JsonObject = {}): JsonObject {
   return fx({
-    fixture_id: "fx-syn-1",
     family_id: "fam-syn-missed-commit",
     variant_id: "v1",
     root: { kind: "synthetic", id: "missed-commit" },
@@ -90,21 +86,15 @@ function invariantAssertion(overrides: JsonObject = {}): JsonObject {
 function bundle(overrides: JsonObject = {}): JsonObject {
   return {
     schema_version: 1,
-    bundle_id: "hb-390-a",
     family_id: "fam-390",
     variant_id: "a",
-    root: { kind: "issue", number: 390 },
-    source_repo: "frozename/penumbra",
-    synthetic: false,
-    base_sha: SHA40,
-    task_digest: HEX64_D,
-    inputs: [{ kind: "prompt", text: "Fix the bug." }],
+    repo_files: { "src/a.ts": "export const a = 1;\n" },
     assertions: [invariantAssertion()],
     patches: {
       good: "diff --git a/src/a.ts b/src/a.ts\nGOOD\n",
       bad: ["diff --git a/src/b.ts b/src/b.ts\nBAD\n"],
     },
-    repo_files: { "src/a.ts": "export const a = 1;\n" },
+    mutants: [],
     ...overrides,
   };
 }
@@ -112,13 +102,14 @@ function bundle(overrides: JsonObject = {}): JsonObject {
 function lockEntry(overrides: JsonObject = {}): JsonObject {
   return {
     family_id: "fam-390",
+    variant_id: "a",
     root: { kind: "issue", number: 390 },
-    source_repo: "frozename/penumbra",
     failure_type: "lost_evidence",
     synthetic: false,
     expect_blocked: false,
     base_sha: SHA40,
     task_digest: HEX64_D,
+    source_root_handoff_digests: [],
     content_digest: HEX64_E,
     assertion_set_digest: HEX64_F,
     ...overrides,
@@ -126,7 +117,7 @@ function lockEntry(overrides: JsonObject = {}): JsonObject {
 }
 
 function lock(entries: JsonObject[]): JsonObject {
-  return { entries, digest: HEX64_9 };
+  return { schema_version: 1, entries, digest: HEX64_9 };
 }
 
 test("case 17: family_id derives from root; variants keep the root family", () => {
@@ -156,7 +147,7 @@ test("case 18: synthetic flag, reconstructs, failure_type and digest rules", () 
 });
 
 test("case 19: FixturePublic is strict and carries required contract fields", () => {
-  for (const key of ["assertions", "patches", "hidden", "repo_files"]) {
+  for (const key of ["assertions", "patches", "hidden", "repo_files", "fixture_id"]) {
     rejects(FixturePublicSchema, fx({ [key]: [] }));
   }
   rejects(FixturePublicSchema, fx({ base_sha: undefined }));
@@ -165,6 +156,7 @@ test("case 19: FixturePublic is strict and carries required contract fields", ()
     rejects(FixturePublicSchema, omit(fx(), key));
   }
   parses(FixturePublicSchema, fx({ hidden_ref: { assertion_set_digest: HEX64_E } }));
+  rejects(FixturePublicSchema, fx({ hidden_ref: null }));
   rejects(FixturePublicSchema, fx({ hidden_ref: { assertion_set_digest: "xyz" } }));
 });
 
@@ -226,6 +218,7 @@ test("case 20b: HiddenAssertionSchema binds ids to c-format and invariant to a c
   rejects(HiddenAssertionSchema, invariantAssertion({ property: "whatever" }));
   rejects(HiddenAssertionSchema, omit(invariantAssertion(), "module"));
   rejects(HiddenAssertionSchema, invariantAssertion({ inputs: [] }));
+  rejects(HiddenAssertionSchema, invariantAssertion({ expect: { ok: true } }));
 });
 
 test("case 21: holdout lock entries carry digests only, family must match root", () => {
@@ -241,12 +234,22 @@ test("case 21: holdout lock entries carry digests only, family must match root",
 });
 
 test("case 21b: lock entries and the lock digest are required", () => {
-  for (const key of ["base_sha", "task_digest", "assertion_set_digest", "failure_type"]) {
+  for (const key of [
+    "base_sha",
+    "task_digest",
+    "assertion_set_digest",
+    "failure_type",
+    "variant_id",
+    "source_root_handoff_digests",
+  ]) {
     rejects(HoldoutLockEntrySchema, omit(lockEntry(), key));
   }
+  rejects(HoldoutLockEntrySchema, lockEntry({ schema_version: 1 }));
+  rejects(HoldoutLockEntrySchema, lockEntry({ source_repo: "frozename/penumbra" }));
   parses(HoldoutLockEntrySchema, lockEntry({ failure_type: null }));
   rejects(HoldoutLockEntrySchema, lockEntry({ task_digest: "xyz" }));
   rejects(HoldoutLockSchema, omit(lock([lockEntry()]), "digest"));
+  rejects(HoldoutLockSchema, omit(lock([lockEntry()]), "schema_version"));
   rejects(HoldoutLockSchema, { entries: [], digest: "xyz" });
 });
 
@@ -270,10 +273,16 @@ test("case 22: assertionSetDigest order-insensitive; bundleContentDigest content
     kind: "invariant",
     id: "c1",
   };
-  expect(assertionSetDigest([c1, c2])).toBe(assertionSetDigest([c1Reordered, c2]));
-  expect(assertionSetDigest([c1, c2])).toBe(assertionSetDigest([c2, c1]));
+  expect(assertionSetDigest({ assertions: [c1, c2] })).toBe(
+    assertionSetDigest({ assertions: [c1Reordered, c2] }),
+  );
+  expect(assertionSetDigest({ assertions: [c1, c2] })).toBe(
+    assertionSetDigest({ assertions: [c2, c1] }),
+  );
   const c1Seed8 = { ...c1, seed: 8 };
-  expect(assertionSetDigest([c1, c2])).not.toBe(assertionSetDigest([c1Seed8, c2]));
+  expect(assertionSetDigest({ assertions: [c1, c2] })).not.toBe(
+    assertionSetDigest({ assertions: [c1Seed8, c2] }),
+  );
   const b = bundle();
   expect(bundleContentDigest(b)).not.toBe(
     bundleContentDigest(bundle({ patches: { good: "GOOD", bad: ["OTHER"] } })),
@@ -283,28 +292,34 @@ test("case 22: assertionSetDigest order-insensitive; bundleContentDigest content
   );
 });
 
-test("case 26f: bundle schema_version/variant_id are required and family/synthetic must match root", () => {
+test("case 26f: bundle is exactly the plan shape with a required mutants list", () => {
   parses(HoldoutBundleSchema, bundle());
-  rejects(HoldoutBundleSchema, omit(bundle(), "schema_version"));
-  rejects(HoldoutBundleSchema, omit(bundle(), "variant_id"));
-  rejects(HoldoutBundleSchema, bundle({ family_id: "fam-391" }));
-  rejects(HoldoutBundleSchema, bundle({ synthetic: true }));
-  parses(
-    HoldoutBundleSchema,
-    bundle({
-      root: { kind: "synthetic", id: "s01" },
-      family_id: "fam-syn-s01",
-      synthetic: true,
-    }),
-  );
-  rejects(
-    HoldoutBundleSchema,
-    bundle({
-      root: { kind: "synthetic", id: "s01" },
-      family_id: "fam-syn-s01",
-      synthetic: false,
-    }),
-  );
+  for (const key of [
+    "schema_version",
+    "family_id",
+    "variant_id",
+    "repo_files",
+    "assertions",
+    "patches",
+    "mutants",
+  ]) {
+    rejects(HoldoutBundleSchema, omit(bundle(), key));
+  }
+  for (const key of [
+    "root",
+    "source_repo",
+    "synthetic",
+    "base_sha",
+    "task_digest",
+    "bundle_id",
+    "expect_blocked",
+    "source_root_handoff_digests",
+  ]) {
+    rejects(HoldoutBundleSchema, { ...bundle(), [key]: "x" });
+  }
+  rejects(HoldoutBundleSchema, bundle({ mutants: "m1" }));
+  rejects(HoldoutBundleSchema, bundle({ mutants: [1] }));
+  parses(HoldoutBundleSchema, bundle({ mutants: ["m1", "m2"] }));
 });
 
 test("case 31: lock entry expect_blocked is a required strict boolean", () => {
@@ -323,48 +338,12 @@ test("case 32: bundle repo_files non-empty map of safe relative paths to strings
   parses(HoldoutBundleSchema, bundle({ repo_files: { "src/a.ts": "export const a = 1;\n" } }));
 });
 
-test("case 35: source_repo is required owner/repo format and digests differ", () => {
-  rejects(HoldoutBundleSchema, bundle({ source_repo: undefined }));
-  rejects(HoldoutLockEntrySchema, lockEntry({ source_repo: undefined }));
-  for (const repo of ["penumbra", "a/b/c", ""]) {
-    rejects(HoldoutBundleSchema, bundle({ source_repo: repo }));
-    rejects(HoldoutLockEntrySchema, lockEntry({ source_repo: repo }));
-  }
-  for (const repo of ["frozename/penumbra", "frozename/llamactl"]) {
-    parses(HoldoutBundleSchema, bundle({ source_repo: repo }));
-    parses(HoldoutLockEntrySchema, lockEntry({ source_repo: repo }));
-  }
-  expect(bundleContentDigest(bundle({ source_repo: "frozename/penumbra" }))).not.toBe(
-    bundleContentDigest(bundle({ source_repo: "frozename/llamactl" })),
+test("case 35: plan-exact bundle parses; assertion digest sorts by id", () => {
+  parses(HoldoutBundleSchema, bundle({ mutants: ["m1"] }));
+  rejects(HoldoutBundleSchema, omit(bundle({ mutants: ["m1"] }), "mutants"));
+  const c1 = { id: "c1", kind: "file_absent", path: "src/x.ts" };
+  const c2 = { id: "c2", kind: "file_absent", path: "src/y.ts" };
+  expect(assertionSetDigest({ assertions: [c1, c2] })).toBe(
+    assertionSetDigest({ assertions: [c2, c1] }),
   );
-});
-
-test("case 36: canonicalRoot resolves through reconstructs; canonicalRootKey family", () => {
-  expect(
-    canonicalRoot({
-      root: { kind: "synthetic", id: "missed-commit" },
-      reconstructs: { kind: "issue", number: 379 },
-    }),
-  ).toEqual({ kind: "issue", number: 379 });
-  expect(
-    canonicalRoot({
-      root: { kind: "synthetic", id: "missed-commit" },
-      reconstructs: null,
-    }),
-  ).toEqual({ kind: "synthetic", id: "missed-commit" });
-  expect(
-    canonicalRootKey({
-      root: { kind: "synthetic", id: "missed-commit" },
-      reconstructs: { kind: "issue", number: 379 },
-    }),
-  ).toBe("fam-379");
-  expect(canonicalRootKey({ root: { kind: "issue", number: 379 }, reconstructs: null })).toBe(
-    "fam-379",
-  );
-  expect(
-    canonicalRootKey({
-      root: { kind: "synthetic", id: "missed-commit" },
-      reconstructs: null,
-    }),
-  ).toBe("fam-syn-missed-commit");
 });

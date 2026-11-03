@@ -50,10 +50,17 @@ function omit(obj: JsonObject, key: string): JsonObject {
   return rest;
 }
 
+function identityUnknown(): JsonObject {
+  return { value: null, provenance: "unknown", missing_reason: "x" };
+}
+
 function modelIdentity(overrides: JsonObject = {}): JsonObject {
   return {
-    requested: { value: null, provenance: "unknown", missing_reason: "x" },
-    effective: { value: null, provenance: "unknown", missing_reason: "x" },
+    requested: identityUnknown(),
+    effective: identityUnknown(),
+    quant: identityUnknown(),
+    engine: identityUnknown(),
+    adapter: identityUnknown(),
     config_sha256: null,
     artifact_identity: null,
     ...overrides,
@@ -108,10 +115,14 @@ function epControlled(overrides: JsonObject = {}): JsonObject {
   });
 }
 
+function attTimings(): JsonObject {
+  return { queue_ms: null, exec_ms: null, check_ms: null, e2e_ms: null };
+}
+
 function att(n: number, headSha: string | null, overrides: JsonObject = {}): JsonObject {
   return {
     n,
-    handoff_id: null,
+    handoff_id: `h${String(n)}`,
     dispatch_attempt: null,
     head_sha: headSha,
     commits: {
@@ -125,10 +136,7 @@ function att(n: number, headSha: string | null, overrides: JsonObject = {}): Jso
       base_not_ancestor: null,
       identity_mismatch: null,
     },
-    timings: null,
-    started_at: null,
-    first_model_turn_at: null,
-    ended_at: null,
+    timings: attTimings(),
     usage: { tokens: null, cost_usd: null, scope: "unknown", missing_reason: "x" },
     ...overrides,
   };
@@ -150,7 +158,7 @@ function out(overrides: JsonObject = {}): JsonObject {
 function envEvidence(overrides: JsonObject = {}): JsonObject {
   return {
     source: "dispatch_failure_class",
-    ref: null,
+    ref: "evt-1",
     observed_at: "2026-11-01T10:00:00Z",
     first_model_turn_at: null,
     ...overrides,
@@ -214,9 +222,7 @@ test("case 1: ModelIdentity effective accepts unknown provenance, rejects invali
   );
   rejects(
     ModelIdentitySchema,
-    modelIdentity({
-      effective: { value: "x", provenance: "declared", missing_reason: null },
-    }),
+    modelIdentity({ effective: { value: "x", provenance: "declared" } }),
   );
 });
 
@@ -326,11 +332,13 @@ test("case 7: observed_outcome class and expectation_ref rules", () => {
   for (const cls of ["solved_verified", "solved_unverified", "blocked_incorrect"]) {
     rejects(ObservedOutcomeSchema, out({ class: cls }));
   }
-  parses(
-    ObservedOutcomeSchema,
-    out({ class: "model_failure", reason: "incorrect_blocked", missing_reason: null }),
-  );
-  rejects(ObservedOutcomeSchema, out({ class: "blocked_correct", missing_reason: null }));
+  parses(ObservedOutcomeSchema, { class: "model_failure", reason: "incorrect_blocked" });
+  rejects(ObservedOutcomeSchema, {
+    class: "model_failure",
+    reason: "incorrect_blocked",
+    missing_reason: null,
+  });
+  rejects(ObservedOutcomeSchema, { class: "blocked_correct" });
 });
 
 test("case 8: environment_failure requires env_evidence and closed kind", () => {
@@ -367,10 +375,16 @@ test("case 8: environment_failure requires env_evidence and closed kind", () => 
   );
   parses(
     ObservedOutcomeSchema,
-    envFail(envEvidence({ source: "worktree_setup_failed", observed_at: "2026-11-01T10:00:01Z" })),
+    envFail(
+      envEvidence({
+        source: "worktree_setup_failed",
+        observed_at: "2026-11-01T10:00:01Z",
+        first_model_turn_at: null,
+      }),
+    ),
   );
   for (const reason of ["candidate_timeout", "base_not_ancestor", "contract_violation"]) {
-    parses(ObservedOutcomeSchema, out({ class: "model_failure", reason, missing_reason: null }));
+    parses(ObservedOutcomeSchema, { class: "model_failure", reason });
   }
   rejects(ObservedOutcomeSchema, out({ class: "unknown", missing_reason: null }));
 });
@@ -568,15 +582,17 @@ test("case 15: labels reject agent_performance reserved metadata keys", () => {
   }
 });
 
-test("case 16: RecipeSchema arms closed, pending_upstream/limits guards, explicit nulls", () => {
+test("case 16: RecipeSchema arm options and pending_upstream without blocked_on", () => {
   const recipe: JsonObject = {
     recipe_id: "r1",
-    status: "ready",
-    blocked_on: null,
-    notes: null,
-    created_at: null,
-    arms: ["minimal"],
+    arm: "minimal",
+    components: {
+      source: { status: "materialized", sha256: HEX64_1 },
+      docs: { status: "pending_upstream", blocked_on: "#392" },
+    },
     limits: { max_rounds: 2 },
+    seed: { value: null, supported: false },
+    created_at: null,
   };
   parses(RecipeSchema, recipe);
   expect([...RecipeArmSchema.options].sort()).toEqual([
@@ -585,12 +601,29 @@ test("case 16: RecipeSchema arms closed, pending_upstream/limits guards, explici
     "minimal",
     "verified_memory",
   ]);
-  rejects(RecipeSchema, { ...recipe, status: "pending_upstream" });
-  rejects(RecipeSchema, { ...recipe, blocked_on: "392" });
-  rejects(RecipeSchema, { ...recipe, limits: { max_rounds: 0 } });
-  for (const key of ["blocked_on", "notes", "created_at"]) {
-    rejects(RecipeSchema, omit(recipe, key));
+  for (const arm of ["bounded_repair", "capsule", "verified_memory"]) {
+    parses(RecipeSchema, { ...recipe, arm });
   }
+  rejects(RecipeSchema, { ...recipe, arm: "unbounded" });
+  rejects(RecipeSchema, omit(recipe, "arm"));
+  rejects(RecipeSchema, { ...recipe, components: { docs: { status: "pending_upstream" } } });
+  rejects(RecipeSchema, { ...recipe, components: { src: { status: "materialized" } } });
+  rejects(RecipeSchema, {
+    ...recipe,
+    components: { src: { status: "materialized", sha256: "xyz" } },
+  });
+  rejects(RecipeSchema, omit(recipe, "components"));
+  rejects(RecipeSchema, omit(recipe, "limits"));
+  rejects(RecipeSchema, { ...recipe, limits: { max_rounds: 0 } });
+  rejects(RecipeSchema, { ...recipe, limits: { max_rounds: 1.5 } });
+  rejects(RecipeSchema, omit(recipe, "seed"));
+  rejects(RecipeSchema, { ...recipe, seed: { value: 1.5, supported: true } });
+  rejects(RecipeSchema, { ...recipe, seed: { value: null } });
+  rejects(RecipeSchema, { ...recipe, arms: ["minimal"] });
+  rejects(RecipeSchema, { ...recipe, status: "ready" });
+  rejects(RecipeSchema, { ...recipe, blocked_on: "#392" });
+  parses(RecipeSchema, { ...recipe, notes: "hand-tuned" });
+  parses(RecipeSchema, { ...recipe, seed: { value: 7, supported: true } });
 });
 
 test("case 28: fail_reason nondeterministic is a first-class receipt outcome", () => {
@@ -598,10 +631,7 @@ test("case 28: fail_reason nondeterministic is a first-class receipt outcome", (
     ReceiptClaimSchema,
     signReceipt({ ...hiddenReceiptBody(), fail_reason: "nondeterministic" }),
   );
-  parses(
-    ObservedOutcomeSchema,
-    out({ class: "model_failure", reason: "nondeterministic", missing_reason: null }),
-  );
+  parses(ObservedOutcomeSchema, { class: "model_failure", reason: "nondeterministic" });
   rejects(
     ReceiptClaimSchema,
     signJsonObject({ ...hiddenReceiptBody(), fail_reason: "sideloaded_failure" }),
@@ -661,11 +691,7 @@ test("case 29: final_sha must be explained by last attempt head or human_takeove
 });
 
 test("case 30: blocked_correct requires expectation_ref and a fixture_ref", () => {
-  const blocked = out({
-    class: "blocked_correct",
-    missing_reason: null,
-    expectation_ref: "exp-1",
-  });
+  const blocked: JsonObject = { class: "blocked_correct", expectation_ref: "exp-1" };
   rejects(EpisodeSchema, ep({ observed_outcome: blocked }));
   parses(EpisodeSchema, epControlled({ observed_outcome: blocked }));
 });
@@ -791,15 +817,23 @@ test("case 40: identity null/value and provenance stay coupled", () => {
 
 test("case 41: EnvEvidenceSchema requires ref and observed_at for worktree setup", () => {
   parses(EnvEvidenceSchema, envEvidence());
-  parses(EnvEvidenceSchema, envEvidence({ ref: "evt-1" }));
-  parses(EnvEvidenceSchema, { source: "dispatch_failure_class", ref: null });
+  parses(EnvEvidenceSchema, {
+    source: "dispatch_failure_class",
+    ref: "evt-2",
+    observed_at: null,
+    first_model_turn_at: null,
+  });
   rejects(EnvEvidenceSchema, omit(envEvidence(), "ref"));
+  rejects(EnvEvidenceSchema, envEvidence({ ref: null }));
   rejects(EnvEvidenceSchema, envEvidence({ ref: "" }));
-  rejects(EnvEvidenceSchema, { source: "worktree_setup_failed", ref: null });
+  rejects(EnvEvidenceSchema, omit(envEvidence(), "observed_at"));
+  rejects(EnvEvidenceSchema, omit(envEvidence(), "first_model_turn_at"));
+  rejects(EnvEvidenceSchema, { source: "worktree_setup_failed", ref: "evt-1" });
   rejects(EnvEvidenceSchema, {
     source: "worktree_setup_failed",
-    ref: null,
+    ref: "evt-1",
     observed_at: null,
+    first_model_turn_at: null,
   });
   rejects(EnvEvidenceSchema, envEvidence({ source: "sideloaded" }));
 });
@@ -807,25 +841,25 @@ test("case 41: EnvEvidenceSchema requires ref and observed_at for worktree setup
 test("case 42: worktree ordering compares instants across offsets and fractions", () => {
   parses(EnvEvidenceSchema, {
     source: "worktree_setup_failed",
-    ref: null,
+    ref: "evt-1",
     observed_at: "2026-11-01T10:00:05+02:00",
     first_model_turn_at: "2026-11-01T09:00:00Z",
   });
   rejects(EnvEvidenceSchema, {
     source: "worktree_setup_failed",
-    ref: null,
+    ref: "evt-1",
     observed_at: "2026-11-01T10:00:05+02:00",
     first_model_turn_at: "2026-11-01T07:30:00Z",
   });
   parses(EnvEvidenceSchema, {
     source: "worktree_setup_failed",
-    ref: null,
+    ref: "evt-1",
     observed_at: "2026-11-01T10:00:05.400Z",
     first_model_turn_at: "2026-11-01T10:00:05.500Z",
   });
   rejects(EnvEvidenceSchema, {
     source: "worktree_setup_failed",
-    ref: null,
+    ref: "evt-1",
     observed_at: "2026-11-01T10:00:05.500Z",
     first_model_turn_at: "2026-11-01T10:00:05.400Z",
   });
@@ -839,17 +873,19 @@ test("case 43: IsoTsSchema accepts Z, offset and fractional seconds", () => {
   rejects(IsoTsSchema, "2026-11-01 10:00:00Z");
 });
 
-test("case 44: Attempt requires explicit null handoff_id and timings", () => {
+test("case 44: Attempt requires a handoff_id string and a required timings object", () => {
   parses(AttemptSchema, att(1, SHA40));
   rejects(AttemptSchema, omit(att(1, SHA40), "handoff_id"));
-  rejects(AttemptSchema, omit(att(1, SHA40), "timings"));
   rejects(AttemptSchema, att(1, SHA40, { handoff_id: "" }));
+  rejects(AttemptSchema, omit(att(1, SHA40), "timings"));
+  rejects(AttemptSchema, att(1, SHA40, { timings: omit(attTimings(), "e2e_ms") }));
 });
 
 test("case 45: Assistance requires explicit null attempt_n", () => {
   parses(AssistanceSchema, { kind: "teacher", attempt_n: null, ref: null });
   parses(AssistanceSchema, { kind: "human_takeover", attempt_n: 2, ref: SHA40 });
   rejects(AssistanceSchema, { kind: "teacher", ref: null });
+  rejects(AssistanceSchema, { kind: "teacher", attempt_n: null });
   rejects(AssistanceSchema, { kind: "teacher", attempt_n: 0, ref: null });
   rejects(AssistanceSchema, { kind: "coaching", attempt_n: null, ref: null });
 });
@@ -868,4 +904,44 @@ test("case 46: partial attempt_history is pinned to the handoff_counter basis", 
       final_sha: SHA40,
     }),
   );
+});
+
+test("case 47: ObservedOutcome variants are exactly the plan shape", () => {
+  parses(ObservedOutcomeSchema, { class: "model_failure", reason: "hidden_failed" });
+  parses(ObservedOutcomeSchema, {
+    class: "environment_failure",
+    kind: "environment",
+    env_evidence: envEvidence(),
+  });
+  parses(ObservedOutcomeSchema, { class: "blocked_correct", expectation_ref: "exp-1" });
+  parses(ObservedOutcomeSchema, { class: "terminal_unverified" });
+  parses(ObservedOutcomeSchema, { class: "unknown", missing_reason: "no_terminal_signal" });
+  rejects(ObservedOutcomeSchema, { class: "terminal_unverified", reason: "x" });
+  rejects(ObservedOutcomeSchema, {
+    class: "environment_failure",
+    kind: null,
+    env_evidence: envEvidence(),
+  });
+  rejects(ObservedOutcomeSchema, { class: "environment_failure", env_evidence: envEvidence() });
+  rejects(ObservedOutcomeSchema, { class: "environment_failure", kind: "environment" });
+  rejects(ObservedOutcomeSchema, { class: "unknown" });
+  rejects(ObservedOutcomeSchema, { class: "blocked_correct", expectation_ref: "" });
+  rejects(ObservedOutcomeSchema, { class: "model_failure" });
+});
+
+test("case 48: Attempt carries no timing timestamps and a required timings object", () => {
+  parses(AttemptSchema, att(1, SHA40));
+  rejects(AttemptSchema, att(1, SHA40, { handoff_id: null }));
+  rejects(AttemptSchema, att(1, SHA40, { started_at: null }));
+  rejects(AttemptSchema, att(1, SHA40, { first_model_turn_at: null }));
+  rejects(AttemptSchema, att(1, SHA40, { ended_at: null }));
+  rejects(AttemptSchema, att(1, SHA40, { timings: null }));
+  rejects(AttemptSchema, att(1, SHA40, { timings: { ...attTimings(), extra_ms: 1 } }));
+});
+
+test("case 49: ModelIdentity quant/engine/adapter are required", () => {
+  parses(ModelIdentitySchema, modelIdentity());
+  for (const key of ["quant", "engine", "adapter"]) {
+    rejects(ModelIdentitySchema, omit(modelIdentity(), key));
+  }
 });
