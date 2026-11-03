@@ -45,6 +45,12 @@ interface SeededDraft {
   draftBody: string;
 }
 
+interface NoteConflictBody {
+  error: string;
+  note_path: string;
+  note_mtime: string;
+}
+
 function startHarness(): Harness {
   const db = new Database(":memory:");
   loadSqliteVec(db);
@@ -193,7 +199,7 @@ test("POST /session-notes/approve refuses to overwrite an existing note without 
     });
 
     expect(res.status).toBe(409);
-    const body = await res.json();
+    const body = (await res.json()) as NoteConflictBody;
     expect(body).toMatchObject({
       error: "note_exists",
       note_path: seeded.note_path,
