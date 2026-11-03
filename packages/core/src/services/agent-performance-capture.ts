@@ -26,6 +26,7 @@ import {
 } from "../schemas/agent-performance.js";
 import { attemptOfMetadata } from "../writers/agent-performance-merge.js";
 import { AgentPerformanceWriter } from "../writers/agent-performance.js";
+import { dispatchEndEvidence, dispatchEvidence } from "./agent-performance-dispatch-evidence.js";
 import {
   CURRENT_ATTEMPT_EVENT_BOUND_SQL,
   currentAttempt,
@@ -248,6 +249,7 @@ export function captureAgentPerformanceFromReconciler(opts: {
   const latency = computeLatencyMs(handoff.ts, handoff.resolved_at, nowIso);
   const parsedDispatchEndMeta = getParsedDispatchEndMeta(opts.db, input.handoff_id);
   const parsedAcpSessionMeta = getParsedAcpSessionMeta(opts.db, input.handoff_id);
+  const evidence = dispatchEndEvidence(parsedDispatchEndMeta);
   const metadata: Record<string, unknown> = {};
   if (input.result.pr_url) metadata.pr_url = input.result.pr_url;
   if (input.result.timed_out !== undefined) metadata.timed_out = input.result.timed_out;
@@ -289,9 +291,10 @@ export function captureAgentPerformanceFromReconciler(opts: {
     gate_outcome: lookupLatestLaneGateOutcome(opts.db, input.handoff_id),
     notes: input.result.regression_summary ?? null,
     ...reconcilerFailureClassification(input.result),
+    ...evidence.columns,
     metadata_json: JSON.stringify(metadata),
   };
-  const extras: Record<string, unknown> = {};
+  const extras: Record<string, unknown> = { ...evidence.extras };
   if (input.result.regression_summary) extras.regression_summary = input.result.regression_summary;
   return persistCaptureRow(opts.db, row, { input, handoff, extras, nonAuthoritative });
 }
@@ -708,6 +711,11 @@ export function captureAgentPerformanceFromDispatch(opts: {
     input,
     handoff,
   );
+  const evidence = dispatchEvidence(input.worktree_changed, parsedDispatchEndMeta, {
+    attested: responseSummary !== null,
+    chainResponses: responses.length,
+    nonEmpty: hasNonEmptyResponse,
+  });
 
   const reliabilityResponses: AgentResponseEvent[] = responseSummary?.hasMeaningfulOutput
     ? [{ text: "output", ts: nowIso, agent: handoff.to_agent, handoff_id: input.handoff_id }]
@@ -782,8 +790,9 @@ export function captureAgentPerformanceFromDispatch(opts: {
     reliability_status: reliabilityReport.status,
     ...dispatchFailureClassification(signals.classifier_declined, quotaExhausted, contextOverflow),
     maestro_takeover_required: maestroTakeover,
+    ...evidence.columns,
     metadata_json: JSON.stringify(metadata),
   };
-  const extras = workerHeadExtras(parsedDispatchEndMeta);
+  const extras = { ...workerHeadExtras(parsedDispatchEndMeta), ...evidence.extras };
   return persistCaptureRow(opts.db, row, { input, handoff, extras });
 }

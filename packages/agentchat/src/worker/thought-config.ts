@@ -5,6 +5,8 @@ import type { AgentChatConfig } from "../config/types.js";
 export interface RuntimeThoughtCaptureConfig {
   maxTextBytes: number;
   maxStreamBytes: number;
+  // #297: optional so hand-built configs keep today's no-time-based-flush behavior.
+  coalesceMs?: number;
   adapters: Record<string, boolean>;
   perAgentOverrides: Record<string, boolean>;
 }
@@ -49,6 +51,7 @@ export function loadThoughtsConfig(input: { agentchat: AgentChatConfig }): Runti
   const capture: RuntimeThoughtCaptureConfig = {
     maxTextBytes: t.capture?.max_text_bytes ?? 16384,
     maxStreamBytes: t.capture?.max_stream_bytes ?? 1048576,
+    coalesceMs: t.capture?.coalesce_ms ?? 1000,
     adapters: { ...(t.capture?.adapters ?? {}) },
     perAgentOverrides: { ...(t.capture?.per_agent_overrides ?? {}) },
   };
