@@ -510,6 +510,23 @@ describe("ThoughtCapture coalesce_ms (#297)", () => {
     expect(metaOf(enqueued[2]!).chunk_count).toBe(2);
   });
 
+  it("flushes when elapsed time equals coalesce_ms exactly, splitting the row at chunk 3", () => {
+    const { cap, enqueued, tsOf } = makeCoalescingCapture(16384, 3000);
+    appendChunks(
+      cap,
+      Array.from({ length: 7 }, (_, i) => ` t${String(i)}`),
+    );
+    expect(thoughtTexts(enqueued)).toEqual([" t0 t1 t2 t3"]);
+    expect(enqueued.map((e) => e.ts)).toEqual([tsOf(0)]);
+    expect(enqueued.map((e) => metaOf(e).chunk_count)).toEqual([4]);
+    expect(enqueued.map((e) => metaOf(e).sequence_n)).toEqual([0]);
+    cap.flush("h-1");
+    expect(thoughtTexts(enqueued)).toEqual([" t0 t1 t2 t3", " t4 t5 t6"]);
+    expect(enqueued[1]!.ts).toBe(tsOf(4));
+    expect(metaOf(enqueued[1]!).chunk_count).toBe(3);
+    expect(metaOf(enqueued[1]!).sequence_n).toBe(1);
+  });
+
   it("coalesce_ms 0 writes one row per chunk, as streamed", () => {
     const { cap, enqueued, tsOf } = makeCoalescingCapture(16384, 0);
     appendChunks(cap, ["Let", "'s", " start", " now"]);
