@@ -7,6 +7,7 @@ import {
   ORPHAN_SWEEPER_REASON_PREFIX,
   type Services,
   SettingsDefaults,
+  type TaskClass,
 } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
@@ -67,7 +68,7 @@ function openLane(
   db: Database,
   lane_id: string,
   implementer_handoff: string,
-  task_class = "STANDARD",
+  task_class: TaskClass = "STANDARD",
 ): void {
   insertLane(db, {
     lane_id,
@@ -485,7 +486,7 @@ test("default grace keeps three-hour BOUNDARY and STANDARD lanes open but closes
   const db = setupDb();
   const sink: unknown[] = [];
   const services = makeServices(db, sink);
-  for (const taskClass of ["BOUNDARY", "STANDARD", "TRIVIAL"]) {
+  for (const taskClass of ["BOUNDARY", "STANDARD", "TRIVIAL"] as const) {
     insertHandoff(db, taskClass, "completed", "2026-01-01T09:00:00.000Z");
     openLane(db, `lane-${taskClass}`, taskClass, taskClass);
   }
@@ -526,7 +527,7 @@ test("production sweeper maps both env settings to class grace options", async (
     },
     input: {},
   });
-  for (const taskClass of ["BOUNDARY", "STANDARD", "TRIVIAL"]) {
+  for (const taskClass of ["BOUNDARY", "STANDARD", "TRIVIAL"] as const) {
     insertHandoff(db, taskClass, "completed", "2026-01-01T09:00:00.000Z");
     openLane(db, `production-${taskClass}`, taskClass, taskClass);
   }
@@ -554,7 +555,7 @@ for (const [trivialGraceMs, nonTrivialGraceMs, expected] of [
 ] as const) {
   test(`explicit class grace takes precedence over graceMs alias: ${String(trivialGraceMs)}/${String(nonTrivialGraceMs)}`, () => {
     const db = setupDb();
-    for (const taskClass of ["BOUNDARY", "STANDARD", "TRIVIAL"]) {
+    for (const taskClass of ["BOUNDARY", "STANDARD", "TRIVIAL"] as const) {
       insertHandoff(db, taskClass, "completed", "2026-01-01T09:00:00.000Z");
       openLane(db, `alias-${taskClass}`, taskClass, taskClass);
     }

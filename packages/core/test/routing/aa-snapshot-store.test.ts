@@ -135,7 +135,7 @@ describe("Artificial Analysis snapshot store", () => {
       });
       await store.write(snapshot("old"));
 
-      const refresh = store.refresh(() => snapshot("new"));
+      const refresh = store.refresh(() => Promise.resolve(snapshot("new")));
       const reads = await Promise.all(
         Array.from({ length: 50 }, async () => {
           try {

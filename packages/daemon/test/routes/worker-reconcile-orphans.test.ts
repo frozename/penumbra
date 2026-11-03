@@ -6,7 +6,6 @@ import {
   type Services,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { registerWorkerForTest } from "@penumbra/daemon/test-utils";
 import { Database } from "bun:sqlite";
 import { expect, spyOn, test } from "bun:test";
 
@@ -32,6 +31,40 @@ interface RecoveryResult {
   _exhaustedRows: HandoffRow[];
 }
 
+interface RegisterWorkerForTestArgs {
+  baseUrl: string;
+  sharedBearer: string;
+  worker_id: string;
+  metadata?: Record<string, unknown>;
+  fetcher?: typeof fetch;
+}
+
+interface RegisterWorkerForTestResult {
+  worker_token: string;
+  worker_id: string;
+}
+
+async function registerWorkerForTest(
+  args: RegisterWorkerForTestArgs,
+): Promise<RegisterWorkerForTestResult> {
+  const fetcher = args.fetcher ?? fetch;
+  const res = await fetcher(`${args.baseUrl}/worker/register`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${args.sharedBearer}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ worker_id: args.worker_id, metadata: args.metadata }),
+  });
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => null);
+    throw new Error(
+      `registerWorkerForTest: HTTP ${String(res.status)}: ${JSON.stringify(errorBody)}`,
+    );
+  }
+  return (await res.json()) as RegisterWorkerForTestResult;
+}
+
 interface ErrorBody {
   error: { code?: string; field_errors?: unknown };
 }
@@ -48,11 +81,12 @@ async function readJson<T>(res: Response): Promise<T> {
 }
 
 // Test mocks expose only the subset of OrphanHandoffRecoveryService that the route invokes.
-// Centralizing the cast keeps the production type intact while satisfying the route signature.
-function asRecoveryService(
-  mock: Pick<OrphanHandoffRecoveryService, "runOnce">,
-): OrphanHandoffRecoveryService {
-  return mock as unknown as OrphanHandoffRecoveryService;
+// Extending the real class satisfies the full interface without forbidden casts.
+class OrphanRecoveryServiceMock extends OrphanHandoffRecoveryService {
+  constructor(services: Services, runOnceOverride: OrphanHandoffRecoveryService["runOnce"]) {
+    super(services);
+    this.runOnce = runOnceOverride;
+  }
 }
 
 function tempServices(): Services {
@@ -79,16 +113,21 @@ function makeFetcher(handler: (req: Request) => Promise<Response>): typeof fetch
 }
 
 // Placeholder recovery service used purely for routes that should never reach it (auth-rejected paths).
-// A never-invoked placeholder may use one documented `{} as unknown as T` per the helper rule.
-const PLACEHOLDER_RECOVERY = {} as unknown as OrphanHandoffRecoveryService;
+// Created lazily per-test so we have access to services.
+function createPlaceholderRecovery(services: Services): OrphanHandoffRecoveryService {
+  return new OrphanRecoveryServiceMock(services, (): never => {
+    throw new Error("unreachable: placeholder recovery service");
+  });
+}
 
 test("POST /worker/reconcile-orphans requires worker_id", async () => {
   const services = tempServices();
+  const mockRecovery = createPlaceholderRecovery(services);
   const req = new Request("http://x/worker/reconcile-orphans", {
     method: "POST",
     body: JSON.stringify({}),
   });
-  const res = await workerReconcileOrphansRoute(req, services, PLACEHOLDER_RECOVERY);
+  const res = await workerReconcileOrphansRoute(req, services, mockRecovery);
   expect(res.status).toBe(400);
   const body = await readJson<ErrorBody>(res);
   expect(body.error.code).toBe("validation_error");
@@ -96,10 +135,11 @@ test("POST /worker/reconcile-orphans requires worker_id", async () => {
 
 test("POST /worker/reconcile-orphans returns 400 invalid_json on missing body", async () => {
   const services = tempServices();
+  const mockRecovery = createPlaceholderRecovery(services);
   const req = new Request("http://x/worker/reconcile-orphans", {
     method: "POST",
   });
-  const res = await workerReconcileOrphansRoute(req, services, PLACEHOLDER_RECOVERY);
+  const res = await workerReconcileOrphansRoute(req, services, mockRecovery);
   expect(res.status).toBe(400);
   const body = await readJson<ErrorBody>(res);
   expect(body.error.code).toBe("invalid_json");
@@ -107,11 +147,12 @@ test("POST /worker/reconcile-orphans returns 400 invalid_json on missing body", 
 
 test("POST /worker/reconcile-orphans returns 400 validation_error on malformed body (wrong types)", async () => {
   const services = tempServices();
+  const mockRecovery = createPlaceholderRecovery(services);
   const req = new Request("http://x/worker/reconcile-orphans", {
     method: "POST",
     body: JSON.stringify({ worker_id: 123 }), // should be string
   });
-  const res = await workerReconcileOrphansRoute(req, services, PLACEHOLDER_RECOVERY);
+  const res = await workerReconcileOrphansRoute(req, services, mockRecovery);
   expect(res.status).toBe(400);
   const body = await readJson<ErrorBody>(res);
   expect(body.error.code).toBe("validation_error");
@@ -121,11 +162,12 @@ test("POST /worker/reconcile-orphans returns 400 validation_error on malformed b
 test("POST /worker/reconcile-orphans returns 500 recovery_failed on runOnce error", async () => {
   const services = tempServices();
   const token = "secret-token";
-  const mockRecovery = asRecoveryService({
-    runOnce: (_workerId?: string, _opts?: { workerKnownDead?: boolean }) => {
+  const mockRecovery = new OrphanRecoveryServiceMock(
+    services,
+    (_workerId?: string, _opts?: { workerKnownDead?: boolean }) => {
       throw new Error("database crash");
     },
-  });
+  );
   const fetchHandler = createDaemonFetchHandler({
     services,
     token,
@@ -157,8 +199,9 @@ test("POST /worker/reconcile-orphans passes worker_id to runOnce", async () => {
 
   let passedWorkerId: string | undefined;
   let passedOptions: { workerKnownDead?: boolean } | undefined;
-  const mockRecovery = asRecoveryService({
-    runOnce: (workerId?: string, opts?: { workerKnownDead?: boolean }): RecoveryResult => {
+  const mockRecovery = new OrphanRecoveryServiceMock(
+    services,
+    (workerId?: string, opts?: { workerKnownDead?: boolean }): RecoveryResult => {
       passedWorkerId = workerId;
       passedOptions = opts;
       return {
@@ -170,7 +213,7 @@ test("POST /worker/reconcile-orphans passes worker_id to runOnce", async () => {
         _exhaustedRows: [],
       };
     },
-  });
+  );
 
   const fetchHandler = createDaemonFetchHandler({
     services,
@@ -208,8 +251,9 @@ test("POST /worker/reconcile-orphans forwards claimed_before to runOnce", async 
   const token = "secret-token";
 
   let passedOptions: { workerKnownDead?: boolean; claimedBefore?: string } | undefined;
-  const mockRecovery = asRecoveryService({
-    runOnce: (
+  const mockRecovery = new OrphanRecoveryServiceMock(
+    services,
+    (
       _workerId?: string,
       opts?: { workerKnownDead?: boolean; claimedBefore?: string },
     ): RecoveryResult => {
@@ -223,7 +267,7 @@ test("POST /worker/reconcile-orphans forwards claimed_before to runOnce", async 
         _exhaustedRows: [],
       };
     },
-  });
+  );
 
   const fetchHandler = createDaemonFetchHandler({
     services,
@@ -255,8 +299,9 @@ test("POST /worker/reconcile-orphans without claimed_before leaves opts unchange
   const token = "secret-token";
 
   let passedOptions: { workerKnownDead?: boolean; claimedBefore?: string } | undefined;
-  const mockRecovery = asRecoveryService({
-    runOnce: (
+  const mockRecovery = new OrphanRecoveryServiceMock(
+    services,
+    (
       _workerId?: string,
       opts?: { workerKnownDead?: boolean; claimedBefore?: string },
     ): RecoveryResult => {
@@ -270,7 +315,7 @@ test("POST /worker/reconcile-orphans without claimed_before leaves opts unchange
         _exhaustedRows: [],
       };
     },
-  });
+  );
 
   const fetchHandler = createDaemonFetchHandler({
     services,
@@ -306,18 +351,16 @@ test.each([
     const services = tempServices();
     const token = "secret-token";
     let called = false;
-    const mockRecovery = asRecoveryService({
-      runOnce: (): RecoveryResult => {
-        called = true;
-        return {
-          requeued: 0,
-          exhausted: 0,
-          requeuedRowIds: [],
-          exhaustedRowIds: [],
-          _requeuedRows: [],
-          _exhaustedRows: [],
-        };
-      },
+    const mockRecovery = new OrphanRecoveryServiceMock(services, (): RecoveryResult => {
+      called = true;
+      return {
+        requeued: 0,
+        exhausted: 0,
+        requeuedRowIds: [],
+        exhaustedRowIds: [],
+        _requeuedRows: [],
+        _exhaustedRows: [],
+      };
     });
     const fetchHandler = createDaemonFetchHandler({
       services,
@@ -350,18 +393,16 @@ test("POST /worker/reconcile-orphans rejects unknown body keys with 400 (fail cl
   const services = tempServices();
   const token = "secret-token";
   let called = false;
-  const mockRecovery = asRecoveryService({
-    runOnce: (): RecoveryResult => {
-      called = true;
-      return {
-        requeued: 0,
-        exhausted: 0,
-        requeuedRowIds: [],
-        exhaustedRowIds: [],
-        _requeuedRows: [],
-        _exhaustedRows: [],
-      };
-    },
+  const mockRecovery = new OrphanRecoveryServiceMock(services, (): RecoveryResult => {
+    called = true;
+    return {
+      requeued: 0,
+      exhausted: 0,
+      requeuedRowIds: [],
+      exhaustedRowIds: [],
+      _requeuedRows: [],
+      _exhaustedRows: [],
+    };
   });
   const fetchHandler = createDaemonFetchHandler({
     services,
@@ -431,8 +472,9 @@ test("POST /worker/reconcile-orphans auth boundary and service-unavailable", asy
   expect(await res503.json()).toEqual({ error: { code: "recovery_service_unavailable" } });
 
   // 4. Shared bearer + recovery service -> 403 (route runs, principal check fires)
-  const mockRecovery = asRecoveryService({
-    runOnce: (_workerId?: string, _opts?: { workerKnownDead?: boolean }): RecoveryResult => ({
+  const mockRecovery = new OrphanRecoveryServiceMock(
+    services,
+    (_workerId?: string, _opts?: { workerKnownDead?: boolean }): RecoveryResult => ({
       requeued: 1,
       exhausted: 0,
       requeuedRowIds: ["1"],
@@ -440,7 +482,7 @@ test("POST /worker/reconcile-orphans auth boundary and service-unavailable", asy
       _requeuedRows: [],
       _exhaustedRows: [],
     }),
-  });
+  );
   const fetchHandlerWithRecovery = createDaemonFetchHandler({
     services,
     token,
@@ -480,8 +522,7 @@ test("POST /worker/reconcile-orphans auth boundary and service-unavailable", asy
 });
 
 test("POST /worker/reconcile-orphans resolves recovery attached to services after handler creation", async () => {
-  const services: Services & { orphanHandoffRecovery?: OrphanHandoffRecoveryService } =
-    tempServices();
+  const services = tempServices();
   const handler = createDaemonFetchHandler({ services, token: "test-token" });
   try {
     const { worker_token } = await registerWorkerForTest({
@@ -516,8 +557,9 @@ test("POST /worker/reconcile-orphans resolves recovery attached to services afte
 test("POST /worker/reconcile-orphans with shared bearer returns 403 worker_token_required", async () => {
   const services = tempServices();
   const token = "secret-token";
-  const mockRecovery = asRecoveryService({
-    runOnce: (_workerId?: string, _opts?: { workerKnownDead?: boolean }): RecoveryResult => ({
+  const mockRecovery = new OrphanRecoveryServiceMock(
+    services,
+    (_workerId?: string, _opts?: { workerKnownDead?: boolean }): RecoveryResult => ({
       requeued: 0,
       exhausted: 0,
       requeuedRowIds: [],
@@ -525,7 +567,7 @@ test("POST /worker/reconcile-orphans with shared bearer returns 403 worker_token
       _requeuedRows: [],
       _exhaustedRows: [],
     }),
-  });
+  );
   const fetchHandler = createDaemonFetchHandler({
     services,
     token,
@@ -547,8 +589,9 @@ test("POST /worker/reconcile-orphans with shared bearer returns 403 worker_token
 test("POST /worker/reconcile-orphans with worker token + mismatched body worker_id returns 403 worker_id_mismatch", async () => {
   const services = tempServices();
   const token = "secret-token";
-  const mockRecovery = asRecoveryService({
-    runOnce: (_workerId?: string, _opts?: { workerKnownDead?: boolean }): RecoveryResult => ({
+  const mockRecovery = new OrphanRecoveryServiceMock(
+    services,
+    (_workerId?: string, _opts?: { workerKnownDead?: boolean }): RecoveryResult => ({
       requeued: 0,
       exhausted: 0,
       requeuedRowIds: [],
@@ -556,7 +599,7 @@ test("POST /worker/reconcile-orphans with worker token + mismatched body worker_
       _requeuedRows: [],
       _exhaustedRows: [],
     }),
-  });
+  );
   const fetchHandler = createDaemonFetchHandler({
     services,
     token,
@@ -587,8 +630,9 @@ test("POST /worker/reconcile-orphans with worker token + matching body worker_id
   const token = "secret-token";
 
   let calledWith: string | undefined;
-  const mockRecovery = asRecoveryService({
-    runOnce: (workerId?: string, _opts?: { workerKnownDead?: boolean }): RecoveryResult => {
+  const mockRecovery = new OrphanRecoveryServiceMock(
+    services,
+    (workerId?: string, _opts?: { workerKnownDead?: boolean }): RecoveryResult => {
       calledWith = workerId;
       return {
         requeued: 2,
@@ -599,7 +643,7 @@ test("POST /worker/reconcile-orphans with worker token + matching body worker_id
         _exhaustedRows: [],
       };
     },
-  });
+  );
   const fetchHandler = createDaemonFetchHandler({
     services,
     token,
@@ -688,8 +732,9 @@ test("POST /worker/reconcile-orphans releases the caller's drain holds claimed b
   const fetchHandler = createDaemonFetchHandler({
     services,
     token,
-    orphanHandoffRecovery: asRecoveryService({
-      runOnce: (): RecoveryResult => ({
+    orphanHandoffRecovery: new OrphanRecoveryServiceMock(
+      services,
+      (): RecoveryResult => ({
         requeued: 0,
         exhausted: 0,
         requeuedRowIds: [],
@@ -697,7 +742,7 @@ test("POST /worker/reconcile-orphans releases the caller's drain holds claimed b
         _requeuedRows: [],
         _exhaustedRows: [],
       }),
-    }),
+    ),
   });
   // Both workers heartbeat, so only a reconcile can release their holds early.
   const { worker_token } = await registerWorkerForTest({
@@ -779,8 +824,9 @@ test("POST /worker/reconcile-orphans keeps its recovery result when the drain-ho
   const fetchHandler = createDaemonFetchHandler({
     services,
     token,
-    orphanHandoffRecovery: asRecoveryService({
-      runOnce: (): RecoveryResult => ({
+    orphanHandoffRecovery: new OrphanRecoveryServiceMock(
+      services,
+      (): RecoveryResult => ({
         requeued: 1,
         exhausted: 0,
         requeuedRowIds: ["h-orphan"],
@@ -788,7 +834,7 @@ test("POST /worker/reconcile-orphans keeps its recovery result when the drain-ho
         _requeuedRows: [],
         _exhaustedRows: [],
       }),
-    }),
+    ),
   });
   const { worker_token } = await registerWorkerForTest({
     baseUrl: "http://x",

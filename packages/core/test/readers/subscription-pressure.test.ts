@@ -408,7 +408,7 @@ describe("readSubscriptionPressure", () => {
 
     const out = readSubscriptionPressure(db, { provider: "anthropic-claude" });
     expect(out.snapshots).toHaveLength(1);
-    expect(out.snapshots[0].provider).toBe("anthropic-claude");
+    expect(out.snapshots[0]?.provider).toBe("anthropic-claude");
   });
 
   it("adds a stale_snapshot warning when the snapshot is older than the threshold", () => {

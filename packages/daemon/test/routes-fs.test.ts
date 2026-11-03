@@ -127,7 +127,7 @@ describe("worktrees fs routes", () => {
     expect(res.status).toBe(200);
     const body = await jsonBody<GrepBody>(res);
     expect(body.results.length).toBe(1);
-    expect(body.results[0].text).toBe("TODO");
+    expect(body.results[0]!.text).toBe("TODO");
   });
 
   it("grep: returns 404 when handoff is unknown", async () => {

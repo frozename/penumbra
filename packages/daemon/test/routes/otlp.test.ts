@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 import { otlpLogsRoute, otlpMetricsRoute, otlpTracesRoute } from "@src/routes/otlp.js";
 
-import { ProtoWriter } from "../../../core/test/otlp/encoder.js";
+import { ProtoWriter } from "../otlp/encoder.js";
 
 const FIXTURE_PATH = join(
   import.meta.dir,

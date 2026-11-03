@@ -245,7 +245,7 @@ describe("dreaming/query-rewriter-cache", () => {
       model: "granite-4.1-3b",
       now_ms: nowMs,
     });
-    expect(row?.expires_at_ms - row?.created_at_ms).toBe(DEFAULT_TTL_MS);
+    expect(row!.expires_at_ms - row!.created_at_ms).toBe(DEFAULT_TTL_MS);
     db.close();
   });
 

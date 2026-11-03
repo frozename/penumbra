@@ -33,7 +33,7 @@ describe("P6: Brief Refresh", () => {
 
     const deps: DreamCycleDeps = {
       projectRegistry: {
-        get: (_id: string) => null,
+        get: (_id: string) => undefined,
         list: () => [{ project_id: "proj1", dreaming: {} }],
       },
       memoryObserve: memoryObserveMock,

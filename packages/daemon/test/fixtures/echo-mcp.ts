@@ -75,7 +75,8 @@ function respond(req: JsonRpcRequest): void {
       );
       return;
     }
-    result = { content: [{ type: "text", text: JSON.stringify(req.params.arguments ?? null) }] };
+    const params = req.params;
+    result = { content: [{ type: "text", text: JSON.stringify(params?.arguments ?? null) }] };
   } else {
     stdout.write(
       JSON.stringify({
