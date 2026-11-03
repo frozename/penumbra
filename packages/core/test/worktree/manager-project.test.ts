@@ -6,7 +6,11 @@ import * as path from "node:path";
 import { promisify } from "node:util";
 
 import type { Logger } from "@src/logger.js";
-import { type WorktreeHandle, WorktreeManager } from "@src/worktree/manager.js";
+import {
+  type WorktreeCommandRunner,
+  type WorktreeHandle,
+  WorktreeManager,
+} from "@src/worktree/manager.js";
 
 // node:util.promisify(child_process.exec)'s declaration overloads resolve to the
 // void-returning variant in eslint's type-aware pass; the runtime is in fact a
@@ -40,7 +44,7 @@ async function expectRejectsWith(
   throw new Error("expected promise to reject but it resolved");
 }
 
-async function expectResolvesEqual<T>(promise: Promise<T>, expected: T): Promise<void> {
+async function expectResolvesEqual(promise: Promise<unknown>, expected: unknown): Promise<void> {
   const actual = await promise;
   expect(actual).toEqual(expected);
 }
@@ -227,6 +231,9 @@ describe("WorktreeManager — project parameterization", () => {
     // F1+F2: branch must survive teardown because the work is not in main.
     expect(result.branchDeleted).toBe(false);
     expect(result.branchSha).toMatch(/^[0-9a-f]{40}$/);
+    if (typeof result.branchSha !== "string") {
+      throw new Error("expected teardown to capture branchSha");
+    }
     expect(fs.existsSync(handle.path)).toBe(false);
     const branch = await exec(
       `git -C "${homeRepo}" rev-parse --verify --quiet "refs/heads/agent/${id}"`,
@@ -291,6 +298,9 @@ describe("WorktreeManager — project parameterization", () => {
     expect(result.worktreeRemoved).toBe(true);
     expect(result.branchDeleted).toBe(false);
     expect(result.branchSha).toMatch(/^[0-9a-f]{40}$/);
+    if (typeof result.branchSha !== "string") {
+      throw new Error("expected teardown to capture branchSha");
+    }
     expect(fs.existsSync(handle.path)).toBe(false);
     expect(
       warns.some(({ msg }) => msg === "branch-land probe failed; preserving branch (fail-closed)"),

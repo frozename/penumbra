@@ -1,3 +1,5 @@
+import type { DispatchReliabilityReport } from "@penumbra/core";
+
 import { expect, mock, test } from "bun:test";
 import { z } from "zod";
 
@@ -17,7 +19,7 @@ test("DispatchAuditInputShape requires a handoff_id string", () => {
 });
 
 test("dispatchAuditHandler delegates to the daemon and returns JSON text content", async () => {
-  const audit = {
+  const audit: { report: DispatchReliabilityReport } = {
     report: {
       handoff_id: "h-1",
       status: "complete",
@@ -30,6 +32,7 @@ test("dispatchAuditHandler delegates to the daemon and returns JSON text content
         event_count: 4,
         response_count: 1,
         worktree_changed: true,
+        dispatch_end_committed: true,
         reconciled: true,
         watchdog_failed: false,
         cancel_requested: false,
@@ -56,9 +59,7 @@ test("dispatchAuditHandler delegates to the daemon and returns JSON text content
 });
 
 test("dispatch.audit is registered and forwards through DaemonClient to GET /dispatch/audit", async () => {
-  let receivedMethod: string | undefined;
-  let receivedPath: string | undefined;
-  let receivedHandoffId: string | null = null;
+  const received: { method: string; path: string; handoffId: string | null }[] = [];
   const audit = {
     report: {
       handoff_id: "h space",
@@ -84,9 +85,11 @@ test("dispatch.audit is registered and forwards through DaemonClient to GET /dis
     port: 0,
     fetch(req) {
       const url = new URL(req.url);
-      receivedMethod = req.method;
-      receivedPath = url.pathname;
-      receivedHandoffId = url.searchParams.get("handoff_id");
+      received.push({
+        method: req.method,
+        path: url.pathname,
+        handoffId: url.searchParams.get("handoff_id"),
+      });
       return Response.json(audit);
     },
   });
@@ -107,9 +110,7 @@ test("dispatch.audit is registered and forwards through DaemonClient to GET /dis
     if (firstBlock === undefined) throw new Error("expected content[0]");
 
     expect(JSON.parse(firstBlock.text)).toEqual(audit);
-    expect(receivedMethod).toBe("GET");
-    expect(receivedPath).toBe("/dispatch/audit");
-    expect(receivedHandoffId).toBe("h space");
+    expect(received).toEqual([{ method: "GET", path: "/dispatch/audit", handoffId: "h space" }]);
   } finally {
     await client?.close();
     await srv.stop(true);

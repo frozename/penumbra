@@ -37,8 +37,8 @@ describe("fs.glob handler", () => {
   });
 
   it("forwards pattern + path + handoff_id to daemon", async () => {
-    let receivedId: string | null = null;
-    let receivedPattern: string | null = null;
+    let receivedId: string | undefined;
+    let receivedPattern: string | undefined;
     const daemon = fakeDaemon((id, args) => {
       receivedId = id;
       receivedPattern = args.pattern;
@@ -54,7 +54,7 @@ describe("fs.glob handler", () => {
 
   it("defaults handoff_id from PENUMBRA_HANDOFF_ID env when arg absent", async () => {
     process.env.PENUMBRA_HANDOFF_ID = "H_ENV";
-    let receivedId: string | null = null;
+    let receivedId: string | undefined;
     const daemon = fakeDaemon((id) => {
       receivedId = id;
       return Promise.resolve({ results: [], truncated: false });

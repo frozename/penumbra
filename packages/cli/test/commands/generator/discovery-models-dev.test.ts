@@ -107,12 +107,15 @@ describe("models.dev discovery metadata", () => {
     const urls: string[] = [];
 
     const payload = await fetchModelsDevPayload({
-      fetch: (input) => {
-        urls.push(
-          typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
-        );
-        return Response.json(fixturePayload);
-      },
+      fetch: Object.assign(
+        (input: string | URL | Request): Promise<Response> => {
+          urls.push(
+            typeof input === "string" ? input : input instanceof URL ? input.href : input.url,
+          );
+          return Promise.resolve(Response.json(fixturePayload));
+        },
+        { preconnect: fetch.preconnect.bind(fetch) },
+      ),
     });
 
     expect(urls).toEqual(["https://models.dev/api.json"]);
