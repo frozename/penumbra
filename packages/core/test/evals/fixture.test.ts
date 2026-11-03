@@ -388,6 +388,14 @@ test("case 58: bundle accepts assertions with empty export and pattern fields", 
   );
 });
 
+test("case P5a: bundle patches.bad rejects the empty array", () => {
+  rejects(HoldoutBundleSchema, bundle({ patches: { good: "d", bad: [] } }));
+});
+
+test("case P5b: bundle patches.bad accepts an empty-string patch entry", () => {
+  parses(HoldoutBundleSchema, bundle({ patches: { good: "d", bad: [""] } }));
+});
+
 test("case 50: plan-exact bundle parses; assertion digest sorts by id", () => {
   parses(HoldoutBundleSchema, bundle({ mutants: ["m1"] }));
   rejects(HoldoutBundleSchema, omit(bundle({ mutants: ["m1"] }), "mutants"));

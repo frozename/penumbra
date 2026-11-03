@@ -146,7 +146,7 @@ export const HoldoutBundleSchema = z
     assertions: z.array(HiddenAssertionSchema).min(1),
     patches: z.strictObject({
       good: z.string().min(1),
-      bad: z.array(z.string().min(1)).min(1),
+      bad: z.array(z.string()).min(1),
     }),
     mutants: z.array(z.string()),
   })

@@ -1017,3 +1017,37 @@ test("case 55: FixtureRefSchema.family_id accepts the empty string", () => {
   parses(FixtureRefSchema, { family_id: "fam-390", variant_id: "v1" });
   rejects(FixtureRefSchema, { family_id: "fam-390", variant_id: "V1" });
 });
+
+test("case P33c: observational episode with a harness_build sha still rejects model attribution", () => {
+  rejects(
+    EpisodeSchema,
+    ep({
+      harness_build: { sha: SHA40 },
+      attempt_history: history("complete", null, 1, "claim_events"),
+      attempts: [att(1, SHA40, { commits: commits("model", "controlled_harness_build", null) })],
+      final_sha: SHA40,
+    }),
+  );
+});
+
+test("case P34b1: recovery attribution rejects the none basis even with the autocommit flag", () => {
+  rejects(AttemptSchema, att(1, SHA40, { commits: commits("recovery", "none", true) }));
+});
+
+test("case P34b2: recovery attribution rejects controlled_harness_build even with the flag", () => {
+  rejects(
+    AttemptSchema,
+    att(1, SHA40, { commits: commits("recovery", "controlled_harness_build", true) }),
+  );
+});
+
+test("case P34c: AttemptSchema rejects model attribution without the controlled_harness_build basis", () => {
+  rejects(AttemptSchema, att(1, SHA40, { commits: commits("model", "none", null) }));
+});
+
+test("case P34d: unknown attribution rejects the dispatch_end_autocommitted basis", () => {
+  rejects(
+    AttemptSchema,
+    att(1, SHA40, { commits: commits("unknown", "dispatch_end_autocommitted", null) }),
+  );
+});
