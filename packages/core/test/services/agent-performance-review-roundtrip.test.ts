@@ -1,8 +1,9 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, test } from "bun:test";
 
-import { loadSqliteVec, migrate, routeAgent } from "@src/index.js";
+import { loadSqliteVec, migrate } from "@src/index.js";
 import { captureAgentPerformanceFromDispatch } from "@src/services/agent-performance-capture.js";
+import { routeAgent } from "@src/services/agent-routing.js";
 
 if (process.platform === "darwin") {
   try {
@@ -113,18 +114,10 @@ describe("review_adversarial performance roundtrip", () => {
     });
 
     // 3. Assert success_rate > 0 / successes = 1
-    const recommendation = (
-      routeResult.candidates as
-        | {
-            candidates: {
-              agent_name: string;
-              samples: number;
-              successes: number;
-              success_rate: number;
-            }[];
-          }
-        | undefined
-    )?.candidates.find((r) => r.agent_name === "alpha");
+    if (routeResult.detail !== "rank") {
+      throw new Error(`routeAgent returned detail="${routeResult.detail}", expected "rank"`);
+    }
+    const recommendation = routeResult.candidates.candidates.find((r) => r.agent_name === "alpha");
     expect(recommendation).toBeDefined();
     expect(recommendation?.samples).toBe(1);
     expect(recommendation?.successes).toBe(1);
@@ -210,18 +203,10 @@ describe("review_adversarial performance roundtrip", () => {
       applyPressure: { snapshots: [] },
     });
 
-    const recommendation = (
-      routeResult.candidates as
-        | {
-            candidates: {
-              agent_name: string;
-              samples: number;
-              successes: number;
-              success_rate: number;
-            }[];
-          }
-        | undefined
-    )?.candidates.find((r) => r.agent_name === "beta");
+    if (routeResult.detail !== "rank") {
+      throw new Error(`routeAgent returned detail="${routeResult.detail}", expected "rank"`);
+    }
+    const recommendation = routeResult.candidates.candidates.find((r) => r.agent_name === "beta");
     expect(recommendation).toBeDefined();
     expect(recommendation?.samples).toBe(1);
     expect(recommendation?.successes).toBe(0);
