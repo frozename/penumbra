@@ -23,8 +23,10 @@ describe("local seat health service", () => {
       agents: () => [localSeat],
       ttlMs: 20_000,
       fetch: () =>
-        new Response(
-          JSON.stringify({ data: [{ id: "bge-m3-GGUF/bge-m3-FP16.gguf" }, { id: "bge-m3" }] }),
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ data: [{ id: "bge-m3-GGUF/bge-m3-FP16.gguf" }, { id: "bge-m3" }] }),
+          ),
         ),
     });
 
@@ -46,7 +48,7 @@ describe("local seat health service", () => {
       ttlMs: 20_000,
       fetch: () => {
         calls += 1;
-        return new Response(JSON.stringify({ data: [{ id: "different-model" }] }));
+        return Promise.resolve(new Response(JSON.stringify({ data: [{ id: "different-model" }] })));
       },
     });
 
@@ -65,7 +67,7 @@ describe("local seat health service", () => {
       now: () => now,
       fetch: () => {
         calls += 1;
-        return new Response(JSON.stringify({ data: [{ id: "bge-m3" }] }));
+        return Promise.resolve(new Response(JSON.stringify({ data: [{ id: "bge-m3" }] })));
       },
     });
 
