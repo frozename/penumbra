@@ -1140,7 +1140,7 @@ describe("renderOpencodeProfileConfig", () => {
       permission: Record<string, unknown>;
       agent: Record<string, { permission: Record<string, unknown> }>;
     };
-    expect(config.agent.reviewer.permission).toEqual(config.permission);
+    expect(config.agent["reviewer"]?.permission).toEqual(config.permission);
   });
 
   test("every opencode tool id has an explicit rule", () => {
