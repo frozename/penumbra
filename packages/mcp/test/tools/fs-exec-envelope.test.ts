@@ -1,28 +1,27 @@
 import { afterEach, describe, expect, it } from "bun:test";
 
-import type { DaemonClient } from "@src/daemon-client.js";
+import { DaemonClient } from "@src/daemon-client.js";
 import { HandleStore } from "@src/handle-store.js";
 import { isEnvelopeResult } from "@src/responses/envelope.js";
 import { fsExecHandler } from "@src/tools/fs-exec.js";
 import { readHandleHandler } from "@src/tools/read-handle.js";
 
-type ExecDaemon = Pick<DaemonClient, "execInWorktree">;
 type ExecImpl = DaemonClient["execInWorktree"];
 type ExecResult = Awaited<ReturnType<ExecImpl>>;
 
-function fakeDaemon(impl?: ExecImpl): ExecDaemon {
-  return {
-    execInWorktree:
-      impl ??
-      ((): Promise<ExecResult> =>
-        Promise.resolve({
-          stdout: "hello",
-          stderr: "",
-          exit_code: 0,
-          timed_out: false,
-          truncated: false,
-        })),
-  };
+function fakeDaemon(impl?: ExecImpl): DaemonClient {
+  const client = new DaemonClient({ baseUrl: "http://127.0.0.1:1", token: "test-token" });
+  client.execInWorktree =
+    impl ??
+    ((): Promise<ExecResult> =>
+      Promise.resolve({
+        stdout: "hello",
+        stderr: "",
+        exit_code: 0,
+        timed_out: false,
+        truncated: false,
+      }));
+  return client;
 }
 
 describe("fs.exec handler - envelope opt-in", () => {

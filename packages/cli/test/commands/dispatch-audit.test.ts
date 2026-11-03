@@ -9,6 +9,11 @@ import { formatDispatchAudit, runDispatchAudit } from "@src/commands/dispatch-au
 
 import { urlToString } from "./_helpers.js";
 
+// Bun's `typeof fetch` requires a static `preconnect` member that a bare stub lacks.
+function fetchStub(impl: (...args: Parameters<typeof fetch>) => Promise<Response>): typeof fetch {
+  return Object.assign(impl, { preconnect: fetch.preconnect.bind(fetch) });
+}
+
 const report = {
   handoff_id: "h-1",
   status: "watchdog_only",
@@ -89,7 +94,7 @@ describe("runDispatchAudit", () => {
       handoffId: "handoff-1",
       json: false,
       storageRoot,
-      fetch: (url, init) => {
+      fetch: fetchStub((url, init) => {
         calls.push({ url: urlToString(url), init });
         return Promise.resolve(
           new Response(JSON.stringify({ report }), {
@@ -97,7 +102,7 @@ describe("runDispatchAudit", () => {
             headers: { "content-type": "application/json" },
           }),
         );
-      },
+      }),
       print: (line) => {
         printed.push(line);
       },
@@ -118,13 +123,14 @@ describe("runDispatchAudit", () => {
       handoffId: "handoff-2",
       json: true,
       storageRoot,
-      fetch: () =>
+      fetch: fetchStub(() =>
         Promise.resolve(
           new Response(JSON.stringify({ report }), {
             status: 200,
             headers: { "content-type": "application/json" },
           }),
         ),
+      ),
       print: (line) => {
         printed = line;
       },

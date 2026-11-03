@@ -1,4 +1,10 @@
-import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import {
+  buildServices,
+  type ConversationStreamEvent,
+  loadSqliteVec,
+  migrate,
+  type Services,
+} from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
@@ -30,11 +36,6 @@ function tempServices(): Services {
     })(),
   });
 }
-
-type ConversationStreamEvent = Record<string, unknown> & {
-  handoff_id?: string;
-  type: string;
-};
 
 function parseConversationStreamEvent(raw: string): ConversationStreamEvent {
   const parsed: unknown = JSON.parse(raw);
@@ -84,8 +85,20 @@ test("GET /conversations/:id/stream flushes cached state and pipes live events",
   const cid = "conv-1";
 
   // 1. Emit some events BEFORE connecting (will be cached)
-  services.conversationStream.emit(cid, { type: "hop-start", handoff_id: "h1", agent: "a1" });
-  services.conversationStream.emit(cid, { type: "token", handoff_id: "h1", seq: 1, text: "hello" });
+  services.conversationStream.emit(cid, {
+    type: "hop-start",
+    handoff_id: "h1",
+    chain_id: "chain-1",
+    idx: 0,
+    agent_name: "a1",
+    status: "in_progress",
+  });
+  services.conversationStream.emit(cid, {
+    type: "token",
+    handoff_id: "h1",
+    seq: 1,
+    delta: "hello",
+  });
 
   // 2. Connect
   const res = conversationStreamRoute(new Request("http://x"), cid, services);
@@ -96,15 +109,22 @@ test("GET /conversations/:id/stream flushes cached state and pipes live events",
     type: "token",
     handoff_id: "h1",
     seq: 2,
-    text: " world",
+    delta: " world",
   });
 
   // 4. Read events (should get 2 cached + 1 live)
   const events = await readSseEvents(res.body!, 3);
   expect(events.length).toBe(3);
-  expect(events[0]).toEqual({ type: "hop-start", handoff_id: "h1", agent: "a1" });
-  expect(events[1]).toEqual({ type: "token", handoff_id: "h1", seq: 1, text: "hello" });
-  expect(events[2]).toEqual({ type: "token", handoff_id: "h1", seq: 2, text: " world" });
+  expect(events[0]).toEqual({
+    type: "hop-start",
+    handoff_id: "h1",
+    chain_id: "chain-1",
+    idx: 0,
+    agent_name: "a1",
+    status: "in_progress",
+  });
+  expect(events[1]).toEqual({ type: "token", handoff_id: "h1", seq: 1, delta: "hello" });
+  expect(events[2]).toEqual({ type: "token", handoff_id: "h1", seq: 2, delta: " world" });
 });
 
 test("GET /conversations/:id/stream clears on hop-end", async () => {
@@ -112,8 +132,22 @@ test("GET /conversations/:id/stream clears on hop-end", async () => {
   const cid = "conv-1";
 
   // 1. First hop
-  services.conversationStream.emit(cid, { type: "hop-start", handoff_id: "h1", agent: "a1" });
-  services.conversationStream.emit(cid, { type: "hop-end", handoff_id: "h1", text: "full" });
+  services.conversationStream.emit(cid, {
+    type: "hop-start",
+    handoff_id: "h1",
+    chain_id: "chain-1",
+    idx: 0,
+    agent_name: "a1",
+    status: "in_progress",
+  });
+  services.conversationStream.emit(cid, {
+    type: "hop-end",
+    handoff_id: "h1",
+    chain_id: "chain-1",
+    text: "full",
+    next_handoff_id: null,
+    error: null,
+  });
 
   // 2. Connect
   const res = conversationStreamRoute(new Request("http://x"), cid, services);
@@ -123,9 +157,18 @@ test("GET /conversations/:id/stream clears on hop-end", async () => {
   expect(events.length).toBe(0);
 
   // 4. Start second hop
-  services.conversationStream.emit(cid, { type: "hop-start", handoff_id: "h2", agent: "a2" });
+  const hopStart = {
+    type: "hop-start",
+    handoff_id: "h2",
+    chain_id: "chain-1",
+    idx: 1,
+    agent_name: "a2",
+    status: "in_progress",
+  } as const;
+  services.conversationStream.emit(cid, hopStart);
   const live = await readSseEvents(res.body!, 1);
-  expect(live[0]).toEqual({ type: "hop-start", handoff_id: "h2", agent: "a2" });
+  expect(live.length).toBe(1);
+  expect(live[0]).toEqual(hopStart);
 });
 
 test("GET /conversations/:id/stream isolates by conversation_id", async () => {
@@ -133,12 +176,32 @@ test("GET /conversations/:id/stream isolates by conversation_id", async () => {
   const r1 = conversationStreamRoute(new Request("http://x"), "c1", services);
   const r2 = conversationStreamRoute(new Request("http://x"), "c2", services);
 
-  services.conversationStream.emit("c1", { type: "hop-start", handoff_id: "h1", agent: "a" });
-  services.conversationStream.emit("c2", { type: "hop-start", handoff_id: "h2", agent: "b" });
+  services.conversationStream.emit("c1", {
+    type: "hop-start",
+    handoff_id: "h1",
+    chain_id: "chain-1",
+    idx: 0,
+    agent_name: "a",
+    status: "in_progress",
+  });
+  services.conversationStream.emit("c2", {
+    type: "hop-start",
+    handoff_id: "h2",
+    chain_id: "chain-2",
+    idx: 0,
+    agent_name: "b",
+    status: "in_progress",
+  });
 
   const e1 = await readSseEvents(r1.body!, 1);
   const e2 = await readSseEvents(r2.body!, 1);
 
-  expect(e1[0].handoff_id).toBe("h1");
-  expect(e2[0].handoff_id).toBe("h2");
+  expect(e1.length).toBe(1);
+  expect(e2.length).toBe(1);
+  expect(e1[0]?.type).toBe("hop-start");
+  expect(e2[0]?.type).toBe("hop-start");
+  if (e1[0]?.type === "hop-start" && e2[0]?.type === "hop-start") {
+    expect(e1[0].handoff_id).toBe("h1");
+    expect(e2[0].handoff_id).toBe("h2");
+  }
 });
