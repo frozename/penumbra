@@ -6,7 +6,16 @@ import {
   LaneLedgerRecentInputShape,
 } from "@src/tools/lane-ledger-recent.js";
 
-import { installFetchMock, requestUrl } from "../helpers.js";
+import { type FetchImpl, installFetchMock, requestUrl } from "../helpers.js";
+
+type FetchInput = Parameters<typeof fetch>[0];
+type FetchInit = Parameters<typeof fetch>[1];
+type FetchHandler = (input: FetchInput, init?: FetchInit) => Promise<Response>;
+
+// `typeof fetch` requires `preconnect`; bare mock functions don't satisfy it.
+function fetchMock(handler: FetchHandler): FetchImpl {
+  return Object.assign(handler, { preconnect: (): void => undefined });
+}
 
 interface MockToolResult {
   content: { type: string; text: string }[];
@@ -43,34 +52,36 @@ test("laneLedgerRecentHandler GETs /lanes/recent with filters and returns lanes 
   let receivedPath: string | undefined;
   let receivedSearch: string | undefined;
   let receivedAuth: string | undefined;
-  const { daemon, restore } = installFetchMock((input, init): Promise<Response> => {
-    const url = new URL(requestUrl(input));
-    receivedMethod = init?.method;
-    receivedPath = url.pathname;
-    receivedSearch = url.search;
-    receivedAuth = init?.headers
-      ? (new Headers(init.headers).get("authorization") ?? undefined)
-      : undefined;
-    return Promise.resolve(
-      Response.json({
-        lanes: [
-          {
-            lane_id: "lane-recent-1",
-            ts_opened: "2026-05-12T00:00:00Z",
-            ts_closed: "2026-05-12T00:01:00Z",
-            task_class: "STANDARD",
-            implementer_handoff: "h-recent-1",
-            reviewer_handoff: "h-review-1",
-            gate_status: "passed",
-            recalled_memory_ids: [],
-            recalled_query: null,
-            override_reason: null,
-            metadata_json: "{}",
-          },
-        ],
-      }),
-    );
-  });
+  const { daemon, restore } = installFetchMock(
+    fetchMock((input, init): Promise<Response> => {
+      const url = new URL(requestUrl(input));
+      receivedMethod = init?.method;
+      receivedPath = url.pathname;
+      receivedSearch = url.search;
+      receivedAuth = init?.headers
+        ? (new Headers(init.headers).get("authorization") ?? undefined)
+        : undefined;
+      return Promise.resolve(
+        Response.json({
+          lanes: [
+            {
+              lane_id: "lane-recent-1",
+              ts_opened: "2026-05-12T00:00:00Z",
+              ts_closed: "2026-05-12T00:01:00Z",
+              task_class: "STANDARD",
+              implementer_handoff: "h-recent-1",
+              reviewer_handoff: "h-review-1",
+              gate_status: "passed",
+              recalled_memory_ids: [],
+              recalled_query: null,
+              override_reason: null,
+              metadata_json: "{}",
+            },
+          ],
+        }),
+      );
+    }),
+  );
 
   try {
     const out = parseToolResult(
@@ -105,10 +116,12 @@ test("laneLedgerRecentHandler GETs /lanes/recent with filters and returns lanes 
 
 test("laneLedgerRecentHandler omits query params when no filters are given", async () => {
   let receivedSearch: string | undefined;
-  const { daemon, restore } = installFetchMock((input): Promise<Response> => {
-    receivedSearch = new URL(requestUrl(input)).search;
-    return Promise.resolve(Response.json({ lanes: [] }));
-  });
+  const { daemon, restore } = installFetchMock(
+    fetchMock((input): Promise<Response> => {
+      receivedSearch = new URL(requestUrl(input)).search;
+      return Promise.resolve(Response.json({ lanes: [] }));
+    }),
+  );
 
   try {
     parseToolResult(await laneLedgerRecentHandler(daemon)({}));
@@ -120,13 +133,15 @@ test("laneLedgerRecentHandler omits query params when no filters are given", asy
 
 test("laneLedgerRecentHandler surfaces daemon 400 errors", async () => {
   const { daemon, restore } = installFetchMock(
-    (): Promise<Response> =>
-      Promise.resolve(
-        new Response(JSON.stringify({ error: { code: "validation_failed" } }), {
-          status: 400,
-          headers: { "content-type": "application/json" },
-        }),
-      ),
+    fetchMock(
+      (): Promise<Response> =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: { code: "validation_failed" } }), {
+            status: 400,
+            headers: { "content-type": "application/json" },
+          }),
+        ),
+    ),
   );
   try {
     await expectRejection(

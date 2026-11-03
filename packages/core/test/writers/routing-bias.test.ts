@@ -192,8 +192,8 @@ describe("readRoutingBiases", () => {
 
     const result = readRoutingBiases(db, { now });
     expect(result).toHaveLength(1);
-    expect(result[0].mode).toBe("divert");
-    expect(result[0].weight).toBe(0.5);
+    expect(result[0]?.mode).toBe("divert");
+    expect(result[0]?.weight).toBe(0.5);
     db.close();
   });
 
@@ -241,11 +241,11 @@ describe("readRoutingBiases", () => {
 
     const agents = readRoutingBiases(db, { scope: "agent" });
     expect(agents).toHaveLength(1);
-    expect(agents[0].value).toBe("a1");
+    expect(agents[0]?.value).toBe("a1");
 
     const providers = readRoutingBiases(db, { scope: "provider" });
     expect(providers).toHaveLength(1);
-    expect(providers[0].value).toBe("p1");
+    expect(providers[0]?.value).toBe("p1");
     db.close();
   });
 
@@ -272,7 +272,7 @@ describe("readRoutingBiases", () => {
 
     const filtered = readRoutingBiases(db, { value: "a1" });
     expect(filtered).toHaveLength(1);
-    expect(filtered[0].value).toBe("a1");
+    expect(filtered[0]?.value).toBe("a1");
     db.close();
   });
 
@@ -311,7 +311,7 @@ describe("readRoutingBiases", () => {
 
     const result = readRoutingBiases(db, { now: readNow });
     expect(result.map((bias) => bias.value)).toEqual(["a1", "a2"]);
-    expect(result[0].created_at).toBe("2026-06-15T00:00:03.000Z");
+    expect(result[0]?.created_at).toBe("2026-06-15T00:00:03.000Z");
     db.close();
   });
 });
