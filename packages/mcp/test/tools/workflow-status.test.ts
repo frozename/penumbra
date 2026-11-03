@@ -1,3 +1,5 @@
+import type { TextContentEnvelope } from "@novaproto/mcp-shared";
+
 import { expect, mock, test } from "bun:test";
 import { z } from "zod";
 
@@ -20,13 +22,11 @@ import { fakeDaemon } from "../helpers.js";
 type WorkflowStatusFn = DaemonClient["workflowStatus"];
 type WorkflowWaitFn = DaemonClient["workflowWait"];
 
-interface TextEnvelope {
-  content: { type: string; text: string }[];
-}
+type TextEnvelope = TextContentEnvelope | EnvelopeResult;
 
 function envelopeText(result: TextEnvelope): string {
   const block = result.content[0];
-  if (!block) {
+  if (block === undefined || typeof block.text !== "string") {
     throw new Error("expected content[0]");
   }
   return block.text;
@@ -41,15 +41,6 @@ function asEnvelope(value: unknown): EnvelopeResult {
     throw new Error("expected envelope result");
   }
   return value;
-}
-
-interface MaybeError {
-  isError?: boolean;
-  content: { type: string; text: string }[];
-}
-
-function asMaybeError(value: unknown): MaybeError {
-  return value as MaybeError;
 }
 
 test("workflow_status proxies workflow_run_id to daemon.workflowStatus", async () => {
@@ -223,8 +214,8 @@ test("workflow_wait spills oversized result/error into independent handles with 
     expect(typeof body.error_handle_id).toBe("string");
     expect(body.result_handle_id).not.toBe(body.error_handle_id);
 
-    const resultRead = asMaybeError(await read({ handle_id: body.result_handle_id as string }));
-    const errorRead = asMaybeError(await read({ handle_id: body.error_handle_id as string }));
+    const resultRead = await read({ handle_id: body.result_handle_id as string });
+    const errorRead = await read({ handle_id: body.error_handle_id as string });
 
     expect(resultRead.isError).toBeUndefined();
     expect(errorRead.isError).toBeUndefined();
@@ -305,9 +296,9 @@ test("workflow_wait exposes result_handle_id after central response budgeting", 
     expect(body.result_truncated).toBe(true);
     expect(typeof body.result_handle_id).toBe("string");
 
-    const read = asMaybeError(
-      await readHandleHandler(store)({ handle_id: body.result_handle_id as string }),
-    );
+    const read = await readHandleHandler(store)({
+      handle_id: body.result_handle_id as string,
+    });
     expect(read.isError).toBeUndefined();
     expect(JSON.parse(envelopeText(read))).toEqual(result);
   } finally {
