@@ -235,6 +235,34 @@ describe("dispatch-side evidence (#451)", () => {
     expect(m.artifact_source).toBe("none");
   });
 
+  it("a false worker hint wins over a contradicting dispatch.end worktree_changed", () => {
+    insertEvent("dispatch.end", END_TS, {
+      status: "ok",
+      worktree_changed: true,
+      dirty: false,
+    });
+    dispatch("perf-d", "2026-04-30T12:03:00Z", { ...SAID_NOTHING, worktree_changed: false });
+
+    const p = persisted();
+    const m = meta(p);
+    expect(p.worktree_changed).toBe("n");
+    expect(p.artifact_present).toBe("n");
+    expect(m.artifact_source).toBe("none");
+  });
+
+  it("a null worker hint falls back to the dispatch.end worktree_changed", () => {
+    insertEvent("dispatch.end", END_TS, {
+      status: "ok",
+      worktree_changed: false,
+      committed: false,
+      dirty: false,
+    });
+    dispatch("perf-d", "2026-04-30T12:03:00Z", { worktree_changed: null });
+
+    const p = persisted();
+    expect(p.worktree_changed).toBe("n");
+  });
+
   it("a recovery autocommit is distinguishable from a model-authored commit", () => {
     insertEvent("dispatch.end", END_TS, AUTOCOMMITTED);
     dispatch("perf-d", "2026-04-30T12:03:00Z", SAID);
