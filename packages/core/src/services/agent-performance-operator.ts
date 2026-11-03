@@ -10,6 +10,7 @@ import {
 } from "../schemas/agent-performance.js";
 import { AgentPerformanceWriter } from "../writers/agent-performance.js";
 import { aggregateHandoffUsage } from "./agent-performance-capture.js";
+import { currentAttempt } from "./agent-performance-identity.js";
 
 function computeResolvedLatencyMs(ts: string, resolvedAt: string | null): number | null {
   if (!resolvedAt) return null;
@@ -60,5 +61,9 @@ export function recordOperatorAgentPerformance(opts: {
     metadata_json: JSON.stringify({ source: "operator" }),
   };
 
-  return new AgentPerformanceWriter(opts.db).upsert(row);
+  const attempt = currentAttempt(handoff);
+  return new AgentPerformanceWriter(opts.db).upsert(
+    row,
+    attempt === null ? {} : { identity: { dispatch_attempt: attempt } },
+  );
 }

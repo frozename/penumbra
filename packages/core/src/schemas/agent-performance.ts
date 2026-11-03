@@ -45,6 +45,53 @@ export type AgentBooleanFlag = z.infer<typeof AgentBooleanFlagSchema>;
 export type AgentPerformanceSource = z.infer<typeof AgentPerformanceSourceSchema>;
 export type AgentKind = z.infer<typeof AgentKindSchema>;
 
+export const FULL_GIT_SHA_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
+// Metadata keys the writer owns: they are rebuilt from merge context on every
+// stamped write, so producers can never set or inherit them.
+export const AGENT_PERFORMANCE_RESERVED_METADATA_KEYS = [
+  "dispatch_attempt",
+  "head_sha",
+  "producers",
+  "outcome_source",
+  "notes_source",
+  "task_type_source",
+] as const;
+
+// Worker-owned keys are cleared from the stored base on each same-attempt
+// worker write, so an omitted key means "no longer true".
+export const WORKER_OWNED_METADATA_KEYS = [
+  "reason",
+  "silent_failure",
+  "tool_failure_count",
+  "tool_failure_kinds",
+  "classifier_declined",
+  "decline_reason",
+  "caller_task_type",
+  "handoff_task_type",
+  "task_type_mismatch",
+  "final_response_chars",
+  "has_meaningful_output",
+  "quota_exhausted",
+  "autocommitted",
+  "autocommit_sha",
+  "worker_head_sha",
+] as const;
+
+export const RECONCILER_OWNED_METADATA_KEYS = ["regression_summary", "timed_out"] as const;
+
+export type AgentPerformanceIdentity = {
+  dispatch_attempt: number;
+  head_sha?: string | null;
+};
+
+export type AgentPerformanceUpsertOptions = {
+  identity?: AgentPerformanceIdentity;
+  outcomeNonAuthoritative?: boolean;
+};
+
+export type AgentPerformanceInput = AgentPerformanceRow;
+
 export const AgentPerformanceRowSchema = z.object({
   performance_id: z.string(),
   ts: z.string(),
@@ -68,14 +115,20 @@ export const AgentPerformanceRowSchema = z.object({
   notes: z.string().nullable(),
   reliability_status: z.string().nullable().optional(),
   failure_class: z.string().nullable().optional(),
+  /** NULL = unknown for the current identity, never false. 'n' is an explicit negative. */
   artifact_present: AgentEvidenceFlagSchema.nullable().optional(),
+  /** NULL = unknown for the current identity, never false. 'n' is an explicit negative. */
   verification_present: AgentEvidenceFlagSchema.nullable().optional(),
+  /** NULL = unknown, never false. */
   maestro_takeover_required: AgentBooleanFlagSchema.nullable().optional(),
+  /** NULL = unknown, never false. */
   empty_response: AgentBooleanFlagSchema.nullable().optional(),
+  /** NULL = unknown for the current identity, never false. 'n' is an explicit negative. */
   worktree_changed: AgentEvidenceFlagSchema.nullable().optional(),
   /** @deprecated Dead column: never written in production (0 of ~42k rows non-null as of 2026-08-27) and read by nothing. Do not adopt for new writes; kept only because dropping a column from the live DB is not worth a migration. */
   reconcile_status: z.string().nullable().optional(),
   environment_failure: AgentBooleanFlagSchema.nullable().optional(),
+  /** NULL = unknown, never false. 0 is an explicit score, not a missing value. */
   trust_score: z.number().nullable().optional(),
   agent_kind: AgentKindSchema.optional(),
   metadata_json: z.string(),
@@ -96,6 +149,7 @@ export const MergeResultStatusSchema = z.enum([
 
 export const AgentPerformanceCaptureFromReconcilerSchema = z.object({
   handoff_id: z.string().min(1),
+  dispatch_attempt: z.number().int().nonnegative().optional(),
   task_type: AgentTaskTypeSchema.optional(),
   wall_ms: z.number().nonnegative().nullable().optional(),
   framework_overhead_ms: z.number().nonnegative().nullable().optional(),
@@ -115,6 +169,7 @@ export type AgentPerformanceCaptureFromReconciler = z.infer<
 
 export const AgentPerformanceCaptureFromDispatchSchema = z.object({
   handoff_id: z.string().min(1),
+  dispatch_attempt: z.number().int().nonnegative().optional(),
   task_type: AgentTaskTypeSchema.optional(),
   reason: z.enum(["completed", "max_hops", "cancelled", "error"]),
   // Optional snapshot from the worker's getWorktreeSnapshot probe at
