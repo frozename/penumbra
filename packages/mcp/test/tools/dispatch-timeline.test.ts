@@ -50,7 +50,7 @@ test("dispatchTimelineHandler delegates to the daemon and returns JSON text cont
 test("dispatch.timeline is registered and forwards through DaemonClient to GET /dispatch/events", async () => {
   let receivedMethod: string | undefined;
   let receivedPath: string | undefined;
-  let receivedHandoffId: string | null = null;
+  let receivedHandoffId: string | undefined;
   const timeline = {
     events: [
       {
@@ -69,7 +69,7 @@ test("dispatch.timeline is registered and forwards through DaemonClient to GET /
       const url = new URL(req.url);
       receivedMethod = req.method;
       receivedPath = url.pathname;
-      receivedHandoffId = url.searchParams.get("handoff_id");
+      receivedHandoffId = url.searchParams.get("handoff_id") ?? undefined;
       return Response.json(timeline);
     },
   });

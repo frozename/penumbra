@@ -1,8 +1,44 @@
-import { registerWorkerForTest } from "@penumbra/daemon/test-utils";
 import { expect } from "bun:test";
 
 import { makeTempDaemon } from "../helpers.js";
 import { serviceTest } from "../helpers/service-gates.js";
+
+// File-local copy of the daemon test-utils helper: importing the shared
+// module via "@penumbra/daemon/test-utils" pulls it into tsconfig.test.json's
+// program outside its file list and trips TS6307 for this project.
+interface RegisterWorkerForTestArgs {
+  baseUrl: string;
+  sharedBearer: string;
+  worker_id: string;
+  metadata?: Record<string, unknown>;
+  fetcher?: typeof fetch;
+}
+
+interface RegisterWorkerForTestResult {
+  worker_token: string;
+  worker_id: string;
+}
+
+async function registerWorkerForTest(
+  args: RegisterWorkerForTestArgs,
+): Promise<RegisterWorkerForTestResult> {
+  const fetcher = args.fetcher ?? fetch;
+  const res = await fetcher(`${args.baseUrl}/worker/register`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${args.sharedBearer}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ worker_id: args.worker_id, metadata: args.metadata }),
+  });
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => null);
+    throw new Error(
+      `registerWorkerForTest: HTTP ${String(res.status)}: ${JSON.stringify(errorBody)}`,
+    );
+  }
+  return (await res.json()) as RegisterWorkerForTestResult;
+}
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 

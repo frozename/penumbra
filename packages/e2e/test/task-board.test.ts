@@ -1,10 +1,11 @@
-import { DaemonClient } from "@penumbra/mcp";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { buildServer, DaemonClient } from "@penumbra/mcp";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { connectInMemory } from "../../mcp/test/helpers.js";
 import { parseToolResultJson } from "./helpers/mcp-envelope.js";
 import { makeSandbox } from "./helpers/sandbox.js";
 import {
@@ -44,6 +45,15 @@ interface TaskNextResponse {
   prompt: string;
   lease_id: string;
   expires_at: number;
+}
+
+async function connectInMemory(daemon: DaemonClient): Promise<Client> {
+  const server = await buildServer({ daemon });
+  const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  const client = new Client({ name: "test-client", version: "0.0.0" }, { capabilities: {} });
+  await client.connect(clientTransport);
+  return client;
 }
 
 type McpClient = Awaited<ReturnType<typeof connectInMemory>>;

@@ -308,6 +308,36 @@ test("agentchat_reload rebuilds the thoughts config so analyzer pools drop a rem
   expect(bootSnapshot.thoughtsConfig.analyze.digest.pool).toEqual(twoMembers);
 });
 
+// Textually pins the worker half of #296: the bin holds the thoughts config in a
+// mutable holder that the reconciler reads through a getter and the reload
+// rebuilds. The #296 test in merge-reconciler.test.ts pins the runtime half.
+test("agentchat-worker wires thoughtsConfig as a reloadable holder read through a getter (#296)", () => {
+  const source = fs.readFileSync(new URL("../../bin/agentchat-worker.ts", import.meta.url), "utf8");
+
+  expect(source).toContain("let thoughtsConfig = loadThoughtsConfig(");
+  expect(source).not.toContain("const thoughtsConfig = loadThoughtsConfig(");
+
+  const reconcilerStart = source.indexOf("createMergeReconciler({");
+  expect(reconcilerStart).toBeGreaterThan(-1);
+  const reconcilerEnd = source.indexOf("\n});", reconcilerStart);
+  expect(reconcilerEnd).toBeGreaterThan(reconcilerStart);
+  const reconcilerDeps = source.slice(reconcilerStart, reconcilerEnd);
+  expect(reconcilerDeps).toContain("get thoughtsConfig() {");
+  expect(reconcilerDeps).toContain("return thoughtsConfig;");
+  expect(reconcilerDeps).not.toMatch(/^\s*thoughtsConfig,\s*$/m);
+  expect(reconcilerDeps).not.toMatch(/\bthoughtsConfig:\s*thoughtsConfig\b/);
+
+  const reloadStart = source.indexOf("handleAgentchatReload({");
+  expect(reloadStart).toBeGreaterThan(-1);
+  const rebuildStart = source.indexOf("rebuildDerivedConfig:", reloadStart);
+  const rebuildEnd = source.indexOf("invalidateWarmPools:", rebuildStart);
+  expect(rebuildStart).toBeGreaterThan(reloadStart);
+  expect(rebuildEnd).toBeGreaterThan(rebuildStart);
+  expect(source.slice(rebuildStart, rebuildEnd)).toContain(
+    "thoughtsConfig = loadThoughtsConfig({ agentchat: next });",
+  );
+});
+
 test("reload reports failure and keeps the previous registry when the file goes missing", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "penumbra-registry-reload-"));
   try {

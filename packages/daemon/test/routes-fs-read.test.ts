@@ -30,7 +30,7 @@ function fakeServices(worktrees: Record<string, string>): Services {
 }
 
 async function responseJson<T>(res: Response): Promise<T> {
-  return await res.json();
+  return (await res.json()) as T;
 }
 
 describe("worktrees read route", () => {

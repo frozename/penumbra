@@ -27,14 +27,6 @@ try {
 
 const noop = (): void => undefined;
 
-// File-local widening: tests stub partial RecallResult fixtures because the
-// /lanes/open route only reads id/title/body from recall hits. The schema's
-// other required fields (tier, score, project_id, etc.) are noise here. A
-// single documented widening at the test seam keeps fixtures concise.
-function partialAs<T>(value: Partial<T>): T {
-  return value as unknown as T;
-}
-
 beforeAll(() => {
   delete process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
 });
@@ -848,8 +840,32 @@ test("manual open stores recalled_memory_ids from implementer handoff recall hit
     daemon.services.recallReader.recall = (args): Promise<RecallResult[]> => {
       recallArgs.push(args);
       return Promise.resolve([
-        partialAs<RecallResult>({ id: "manual-m1", title: "manual memo 1", body: "first" }),
-        partialAs<RecallResult>({ id: "manual-m2", title: "manual memo 2", body: "second" }),
+        {
+          id: "manual-m1",
+          title: "manual memo 1",
+          body: "first",
+          tier: "t0",
+          score: 0,
+          fusedScore: 0,
+          sources: [],
+          project_id: null,
+          source_session_ids: [],
+          created_at: "2026-04-23T12:00:00.000Z",
+          ts: "2026-04-23T12:00:00.000Z",
+        },
+        {
+          id: "manual-m2",
+          title: "manual memo 2",
+          body: "second",
+          tier: "t0",
+          score: 0,
+          fusedScore: 0,
+          sources: [],
+          project_id: null,
+          source_session_ids: [],
+          created_at: "2026-04-23T12:00:00.000Z",
+          ts: "2026-04-23T12:00:00.000Z",
+        },
       ]);
     };
     insertHandoff(daemon, "h-manual-recall", "codex", {
@@ -1335,7 +1351,7 @@ test.each([
       const count = daemon.services.db
         .query<
           { c: number },
-          []
+          [string]
         >("SELECT COUNT(*) AS c FROM t2_memory_verification_events WHERE session_id = ?")
         .get(`h-${gateStatus}`);
       expect(count?.c).toBe(expectedVerificationEvents);
