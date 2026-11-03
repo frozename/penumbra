@@ -125,6 +125,27 @@ describe("redactCredentials global replacement", () => {
   });
 });
 
+const GLOBAL_PATTERN_CASES: readonly (readonly [string, string])[] = [
+  ["sk-", buildSkTok()],
+  ["ghp_", buildGhpTok()],
+  ["AIza", buildAIZaTok()],
+  ["gsk_", buildGskTok()],
+  ["nvapi-", buildNvapiTok()],
+  ["xai-", buildXaiTok()],
+  ["fc-", buildFcTok()],
+  ["discord-webhook", "https://discord.com/api/webhooks/123456789/abc_DEF-ghi"],
+  ["bearer", "Bearer aaa.bbb"],
+];
+
+describe("redactCredentials global flag per pattern", () => {
+  it.each(GLOBAL_PATTERN_CASES)("%s: both occurrences redacted", (_label, tok) => {
+    const input = `a=${tok} b=${tok} c`;
+    const output = redactCredentials(input);
+    expect(output).toBe("a=[REDACTED] b=[REDACTED] c");
+    expect(output).not.toContain(tok);
+  });
+});
+
 describe("redactCredentials length thresholds", () => {
   it("sk- with 19 chars is returned unchanged", () => {
     const tok = "sk-" + "A".repeat(19);
@@ -143,6 +164,15 @@ describe("redactCredentials length thresholds", () => {
 
   it("sk- with exactly 20 chars is redacted (boundary)", () => {
     const tok = "sk-" + "A".repeat(20);
+    const output = redactCredentials(tok);
+    expect(output).toBe("[REDACTED]");
+  });
+
+  it.each([
+    ["ghp_", "ghp_"],
+    ["xai-", "xai-"],
+  ])("%s with exactly 20 chars is redacted (boundary)", (_label, prefix) => {
+    const tok = prefix + "A".repeat(20);
     const output = redactCredentials(tok);
     expect(output).toBe("[REDACTED]");
   });
