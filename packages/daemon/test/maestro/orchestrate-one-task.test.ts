@@ -363,7 +363,10 @@ test("orchestrateOneTask: chainStart fails -> compensation commits all four writ
 
   // 3) gh status-sync push enqueued (gh-linked task)
   const ghRow = db
-    .query<{ op: string }, [string]>(`SELECT op FROM gh_outbox WHERE task_id = ? AND op = ?`)
+    .query<
+      { op: string },
+      [string, string]
+    >(`SELECT op FROM gh_outbox WHERE task_id = ? AND op = ?`)
     .get(task_id, "gh_push_status");
   expect(ghRow?.op).toBe("gh_push_status");
 
