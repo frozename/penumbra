@@ -89,7 +89,7 @@ function depsWithAdapter(
   dreaming: Record<string, unknown>,
 ): ResearchDeps {
   return {
-    projectRegistry: { get: () => ({ dreaming }) },
+    projectRegistry: { get: () => ({ project_id: "proj1", dreaming }) },
     getResearchAdapter: () => adapter,
   };
 }
@@ -128,8 +128,8 @@ describe("P5: Active Research", () => {
       .prepare("SELECT * FROM dream_actions WHERE phase='P5'")
       .all() as DreamActionResearchRow[];
     expect(actions.length).toBe(1);
-    expect(actions[0].untrusted_source).toBe(1);
-    expect(actions[0].status).toBe("queued");
+    expect(actions[0]?.untrusted_source).toBe(1);
+    expect(actions[0]?.status).toBe("queued");
   });
 
   test("per-project allowed_domains enforced for research", async () => {
