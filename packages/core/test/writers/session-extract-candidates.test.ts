@@ -137,14 +137,14 @@ describe("extractSessionCandidates", () => {
     );
 
     expect(candidates).toHaveLength(1);
-    expect(candidates[0]).toMatchObject<Partial<SessionExtractCandidate>>({
+    expect(candidates[0]).toMatchObject({
       action: "update",
       slug: "session-extract-existing-rule",
       update_existing_slug: "session-extract-existing-rule",
       existing_memory_id: "m-existing",
       title,
       body,
-    });
+    } satisfies Partial<SessionExtractCandidate>);
   });
 
   test("filters candidates missing why, with short why, or without a durable hook", async () => {

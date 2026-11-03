@@ -29,7 +29,11 @@ import {
 import { routeAgent } from "@src/services/agent-routing.js";
 import { AgentPerformanceWriter } from "@src/writers/agent-performance.js";
 
-import aaLiveSample from "./fixtures/aa-live-sample.json";
+const aaLiveSampleRaw = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "fixtures/aa-live-sample.json"),
+  "utf8",
+);
+const aaLiveSample = JSON.parse(aaLiveSampleRaw) as { data: unknown[] };
 
 if (process.platform === "darwin") {
   try {
