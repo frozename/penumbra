@@ -1,9 +1,30 @@
-import { loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import {
+  buildServices,
+  loadSqliteVec,
+  migrate,
+  type Services,
+  type SettingsInput,
+} from "@penumbra/core";
+import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { describe, expect, mock, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { installPrOrphanSweeper, runPrOrphanSweep } from "@src/sweepers/pr-orphan-sweeper.js";
-import { runReconcilerSweepTick } from "@src/sweepers/reconciler-sweep.js";
+import type { GhClosePullRequestInput } from "@src/services/gh-client.js";
+import {
+  type GhClient,
+  type GitClient,
+  installPrOrphanSweeper,
+  type OpenPullRequest,
+  type PrSweepResult,
+  runPrOrphanSweep,
+} from "@src/sweepers/pr-orphan-sweeper.js";
+import {
+  type ReconcilerSweepOpts,
+  runReconcilerSweepTick,
+} from "@src/sweepers/reconciler-sweep.js";
 
 try {
   if (process.platform === "darwin") {
@@ -13,6 +34,8 @@ try {
   void 0;
 }
 
+type SweepTickInput = Parameters<NonNullable<ReconcilerSweepOpts["runSweep"]>>[0];
+
 function setupDb(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
@@ -20,25 +43,35 @@ function setupDb(): Database {
   return db;
 }
 
-function makeServices(db: Database, settings?: Record<string, unknown>): Services {
-  return {
+function makeServices(db: Database, settings?: SettingsInput): Services {
+  return buildServices({
+    env: {},
+    input: settings ?? {},
+    storageRoot: mkdtempSync(join(tmpdir(), "reconciler-sweep-test-")),
     db,
-    log: { warn: (..._: unknown[]) => undefined },
-    settings,
-  } as unknown as Services;
+    embedder: new TestEmbedder({ dim: 384 }),
+  });
 }
 
-function makeSweepResult(
-  overrides?: Partial<{ scanned: number; superseded: number; stale: number; errored: number }>,
-): { scanned: number; superseded: number; stale: number; errored: number; actions: never[] } {
-  return { scanned: 0, superseded: 0, stale: 0, errored: 0, actions: [], ...overrides };
+function makeSweepResult(overrides?: Partial<Omit<PrSweepResult, "actions">>): PrSweepResult {
+  return {
+    scanned: 0,
+    superseded: 0,
+    stale: 0,
+    stale_unlanded: 0,
+    errored: 0,
+    actions: [],
+    ...overrides,
+  };
 }
 
 describe("runReconcilerSweepTick", () => {
   test("uses opts.dryRun and the configured maxClose", async () => {
     const db = setupDb();
     const svc = makeServices(db);
-    const sweepFn = mock(() => makeSweepResult());
+    const sweepFn = mock(
+      (_input: SweepTickInput): Promise<PrSweepResult> => Promise.resolve(makeSweepResult()),
+    );
 
     await runReconcilerSweepTick({
       services: svc,
@@ -48,16 +81,18 @@ describe("runReconcilerSweepTick", () => {
     });
 
     expect(sweepFn).toHaveBeenCalledTimes(1);
-    const call = sweepFn.mock.calls[0][0] as { dryRun: boolean; maxClose: number };
-    expect(call.dryRun).toBe(false);
-    expect(call.maxClose).toBe(15);
+    const call = sweepFn.mock.calls[0]?.[0];
+    expect(call?.dryRun).toBe(false);
+    expect(call?.maxClose).toBe(15);
   });
 
   test("reads dry-run from settings and never closes PRs when enabled", async () => {
     const db = setupDb();
     const svc = makeServices(db, { prOrphanSweeperDryRun: true });
-    const closePullRequest = mock(() => Promise.resolve());
-    const sweepFn = mock(async ({ dryRun }: { dryRun: boolean }) => {
+    const closePullRequest = mock(
+      (_input: GhClosePullRequestInput): Promise<void> => Promise.resolve(),
+    );
+    const sweepFn = mock(async ({ dryRun }: SweepTickInput): Promise<PrSweepResult> => {
       if (!dryRun) {
         await closePullRequest({ number: 10, comment: "", deleteBranch: true });
       }
@@ -67,16 +102,18 @@ describe("runReconcilerSweepTick", () => {
     await runReconcilerSweepTick({ services: svc, runSweep: sweepFn, maxClose: 7 });
 
     expect(sweepFn).toHaveBeenCalledTimes(1);
-    const call = sweepFn.mock.calls[0][0] as { dryRun: boolean; maxClose: number };
-    expect(call.dryRun).toBe(true);
+    const call = sweepFn.mock.calls[0]?.[0];
+    expect(call?.dryRun).toBe(true);
     expect(closePullRequest).toHaveBeenCalledTimes(0);
   });
 
   test("defaults to dry-run when settings are missing", async () => {
     const db = setupDb();
     const svc = makeServices(db);
-    const closePullRequest = mock(() => Promise.resolve());
-    const sweepFn = mock(async ({ dryRun }: { dryRun: boolean }) => {
+    const closePullRequest = mock(
+      (_input: GhClosePullRequestInput): Promise<void> => Promise.resolve(),
+    );
+    const sweepFn = mock(async ({ dryRun }: SweepTickInput): Promise<PrSweepResult> => {
       if (!dryRun) {
         await closePullRequest({ number: 10, comment: "", deleteBranch: true });
       }
@@ -86,8 +123,8 @@ describe("runReconcilerSweepTick", () => {
     await runReconcilerSweepTick({ services: svc, runSweep: sweepFn, maxClose: 7 });
 
     expect(sweepFn).toHaveBeenCalledTimes(1);
-    const call = sweepFn.mock.calls[0][0] as { dryRun: boolean; maxClose: number };
-    expect(call.dryRun).toBe(true);
+    const call = sweepFn.mock.calls[0]?.[0];
+    expect(call?.dryRun).toBe(true);
     expect(closePullRequest).toHaveBeenCalledTimes(0);
   });
 
@@ -96,36 +133,46 @@ describe("runReconcilerSweepTick", () => {
     const svc = makeServices(db, { prOrphanSweeperDryRun: true });
     const closedPrs: number[] = [];
     let listOpenCalls = 0;
-    let openAll: (() => void) | null = null;
+    let openAll: () => void = () => undefined;
     const openGate = new Promise<void>((resolve) => {
       openAll = resolve;
     });
 
-    const ghClient = {
-      listOpenPullRequests: mock(async () => {
-        listOpenCalls += 1;
-        await openGate;
-        if (listOpenCalls > 2) return [];
-        return [
-          {
-            number: 404,
-            title: "agent dispatch",
-            headRefName: "agent/11111111-1111-1111-1111-111111111111",
-            headRefOid: "sha-superseded",
-            updatedAt: "2026-06-01T00:00:00.000Z",
-          },
-        ];
-      }),
-      closePullRequest: mock((input: { number: number }): void => {
-        closedPrs.push(input.number);
-      }),
-    };
-    const gitClient = {
-      resolveMainSha: (): string => "main-sha",
-      isAncestorOfMain: (): boolean => true,
-      isObjectReachable: (): boolean => true,
-      fetchHeadRef: (): void => undefined,
-      isThreeDotDiffEmptyVsMain: (): boolean => false,
+    const listOpenPullRequests = mock(async (): Promise<OpenPullRequest[]> => {
+      listOpenCalls += 1;
+      await openGate;
+      if (listOpenCalls > 2) return [];
+      return [
+        {
+          number: 404,
+          title: "agent dispatch",
+          headRefName: "agent/11111111-1111-1111-1111-111111111111",
+          headRefOid: "sha-superseded",
+          updatedAt: "2026-06-01T00:00:00.000Z",
+        },
+      ];
+    });
+    const closePullRequest = mock((input: GhClosePullRequestInput): Promise<void> => {
+      closedPrs.push(input.number);
+      return Promise.resolve();
+    });
+    const ghClient: GhClient = { listOpenPullRequests, closePullRequest };
+    const gitClient: GitClient = {
+      resolveMainSha(): Promise<string> {
+        return Promise.resolve("main-sha");
+      },
+      isAncestorOfMain(): Promise<boolean> {
+        return Promise.resolve(true);
+      },
+      isObjectReachable(): Promise<boolean> {
+        return Promise.resolve(true);
+      },
+      fetchHeadRef(): Promise<void> {
+        return Promise.resolve();
+      },
+      isThreeDotDiffEmptyVsMain(): Promise<boolean> {
+        return Promise.resolve(false);
+      },
     };
     const sharedDeps = {
       t0Writer: { write: (..._: unknown[]): void => undefined },
@@ -161,7 +208,7 @@ describe("runReconcilerSweepTick", () => {
 
       const reconcilerSweep = runReconcilerSweepTick({
         services: svc,
-        runSweep: ({ maxClose, services, dryRun }) =>
+        runSweep: ({ maxClose, dryRun }): Promise<PrSweepResult> =>
           runPrOrphanSweep({
             ...sharedDeps,
             ghClient: ghClient,
@@ -171,7 +218,7 @@ describe("runReconcilerSweepTick", () => {
           }),
       });
 
-      openAll?.();
+      openAll();
       await reconcilerSweep;
       await Bun.sleep(10);
 
@@ -185,8 +232,9 @@ describe("runReconcilerSweepTick", () => {
     const db = setupDb();
     const svc = makeServices(db);
     // superseded=1 + stale=2 = closed=3; errored=1
-    const sweepFn = mock(() =>
-      makeSweepResult({ scanned: 5, superseded: 1, stale: 2, errored: 1 }),
+    const sweepFn = mock(
+      (): Promise<PrSweepResult> =>
+        Promise.resolve(makeSweepResult({ scanned: 5, superseded: 1, stale: 2, errored: 1 })),
     );
 
     await runReconcilerSweepTick({ services: svc, maxClose: 20, runSweep: sweepFn });
@@ -241,13 +289,15 @@ describe("runReconcilerSweepTick", () => {
     try {
       const db = setupDb();
       const svc = makeServices(db);
-      const sweepFn = mock(() => makeSweepResult());
+      const sweepFn = mock(
+        (_input: SweepTickInput): Promise<PrSweepResult> => Promise.resolve(makeSweepResult()),
+      );
 
       // No explicit maxClose — should pick up env var
       await runReconcilerSweepTick({ services: svc, runSweep: sweepFn });
 
-      const call = sweepFn.mock.calls[0][0] as { maxClose: number };
-      expect(call.maxClose).toBe(5);
+      const call = sweepFn.mock.calls[0]?.[0];
+      expect(call?.maxClose).toBe(5);
     } finally {
       if (prev === undefined) delete process.env.PENUMBRA_RECONCILER_SWEEP_MAX_CLOSE;
       else process.env.PENUMBRA_RECONCILER_SWEEP_MAX_CLOSE = prev;

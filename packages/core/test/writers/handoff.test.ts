@@ -631,7 +631,10 @@ test("claimDispatch() increments dispatch_attempts and stamps last_dispatch_star
 
   const before = db
     .query("SELECT dispatch_attempts, last_dispatch_started_at FROM handoffs WHERE handoff_id=?")
-    .get("h-claim-success");
+    .get("h-claim-success") as {
+    dispatch_attempts: number;
+    last_dispatch_started_at: string | null;
+  };
   expect(before.dispatch_attempts).toBe(0);
   expect(before.last_dispatch_started_at).toBeNull();
 
@@ -640,7 +643,10 @@ test("claimDispatch() increments dispatch_attempts and stamps last_dispatch_star
 
   const after = db
     .query("SELECT dispatch_attempts, last_dispatch_started_at FROM handoffs WHERE handoff_id=?")
-    .get("h-claim-success");
+    .get("h-claim-success") as {
+    dispatch_attempts: number;
+    last_dispatch_started_at: string | null;
+  };
   expect(after.dispatch_attempts).toBe(1);
   expect(after.last_dispatch_started_at).not.toBeNull();
 });
@@ -813,7 +819,10 @@ test("createApproved() persists workflow_run_id and max_dispatch_attempts", () =
 
   const row = db
     .query("SELECT workflow_run_id, max_dispatch_attempts FROM handoffs WHERE handoff_id=?")
-    .get("h-create-approved-new-fields");
+    .get("h-create-approved-new-fields") as {
+    workflow_run_id: string | null;
+    max_dispatch_attempts: number | null;
+  };
   expect(row.workflow_run_id).toBe("wf-123");
   expect(row.max_dispatch_attempts).toBe(5);
 });
@@ -875,7 +884,10 @@ test("createApproved() defaults max_dispatch_attempts to 3", () => {
 
   const row = db
     .query("SELECT workflow_run_id, max_dispatch_attempts FROM handoffs WHERE handoff_id=?")
-    .get("h-create-approved-defaults");
+    .get("h-create-approved-defaults") as {
+    workflow_run_id: string | null;
+    max_dispatch_attempts: number | null;
+  };
   expect(row.workflow_run_id).toBeNull();
   expect(row.max_dispatch_attempts).toBe(3);
 });
@@ -1094,7 +1106,7 @@ test("markFailed() transitions non-terminal → failed, records reason and does 
     triggered_by_event_id: "e",
   });
   writer.approve("h-fail-2", { resolved_by: "u", resolved_at: "t" });
-  writer.claimDispatch("h-fail-2");
+  writer.claimDispatch("h-fail-2", "worker-1");
   expect(writer.markFailed("h-fail-2", { reason: "crash" })).toBe(true);
   const row2 = db
     .query<
@@ -1119,7 +1131,7 @@ test("markFailed() refuses to transition terminal status", () => {
     triggered_by_event_id: "e",
   });
   writer.approve("h-fail-term", { resolved_by: "u", resolved_at: "t" });
-  writer.claimDispatch("h-fail-term");
+  writer.claimDispatch("h-fail-term", "worker-1");
   writer.markCompleted("h-fail-term");
 
   expect(writer.markFailed("h-fail-term", { reason: "too late" })).toBe(false);
@@ -1596,7 +1608,9 @@ test("HandoffWriter.createApproved inserts a handoff already in approved status 
   expect(row?.chain_trust_mode).toBe("all");
   expect(row?.chain_task_type).toBe("implement_small");
   expect(seen.length).toBe(1);
-  expect(seen[0].handoff_id).toBe("h-cs");
+  const first = seen[0];
+  if (!first) throw new Error("expected bus subscriber to capture the approved handoff");
+  expect(first.handoff_id).toBe("h-cs");
 });
 
 test("createApproved persists permission_profile inside the INSERT", () => {

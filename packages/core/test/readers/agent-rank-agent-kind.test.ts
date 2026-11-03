@@ -67,6 +67,7 @@ describe("routeAgent rank mode - agentKind filter", () => {
   it("defaults to coding rows only", () => {
     const out = rankAgentsViaRoute({
       db,
+      detail: "rank",
       taskType: "health_check",
       minSamples: 1,
       includeNeutral: true,

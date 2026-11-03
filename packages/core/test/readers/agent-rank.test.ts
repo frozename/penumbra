@@ -86,6 +86,7 @@ describe("routeAgent rank mode", () => {
   it("ranks successes above failures and excludes neutral rows by default", () => {
     const out = rankAgentsViaRoute({
       db,
+      detail: "rank",
       taskType: "implement_substantial",
       since: "2026-04-28T00:00:00Z",
       minSamples: 1,
@@ -101,6 +102,7 @@ describe("routeAgent rank mode", () => {
   it("includes neutral rows when requested", () => {
     const out = rankAgentsViaRoute({
       db,
+      detail: "rank",
       taskType: "implement_substantial",
       since: "2026-04-28T00:00:00Z",
       minSamples: 1,
@@ -139,6 +141,7 @@ describe("routeAgent rank mode", () => {
 
     const out = rankAgentsViaRoute({
       db: isolatedDb,
+      detail: "rank",
       taskType: "review_adversarial",
       minSamples: 1,
       now: new Date("2026-04-30T12:00:00Z"),
@@ -199,6 +202,7 @@ describe("routeAgent rank mode", () => {
 
     const out = rankAgentsViaRoute({
       db: isolatedDb,
+      detail: "rank",
       taskType: "review_adversarial",
       minSamples: 1,
       includeNeutral: false,
@@ -266,6 +270,7 @@ describe("routeAgent rank mode", () => {
 
     const out = rankAgentsViaRoute({
       db: isolatedDb,
+      detail: "rank",
       taskType: "implement_substantial",
       minSamples: 1,
       includeNeutral: true,
@@ -322,6 +327,7 @@ describe("routeAgent rank mode", () => {
 
     const out = rankAgentsViaRoute({
       db,
+      detail: "rank",
       taskType: "implement_substantial",
       since: "2026-04-28T00:00:00Z",
       minSamples: 1,
@@ -426,6 +432,7 @@ describe("routeAgent rank mode", () => {
 
     const out = rankAgentsViaRoute({
       db: isolatedDb,
+      detail: "rank",
       taskType: "implement_small",
       minSamples: 1,
       includeNeutral: false,
@@ -488,6 +495,7 @@ describe("routeAgent rank mode", () => {
 
     const out = rankAgentsViaRoute({
       db: isolatedDb,
+      detail: "rank",
       taskType: "implement_substantial",
       minSamples: 1,
       includeNeutral: false,
@@ -537,6 +545,7 @@ describe("routeAgent rank mode", () => {
 
     const out = rankAgentsViaRoute({
       db: isolatedDb,
+      detail: "rank",
       taskType: "implement_substantial",
       minSamples: 1,
       includeNeutral: false,
@@ -636,6 +645,7 @@ describe("routeAgent rank mode", () => {
 
     const out = rankAgentsViaRoute({
       db: isolatedDb,
+      detail: "rank",
       taskType: "implement_substantial",
       minSamples: 1,
       includeNeutral: true,
@@ -678,6 +688,7 @@ describe("routeAgent rank mode", () => {
 
     const out = rankAgentsViaRoute({
       db: isolatedDb,
+      detail: "rank",
       taskType: "implement_substantial",
       minSamples: 1,
       includeNeutral: true,
