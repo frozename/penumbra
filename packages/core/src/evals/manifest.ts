@@ -324,20 +324,17 @@ export const UsageSchema = z
     tokens: z.number().int().min(0).nullable(),
     cost_usd: z.number().min(0).nullable(),
     scope: z.enum(["attempt", "unknown"]),
-    missing_reason: z.string().nullish(),
+    missing_reason: z.string().optional(),
   })
   .superRefine((usage, ctx) => {
-    if (
-      usage.tokens === null &&
-      (usage.missing_reason === undefined || usage.missing_reason === null)
-    ) {
+    if (usage.tokens === null && usage.missing_reason === undefined) {
       ctx.addIssue({ code: "custom", message: "null tokens require a missing_reason" });
     }
   });
 
 export const AttemptSchema = z.strictObject({
   n: z.number().int().min(1),
-  handoff_id: z.string().min(1),
+  handoff_id: z.string(),
   dispatch_attempt: z.number().int().min(1).nullable(),
   head_sha: GitShaSchema.nullable(),
   commits: AttemptCommitsSchema,
@@ -363,7 +360,7 @@ export const AssistanceSchema = z.strictObject({
     "human_takeover",
     "operator_note",
   ]),
-  attempt_n: z.number().int().min(1).nullable(),
+  attempt_n: z.number().int().min(1),
   ref: z.string().nullable(),
 });
 
@@ -474,21 +471,15 @@ export const RecipeComponentSchema = z.discriminatedUnion("status", [
   }),
 ]);
 
-export const RecipeSchema = z
-  .strictObject({
-    recipe_id: z.string().min(1),
-    arm: RecipeArmSchema,
-    components: z.record(z.string(), RecipeComponentSchema),
-    limits: z.record(z.string(), z.number().int().min(1)),
-    seed: z.strictObject({ value: z.number().int().nullable(), supported: z.boolean() }),
-    notes: z.string().optional(),
-    created_at: z.string().nullable(),
-  })
-  .superRefine((recipe, ctx) => {
-    if (!("max_rounds" in recipe.limits)) {
-      ctx.addIssue({ code: "custom", message: "recipe limits must include max_rounds" });
-    }
-  });
+export const RecipeSchema = z.strictObject({
+  recipe_id: z.string().min(1),
+  arm: RecipeArmSchema,
+  components: z.record(z.string(), RecipeComponentSchema),
+  limits: z.record(z.string(), z.number().int().min(1)),
+  seed: z.strictObject({ value: z.number().int().nullable(), supported: z.boolean() }),
+  notes: z.string().optional(),
+  created_at: z.string().optional(),
+});
 
 const HandoffReliabilitySchema = z.strictObject({
   scope: z.literal("handoff_latest"),
@@ -513,7 +504,7 @@ export const EpisodeSchemaInner = z.strictObject({
   model_identity: ModelIdentitySchema,
   harness_build: z.strictObject({
     sha: GitShaSchema.nullable(),
-    missing_reason: z.string().nullish(),
+    missing_reason: z.string().optional(),
   }),
   environment: z.strictObject({
     worktree_kind: z.string().nullable(),

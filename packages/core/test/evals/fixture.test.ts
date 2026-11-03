@@ -150,6 +150,7 @@ test("case 19: FixturePublic is strict and carries required contract fields", ()
   for (const key of ["assertions", "patches", "hidden", "repo_files", "fixture_id"]) {
     rejects(FixturePublicSchema, fx({ [key]: [] }));
   }
+  rejects(FixturePublicSchema, fx({ fixture_id: "fixture-1" }));
   rejects(FixturePublicSchema, fx({ base_sha: undefined }));
   rejects(FixturePublicSchema, fx({ task_digest: undefined }));
   for (const key of ["schema_version", "split", "expect_blocked", "hidden_ref", "content_digest"]) {
@@ -162,7 +163,11 @@ test("case 19: FixturePublic is strict and carries required contract fields", ()
 
 test("case 20: bundle input/assertion/patch guards", () => {
   parses(HoldoutBundleSchema, bundle());
-  rejects(HoldoutBundleSchema, bundle({ inputs: [{ kind: "command", argv: ["bun", "test"] }] }));
+  rejects(HiddenAssertionSchema, { kind: "command", argv: ["bun", "test"] });
+  rejects(
+    HoldoutBundleSchema,
+    bundle({ assertions: [{ kind: "command", argv: ["bun", "test"] }] }),
+  );
   rejects(HoldoutBundleSchema, bundle({ inputs: [] }));
   rejects(
     HoldoutBundleSchema,
@@ -283,6 +288,18 @@ test("case 22: assertionSetDigest order-insensitive; bundleContentDigest content
   expect(assertionSetDigest({ assertions: [c1, c2] })).not.toBe(
     assertionSetDigest({ assertions: [c1Seed8, c2] }),
   );
+  const probe = {
+    id: "c3",
+    kind: "probe",
+    module: "src/a.ts",
+    export: "run",
+    input: { n: 1 },
+    expect: { ok: true },
+  };
+  const probeExpectFlipped = { ...probe, expect: { ok: false } };
+  expect(assertionSetDigest({ assertions: [c1, c2, probe] })).not.toBe(
+    assertionSetDigest({ assertions: [c1, c2, probeExpectFlipped] }),
+  );
   const b = bundle();
   expect(bundleContentDigest(b)).not.toBe(
     bundleContentDigest(bundle({ patches: { good: "GOOD", bad: ["OTHER"] } })),
@@ -338,7 +355,7 @@ test("case 32: bundle repo_files non-empty map of safe relative paths to strings
   parses(HoldoutBundleSchema, bundle({ repo_files: { "src/a.ts": "export const a = 1;\n" } }));
 });
 
-test("case 35: plan-exact bundle parses; assertion digest sorts by id", () => {
+test("case 50: plan-exact bundle parses; assertion digest sorts by id", () => {
   parses(HoldoutBundleSchema, bundle({ mutants: ["m1"] }));
   rejects(HoldoutBundleSchema, omit(bundle({ mutants: ["m1"] }), "mutants"));
   const c1 = { id: "c1", kind: "file_absent", path: "src/x.ts" };

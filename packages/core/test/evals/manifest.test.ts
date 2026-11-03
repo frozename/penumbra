@@ -230,9 +230,7 @@ test("case 2: ModelIdentity is strict and provenance is a closed enum", () => {
   rejects(ModelIdentitySchema, modelIdentity({ weights_sha256: HEX64_C }));
   rejects(
     ModelIdentitySchema,
-    modelIdentity({
-      requested: { value: "m", provenance: "hashed_at_dispatch", missing_reason: null },
-    }),
+    modelIdentity({ requested: { value: "m", provenance: "hashed_at_dispatch" } }),
   );
 });
 
@@ -409,6 +407,13 @@ test("case 10: commit attribution and autocommit_flag rules", () => {
   parses(
     EpisodeSchema,
     epControlled({
+      harness_build: { sha: HEX64_C },
+      attempts: [att(1, SHA40, { commits: commits("model", "controlled_harness_build", null) })],
+    }),
+  );
+  rejects(
+    EpisodeSchema,
+    epControlled({
       harness_build: { sha: HEX64_C, missing_reason: null },
       attempts: [att(1, SHA40, { commits: commits("model", "controlled_harness_build", null) })],
     }),
@@ -559,12 +564,13 @@ test("case 13: lineage_usage completeness and attempt usage missing_reason", () 
     scope: "attempt",
     missing_reason: null,
   });
-  parses(UsageSchema, {
+  rejects(UsageSchema, {
     tokens: 0,
     cost_usd: null,
     scope: "attempt",
     missing_reason: null,
   });
+  parses(UsageSchema, { tokens: 0, cost_usd: null, scope: "attempt" });
 });
 
 test("case 14: episode strictness, recipe/fixture coupling, task_digest hex", () => {
@@ -592,9 +598,16 @@ test("case 16: RecipeSchema arm options and pending_upstream without blocked_on"
     },
     limits: { max_rounds: 2 },
     seed: { value: null, supported: false },
-    created_at: null,
   };
   parses(RecipeSchema, recipe);
+  parses(RecipeSchema, {
+    recipe_id: "r-plan",
+    arm: "minimal",
+    components: {},
+    limits: { timeout_s: 5 },
+    seed: { value: null, supported: false },
+  });
+  rejects(RecipeSchema, { ...recipe, created_at: null });
   expect([...RecipeArmSchema.options].sort()).toEqual([
     "bounded_repair",
     "capsule",
@@ -664,7 +677,7 @@ test("case 29: final_sha must be explained by last attempt head or human_takeove
       final_sha: SHA40,
       attempts: [att(1, SHA40_B)],
       attempt_history: hist,
-      assistance: [{ kind: "human_takeover", attempt_n: null, ref: SHA40 }],
+      assistance: [{ kind: "human_takeover", attempt_n: 1, ref: SHA40 }],
     }),
   );
   rejects(
@@ -673,7 +686,7 @@ test("case 29: final_sha must be explained by last attempt head or human_takeove
       final_sha: SHA40,
       attempts: [att(1, SHA40_B)],
       attempt_history: hist,
-      assistance: [{ kind: "operator_note", attempt_n: null, ref: SHA40 }],
+      assistance: [{ kind: "operator_note", attempt_n: 1, ref: SHA40 }],
     }),
   );
   rejects(
@@ -876,18 +889,19 @@ test("case 43: IsoTsSchema accepts Z, offset and fractional seconds", () => {
 test("case 44: Attempt requires a handoff_id string and a required timings object", () => {
   parses(AttemptSchema, att(1, SHA40));
   rejects(AttemptSchema, omit(att(1, SHA40), "handoff_id"));
-  rejects(AttemptSchema, att(1, SHA40, { handoff_id: "" }));
+  parses(AttemptSchema, att(1, SHA40, { handoff_id: "" }));
+  rejects(AttemptSchema, att(1, SHA40, { handoff_id: 7 }));
   rejects(AttemptSchema, omit(att(1, SHA40), "timings"));
   rejects(AttemptSchema, att(1, SHA40, { timings: omit(attTimings(), "e2e_ms") }));
 });
 
-test("case 45: Assistance requires explicit null attempt_n", () => {
-  parses(AssistanceSchema, { kind: "teacher", attempt_n: null, ref: null });
+test("case 45: Assistance requires a positive attempt_n and rejects null", () => {
+  parses(AssistanceSchema, { kind: "teacher", attempt_n: 1, ref: null });
   parses(AssistanceSchema, { kind: "human_takeover", attempt_n: 2, ref: SHA40 });
   rejects(AssistanceSchema, { kind: "teacher", ref: null });
-  rejects(AssistanceSchema, { kind: "teacher", attempt_n: null });
+  rejects(AssistanceSchema, { kind: "teacher", attempt_n: null, ref: null });
   rejects(AssistanceSchema, { kind: "teacher", attempt_n: 0, ref: null });
-  rejects(AssistanceSchema, { kind: "coaching", attempt_n: null, ref: null });
+  rejects(AssistanceSchema, { kind: "coaching", attempt_n: 1, ref: null });
 });
 
 test("case 46: partial attempt_history is pinned to the handoff_counter basis", () => {

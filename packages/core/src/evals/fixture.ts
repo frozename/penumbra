@@ -87,7 +87,7 @@ const ProbeAssertionSchema = z.strictObject({
   kind: z.literal("probe"),
   id: AssertionIdSchema,
   module: RelPathSchema,
-  export: z.string().min(1),
+  export: z.string(),
   input: z.json(),
   expect: z.json(),
 });
@@ -96,7 +96,7 @@ const FileMatchesAssertionSchema = z.strictObject({
   kind: z.literal("file_matches"),
   id: AssertionIdSchema,
   path: RelPathSchema,
-  pattern: z.string().min(1),
+  pattern: z.string(),
 });
 
 const FileAbsentAssertionSchema = z.strictObject({
@@ -110,7 +110,7 @@ const InvariantAssertionSchema = z.strictObject({
   id: AssertionIdSchema,
   property: InvariantPropertySchema,
   module: RelPathSchema,
-  export: z.string().min(1),
+  export: z.string(),
   inputs: z.array(z.json()).min(1),
   seed: z.number().int(),
 });
