@@ -12,7 +12,9 @@ export interface DispatchEventsRetentionWorker {
 
 /**
  * Prunes old rows from dispatch_events, which is high-volume operational
- * telemetry (~95% heartbeat/lifecycle rows) with no rollup and previously no
+ * telemetry (in the #297 snapshot, per-token agent.thought rows were ~90% of
+ * rows and heartbeats ~9%, before stdio-acp thought coalescing landed in #327)
+ * with no rollup and previously no
  * retention — it grew unbounded (~1.9M rows / ~470MB observed). Mirrors
  * t0-retention: a batched DELETE under the existing idx_dispatch_events_ts, with
  * a microtask yield between batches so a large first prune doesn't block the

@@ -37,6 +37,7 @@ function makeFakeDaemon(overrides: Partial<FakeDaemonHandles> = {}): DaemonClien
     Promise.resolve({
       permission_id: id,
       status: body.decision === "approve" ? "approved" : "rejected",
+      decided_at: "2026-05-08T00:00:00Z",
     });
   return fakeDaemon({
     listPermissions: overrides.listPermissions ?? listPermissions,

@@ -667,9 +667,10 @@ test("worktree.cleanup calls manager", async () => {
     worktreeMode: "symlink_mirror",
   };
   spyOn(services.worktreeManager, "getWorktree").mockReturnValue(handle);
-  const teardownSpy = spyOn(services.worktreeManager, "teardownWorktree").mockResolvedValue(
-    undefined,
-  );
+  const teardownSpy = spyOn(services.worktreeManager, "teardownWorktree").mockResolvedValue({
+    worktreeRemoved: true,
+    branchDeleted: true,
+  });
 
   const res = await worktreesCleanupRoute(
     new Request("http://h/worktrees/h1/cleanup?force=true"),

@@ -152,13 +152,22 @@ export class ThoughtCapture {
    * #297: buffer one streamed chunk. stdio-acp sends about one token per chunk,
    * so the buffer is written as one agent.thought row when it reaches a sentence
    * end or newline with at least THOUGHT_FLUSH_MIN_CHARS chars, when it would
-   * pass rowCap(), or on flush().
+   * pass rowCap(), when coalesce_ms has elapsed since the row's first chunk, or
+   * on flush(). coalesce_ms 0 writes one row per chunk; each chunk is then
+   * redacted on its own, so a credential split across chunks can be stored
+   * unredacted.
    */
   appendThoughtChunk(input: RecordThoughtInput): void {
     if (!this.isAdapterEnabled(input.adapter, input.agentName)) return;
     const state = this.getOrCreateState(input.handoffId);
     if (state.streamCapHit) return;
     const ts = input.ts ?? this.nowIso();
+    const coalesceMs = this.deps.config.capture.coalesceMs;
+    if (coalesceMs === 0) {
+      this.flushPending(input.handoffId, state, null);
+      this.emitRow(state, { ...input, ts }, 1);
+      return;
+    }
     const cap = this.rowCap();
     if (state.pending !== null && state.pending.text.length + input.text.length > cap) {
       this.flushPending(input.handoffId, state, ts);
@@ -170,7 +179,11 @@ export class ThoughtCapture {
       pending.tokenCount = (pending.tokenCount ?? 0) + input.tokenCount;
     }
     state.pending = pending;
-    if (pending.text.length >= cap || isThoughtFlushBoundary(pending.text)) {
+    if (
+      pending.text.length >= cap ||
+      isThoughtFlushBoundary(pending.text) ||
+      (coalesceMs !== undefined && Date.parse(ts) - Date.parse(pending.ts) >= coalesceMs)
+    ) {
       this.flushPending(input.handoffId, state, ts);
     }
   }

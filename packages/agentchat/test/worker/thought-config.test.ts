@@ -237,3 +237,61 @@ describe("thought analyzer input budget default (#295)", () => {
     expect(configParsed.thoughts?.analyze?.digest?.max_input_chars).toBe(50000);
   });
 });
+
+describe("thoughts.capture.coalesce_ms (#297)", () => {
+  const baseAgentchat = {
+    agents: [{ name: "codex", adapter: "codex-cli", options: {}, roles: [], auto_approve_to: [] }],
+    default_roles: {},
+    providers: [],
+  };
+
+  it("loadThoughtsConfig defaults capture.coalesceMs to 1000", () => {
+    const cfg = loadThoughtsConfig({
+      agentchat: { ...baseAgentchat, thoughts: { enabled: true } },
+    });
+    expect(cfg.capture.coalesceMs).toBe(1000);
+  });
+
+  it("loadThoughtsConfig maps an explicit coalesce_ms of 0", () => {
+    const cfg = loadThoughtsConfig({
+      agentchat: {
+        ...baseAgentchat,
+        thoughts: { enabled: true, capture: { coalesce_ms: 0 } },
+      },
+    });
+    expect(cfg.capture.coalesceMs).toBe(0);
+  });
+
+  it("agentchat schema honors coalesce_ms 0 and defaults it to 1000", () => {
+    const parsed = AgentChatConfigSchema.parse({
+      agents: [{ name: "codex", adapter: "codex-cli" }],
+      thoughts: { enabled: true, capture: { coalesce_ms: 0 } },
+    });
+    expect(parsed.thoughts?.capture?.coalesce_ms).toBe(0);
+    const defaulted = AgentChatConfigSchema.parse({
+      agents: [{ name: "codex", adapter: "codex-cli" }],
+      thoughts: { enabled: true, capture: {} },
+    });
+    expect(defaulted.thoughts?.capture?.coalesce_ms).toBe(1000);
+  });
+
+  it("@penumbra/config schema accepts coalesce_ms, defaults to 1000, rejects negatives", () => {
+    const res = AgentsConfigSchema.safeParse({
+      agents: [{ name: "claude-acp-sonnet", adapter: "stdio-acp" }],
+      thoughts: { enabled: true, capture: { coalesce_ms: 250 } },
+    });
+    expect(res.success).toBe(true);
+    expect(res.data?.thoughts?.capture?.coalesce_ms).toBe(250);
+    const defaulted = AgentsConfigSchema.safeParse({
+      agents: [{ name: "claude-acp-sonnet", adapter: "stdio-acp" }],
+      thoughts: { enabled: true, capture: {} },
+    });
+    expect(defaulted.success).toBe(true);
+    expect(defaulted.data?.thoughts?.capture?.coalesce_ms).toBe(1000);
+    const negative = AgentsConfigSchema.safeParse({
+      agents: [{ name: "claude-acp-sonnet", adapter: "stdio-acp" }],
+      thoughts: { enabled: true, capture: { coalesce_ms: -1 } },
+    });
+    expect(negative.success).toBe(false);
+  });
+});

@@ -1389,35 +1389,38 @@ test("a later rollup in the same tick is still judged after two overflows (pool 
   const pool = createJudgePool({
     judges: [makeJudgeEntry("solo", "http://solo")],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: (_url, init): Promise<Response> => {
-      call++;
-      const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as {
-        messages?: { content?: string }[];
-      };
-      const content = body.messages?.[0]?.content ?? "";
-      if (content.length > 5000) {
+    fetch: Object.assign(
+      ((_url: string, init?: RequestInit): Promise<Response> => {
+        call++;
+        const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as {
+          messages?: { content?: string }[];
+        };
+        const content = body.messages?.[0]?.content ?? "";
+        if (content.length > 5000) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                error: {
+                  code: 400,
+                  message:
+                    "request (13857 tokens) exceeds the available context size (8192 tokens) exceed_context_size_error n_prompt_tokens:13857 n_ctx:8192",
+                  type: "exceed_context_size_error",
+                  n_prompt_tokens: 13857,
+                  n_ctx: 8192,
+                },
+              }),
+              { status: 400, headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
         return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              error: {
-                code: 400,
-                message:
-                  "request (13857 tokens) exceeds the available context size (8192 tokens) exceed_context_size_error n_prompt_tokens:13857 n_ctx:8192",
-                type: "exceed_context_size_error",
-                n_prompt_tokens: 13857,
-                n_ctx: 8192,
-              },
-            }),
-            { status: 400, headers: { "content-type": "application/json" } },
-          ),
+          new Response(JSON.stringify({ choices: [{ message: { content: '{"memories":[]}' } }] }), {
+            status: 200,
+          }),
         );
-      }
-      return Promise.resolve(
-        new Response(JSON.stringify({ choices: [{ message: { content: '{"memories":[]}' } }] }), {
-          status: 200,
-        }),
-      );
-    },
+      }) as (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>,
+      { preconnect: (): void => undefined },
+    ),
     unhealthyAfter: 2,
     promptBuilder: (transcript) => transcript,
     parseResponse: () => [],
@@ -1479,61 +1482,64 @@ test("pool not poisoned: a tiny transcript after overflows yields a real memory 
   const pool = createJudgePool({
     judges: [makeJudgeEntry("solo", "http://solo")],
     log: { info: () => undefined, warn: () => undefined, error: () => undefined },
-    fetch: (_url, init): Promise<Response> => {
-      call++;
-      const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as {
-        messages?: { content?: string }[];
-      };
-      const content = body.messages?.[0]?.content ?? "";
-      if (content.length > 5000) {
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              error: {
-                code: 400,
-                message:
-                  "request (13857 tokens) exceeds the available context size (8192 tokens) exceed_context_size_error n_prompt_tokens:13857 n_ctx:8192",
-                type: "exceed_context_size_error",
-                n_prompt_tokens: 13857,
-                n_ctx: 8192,
-              },
-            }),
-            { status: 400, headers: { "content-type": "application/json" } },
-          ),
-        );
-      }
-      if (content === "User: small") {
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              choices: [
-                {
-                  message: {
-                    content: JSON.stringify({
-                      memories: [
-                        {
-                          title: "Tiny Candidate",
-                          body: "A durable fact from a tiny transcript that proves the pool is still healthy after overflows.",
-                          kind: "decision",
-                          why: "Positive control for pool health after overflow exhaustion.",
-                          depth: 2,
-                        },
-                      ],
-                    }),
-                  },
+    fetch: Object.assign(
+      ((_url: string, init?: RequestInit): Promise<Response> => {
+        call++;
+        const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as {
+          messages?: { content?: string }[];
+        };
+        const content = body.messages?.[0]?.content ?? "";
+        if (content.length > 5000) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                error: {
+                  code: 400,
+                  message:
+                    "request (13857 tokens) exceeds the available context size (8192 tokens) exceed_context_size_error n_prompt_tokens:13857 n_ctx:8192",
+                  type: "exceed_context_size_error",
+                  n_prompt_tokens: 13857,
+                  n_ctx: 8192,
                 },
-              ],
-            }),
-            { status: 200 },
-          ),
+              }),
+              { status: 400, headers: { "content-type": "application/json" } },
+            ),
+          );
+        }
+        if (content === "User: small") {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                choices: [
+                  {
+                    message: {
+                      content: JSON.stringify({
+                        memories: [
+                          {
+                            title: "Tiny Candidate",
+                            body: "A durable fact from a tiny transcript that proves the pool is still healthy after overflows.",
+                            kind: "decision",
+                            why: "Positive control for pool health after overflow exhaustion.",
+                            depth: 2,
+                          },
+                        ],
+                      }),
+                    },
+                  },
+                ],
+              }),
+              { status: 200 },
+            ),
+          );
+        }
+        return Promise.resolve(
+          new Response(JSON.stringify({ choices: [{ message: { content: '{"memories":[]}' } }] }), {
+            status: 200,
+          }),
         );
-      }
-      return Promise.resolve(
-        new Response(JSON.stringify({ choices: [{ message: { content: '{"memories":[]}' } }] }), {
-          status: 200,
-        }),
-      );
-    },
+      }) as (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>,
+      { preconnect: (): void => undefined },
+    ),
     unhealthyAfter: 2,
     promptBuilder: (transcript) => transcript,
     parseResponse: parseJudgeResponse,
