@@ -5,11 +5,17 @@ import { TestEmbedder } from "@src/embedder/test-embedder.js";
 
 const originalFetch = globalThis.fetch;
 
-function mockFetch(fn: typeof fetch): () => void {
-  globalThis.fetch = fn;
+function mockFetch(fn: (...args: Parameters<typeof fetch>) => Promise<Response>): () => void {
+  globalThis.fetch = fn as typeof fetch;
   return () => {
     globalThis.fetch = originalFetch;
   };
+}
+
+function requestUrl(input: Parameters<typeof fetch>[0]): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
 }
 
 const catchRejection = async (promise: Promise<unknown>): Promise<unknown> => {
@@ -23,7 +29,7 @@ const catchRejection = async (promise: Promise<unknown>): Promise<unknown> => {
 
 test("auto + live embeddings round-trip chooses remote embedder", async () => {
   const restoreFetch = mockFetch(async (url, init) => {
-    const req = new Request(url, init);
+    const req = new Request(requestUrl(url), init);
     expect(new URL(req.url).pathname).toBe("/v1/embeddings");
     const body = (await req.json()) as { input: string[]; model: string };
     expect(body.input).toEqual(["penumbra embedder liveness probe"]);
@@ -109,7 +115,7 @@ test("bundled mode always chooses fallback", async () => {
 test("auto mode skips liveness probe when healthPath is empty", async () => {
   let calledProbe = false;
   const restoreFetch = mockFetch((url) => {
-    const req = new Request(url);
+    const req = new Request(requestUrl(url));
     const path = new URL(req.url).pathname;
     if (path === "/v1/embeddings" || path === "/healthz") {
       calledProbe = true;

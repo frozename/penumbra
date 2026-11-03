@@ -25,9 +25,18 @@ const fixtures: { name: string; message: string; role?: string }[] = [
   },
 ] as const;
 
+function must<T>(value: T | undefined, what: string): T {
+  expect(value, what).toBeDefined();
+  if (value === undefined) {
+    throw new Error(`missing ${what}`);
+  }
+  return value;
+}
+
 describe("profileTaskDeterministic", () => {
   test("a repo-wide implementation message scores high codingDemand and complexity", () => {
-    const profile = profileTaskDeterministic(fixtures[0].message, fixtures[0].role);
+    const fixture = must(fixtures[0], "repo-wide implementation fixture");
+    const profile = profileTaskDeterministic(fixture.message, fixture.role);
 
     expect(profile.taskTypes).toContain("coding");
     expect(profile.codingDemand).toBeGreaterThanOrEqual(0.8);
@@ -35,7 +44,8 @@ describe("profileTaskDeterministic", () => {
   });
 
   test("a one-line formatting fix scores low complexity, high cost/latency sensitivity", () => {
-    const profile = profileTaskDeterministic(fixtures[1].message, fixtures[1].role);
+    const fixture = must(fixtures[1], "one-line formatting fixture");
+    const profile = profileTaskDeterministic(fixture.message, fixture.role);
 
     expect(profile.complexity).toBeLessThanOrEqual(0.3);
     expect(profile.latencySensitivity).toBeGreaterThanOrEqual(0.75);
@@ -72,8 +82,10 @@ describe("profileTaskDeterministic", () => {
   });
 
   test("confidence is lower for a message with no recognizable signal than for one with several, and never reaches 1.0", () => {
-    const ambiguous = profileTaskDeterministic(fixtures[2].message);
-    const recognized = profileTaskDeterministic(fixtures[0].message, fixtures[0].role);
+    const ambiguousFixture = must(fixtures[2], "ambiguous fixture");
+    const recognizedFixture = must(fixtures[0], "repo-wide implementation fixture");
+    const ambiguous = profileTaskDeterministic(ambiguousFixture.message);
+    const recognized = profileTaskDeterministic(recognizedFixture.message, recognizedFixture.role);
 
     expect(ambiguous.confidence).toBeLessThan(recognized.confidence);
     expect(ambiguous.confidence).toBeLessThan(0.6);
@@ -98,8 +110,9 @@ describe("profileTaskDeterministic", () => {
       requiredCapabilities: ["typescript"],
     };
 
-    const first = profileTaskDeterministic(fixtures[0].message, "executor", hints);
-    const second = profileTaskDeterministic(fixtures[0].message, "executor", hints);
+    const fixture = must(fixtures[0], "repo-wide implementation fixture");
+    const first = profileTaskDeterministic(fixture.message, "executor", hints);
+    const second = profileTaskDeterministic(fixture.message, "executor", hints);
 
     expect(JSON.stringify(first)).toBe(JSON.stringify(second));
   });
