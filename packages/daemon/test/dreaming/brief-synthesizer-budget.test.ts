@@ -25,6 +25,16 @@ function makeMarkdownResponse(markdown: string): Response {
   );
 }
 
+// `typeof fetch` requires `preconnect`; bare mock functions don't satisfy it.
+function asFetchMock(
+  impl: (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+  ) => Promise<Response>,
+): typeof fetch {
+  return Object.assign(impl, { preconnect: (): void => undefined });
+}
+
 function promptFromInit(init?: RequestInit): string {
   if (!init?.body || typeof init.body !== "string") throw new TypeError("missing JSON body");
   const parsed = JSON.parse(init.body) as { messages?: { content?: string }[] };
@@ -68,10 +78,10 @@ describe("buildBriefPrompt budget", () => {
 describe("BriefSynthesizer prompt budget", () => {
   it("returns source_memory_ids for only memories included in the successful prompt", async () => {
     const prompts: string[] = [];
-    const fakeFetch: typeof fetch = (_input, init) => {
+    const fakeFetch = asFetchMock((_input, init) => {
       prompts.push(promptFromInit(init));
       return Promise.resolve(makeMarkdownResponse("# Project Brief: proj\n\nok"));
-    };
+    });
     const synthesizer = createBriefSynthesizer(
       [{ name: "s1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" }],
       fakeFetch,
@@ -94,7 +104,7 @@ describe("BriefSynthesizer prompt budget", () => {
 
   it("halves memories and retries after a context overflow", async () => {
     const prompts: string[] = [];
-    const fakeFetch: typeof fetch = (_input, init) => {
+    const fakeFetch = asFetchMock((_input, init) => {
       prompts.push(promptFromInit(init));
       if (prompts.length === 1) {
         return Promise.resolve(
@@ -102,7 +112,7 @@ describe("BriefSynthesizer prompt budget", () => {
         );
       }
       return Promise.resolve(makeMarkdownResponse("# Project Brief: proj\n\nok after retry"));
-    };
+    });
     const synthesizer = createBriefSynthesizer(
       [{ name: "s1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" }],
       fakeFetch,
@@ -129,10 +139,10 @@ describe("BriefSynthesizer prompt budget", () => {
 
   it("does not treat non-overflow failures as shrinkable", async () => {
     const prompts: string[] = [];
-    const fakeFetch: typeof fetch = (_input, init) => {
+    const fakeFetch = asFetchMock((_input, init) => {
       prompts.push(promptFromInit(init));
       return Promise.resolve(new Response("server unavailable", { status: 503 }));
-    };
+    });
     const synthesizer = createBriefSynthesizer(
       [{ name: "s1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" }],
       fakeFetch,

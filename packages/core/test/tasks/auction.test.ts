@@ -8,6 +8,7 @@ import { Worker as NodeWorker } from "node:worker_threads";
 import { migrate } from "@src/db/migrations.js";
 import { applyRuntimePragmas, loadSqliteVec } from "@src/db/sqlite-vec.js";
 import { pickPreferred as exportedPickPreferred } from "@src/index.js";
+import type { AgentRankOutput } from "@src/schemas/agent-performance.js";
 import type { RouteAgentOutput } from "@src/services/agent-routing.js";
 import { pickPreferred } from "@src/tasks/auction.js";
 import type { AgentDescriptor } from "@src/tasks/eligibility.js";
@@ -75,44 +76,36 @@ function defaultAgents(): AgentRegistry {
   ]);
 }
 
+type RankCandidate = AgentRankOutput["candidates"][number];
+
+function rankCandidate(agent_name: string, score: number): RankCandidate {
+  return {
+    agent_name,
+    samples: 1,
+    successes: 1,
+    failures: 0,
+    neutral: 0,
+    success_rate: 1,
+    avg_rounds: null,
+    avg_latency_ms: null,
+    avg_exec_ms: null,
+    cost_per_success_usd: null,
+    avg_reviewer_findings: null,
+    avg_trust_score: null,
+    gate_verdict_coverage: 0,
+    gate_pass_rate: 0,
+    score,
+    last_outcome_at: "",
+  };
+}
+
 function raceRouteAgentOutput(): RouteAgentOutput {
   return {
     detail: "rank" as const,
     candidates: {
       task_type: "implement_substantial",
       window: { from: null, to: "" },
-      candidates: [
-        {
-          agent_name: "A",
-          samples: 1,
-          successes: 1,
-          failures: 0,
-          neutral: 0,
-          success_rate: 1,
-          avg_rounds: null,
-          avg_latency_ms: null,
-          cost_per_success_usd: null,
-          avg_reviewer_findings: null,
-          avg_trust_score: null,
-          score: 90,
-          last_outcome_at: "",
-        },
-        {
-          agent_name: "B",
-          samples: 1,
-          successes: 1,
-          failures: 0,
-          neutral: 0,
-          success_rate: 1,
-          avg_rounds: null,
-          avg_latency_ms: null,
-          cost_per_success_usd: null,
-          avg_reviewer_findings: null,
-          avg_trust_score: null,
-          score: 30,
-          last_outcome_at: "",
-        },
-      ],
+      candidates: [rankCandidate("A", 90), rankCandidate("B", 30)],
     },
   };
 }
@@ -132,26 +125,12 @@ describe("TaskWriter.next auction window", () => {
     return new TaskWriter(db, {
       now: (): number => nowMs,
       resolveAgent: (name): AgentDescriptor | undefined => agents.get(name),
-      routeAgent: () => ({
-        detail: "rank" as const,
+      routeAgent: (): RouteAgentOutput => ({
+        detail: "rank",
         candidates: {
           task_type: "implement_substantial",
           window: { from: null, to: "" },
-          candidates: rankings.map((r) => ({
-            agent_name: r.agent_name,
-            samples: 1,
-            successes: 1,
-            failures: 0,
-            neutral: 0,
-            success_rate: 1,
-            avg_rounds: null,
-            avg_latency_ms: null,
-            cost_per_success_usd: null,
-            avg_reviewer_findings: null,
-            avg_trust_score: null,
-            score: r.score,
-            last_outcome_at: "",
-          })),
+          candidates: rankings.map((r) => rankCandidate(r.agent_name, r.score)),
         },
       }),
     });
