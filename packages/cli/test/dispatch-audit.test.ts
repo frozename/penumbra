@@ -1,13 +1,19 @@
 import type { DispatchReliabilityReport } from "@penumbra/core";
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { formatDispatchAudit, runDispatchAudit } from "@src/commands/dispatch-audit.js";
+import { formatDispatchAudit, runDispatchAudit } from "../src/commands/dispatch-audit.js";
+import { urlToString } from "./commands/_helpers.js";
 
-import { parseJson, urlToString } from "./commands/_helpers.js";
+type FetchArgs = Parameters<typeof globalThis.fetch>;
+
+// Bun's `typeof fetch` requires a static `preconnect` member that a bare stub lacks.
+function fetchStub(impl: (...args: Parameters<typeof fetch>) => Promise<Response>): typeof fetch {
+  return Object.assign(impl, { preconnect: fetch.preconnect.bind(fetch) });
+}
 
 const report = {
   handoff_id: "h-1",
@@ -67,11 +73,9 @@ describe("runDispatchAudit", () => {
   test("fetches the dispatch audit and prints the formatted report", async () => {
     const calls: { url: string; init?: RequestInit }[] = [];
     const printed: string[] = [];
-    const fetchImpl = Object.assign(
-      (
-        url: string | URL | Request,
-        init: RequestInit | BunFetchRequestInit | undefined,
-      ): Promise<Response> => {
+    const fetch = fetchStub(
+      mock((...args: FetchArgs) => {
+        const [url, init] = args;
         calls.push({ url: urlToString(url), init });
         return Promise.resolve(
           new Response(JSON.stringify({ report }), {
@@ -79,21 +83,20 @@ describe("runDispatchAudit", () => {
             headers: { "content-type": "application/json" },
           }),
         );
-      },
-      { preconnect: fetch.preconnect.bind(fetch) },
+      }),
     );
 
     await runDispatchAudit({
       handoffId: "handoff-1",
       json: false,
       storageRoot,
-      fetch: fetchImpl,
+      fetch,
       print: (line) => {
         printed.push(line);
       },
     });
 
-    expect(calls).toHaveLength(1);
+    expect(fetch).toHaveBeenCalledTimes(1);
     expect(calls[0]?.url).toBe("http://127.0.0.1:4242/dispatch/audit?handoff_id=handoff-1");
     expect(new Headers(calls[0]?.init?.headers).get("authorization")).toBe("Bearer tok");
     expect(printed).toHaveLength(1);
@@ -110,22 +113,20 @@ describe("runDispatchAudit", () => {
       handoffId: "handoff-2",
       json: true,
       storageRoot,
-      fetch: Object.assign(
-        (): Promise<Response> =>
-          Promise.resolve(
-            new Response(JSON.stringify({ report }), {
-              status: 200,
-              headers: { "content-type": "application/json" },
-            }),
-          ),
-        { preconnect: fetch.preconnect.bind(fetch) },
+      fetch: fetchStub(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ report }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        ),
       ),
       print: (line) => {
         printed = line;
       },
     });
 
-    expect(parseJson(printed)).toEqual(report);
+    expect(JSON.parse(printed)).toEqual(report);
     expect(printed).toContain('\n  "handoff_id": "h-1"');
   });
 
@@ -138,15 +139,13 @@ describe("runDispatchAudit", () => {
         handoffId: "missing-handoff",
         json: false,
         storageRoot,
-        fetch: Object.assign(
-          (): Promise<Response> =>
-            Promise.resolve(
-              new Response(JSON.stringify({ error: { code: "not_found", message: "missing" } }), {
-                status: 404,
-                headers: { "content-type": "application/json" },
-              }),
-            ),
-          { preconnect: fetch.preconnect.bind(fetch) },
+        fetch: fetchStub(() =>
+          Promise.resolve(
+            new Response(JSON.stringify({ error: { code: "not_found", message: "missing" } }), {
+              status: 404,
+              headers: { "content-type": "application/json" },
+            }),
+          ),
         ),
         print: (line) => {
           printed.push(line);

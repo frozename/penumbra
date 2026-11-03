@@ -3,30 +3,15 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-type WatchdogResult = {
-  status: "healthy" | "service_absent" | "service_present_unhealthy" | "launchctl_unknown";
-  action: "none" | "bootstrap" | "kickstart";
-  downSince: string | null;
-  downtimeMs: number;
-};
+import type {
+  LaunchctlResult,
+  RunWatchdogOptions,
+  WatchdogDependencies,
+  WatchdogResult,
+} from "@src/commands/watchdog.js";
 
-type WatchdogOptions = {
-  storageRoot: string;
-  heal?: boolean;
-  dependencies: {
-    now: () => Date;
-    probeDaemon: () => Promise<boolean>;
-    launchctl: (args: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
-    uid: () => number;
-    plistPath: string;
-    error: (message: string) => void;
-  };
-};
-
-async function runWatchdog(options: WatchdogOptions): Promise<WatchdogResult | null> {
-  const module = (await import("@src/commands/watchdog.js").catch(() => null)) as {
-    runWatchdog?: (opts: WatchdogOptions) => Promise<WatchdogResult>;
-  } | null;
+async function runWatchdog(options: RunWatchdogOptions): Promise<WatchdogResult | null> {
+  const module = await import("@src/commands/watchdog.js").catch(() => null);
   return module?.runWatchdog ? await module.runWatchdog(options) : null;
 }
 
@@ -38,13 +23,12 @@ function setupRoot(): string {
   return root;
 }
 
-function dependencies(
-  overrides: Partial<WatchdogOptions["dependencies"]> = {},
-): WatchdogOptions["dependencies"] {
+function dependencies(overrides: Partial<WatchdogDependencies> = {}): WatchdogDependencies {
   return {
     now: () => new Date("2026-08-18T10:00:00.000Z"),
-    probeDaemon: () => false,
-    launchctl: () => ({ exitCode: 0, stdout: "", stderr: "" }),
+    probeDaemon: (): Promise<boolean> => Promise.resolve(false),
+    launchctl: (): Promise<LaunchctlResult> =>
+      Promise.resolve({ exitCode: 0, stdout: "", stderr: "" }),
     uid: () => 501,
     plistPath: "/tmp/dev.penumbra.daemon.plist",
     error: () => undefined,
@@ -62,10 +46,10 @@ test("watchdog reports a healthy daemon without launchctl or corrective action",
   const result = await runWatchdog({
     storageRoot: setupRoot(),
     dependencies: dependencies({
-      probeDaemon: () => true,
-      launchctl: (args) => {
+      probeDaemon: (): Promise<boolean> => Promise.resolve(true),
+      launchctl: (args): Promise<LaunchctlResult> => {
         launchctlCalls.push(args);
-        return { exitCode: 0, stdout: "", stderr: "" };
+        return Promise.resolve({ exitCode: 0, stdout: "", stderr: "" });
       },
     }),
   });
@@ -86,13 +70,13 @@ test("watchdog bootstraps an absent service only when healing is enabled", async
     storageRoot: setupRoot(),
     heal: true,
     dependencies: dependencies({
-      launchctl: (args) => {
+      launchctl: (args): Promise<LaunchctlResult> => {
         launchctlCalls.push(args);
-        return {
+        return Promise.resolve({
           exitCode: args[0] === "print" ? 1 : 0,
           stdout: "",
           stderr: "Could not find service",
-        };
+        });
       },
     }),
   });
@@ -111,9 +95,9 @@ test("watchdog kickstarts a present but unhealthy service when healing is enable
     storageRoot: setupRoot(),
     heal: true,
     dependencies: dependencies({
-      launchctl: (args) => {
+      launchctl: (args): Promise<LaunchctlResult> => {
         launchctlCalls.push(args);
-        return { exitCode: 0, stdout: "", stderr: "" };
+        return Promise.resolve({ exitCode: 0, stdout: "", stderr: "" });
       },
     }),
   });
@@ -131,9 +115,9 @@ test("watchdog observe-only mode never makes a corrective launchctl call", async
   const result = await runWatchdog({
     storageRoot: setupRoot(),
     dependencies: dependencies({
-      launchctl: (args) => {
+      launchctl: (args): Promise<LaunchctlResult> => {
         launchctlCalls.push(args);
-        return { exitCode: 1, stdout: "", stderr: "Could not find service" };
+        return Promise.resolve({ exitCode: 1, stdout: "", stderr: "Could not find service" });
       },
     }),
   });
@@ -149,9 +133,9 @@ test("watchdog does not bootstrap for an unclassified launchctl query failure", 
     storageRoot: setupRoot(),
     heal: true,
     dependencies: dependencies({
-      launchctl: (args) => {
+      launchctl: (args): Promise<LaunchctlResult> => {
         launchctlCalls.push(args);
-        return { exitCode: 1, stdout: "", stderr: "Operation not permitted" };
+        return Promise.resolve({ exitCode: 1, stdout: "", stderr: "Operation not permitted" });
       },
     }),
   });
@@ -168,9 +152,9 @@ test("watchdog records a down observation when the selected remediation fails", 
       storageRoot: root,
       heal: true,
       dependencies: dependencies({
-        launchctl: (args) => {
+        launchctl: (args): Promise<LaunchctlResult> => {
           if (args[0] === "print") {
-            return { exitCode: 1, stdout: "", stderr: "Could not find service" };
+            return Promise.resolve({ exitCode: 1, stdout: "", stderr: "Could not find service" });
           }
           throw new Error("bootstrap failed");
         },
@@ -194,14 +178,16 @@ test("watchdog preserves the first down observation and accumulates downtime", a
     storageRoot: root,
     dependencies: dependencies({
       now: () => new Date("2026-08-18T10:00:00.000Z"),
-      launchctl: () => ({ exitCode: 1, stdout: "", stderr: "not found" }),
+      launchctl: (): Promise<LaunchctlResult> =>
+        Promise.resolve({ exitCode: 1, stdout: "", stderr: "not found" }),
     }),
   });
   const second = await runWatchdog({
     storageRoot: root,
     dependencies: dependencies({
       now: () => new Date("2026-08-18T10:05:00.000Z"),
-      launchctl: () => ({ exitCode: 1, stdout: "", stderr: "not found" }),
+      launchctl: (): Promise<LaunchctlResult> =>
+        Promise.resolve({ exitCode: 1, stdout: "", stderr: "not found" }),
     }),
   });
 
