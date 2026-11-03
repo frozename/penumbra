@@ -41,18 +41,20 @@ describe("llamactl inventory", () => {
       fetch: (url, init) => {
         expect(init?.signal).toBeDefined();
         if (url === "http://127.0.0.1:7944/v1/models") {
-          return new Response(
-            JSON.stringify({
-              data: [
-                {
-                  id: "models/granite-4.1-3b-Q8_0.gguf",
-                  owned_by: "mac-mini",
-                  created: 100,
-                },
-                { id: "granite-4.1-3b-Q8_0.gguf", owned_by: "mac-mini", created: 100 },
-                { id: "other.gguf", owned_by: "mac-mini", created: 101 },
-              ],
-            }),
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                data: [
+                  {
+                    id: "models/granite-4.1-3b-Q8_0.gguf",
+                    owned_by: "mac-mini",
+                    created: 100,
+                  },
+                  { id: "granite-4.1-3b-Q8_0.gguf", owned_by: "mac-mini", created: 100 },
+                  { id: "other.gguf", owned_by: "mac-mini", created: 101 },
+                ],
+              }),
+            ),
           );
         }
         if (url === "https://mac-mini.local:7945/v1/fleet/snapshot") {
@@ -60,11 +62,11 @@ describe("llamactl inventory", () => {
             authorization: "Bearer ll_agt_secret",
           });
           expect(init?.tls).toEqual({ ca: "CERT" });
-          return new Response(JSON.stringify({ ok: true }));
+          return Promise.resolve(new Response(JSON.stringify({ ok: true })));
         }
         throw new Error(`unexpected url ${url}`);
       },
-      execFile: () => ({ ok: false, stdout: "", stderr: "missing" }),
+      execFile: () => Promise.resolve({ ok: false, stdout: "", stderr: "missing" }),
     });
 
     expect(inventory.status).toBe("ok");
@@ -117,37 +119,39 @@ describe("llamactl inventory", () => {
       fetch: (url, init) => {
         expect(init?.signal).toBeDefined();
         if (url === "http://127.0.0.1:7944/v1/models") {
-          return new Response(
-            JSON.stringify({
-              data: [
-                {
-                  id: "LFM2.5-8B-A1B-MoQ/MoQ-4.25.gguf",
-                  owned_by: "mac-mini",
-                  created: 1781009551,
-                },
-                { id: "lfm2-generator", owned_by: "mac-mini", created: 1781009551 },
-                { id: "bge-m3", owned_by: "llamactl-agent", created: 0 },
-                { id: "granite-mini-3b", owned_by: "llamactl-agent", created: 0 },
-                {
-                  id: "Open4bits/Qwen3-Coder-Next-mlx-2Bit",
-                  owned_by: "llamactl-host",
-                  created: 1781188394,
-                },
-                {
-                  id: "Qwen3-Coder-Next-mlx-2Bit",
-                  owned_by: "llamactl-host",
-                  created: 1781188394,
-                },
-              ],
-            }),
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                data: [
+                  {
+                    id: "LFM2.5-8B-A1B-MoQ/MoQ-4.25.gguf",
+                    owned_by: "mac-mini",
+                    created: 1781009551,
+                  },
+                  { id: "lfm2-generator", owned_by: "mac-mini", created: 1781009551 },
+                  { id: "bge-m3", owned_by: "llamactl-agent", created: 0 },
+                  { id: "granite-mini-3b", owned_by: "llamactl-agent", created: 0 },
+                  {
+                    id: "Open4bits/Qwen3-Coder-Next-mlx-2Bit",
+                    owned_by: "llamactl-host",
+                    created: 1781188394,
+                  },
+                  {
+                    id: "Qwen3-Coder-Next-mlx-2Bit",
+                    owned_by: "llamactl-host",
+                    created: 1781188394,
+                  },
+                ],
+              }),
+            ),
           );
         }
         if (url === "https://mac-mini.local:7945/v1/fleet/snapshot") {
-          return new Response(JSON.stringify({ ok: true }));
+          return Promise.resolve(new Response(JSON.stringify({ ok: true })));
         }
         throw new Error(`unexpected url ${url}`);
       },
-      execFile: () => ({ ok: false, stdout: "", stderr: "missing" }),
+      execFile: () => Promise.resolve({ ok: false, stdout: "", stderr: "missing" }),
     });
 
     expect(inventory.status).toBe("ok");

@@ -68,6 +68,7 @@ async function seedT2Memory(
 ): Promise<void> {
   const embedder = new TestEmbedder({ dim: 384 });
   const [vec] = await embedder.embed([text]);
+  if (!vec) throw new Error(`TestEmbedder returned no vector for seed text ${memoryId}`);
   db.run(
     `INSERT INTO t2_memories(memory_id, project_id, user_id, kind, source_session_ids, window_start, window_end,
                              title, body, metadata_json, compressed_from, created_at, updated_at)
