@@ -339,7 +339,7 @@ describe("executeGrep", () => {
     fs.writeFileSync(path.join(tmp, "big.ts"), long + "\n");
     const r = await executeGrep({ pattern: "TODO", output_mode: "content" }, tmp);
     const first = r.results[0];
-    if (typeof first === "string") throw new Error("expected content mode");
+    if (first === undefined || typeof first === "string") throw new Error("expected content mode");
     expect(first.text.length).toBeLessThanOrEqual(1024);
     expect(first.text.endsWith("…")).toBe(true);
   });
@@ -349,7 +349,7 @@ describe("executeGrep", () => {
     fs.writeFileSync(path.join(tmp, "emoji.ts"), long + "\n");
     const r = await executeGrep({ pattern: "a", output_mode: "content" }, tmp);
     const first = r.results[0];
-    if (typeof first === "string") throw new Error("expected content mode");
+    if (first === undefined || typeof first === "string") throw new Error("expected content mode");
     expect(Buffer.byteLength(first.text, "utf8")).toBeLessThanOrEqual(1024);
     expect(first.text).not.toContain("\uFFFD");
   });
