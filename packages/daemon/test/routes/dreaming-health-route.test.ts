@@ -1,17 +1,21 @@
 import {
   buildServices,
   DispatchEventLog,
+  type LlmServingCandidate,
   loadSqliteVec,
   migrate,
   type Services,
+  tryResolveLlmProvider,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { z } from "zod";
 
 import type { DreamConfig } from "@src/dreaming/config.js";
-import { runDreamCycle } from "@src/dreaming/cycle.js";
+import { type ProjectRegistryEntry, runDreamCycle } from "@src/dreaming/cycle.js";
 import { dreamingHealthRoute } from "@src/routes/dreaming.js";
+import type { LlmInvokeInput, LlmInvokeResult } from "@src/services/llm-invoke.js";
 import { recordSubsystemOutcome } from "@src/services/subsystem-health.js";
 
 try {
@@ -114,19 +118,42 @@ function insertDreamCycle(
     .run(input.cycle_id, input.started_at, input.outcome);
 }
 
-type RewriterTestProject = {
-  project_id: string;
+type RewriterTestProject = ProjectRegistryEntry & {
   dreaming: { research_provider: string };
 };
 
 function makeRewriterProjectRegistry(projects: RewriterTestProject[]): {
-  get: (id: string) => RewriterTestProject | null;
-  list: () => RewriterTestProject[];
+  get(id: string): ProjectRegistryEntry | undefined;
+  list(): ProjectRegistryEntry[];
 } {
   return {
-    get: (id: string): RewriterTestProject | null =>
-      projects.find((p) => p.project_id === id) ?? null,
-    list: (): RewriterTestProject[] => projects,
+    get: (id: string): ProjectRegistryEntry | undefined =>
+      projects.find((p) => p.project_id === id),
+    list: (): ProjectRegistryEntry[] => projects,
+  };
+}
+
+type RewriteLlmInvoker = <T extends z.ZodType>(
+  input: LlmInvokeInput<T>,
+) => Promise<LlmInvokeResult<T>>;
+
+function makeSkipRewriteInvoker(): RewriteLlmInvoker {
+  const servingCandidate: LlmServingCandidate = {
+    name: "rewriter-a",
+    baseUrl: "http://127.0.0.1:7944",
+    model: "rewriter-a",
+    provider: tryResolveLlmProvider("http://127.0.0.1:7944") ?? "unknown",
+    authSource: "none",
+    tier: "primary",
+  };
+  return <T extends z.ZodType>(input: LlmInvokeInput<T>): Promise<LlmInvokeResult<T>> => {
+    const value = input.schema.parse({ kind: "skip", reason: "too-internal" });
+    return Promise.resolve({
+      ok: true,
+      value,
+      raw: '{"kind":"skip","reason":"too-internal"}',
+      candidate: servingCandidate,
+    });
   };
 }
 
@@ -149,6 +176,16 @@ function rewriterCycleConfig(): DreamConfig {
     rewriterTimeoutMs: 5000,
     rewriterCacheTtlMs: 30 * 24 * 60 * 60 * 1000,
     rewriterConcurrency: 4,
+    contentQualityThreshold: 0.5,
+    reembedBatchSize: 100,
+    eventTriggerEnabled: false,
+    idleMinutes: 10,
+    triggerCooldownMinutes: 5,
+    briefRefreshHours: 0,
+    pc1BatchSize: 100,
+    pc2MinClusterSize: 3,
+    pc2ClusterLinkThreshold: 0.85,
+    pc2AutoThreshold: 0.97,
     skipPhases: new Set(["P1", "P2", "P3", "P5", "P6", "P7", "P8", "PC1", "PC2"]),
   };
 }
@@ -463,12 +500,7 @@ describe("dreamingHealthRoute", () => {
     await runDreamCycle(services.db, rewriterCycleConfig(), {
       projectRegistry,
       dispatchEventLog: services.dispatchEventLog,
-      llmInvoke: () =>
-        Promise.resolve({
-          ok: true as const,
-          value: { kind: "skip", reason: "too-internal" },
-          raw: '{"kind":"skip","reason":"too-internal"}',
-        }),
+      llmInvoke: makeSkipRewriteInvoker(),
     });
 
     seedRewriterMemory(services, {

@@ -214,6 +214,7 @@ test("?handoff_id filter rejects non-matching live events", async () => {
 
     const { data } = await readSseFrames(res.body!, 1, 1000);
     expect(data).toHaveLength(1);
+    expect(data[0]).toBeDefined();
     expect(data[0]?.handoff_id).toBe("h-target");
   } finally {
     daemon.stop();
@@ -242,6 +243,7 @@ test("?source=daemon filters out worker-emitted events", async () => {
 
     const { data } = await readSseFrames(res.body!, 1, 1000);
     expect(data).toHaveLength(1);
+    expect(data[0]).toBeDefined();
     expect(data[0]?.source).toBe("daemon");
     expect(data[0]?.kind).toBe("claim");
   } finally {

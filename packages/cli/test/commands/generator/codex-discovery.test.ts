@@ -84,7 +84,7 @@ describe("codex model discovery", () => {
     const models = await discoverCodexModels({
       runCodexDebugModels: () => {
         runCount += 1;
-        return fixtureText;
+        return Promise.resolve(fixtureText);
       },
     });
 

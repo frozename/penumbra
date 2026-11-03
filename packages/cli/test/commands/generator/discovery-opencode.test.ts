@@ -51,7 +51,7 @@ valid/model
     const models = await discoverOpencodeModels({
       runOpencodeModels: () => {
         runCount += 1;
-        return fixtureText;
+        return Promise.resolve(fixtureText);
       },
     });
 

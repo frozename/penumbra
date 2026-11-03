@@ -4,14 +4,56 @@ import { describe, expect, test } from "bun:test";
 import { loadSqliteVec, migrate, pickFromPool } from "@src/index.js";
 import type { RoutingBias } from "@src/readers/routing-bias.js";
 import type { AgentTaskType } from "@src/schemas/agent-performance.js";
-import { routeAgent, type RouteAgentInput } from "@src/services/agent-routing.js";
+import {
+  routeAgent,
+  type RouteAgentInput,
+  type RouteAgentOutput,
+} from "@src/services/agent-routing.js";
 import { AgentPerformanceWriter } from "@src/writers/agent-performance.js";
 
-import {
-  buildRetryRoutingMaps,
-  type RetryAgentCandidate,
-  selectRetryAgent,
-} from "../../../agentchat/src/worker/silent-failure-retry.js";
+// A static cross-package src import breaks core's composite tsconfig (TS6059/TS6307),
+// so the agentchat module is loaded at runtime behind a locally declared module shape.
+const silentFailureRetryModule = new URL(
+  "../../../agentchat/src/worker/silent-failure-retry.ts",
+  import.meta.url,
+).href;
+
+interface RetryAgentCandidate {
+  agent_name: string;
+  score: number;
+}
+
+interface RetryRoutingMaps {
+  validAgents: ReadonlySet<string>;
+  agentProviders: ReadonlyMap<string, string | null>;
+  agentAdapters: ReadonlyMap<string, string | null>;
+}
+
+interface RetryAgentEntry {
+  name: string;
+  pricing_mode: string;
+  subscription_provider: string;
+  adapter: string;
+}
+
+interface SelectRetryAgentParams {
+  candidates: RetryAgentCandidate[];
+  failedAgent: string;
+  validAgents: ReadonlySet<string>;
+  agentProviders: ReadonlyMap<string, string | null>;
+  agentAdapters: ReadonlyMap<string, string | null>;
+  activeBiases: readonly RoutingBias[];
+  tool_free?: boolean;
+}
+
+interface SilentFailureRetryModule {
+  buildRetryRoutingMaps: (agents: RetryAgentEntry[]) => RetryRoutingMaps;
+  selectRetryAgent: (input: SelectRetryAgentParams) => string | null;
+}
+
+async function loadSilentFailureRetry(): Promise<SilentFailureRetryModule> {
+  return (await import(silentFailureRetryModule)) as SilentFailureRetryModule;
+}
 
 if (process.platform === "darwin") {
   try {
@@ -24,13 +66,14 @@ if (process.platform === "darwin") {
 const NOW = "2026-08-27T12:00:00.000Z";
 
 type AgentchatConfig = NonNullable<RouteAgentInput["agentchatConfig"]>;
-type RouteCheck = {
-  detail: string;
-  route: { agent: string } | null;
-};
+type SingleRoute = Extract<RouteAgentOutput, { detail: "single" }>;
 
-function runRoute(input: RouteAgentInput): RouteCheck {
-  return routeAgent(input) as unknown as RouteCheck;
+function runRoute(input: RouteAgentInput): SingleRoute {
+  const out = routeAgent(input);
+  if (out.detail !== "single") {
+    throw new Error(`expected single route detail, got ${out.detail}`);
+  }
+  return out;
 }
 
 function freshDb(): Database {
@@ -58,7 +101,7 @@ function writePerf(db: Database, agent: string, taskType: AgentTaskType = "imple
     tokens_used: 100,
     latency_ms: 1_000,
     exec_ms: 1_000,
-    source: "test",
+    source: "manual_seed",
     notes: null,
     metadata_json: "{}",
   });
@@ -119,7 +162,7 @@ describe("requires-tools hard constraint", () => {
       detail: "single",
       role: "executor",
       message: "summarize this",
-      taskType: "summarization",
+      taskType: "unknown",
       agentRegistry: ["http-seat", "tool-seat"],
       agentchatConfig: agentchatConfig(),
       roleExplorationPolicy: "ranked-first",
@@ -192,18 +235,12 @@ describe("requires-tools hard constraint", () => {
     const db = freshDb();
 
     expect(
-      pickFromPool(
-        ["http-seat", "tool-seat"],
-        db,
-        agentchatConfig(),
-        undefined,
-        "summarization",
-        true,
-      ),
+      pickFromPool(["http-seat", "tool-seat"], db, agentchatConfig(), undefined, "unknown", true),
     ).toBe("http-seat");
   });
 
-  test("selectRetryAgent skips text-only HTTP candidates for non-tool-free retries", () => {
+  test("selectRetryAgent skips text-only HTTP candidates for non-tool-free retries", async () => {
+    const { buildRetryRoutingMaps, selectRetryAgent } = await loadSilentFailureRetry();
     const candidates: RetryAgentCandidate[] = [
       { agent_name: "http-seat", score: 1 },
       { agent_name: "tool-seat", score: 0.5 },

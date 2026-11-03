@@ -94,8 +94,6 @@ it("search with allowed_domains rejects results from disallowed host", async () 
     allowed_domains: ["allowed.com"],
   });
   expect(results.length).toBe(2);
-  expect(results[0]).toBeDefined();
-  expect(results[1]).toBeDefined();
   expect(results[0]?.url).toBe("https://allowed.com/result");
   expect(results[1]?.url).toBe("https://sub.allowed.com/result");
 });
@@ -122,7 +120,6 @@ it("FirecrawlWithFallbackAdapter forwards allowed_domains to fallback after 401"
     allowed_domains: ["duckduckgo.com"],
   });
   expect(results2.length).toBe(1);
-  expect(results2[0]).toBeDefined();
   expect(results2[0]?.url).toContain("duckduckgo.com");
   expect(results2[0]?.source_provider).toBe("webfetch");
 });

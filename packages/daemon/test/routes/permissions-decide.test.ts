@@ -99,8 +99,8 @@ test("POST /permissions/:id/decide emits permission.decided", async () => {
     services,
   );
   expect(seen.map((e) => e.kind)).toEqual(["permission.decided"]);
-  expect(seen[0].payload.decision).toBe("reject");
-  expect(seen[0].payload.reason).toBe("no third-party calls");
+  expect(seen[0]?.payload.decision).toBe("reject");
+  expect(seen[0]?.payload.reason).toBe("no third-party calls");
 });
 
 test("POST /permissions/:id/decide returns 409 if already terminal", async () => {

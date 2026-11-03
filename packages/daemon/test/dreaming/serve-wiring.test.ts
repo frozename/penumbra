@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import type { DreamConfig } from "@src/dreaming/config.js";
+import type { DreamCycleDeps, ProjectRegistryEntry } from "@src/dreaming/cycle.js";
 import { buildDreamCycleDeps } from "@src/dreaming/deps.js";
 
 // File-local typed placeholder factory. buildDreamCycleDeps reads only a small
@@ -15,8 +16,8 @@ function emptyDreamConfig(): DreamConfig {
 }
 
 interface ProjectRegistryStub {
-  get(id: string): { project_id: string; dreaming?: Record<string, unknown> } | undefined;
-  list(): { project_id: string; dreaming?: Record<string, unknown> }[];
+  get(id: string): ProjectRegistryEntry | undefined;
+  list(): ProjectRegistryEntry[];
 }
 
 interface EmbedderStub {
@@ -99,7 +100,7 @@ describe("buildDreamCycleDeps", () => {
 
     const deps = buildDreamCycleDeps(services, db, emptyDreamConfig());
 
-    expect(deps.projectRegistry).toBe(fakeProjectRegistry);
+    expect(deps.projectRegistry).toBe(fakeProjectRegistry as DreamCycleDeps["projectRegistry"]);
     expect(typeof deps.getResearchAdapter).toBe("function");
     const adapter = deps.getResearchAdapter!({
       project_id: "test",
@@ -127,7 +128,7 @@ describe("buildDreamCycleDeps", () => {
     const deps = buildDreamCycleDeps(services, db, emptyDreamConfig());
     services.projectRegistry = registryB;
 
-    expect(deps.projectRegistry).toBe(registryB);
+    expect(deps.projectRegistry).toBe(registryB as DreamCycleDeps["projectRegistry"]);
   });
 
   test("omits onReembed when no embedder supplied", () => {

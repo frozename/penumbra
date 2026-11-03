@@ -25,7 +25,7 @@ function workflowSpec(output: WorkflowSpec["output"]): WorkflowSpec {
     triggers: [],
     recall: [],
     output,
-    run: { kind: "markdown-template" },
+    run: { kind: "markdown-template", template: "# session handoff" },
   };
 }
 

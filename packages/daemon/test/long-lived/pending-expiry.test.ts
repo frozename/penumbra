@@ -8,28 +8,31 @@ import { reconcileLongLivedAgents } from "@penumbra/daemon/long-lived/reconciler
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 
+const seedAgentFixture: AgentConfig = {
+  name: "home",
+  adapter: "test",
+  options: {},
+  roles: [],
+  auto_approve_to: [],
+  pricing_mode: "api",
+  long_lived: true,
+  long_lived_config: {
+    schedule_cron: "*/15 * * * *",
+    subscriptions: [],
+    hosted_mcp_servers: [],
+    mcp_allowlist: ["ha:light.*"],
+    require_snapshot: false,
+    bounds: { wall_clock_ms: 1000, cost_cents: 1, max_sub_dispatches: 0 },
+    circuit_breaker_threshold: 3,
+    standing_brief: "x",
+  },
+};
+
 function setup(): Database {
   const db = new Database(":memory:");
   loadSqliteVec(db);
   applySchema(db, { embeddingDim: 384 });
-  reconcileLongLivedAgents(
-    db,
-    [
-      {
-        name: "home",
-        long_lived: true,
-        long_lived_config: {
-          schedule_cron: "*/15 * * * *",
-          subscriptions: [],
-          mcp_allowlist: ["ha:light.*"],
-          bounds: { wall_clock_ms: 1000, cost_cents: 1, max_sub_dispatches: 0 },
-          circuit_breaker_threshold: 3,
-          standing_brief: "x",
-        },
-      } as AgentConfig,
-    ],
-    { now: 100 },
-  );
+  reconcileLongLivedAgents(db, [seedAgentFixture], { now: 100 });
   return db;
 }
 
@@ -134,10 +137,10 @@ describe("runPendingExpiry", () => {
     const dispatchEvents: {
       handoff_id: string;
       worker_id: string | null;
-      source: string;
+      source: "worker" | "daemon";
       kind: string;
       ts: string;
-      meta: Record<string, unknown>;
+      meta?: Record<string, unknown>;
     }[] = [];
     const dispatchEventLog = {
       record(event: (typeof dispatchEvents)[0]): void {
@@ -148,9 +151,17 @@ describe("runPendingExpiry", () => {
     runPendingExpiry(db, { now: 100, dispatchEventLog });
 
     expect(dispatchEvents.length).toBe(1);
-    expect(dispatchEvents[0].kind).toBe("long_lived.action.expired");
-    expect(dispatchEvents[0].source).toBe("daemon");
-    expect(dispatchEvents[0].meta).toMatchObject({
+    const de0 = dispatchEvents[0] as {
+      handoff_id: string;
+      worker_id: string | null;
+      source: "worker" | "daemon";
+      kind: string;
+      ts: string;
+      meta?: Record<string, unknown>;
+    };
+    expect(de0.kind).toBe("long_lived.action.expired");
+    expect(de0.source).toBe("daemon");
+    expect(de0.meta).toMatchObject({
       action_id: "pa-dispatch",
       agent_id: "home",
       action_kind: "ha:light.turn_on",
@@ -177,7 +188,7 @@ describe("runPendingExpiry", () => {
     const row = db
       .query<
         { kind: string; summary: string | null },
-        [string]
+        []
       >("SELECT kind, summary FROM notification_outbox WHERE kind='pending_action_expired' AND reference_id='pa-notify'")
       .get();
     expect(row).not.toBeNull();
@@ -220,9 +231,9 @@ describe("runPendingExpiry", () => {
        ) VALUES ('pa-race', 'home', 't1', 'ha:light.turn_on', 'light.kitchen', '{}', 'pending', 50, 1)`,
     ).run();
 
-    const origQuery = (db as unknown as { query: typeof db.query }).query.bind(db);
+    const origQuery = db.query.bind(db);
     let intercepted = false;
-    (db as unknown as { query: typeof db.query }).query = (
+    (db as { query: (sql: string) => ReturnType<typeof origQuery> }).query = (
       sql: string,
     ): ReturnType<typeof origQuery> => {
       const stmt = origQuery(sql);
@@ -237,7 +248,7 @@ describe("runPendingExpiry", () => {
 
     const result = runPendingExpiry(db, { now: 100 });
 
-    (db as unknown as { query: typeof db.query }).query = origQuery;
+    (db as { query: (sql: string) => ReturnType<typeof origQuery> }).query = origQuery;
 
     expect(result.expired).toBe(0);
 
@@ -282,7 +293,7 @@ describe("runPendingExpiry", () => {
     const row = db
       .query<
         { project_id: string | null; coalesce_key: string },
-        [string]
+        []
       >("SELECT project_id, coalesce_key FROM notification_outbox WHERE reference_id='pa-proj'")
       .get();
     expect(row).not.toBeNull();
@@ -339,7 +350,7 @@ describe("runPendingExpiry", () => {
       .get();
     expect(wm).not.toBeNull();
     const parsed = JSON.parse(wm!.working_memory_json) as {
-      recent_decisions: { pending_action_id: string; decision: string }[];
+      recent_decisions: { pending_action_id: string; decision: string; decided_at: number }[];
     };
     expect(parsed.recent_decisions).toEqual([
       { pending_action_id: "pa-corrupt", decision: "expired", decided_at: 100 },
