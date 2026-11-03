@@ -37,7 +37,11 @@ test("chain_start workload-only dispatches identically to task_type-only", async
   await handler({ initial_agent: "executor", message: "run it", task_type: "implement_small" });
 
   const recorded = calls(startChain);
-  expect(recorded[0]).toEqual(recorded[1] ?? {});
+  const [first, second] = recorded;
+  if (first === undefined || second === undefined) {
+    throw new Error("expected two startChain calls");
+  }
+  expect(first).toEqual(second);
 });
 
 test("chain_start allows matching workload and task_type", async () => {

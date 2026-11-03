@@ -35,9 +35,9 @@ describe("instrumentation integration", () => {
 
     expect(sampler.maxLagMs).toBe(25);
     expect(warnFields).not.toBeNull();
-    expect(warnFields.lagMs).toBe(25);
-    expect(warnFields.thresholdMs).toBe(20);
-    expect(warnMsg).toBe("event-loop lag exceeded threshold");
+    expect(warnFields!.lagMs).toBe(25);
+    expect(warnFields!.thresholdMs).toBe(20);
+    expect(warnMsg!).toBe("event-loop lag exceeded threshold");
 
     sampler.stop();
   });
@@ -166,8 +166,8 @@ describe("instrumentation integration", () => {
       stmt.run();
 
       expect(logged).not.toBeNull();
-      expect(logged.sql).toMatch(/^INSERT INTO foo/);
-      expect(logged.durationMs).toBe(60);
+      expect(logged!.sql).toMatch(/^INSERT INTO foo/);
+      expect(logged!.durationMs).toBe(60);
     } finally {
       Object.defineProperty(performance, "now", {
         value: originalPerfNow,
@@ -202,8 +202,8 @@ describe("instrumentation integration", () => {
       tx();
 
       expect(logged).not.toBeNull();
-      expect(logged.sql).toBe("transaction");
-      expect(logged.durationMs).toBe(60);
+      expect(logged!.sql).toBe("transaction");
+      expect(logged!.durationMs).toBe(60);
     } finally {
       Object.defineProperty(performance, "now", {
         value: originalPerfNow,

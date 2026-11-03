@@ -2,8 +2,9 @@ import { expect, mock, spyOn, test } from "bun:test";
 
 import * as llmCandidates from "@src/services/llm-candidates.js";
 
-const resolver = (input: unknown): unknown =>
-  (llmCandidates as Record<string, (value: unknown) => unknown>).resolveRoleLlmCandidates(input);
+const resolver = (
+  input: llmCandidates.ResolveRoleLlmCandidatesInput,
+): llmCandidates.RoleLlmCandidate[] => llmCandidates.resolveRoleLlmCandidates(input);
 
 test("resolves allowed role-tagged HTTP seats before process adapters", () => {
   const candidates = resolver({
@@ -43,7 +44,7 @@ test("resolves allowed role-tagged HTTP seats before process adapters", () => {
         },
       ],
     },
-  }) as { name: string; provider: string; adapter: string }[];
+  });
 
   expect(candidates.map(({ name }) => name)).toEqual([
     "local-fourth-in-config",
@@ -78,7 +79,7 @@ test("maps keychain auth for role-tagged HTTP seats", () => {
         },
       ],
     },
-  }) as { auth: unknown }[];
+  });
 
   expect(candidates[0]?.auth).toEqual({
     source: "keychain",
@@ -107,7 +108,7 @@ test("resolves env auth at authorization time", () => {
         },
       ],
     },
-  }) as llmCandidates.LlmCandidate[];
+  });
 
   try {
     process.env.PENUMBRA_TEST_LLM_KEY = "late-bound-token";
@@ -138,7 +139,7 @@ test("resolves snake_case env auth at authorization time", () => {
         },
       ],
     },
-  }) as llmCandidates.LlmCandidate[];
+  });
 
   try {
     process.env.PENUMBRA_TEST_LLM_SNAKE_KEY = "late-bound-snake-token";
@@ -167,7 +168,7 @@ test("maps file auth for role-tagged HTTP seats", () => {
         },
       ],
     },
-  }) as { auth: unknown }[];
+  });
 
   expect(candidates[0]?.auth).toEqual({
     source: "file",
@@ -325,7 +326,7 @@ test("keeps role resolution non-throwing for partial or unrecognized HTTP config
         },
       ],
     },
-  }) as { name: string; provider: string }[];
+  });
 
   expect(candidates).toMatchObject([
     {
@@ -336,7 +337,7 @@ test("keeps role resolution non-throwing for partial or unrecognized HTTP config
 });
 
 test("uses the supplied legacy candidate when no seat carries the role", () => {
-  const fallback = {
+  const fallback: llmCandidates.RoleLlmCandidate = {
     name: "PENUMBRA_DREAMING_REWRITER_MODEL",
     baseUrl: "http://127.0.0.1:7944",
     model: "legacy-local",

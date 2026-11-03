@@ -83,11 +83,13 @@ describe("trimWorkingMemoryThreadNotes", () => {
       ],
     };
     const result = trimWorkingMemoryThreadNotes(wm);
-    expect(result.open_threads[0].notes.length).toBeLessThanOrEqual(MAX);
-    expect(result.open_threads[0].notes.startsWith(BANNER)).toBe(true);
-    expect(result.open_threads[1].notes).toBe("short note");
-    expect(result.open_threads[2].notes.length).toBeLessThanOrEqual(MAX);
-    expect(result.open_threads[2].notes.startsWith(BANNER)).toBe(true);
+    const [t1, t2, t3] = result.open_threads;
+    if (!t1 || !t2 || !t3) throw new Error("expected three trimmed threads");
+    expect(t1.notes.length).toBeLessThanOrEqual(MAX);
+    expect(t1.notes.startsWith(BANNER)).toBe(true);
+    expect(t2.notes).toBe("short note");
+    expect(t3.notes.length).toBeLessThanOrEqual(MAX);
+    expect(t3.notes.startsWith(BANNER)).toBe(true);
   });
 
   it("returns the same object reference when no thread needs trimming", () => {

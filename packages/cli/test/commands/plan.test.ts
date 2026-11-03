@@ -12,7 +12,14 @@ import {
   runPlanValidate,
 } from "@src/commands/plan.js";
 
+import { urlToString } from "./_helpers.js";
+
 const KNOWN_AGENTS = new Set(["codex-acp-fast", "gemini-acp"]);
+
+// Bun's `typeof fetch` requires a static `preconnect` member that a bare stub lacks.
+function fetchStub(impl: (...args: Parameters<typeof fetch>) => Promise<Response>): typeof fetch {
+  return Object.assign(impl, { preconnect: fetch.preconnect.bind(fetch) });
+}
 
 let workDir: string;
 
@@ -278,8 +285,8 @@ test("runPlanStart prints the plan id and initial task tree", async () => {
   await writeFile(path, planFixture(path), "utf8");
 
   const requests: { url: string; init?: RequestInit }[] = [];
-  const fetch = (url: string | URL, init?: RequestInit): Promise<Response> => {
-    const urlStr = typeof url === "string" ? url : url.toString();
+  const fetch = fetchStub((url, init) => {
+    const urlStr = urlToString(url);
     requests.push({ url: urlStr, init });
     const parsed = new URL(urlStr, "http://127.0.0.1:4242");
     if (parsed.pathname === "/plans" && init?.method === "POST") {
@@ -293,7 +300,7 @@ test("runPlanStart prints the plan id and initial task tree", async () => {
       );
     }
     throw new Error(`unexpected ${parsed.pathname}`);
-  };
+  });
 
   const lines: string[] = [];
   await runPlanStart({
@@ -311,8 +318,8 @@ test("runPlanStart prints the plan id and initial task tree", async () => {
 
 test("runPlanList renders a table and forwards status filters", async () => {
   const requests: { url: string; init?: RequestInit }[] = [];
-  const fetch = (url: string | URL, init?: RequestInit): Promise<Response> => {
-    const urlStr = typeof url === "string" ? url : url.toString();
+  const fetch = fetchStub((url, init) => {
+    const urlStr = urlToString(url);
     requests.push({ url: urlStr, init });
     const parsed = new URL(urlStr, "http://127.0.0.1:4242");
     if (parsed.pathname === "/plans" && parsed.search === "") {
@@ -359,7 +366,7 @@ test("runPlanList renders a table and forwards status filters", async () => {
       );
     }
     throw new Error(`unexpected ${parsed.pathname}${parsed.search}`);
-  };
+  });
 
   const lines: string[] = [];
   await runPlanList({ storageRoot: workDir, fetch, print: (line) => lines.push(line) });
@@ -384,8 +391,8 @@ test("runPlanStatus renders the plan task DAG", async () => {
   const path = join(workDir, "status-plan.md");
   await writeFile(path, planFixture(path), "utf8");
 
-  const fetch = (url: string | URL): Promise<Response> => {
-    const urlStr = typeof url === "string" ? url : url.toString();
+  const fetch = fetchStub((url) => {
+    const urlStr = urlToString(url);
     const parsed = new URL(urlStr, "http://127.0.0.1:4242");
     if (parsed.pathname === "/plans/plan_123") {
       return Promise.resolve(
@@ -393,7 +400,7 @@ test("runPlanStatus renders the plan task DAG", async () => {
       );
     }
     throw new Error(`unexpected ${parsed.pathname}`);
-  };
+  });
 
   const lines: string[] = [];
   await runPlanStatus({
@@ -415,9 +422,9 @@ test("runPlanStatus watch stops after the first poll when signaled", async () =>
 
   const controller = new AbortController();
   let polls = 0;
-  const fetch = (url: string | URL): Promise<Response> => {
+  const fetch = fetchStub((url) => {
     polls += 1;
-    const urlStr = typeof url === "string" ? url : url.toString();
+    const urlStr = urlToString(url);
     const parsed = new URL(urlStr, "http://127.0.0.1:4242");
     if (parsed.pathname === "/plans/plan_123") {
       controller.abort();
@@ -426,7 +433,7 @@ test("runPlanStatus watch stops after the first poll when signaled", async () =>
       );
     }
     throw new Error(`unexpected ${parsed.pathname}`);
-  };
+  });
 
   const lines: string[] = [];
   await runPlanStatus({
@@ -465,8 +472,8 @@ test("loadKnownAgents falls back to real fleet names (not stale repo yaml) when 
 
 test("runPlanCancel prints the cancelled running count", async () => {
   const requests: { url: string; init?: RequestInit }[] = [];
-  const fetch = (url: string | URL, init?: RequestInit): Promise<Response> => {
-    const urlStr = typeof url === "string" ? url : url.toString();
+  const fetch = fetchStub((url, init) => {
+    const urlStr = urlToString(url);
     requests.push({ url: urlStr, init });
     const parsed = new URL(urlStr, "http://127.0.0.1:4242");
     if (parsed.pathname === "/plans/plan_123/cancel" && init?.method === "POST") {
@@ -478,7 +485,7 @@ test("runPlanCancel prints the cancelled running count", async () => {
       );
     }
     throw new Error(`unexpected ${parsed.pathname}`);
-  };
+  });
 
   const lines: string[] = [];
   await runPlanCancel({
