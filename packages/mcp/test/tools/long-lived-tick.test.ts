@@ -14,6 +14,8 @@ test("long_lived_tick proxies to daemon.longLivedTick", async () => {
   const result = await longLivedTickHandler(daemon)({ id: "home-mgmt" });
 
   expect(longLivedTick).toHaveBeenCalledWith("home-mgmt");
-  expect(result.content[0].text).toContain('"outcome"');
-  expect(result.content[0].text).toContain('"ok": true');
+  const block = result.content[0];
+  if (block === undefined) throw new Error("expected content[0]");
+  expect(block.text).toContain('"outcome"');
+  expect(block.text).toContain('"ok": true');
 });

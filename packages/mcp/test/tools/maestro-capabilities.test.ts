@@ -23,9 +23,11 @@ test("maestro_capabilities proxies daemon and returns wrapped text content", asy
     ),
   };
   const handler = maestroCapabilitiesHandler(daemon);
-  const out = await handler({});
+  const out = await handler();
   expect(daemon.maestroCapabilities).toHaveBeenCalled();
-  expect(JSON.parse(out.content[0].text)).toEqual({
+  const block = out.content[0];
+  if (block === undefined) throw new Error("expected content[0]");
+  expect(JSON.parse(block.text)).toEqual({
     agents: [
       {
         name: "claude-acp-sonnet",
