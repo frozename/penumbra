@@ -86,7 +86,7 @@ test("canonicalization warning truncates long values", () => {
 `,
   );
 
-  const warn = mock((): void => undefined);
+  const warn = mock((..._args: unknown[]): void => undefined);
   const originalWarn = console.warn;
   console.warn = warn;
   try {

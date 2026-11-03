@@ -299,6 +299,8 @@ describe("TaskWriter centralized gh status-sync enqueue", () => {
               cost_per_success_usd: null,
               avg_reviewer_findings: null,
               avg_trust_score: null,
+              gate_verdict_coverage: 1,
+              gate_pass_rate: 1,
               score: 90,
               last_outcome_at: "",
             },

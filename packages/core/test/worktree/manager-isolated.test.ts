@@ -20,7 +20,13 @@ const TEST_TMP_ROOT = fs.realpathSync.native(os.tmpdir());
 // fact a Promise (per util.promisify.custom), so the explicit shape closes the
 // gap without an `as any` dodge.
 type ExecResult = { stdout: string; stderr: string };
-type ExecOpts = { cwd?: string; env?: NodeJS.ProcessEnv };
+type ExecOpts = {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  timeout?: number;
+  maxBuffer?: number;
+  signal?: AbortSignal;
+};
 const exec: (command: string, opts?: ExecOpts) => Promise<ExecResult> = promisify(execCb);
 const execFile: (file: string, args?: string[], opts?: ExecOpts) => Promise<ExecResult> =
   promisify(execFileCb);

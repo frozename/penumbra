@@ -79,7 +79,7 @@ function unusedScrape(): Promise<WebResearchResult> {
 
 function p5Deps(adapter: WebResearchAdapter, dreaming: Record<string, unknown>): ResearchDeps {
   return {
-    projectRegistry: { get: () => ({ dreaming }) },
+    projectRegistry: { get: () => ({ project_id: "proj1", dreaming }) },
     getResearchAdapter: () => adapter,
   };
 }

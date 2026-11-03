@@ -10,6 +10,7 @@ function baseTask(overrides: Partial<TaskRecord> = {}): TaskRecord {
     updated_at: 1,
     created_by_kind: "workflow",
     created_by_id: "workflow-1",
+    project_id: null,
     parent_task_id: null,
     kind: "orchestrate",
     priority: "normal",

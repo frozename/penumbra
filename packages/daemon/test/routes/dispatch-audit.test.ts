@@ -163,6 +163,7 @@ function writeAgentResponse(svc: Services, conversationId: string, response: str
     request_id: null,
     payload_json: { response },
     payload_summary: response,
+    origin: null,
   });
 }
 
