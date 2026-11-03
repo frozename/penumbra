@@ -1,3 +1,5 @@
+import type { SessionEventsListResponse } from "@penumbra/api-contract";
+
 import { expect, mock, test } from "bun:test";
 import { z } from "zod";
 
@@ -7,9 +9,23 @@ import {
   SessionEventsRecentInputShape,
 } from "@src/tools/session-events-recent.js";
 
-import { connectInMemory, fakeDaemon, installFetchMock, requestUrl } from "../helpers.js";
+import {
+  connectInMemory,
+  fakeDaemon,
+  firstText,
+  installFetchMock,
+  requestUrl,
+} from "../helpers.js";
 
 type SessionEventsRecentFn = DaemonClient["sessionEventsRecent"];
+
+// Bun's `typeof fetch` carries a `preconnect` static that bare mock
+// implementations lack; Object.assign supplies it without a cast.
+function asFetchMock(
+  impl: (input: string | URL | Request, init?: RequestInit) => Promise<Response>,
+): typeof fetch {
+  return Object.assign(impl, { preconnect: (): void => undefined });
+}
 
 test("SessionEventsRecentInputShape accepts optional filters", () => {
   const schema = z.object(SessionEventsRecentInputShape).strict();
@@ -23,7 +39,7 @@ test("SessionEventsRecentInputShape accepts optional filters", () => {
 });
 
 test("wraps GET /session-events and validates against SessionEventsListResponseSchema", async () => {
-  const response = {
+  const response: SessionEventsListResponse = {
     events: [
       {
         session_id: "s-1",
@@ -52,7 +68,7 @@ test("wraps GET /session-events and validates against SessionEventsListResponseS
 });
 
 test("validates null session_id rows from GET /session-events", async () => {
-  const response = {
+  const response: SessionEventsListResponse = {
     events: [
       {
         session_id: null,
@@ -79,10 +95,10 @@ test("validates null session_id rows from GET /session-events", async () => {
 
 test("session_events is registered and forwards through DaemonClient to GET /session-events", async () => {
   let receivedPath: string | undefined;
-  let receivedSessionId: string | null = null;
-  let receivedKindPrefix: string | null = null;
-  let receivedAuth: string | null = null;
-  const events = {
+  let receivedSessionId: string | null | undefined;
+  let receivedKindPrefix: string | null | undefined;
+  let receivedAuth: string | null | undefined;
+  const events: SessionEventsListResponse = {
     events: [
       {
         session_id: "s space",
@@ -97,14 +113,16 @@ test("session_events is registered and forwards through DaemonClient to GET /ses
       },
     ],
   };
-  const { daemon, restore } = installFetchMock((input, init): Promise<Response> => {
-    const url = new URL(requestUrl(input));
-    receivedPath = url.pathname;
-    receivedSessionId = url.searchParams.get("session_id");
-    receivedKindPrefix = url.searchParams.get("kind_prefix");
-    receivedAuth = init?.headers ? new Headers(init.headers).get("authorization") : null;
-    return Promise.resolve(Response.json(events));
-  });
+  const { daemon, restore } = installFetchMock(
+    asFetchMock((input, init): Promise<Response> => {
+      const url = new URL(requestUrl(input));
+      receivedPath = url.pathname;
+      receivedSessionId = url.searchParams.get("session_id");
+      receivedKindPrefix = url.searchParams.get("kind_prefix");
+      receivedAuth = init?.headers ? new Headers(init.headers).get("authorization") : null;
+      return Promise.resolve(Response.json(events));
+    }),
+  );
   let client: Awaited<ReturnType<typeof connectInMemory>> | undefined;
   const originalInvocationLogEnabled = process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED;
   process.env.PENUMBRA_MCP_INVOCATION_LOG_ENABLED = "0";
@@ -115,11 +133,7 @@ test("session_events is registered and forwards through DaemonClient to GET /ses
       name: "session_events",
       arguments: { session_id: "s space", kind_prefix: "continuity." },
     });
-    const content = (out as unknown as { content: { type: string; text: string }[] }).content;
-    const firstBlock = content[0];
-    if (firstBlock === undefined) throw new Error("expected content[0]");
-
-    expect(JSON.parse(firstBlock.text)).toEqual(events);
+    expect(JSON.parse(firstText(out))).toEqual(events);
     expect(receivedPath).toBe("/session-events");
     expect(receivedSessionId).toBe("s space");
     expect(receivedKindPrefix).toBe("continuity.");

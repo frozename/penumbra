@@ -16,6 +16,27 @@ beforeAll(() => {
   delete process.env["PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID"];
 });
 
+function makeMockFetch(
+  handler: (input: string | URL | Request) => Response | Promise<Response>,
+): typeof fetch {
+  const fn = (input: string | URL | Request): Response | Promise<Response> =>
+    Promise.resolve(handler(input));
+  return Object.assign(fn, { preconnect: (): void => undefined }) as typeof fetch;
+}
+
+function makeMockFetchWithInit(
+  handler: (
+    input: string | URL | Request,
+    init?: RequestInit | BunFetchRequestInit,
+  ) => Response | Promise<Response>,
+): typeof fetch {
+  const fn = (
+    input: string | URL | Request,
+    init?: RequestInit | BunFetchRequestInit,
+  ): Response | Promise<Response> => Promise.resolve(handler(input, init));
+  return Object.assign(fn, { preconnect: (): void => undefined }) as typeof fetch;
+}
+
 // --- unit: prompt builder ---
 
 describe("buildDreamingPromptBlock", () => {
@@ -140,13 +161,13 @@ function makeVoteResponse(promote: boolean, confidence: number): Response {
 describe("DreamingJudgePool.judgeAll", () => {
   it("fans out to all judges in parallel and returns one result per judge", async () => {
     const callLog: string[] = [];
-    const fakeFetch: typeof fetch = (input) => {
+    const fakeFetch = makeMockFetch((input) => {
       const url = input instanceof Request ? input.url : String(input);
       callLog.push(url);
       return Promise.resolve(
         url.includes("1111") ? makeVoteResponse(true, 0.9) : makeVoteResponse(false, 0.3),
       );
-    };
+    });
 
     const judges: DreamingJudgeEntry[] = [
       { name: "j1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" },
@@ -164,14 +185,14 @@ describe("DreamingJudgePool.judgeAll", () => {
   });
 
   it("returns judge_error sentinel for a failing judge without throwing", async () => {
-    const fakeFetch: typeof fetch = (input) => {
+    const fakeFetch = makeMockFetch((input) => {
       const url = input instanceof Request ? input.url : String(input);
       return Promise.resolve(
         url.includes("1111")
           ? makeVoteResponse(true, 0.95)
           : new Response("server error", { status: 500 }),
       );
-    };
+    });
 
     const judges: DreamingJudgeEntry[] = [
       { name: "j1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" },
@@ -186,14 +207,14 @@ describe("DreamingJudgePool.judgeAll", () => {
   });
 
   it("marks unreachable judge votes as abstentions rather than NO votes", async () => {
-    const fakeFetch = ((input: string | URL | Request) => {
+    const fakeFetch = makeMockFetch((input) => {
       const url = input instanceof Request ? input.url : String(input);
       return Promise.resolve(
         url.includes("1111")
           ? makeVoteResponse(true, 0.95)
           : new Response("server error", { status: 500 }),
       );
-    }) as unknown as typeof fetch;
+    });
 
     const judges: DreamingJudgeEntry[] = [
       { name: "j1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" },
@@ -211,14 +232,14 @@ describe("DreamingJudgePool.judgeAll", () => {
   });
 
   it("tags every ballot with its seat and classifies an HTTP 502 as http_502", async () => {
-    const fakeFetch = ((input: string | URL | Request) => {
+    const fakeFetch = makeMockFetch((input) => {
       const url = input instanceof Request ? input.url : String(input);
       return Promise.resolve(
         url.includes("1111")
           ? makeVoteResponse(true, 0.95)
           : new Response("upstream llama-server unreachable", { status: 502 }),
       );
-    }) as unknown as typeof fetch;
+    });
     const pool = createDreamingJudgePool(
       [
         { name: "j1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" },
@@ -233,12 +254,12 @@ describe("DreamingJudgePool.judgeAll", () => {
   });
 
   it("classifies a rejected fetch as transport_error and never carries the message", async () => {
-    const fakeFetch = ((input: string | URL | Request) => {
+    const fakeFetch = makeMockFetch((input) => {
       const url = input instanceof Request ? input.url : String(input);
       return url.includes("1111")
         ? Promise.resolve(makeVoteResponse(true, 0.9))
         : Promise.reject(new TypeError("fetch failed: connect ECONNREFUSED 127.0.0.1:9999"));
-    }) as unknown as typeof fetch;
+    });
     const pool = createDreamingJudgePool(
       [
         { name: "j1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" },
@@ -260,10 +281,10 @@ describe("DreamingJudgePool.judgeAll", () => {
       JSON.stringify({ choices: [{ message: { content: "Yes, promote this." } }] }),
       { status: 200, headers: { "Content-Type": "application/json" } },
     );
-    const fakeFetch = ((input: string | URL | Request) => {
+    const fakeFetch = makeMockFetch((input) => {
       const url = input instanceof Request ? input.url : String(input);
       return Promise.resolve(url.includes("1111") ? makeVoteResponse(true, 0.9) : proseReply);
-    }) as unknown as typeof fetch;
+    });
     const pool = createDreamingJudgePool(
       [
         { name: "j1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" },
@@ -287,11 +308,11 @@ describe("DreamingJudgePool.judgeAll", () => {
 describe("DreamingJudgePool.judge", () => {
   it("round-robins across judges: 4 calls with 2 judges → each called exactly twice", async () => {
     const callLog: string[] = [];
-    const fakeFetch: typeof fetch = (input) => {
+    const fakeFetch = makeMockFetch((input) => {
       const url = input instanceof Request ? input.url : String(input);
       callLog.push(url);
       return Promise.resolve(makeVoteResponse(true, 0.8));
-    };
+    });
 
     const judges: DreamingJudgeEntry[] = [
       { name: "j1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" },
@@ -310,7 +331,7 @@ describe("DreamingJudgePool.judge", () => {
   });
 
   it("returns yes verdict for promote=true response", async () => {
-    const fakeFetch: typeof fetch = () => Promise.resolve(makeVoteResponse(true, 0.85));
+    const fakeFetch = makeMockFetchWithInit(() => Promise.resolve(makeVoteResponse(true, 0.85)));
     const pool = createDreamingJudgePool(
       [{ name: "j1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" }],
       fakeFetch,
@@ -321,7 +342,7 @@ describe("DreamingJudgePool.judge", () => {
   });
 
   it("returns no verdict for promote=false response", async () => {
-    const fakeFetch: typeof fetch = () => Promise.resolve(makeVoteResponse(false, 0.1));
+    const fakeFetch = makeMockFetchWithInit(() => Promise.resolve(makeVoteResponse(false, 0.1)));
     const pool = createDreamingJudgePool(
       [{ name: "j1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" }],
       fakeFetch,
@@ -444,10 +465,10 @@ const CANONICAL_BODY_KEYS = ["max_tokens", "messages", "model", "response_format
 describe("DreamingJudgePool request extras", () => {
   it("sends a seat's requestExtras in the POST body", async () => {
     let body: Record<string, unknown> = {};
-    const fakeFetch: typeof fetch = (_input, init) => {
+    const fakeFetch = makeMockFetchWithInit((_input, init) => {
       body = readRequestBody(init);
       return Promise.resolve(makeVoteResponse(true, 0.9));
-    };
+    });
     const pool = createDreamingJudgePool(
       [
         {
@@ -466,10 +487,10 @@ describe("DreamingJudgePool request extras", () => {
 
   it("FAIL-CLOSED: requestExtras cannot override the canonical request fields", async () => {
     let body: Record<string, unknown> = {};
-    const fakeFetch: typeof fetch = (_input, init) => {
+    const fakeFetch = makeMockFetchWithInit((_input, init) => {
       body = readRequestBody(init);
       return Promise.resolve(makeVoteResponse(true, 0.9));
-    };
+    });
     const pool = createDreamingJudgePool(
       [
         {
@@ -499,10 +520,10 @@ describe("DreamingJudgePool request extras", () => {
 
   it("REGRESSION PIN: a seat without requestExtras sends exactly the canonical keys", async () => {
     let body: Record<string, unknown> = {};
-    const fakeFetch: typeof fetch = (_input, init) => {
+    const fakeFetch = makeMockFetchWithInit((_input, init) => {
       body = readRequestBody(init);
       return Promise.resolve(makeVoteResponse(true, 0.9));
-    };
+    });
     const pool = createDreamingJudgePool(
       [{ name: "plain", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "m" }],
       fakeFetch,
@@ -513,10 +534,10 @@ describe("DreamingJudgePool request extras", () => {
 
   it("judgeAll inherits extras because it shares callJudge", async () => {
     const bodies: Record<string, unknown>[] = [];
-    const fakeFetch: typeof fetch = (_input, init) => {
+    const fakeFetch = makeMockFetchWithInit((_input, init) => {
       bodies.push(readRequestBody(init));
       return Promise.resolve(makeVoteResponse(true, 0.9));
-    };
+    });
     const seats: DreamingJudgeEntry[] = [
       {
         name: "a",
@@ -536,10 +557,10 @@ describe("DreamingJudgePool request extras", () => {
 
   it("REGRESSION PIN: a subjectId on judgeAll args never reaches the judge request body", async () => {
     const bodies: Record<string, unknown>[] = [];
-    const fakeFetch = ((_input: string | URL | Request, init: RequestInit | undefined) => {
+    const fakeFetch = makeMockFetchWithInit((_input, init) => {
       bodies.push(readRequestBody(init));
       return Promise.resolve(makeVoteResponse(true, 0.9));
-    }) as unknown as typeof fetch;
+    });
     const pool = createDreamingJudgePool(
       [{ name: "plain", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "m" }],
       fakeFetch,
@@ -561,11 +582,11 @@ describe("createDreamingJudgePoolFromAgentchat request extras", () => {
       ].join("\n"),
     );
     const bodies = new Map<string, Record<string, unknown>>();
-    const fakeFetch: typeof fetch = (input, init) => {
+    const fakeFetch = makeMockFetchWithInit((input, init) => {
       const url = input instanceof Request ? input.url : String(input);
       bodies.set(url, readRequestBody(init));
       return Promise.resolve(makeVoteResponse(true, 0.9));
-    };
+    });
     const saved = process.env["PENUMBRA_CONFIG_DIR"];
     process.env["PENUMBRA_CONFIG_DIR"] = tmpConfigPath;
     try {
@@ -596,10 +617,10 @@ describe("createDreamingJudgePoolFromAgentchat request extras", () => {
           ].join("\n"),
         );
         const bodies: Record<string, unknown>[] = [];
-        const fakeFetch: typeof fetch = (_input, init) => {
+        const fakeFetch = makeMockFetchWithInit((_input, init) => {
           bodies.push(readRequestBody(init));
           return Promise.resolve(makeVoteResponse(true, 0.9));
-        };
+        });
         const pool = createDreamingJudgePoolFromAgentchat(undefined, fakeFetch);
         expect(pool).not.toBeNull();
         await pool?.judgeAll!({ body: "candidate", kind: "promote_t1" });

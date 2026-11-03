@@ -6,6 +6,8 @@ import { type TaskProfile } from "@src/routing/schemas.js";
 import {
   createTaskProfileJudgeAdapter,
   ROUTER_SCORED_AXES,
+  type TaskProfileJudgeFallbackReason,
+  type TaskProfileJudgeResult,
 } from "@src/routing/task-profile-judge.js";
 import type { JudgeChatFn } from "@src/services/judge-chat.js";
 
@@ -48,6 +50,13 @@ const deterministic = validProfile({
 });
 const deterministicFallback: DeterministicFallback = () => deterministic;
 
+function deterministicResult(result: TaskProfileJudgeResult): TaskProfileJudgeFallbackReason {
+  if (result.source !== "deterministic") {
+    throw new Error(`expected deterministic fallback result, got source ${result.source}`);
+  }
+  return result.fallbackReason;
+}
+
 describe("createTaskProfileJudgeAdapter", () => {
   test("invalid JSON from the judge falls back to the deterministic profile, never throws", async () => {
     const judge = createTaskProfileJudgeAdapter({
@@ -62,7 +71,7 @@ describe("createTaskProfileJudgeAdapter", () => {
 
     expect(result.profile).toEqual(deterministic);
     expect(result.source).toBe("deterministic");
-    expect(result.fallbackReason).toBe("invalid_json");
+    expect(deterministicResult(result)).toBe("invalid_json");
   });
 
   test("valid JSON failing strict schema validation falls back with a distinct reason", async () => {
@@ -77,7 +86,7 @@ describe("createTaskProfileJudgeAdapter", () => {
     const result = await judge.profileTask(task, "executor");
 
     expect(result.profile).toEqual(deterministic);
-    expect(result.fallbackReason).toBe("schema_validation_failed");
+    expect(deterministicResult(result)).toBe("schema_validation_failed");
   });
 
   test("confidence below the configured floor falls back with a distinct reason", async () => {
@@ -93,7 +102,7 @@ describe("createTaskProfileJudgeAdapter", () => {
     const result = await judge.profileTask(task, "executor");
 
     expect(result.profile).toEqual(deterministic);
-    expect(result.fallbackReason).toBe("confidence_below_floor");
+    expect(deterministicResult(result)).toBe("confidence_below_floor");
   });
 
   test("timeout falls back with a distinct reason", async () => {
@@ -109,7 +118,7 @@ describe("createTaskProfileJudgeAdapter", () => {
     const result = await judge.profileTask(task, "executor");
 
     expect(result.profile).toEqual(deterministic);
-    expect(result.fallbackReason).toBe("timeout");
+    expect(deterministicResult(result)).toBe("timeout");
   });
 
   test("provider-policy and other judge errors fall back instead of escaping", async () => {
@@ -124,7 +133,7 @@ describe("createTaskProfileJudgeAdapter", () => {
     const result = await judge.profileTask(task, "executor");
 
     expect(result.profile).toEqual(deterministic);
-    expect(result.fallbackReason).toBe("judge_error");
+    expect(deterministicResult(result)).toBe("judge_error");
   });
 
   test("task content is passed inside a delimited untrusted block, never concatenated as an instruction prefix", async () => {
