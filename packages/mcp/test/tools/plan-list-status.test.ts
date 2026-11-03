@@ -78,7 +78,7 @@ test("plan.list returns all plans when no status filter", async () => {
 
 test("plan.list filters by status", async () => {
   const planList: PlanListFn = (req: PlanListReq): Promise<PlanListResult> => {
-    expect(req.status).toBe("running");
+    expect(req?.status).toBe("running");
     return Promise.resolve({
       plans: [
         {
