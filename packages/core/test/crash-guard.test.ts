@@ -2,11 +2,16 @@ import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "b
 
 import type { WorkerFatalRecord } from "../src/crash-guard.js";
 
-const crashGuard =
-  (await import("../src/crash-guard.js?crash-guard-test")) as typeof import(
-    "../src/crash-guard.js"
-  );
+// The query string forces a fresh module instance so the module-level
+// installed flag starts false regardless of other files in the same process.
+// The specifier must stay non-literal for tsc, which cannot resolve query imports.
+const crashGuardSpec = "../src/crash-guard.js?crash-guard-test";
+const crashGuardModule: unknown = await import(crashGuardSpec);
+const crashGuard = crashGuardModule as typeof import("../src/crash-guard.js");
 const { installGlobalCrashHandlers } = crashGuard;
+
+type RejectionListener = (reason: unknown, promise: Promise<unknown>) => void;
+type ExceptionListener = (error: Error, origin: NodeJS.UncaughtExceptionOrigin) => void;
 
 const logged: { record: WorkerFatalRecord; msg: string }[] = [];
 let flushCount = 0;
@@ -20,13 +25,13 @@ const log = {
 };
 
 let listenersAtInstall: {
-  rejection: unknown[];
-  exception: unknown[];
+  rejection: RejectionListener[];
+  exception: ExceptionListener[];
 };
 let exitSpy: ReturnType<typeof spyOn<typeof process, "exit">>;
 const originalGuardEnv = process.env["PENUMBRA_WORKER_CRASH_GUARD"];
-let testRejectionListeners: unknown[] = [];
-let testExceptionListeners: unknown[] = [];
+let testRejectionListeners: RejectionListener[] = [];
+let testExceptionListeners: ExceptionListener[] = [];
 
 beforeAll(() => {
   exitSpy = spyOn(process, "exit").mockImplementation(() => undefined as never);
@@ -65,10 +70,10 @@ afterEach(() => {
 afterAll(() => {
   exitSpy.mockRestore();
   for (const listener of testRejectionListeners) {
-    process.removeListener("unhandledRejection", listener as never);
+    process.removeListener("unhandledRejection", listener);
   }
   for (const listener of testExceptionListeners) {
-    process.removeListener("uncaughtException", listener as never);
+    process.removeListener("uncaughtException", listener);
   }
 });
 
