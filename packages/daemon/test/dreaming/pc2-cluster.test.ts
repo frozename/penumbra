@@ -37,7 +37,7 @@ function parseJsonObject(value: string): Record<string, unknown> {
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new TypeError("expected JSON object");
   }
-  return parsed;
+  return parsed as Record<string, unknown>;
 }
 
 function parseStringArray(value: string): string[] {
@@ -163,7 +163,12 @@ function seedCluster(
 
   for (let i = 0; i < ids.length; i++) {
     for (let j = i + 1; j < ids.length; j++) {
-      insertLink(db, { src: ids[i], dst: ids[j], weight: opts.similarity });
+      const src = ids[i];
+      const dst = ids[j];
+      if (src === undefined || dst === undefined) {
+        continue;
+      }
+      insertLink(db, { src, dst, weight: opts.similarity });
     }
   }
 }
@@ -179,16 +184,24 @@ function testConfig(overrides?: Partial<DreamConfig>): DreamConfig {
     perCycleResearchUsd: 0.25,
     linkAutoThreshold: 0.75,
     p1BatchSize: 10,
+    contentQualityThreshold: 0.7,
     reembedBatchSize: 100,
     skipPhases: new Set(),
     eventTriggerEnabled: true,
     idleMinutes: 15,
     triggerCooldownMinutes: 5,
     briefRefreshHours: 24,
-    curatorEnabled: false,
+    pc1BatchSize: 10,
     pc2MinClusterSize: 3,
     pc2ClusterLinkThreshold: 0.85,
     pc2AutoThreshold: 0.97,
+    curatorEnabled: false,
+    rewriterEnabled: false,
+    rewriterBaseUrl: "",
+    rewriterModel: "",
+    rewriterTimeoutMs: 0,
+    rewriterCacheTtlMs: 0,
+    rewriterConcurrency: 0,
     ...overrides,
   };
 }
@@ -219,7 +232,7 @@ it("findSimilarityClusters groups memory_links semantic_near edges", () => {
   insertLink(db, { src: "D", dst: "E", weight: 0.94 }); // pair — below minSize
   const clusters = findSimilarityClusters(db, { minSize: 3, minWeight: 0.9 });
   expect(clusters).toHaveLength(1);
-  expect(clusters[0].sort()).toEqual(["A", "B", "C"]);
+  expect(clusters.at(0)!.sort()).toEqual(["A", "B", "C"]);
 });
 
 it("runPC2Phase inserts cluster_retire for non-canonicals (queued by default)", async () => {
@@ -271,7 +284,7 @@ it("runPC2Phase avoids per-member SELECTs for 5-member cluster", () => {
   const originalPrepare = db.prepare.bind(db);
   let totalSelects = 0;
   let similarityScanSelects = 0;
-  db.prepare = (query, ...params): ReturnType<Database["prepare"]> => {
+  const wrappedPrepare: Database["prepare"] = (query, ...params) => {
     const upper = query.toUpperCase();
     if (upper.startsWith("SELECT ")) {
       totalSelects += 1;
@@ -281,6 +294,11 @@ it("runPC2Phase avoids per-member SELECTs for 5-member cluster", () => {
     }
     return originalPrepare(query, ...params);
   };
+  Object.defineProperty(db, "prepare", {
+    value: wrappedPrepare,
+    writable: true,
+    configurable: true,
+  });
 
   try {
     seedCluster(db, ["A", "B", "C", "D", "E"], { similarity: 0.98, canonical: "A" });

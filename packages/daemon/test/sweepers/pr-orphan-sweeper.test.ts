@@ -2,6 +2,10 @@ import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
 import {
+  type GhClosePullRequestInput,
+  type GhLabelPullRequestInput,
+} from "@src/services/gh-client.js";
+import {
   type GhClient,
   installPrOrphanSweeper,
   type PrOrphanSweeperDeps,
@@ -86,8 +90,8 @@ function pr(
 }
 
 test("superseded agent PRs are closed and unlanded stale agent PRs are labeled", async () => {
-  const closed: { number: number; comment: string; deleteBranch: boolean }[] = [];
-  const labeled: { number: number; labels: string[] }[] = [];
+  const closed: GhClosePullRequestInput[] = [];
+  const labeled: GhLabelPullRequestInput[] = [];
   const { deps, events } = makeDeps({
     ghClient: {
       listOpenPullRequests: () =>
@@ -129,6 +133,9 @@ test("superseded agent PRs are closed and unlanded stale agent PRs are labeled",
     gitClient: {
       resolveMainSha: () => Promise.resolve("main-sha-1"),
       isAncestorOfMain: (sha: string) => Promise.resolve(sha === "sha-sup"),
+      isObjectReachable: () => Promise.resolve(true),
+      fetchHeadRef: () => Promise.resolve(),
+      isThreeDotDiffEmptyVsMain: () => Promise.resolve(false),
     },
   });
 
@@ -190,8 +197,11 @@ test("fleet PRs are identified by handoff branch_name membership with legacy age
     gitClient: {
       resolveMainSha: () => Promise.resolve("main-sha-1"),
       isAncestorOfMain: () => Promise.resolve(true),
+      isObjectReachable: () => Promise.resolve(true),
+      fetchHeadRef: () => Promise.resolve(),
+      isThreeDotDiffEmptyVsMain: () => Promise.resolve(false),
     },
-  } as Partial<PrOrphanSweeperDeps>);
+  });
 
   const result = await runPrOrphanSweep(deps);
 
@@ -230,6 +240,9 @@ test("dry-run mode emits events and report actions but does not close PRs", asyn
     gitClient: {
       resolveMainSha: () => Promise.resolve("main-sha-2"),
       isAncestorOfMain: (sha: string) => Promise.resolve(sha === "sha-sup"),
+      isObjectReachable: () => Promise.resolve(true),
+      fetchHeadRef: () => Promise.resolve(),
+      isThreeDotDiffEmptyVsMain: () => Promise.resolve(false),
     },
   });
 
@@ -315,6 +328,9 @@ test("young PRs are not auto-closed even when superseded", async () => {
     gitClient: {
       resolveMainSha: () => Promise.resolve("main-sha-3"),
       isAncestorOfMain: () => Promise.resolve(true),
+      isObjectReachable: () => Promise.resolve(true),
+      fetchHeadRef: () => Promise.resolve(),
+      isThreeDotDiffEmptyVsMain: () => Promise.resolve(false),
     },
   });
 
@@ -349,6 +365,9 @@ test("per-PR failures are isolated and counted as errored", async () => {
     gitClient: {
       resolveMainSha: () => Promise.resolve("main-sha-4"),
       isAncestorOfMain: () => Promise.resolve(true),
+      isObjectReachable: () => Promise.resolve(true),
+      fetchHeadRef: () => Promise.resolve(),
+      isThreeDotDiffEmptyVsMain: () => Promise.resolve(false),
     },
   });
 
@@ -384,6 +403,9 @@ test("maxClose limits actions during a manual sweep", async () => {
     gitClient: {
       resolveMainSha: () => Promise.resolve("main-sha-5"),
       isAncestorOfMain: (sha: string) => Promise.resolve(sha === "sha-sup"),
+      isObjectReachable: () => Promise.resolve(true),
+      fetchHeadRef: () => Promise.resolve(),
+      isThreeDotDiffEmptyVsMain: () => Promise.resolve(false),
     },
     maxClose: 1,
   });
@@ -394,7 +416,7 @@ test("maxClose limits actions during a manual sweep", async () => {
 });
 
 test("classifies as superseded when head is not ancestor but three-dot diff vs main is empty", async () => {
-  const closed: { number: number; comment: string; deleteBranch: boolean }[] = [];
+  const closed: GhClosePullRequestInput[] = [];
   const { deps } = makeDeps({
     ghClient: {
       listOpenPullRequests: () =>
@@ -514,7 +536,7 @@ test("scheduled sweeper skips overlapping ticks and emits sweeper.skip_tick", as
 
   await Bun.sleep(20);
   handle.stop();
-  resolveList?.();
+  resolveList!();
   await Bun.sleep(1);
 
   expect(listCalls).toBe(1);

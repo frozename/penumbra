@@ -6,6 +6,9 @@ import {
   ServedModelsProbeError,
   servedModelsUrl,
 } from "@src/index.js";
+import type { ServedModelsFetch } from "@src/services/served-models-client.js";
+
+type ProbeInit = NonNullable<Parameters<ServedModelsFetch>[1]>;
 
 describe("served models client", () => {
   test("builds the /v1/models URL from base URLs with or without /v1", () => {
@@ -21,15 +24,17 @@ describe("served models client", () => {
       fetch: (url, init) => {
         requestedUrls.push(url);
         expect(init?.signal).toBeDefined();
-        return new Response(
-          JSON.stringify({
-            data: [
-              { id: "bge-m3-GGUF/bge-m3-FP16.gguf" },
-              { id: "bge-m3" },
-              { id: "bge-m3" },
-              { id: 42 },
-            ],
-          }),
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: [
+                { id: "bge-m3-GGUF/bge-m3-FP16.gguf" },
+                { id: "bge-m3" },
+                { id: "bge-m3" },
+                { id: 42 },
+              ],
+            }),
+          ),
         );
       },
     });
@@ -41,14 +46,16 @@ describe("served models client", () => {
   test("returns metadata entries for inventory callers", async () => {
     const entries = await fetchServedModelEntries("http://127.0.0.1:7944", {
       fetch: () =>
-        new Response(
-          JSON.stringify({
-            data: [
-              { id: "repo/model.gguf", owned_by: "mac-mini", created: 42 },
-              { id: "model", owned_by: "mac-mini", created: 42 },
-              { id: "", owned_by: "ignored", created: 1 },
-            ],
-          }),
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: [
+                { id: "repo/model.gguf", owned_by: "mac-mini", created: 42 },
+                { id: "model", owned_by: "mac-mini", created: 42 },
+                { id: "", owned_by: "ignored", created: 1 },
+              ],
+            }),
+          ),
         ),
     });
 
@@ -62,7 +69,7 @@ describe("served models client", () => {
     let caught: unknown;
     try {
       await fetchServedModels("http://127.0.0.1:7944", {
-        fetch: () => new Response("bad", { status: 502 }),
+        fetch: () => Promise.resolve(new Response("bad", { status: 502 })),
       });
     } catch (error) {
       caught = error;
@@ -90,7 +97,7 @@ describe("served models client", () => {
   });
 
   test("sends bearer authorization and custom CA when provided", async () => {
-    let seenInit: { headers?: Record<string, string>; tls?: { ca: string } } | undefined;
+    let seenInit: ProbeInit | undefined;
     await fetchServedModels("https://gw.example.invalid:7843/v1", {
       bearerToken: "tok",
       caPem: "PEM",

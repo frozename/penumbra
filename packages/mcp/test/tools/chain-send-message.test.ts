@@ -2,15 +2,24 @@ import { expect, test } from "bun:test";
 
 import { chainSendMessageHandler } from "@src/tools/chain-send-message.js";
 
-import { installFetchMock } from "../helpers.js";
+import { type FetchImpl, installFetchMock } from "../helpers.js";
+
+// Bun's `typeof fetch` carries a custom `preconnect` member a bare handler
+// lacks; graft the real one so the mock satisfies the global fetch type.
+function fetchResponding(respond: () => Response): FetchImpl {
+  return Object.assign(() => Promise.resolve(respond()), {
+    preconnect: globalThis.fetch.preconnect,
+  });
+}
 
 test("chainSendMessageHandler returns ok on a successful inject", async () => {
-  const { daemon, restore } = installFetchMock(() =>
-    Promise.resolve(
-      new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
+  const { daemon, restore } = installFetchMock(
+    fetchResponding(
+      () =>
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
     ),
   );
   try {
@@ -24,12 +33,13 @@ test("chainSendMessageHandler returns ok on a successful inject", async () => {
 });
 
 test("chainSendMessageHandler surfaces not_found errors", async () => {
-  const { daemon, restore } = installFetchMock(() =>
-    Promise.resolve(
-      new Response(JSON.stringify({ error: { code: "not_found", message: "missing" } }), {
-        status: 404,
-        headers: { "content-type": "application/json" },
-      }),
+  const { daemon, restore } = installFetchMock(
+    fetchResponding(
+      () =>
+        new Response(JSON.stringify({ error: { code: "not_found", message: "missing" } }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        }),
     ),
   );
   try {
@@ -49,12 +59,13 @@ test("chainSendMessageHandler surfaces not_found errors", async () => {
 });
 
 test("chainSendMessageHandler surfaces unsupported_adapter errors", async () => {
-  const { daemon, restore } = installFetchMock(() =>
-    Promise.resolve(
-      new Response(JSON.stringify({ error: { code: "unsupported_adapter", message: "nope" } }), {
-        status: 409,
-        headers: { "content-type": "application/json" },
-      }),
+  const { daemon, restore } = installFetchMock(
+    fetchResponding(
+      () =>
+        new Response(JSON.stringify({ error: { code: "unsupported_adapter", message: "nope" } }), {
+          status: 409,
+          headers: { "content-type": "application/json" },
+        }),
     ),
   );
   try {
