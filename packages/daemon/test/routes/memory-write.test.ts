@@ -1,3 +1,5 @@
+import type { RecallBundle, WorkflowCtx, WorkflowFn } from "@penumbra/workflows";
+
 import {
   buildServices,
   type Embedder,
@@ -6,40 +8,37 @@ import {
   type Services,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { registerWorkerForTest } from "@penumbra/daemon/test-utils";
-import { loadTsWorkflow } from "@penumbra/workflows";
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
+import type { DreamConfig } from "@src/dreaming/config.js";
 import { runPC1Phase } from "@src/dreaming/curator/pc1-ephemera.js";
 import { runPC2Phase } from "@src/dreaming/curator/pc2-cluster.js";
 import { createDaemonFetchHandler } from "@src/serve.js";
 
-const { fn: memoryDigestFn } = await loadTsWorkflow(
-  join(import.meta.dir, "../../../..", "plugin/workflows/memory-digest/workflow.ts"),
-);
-if (memoryDigestFn === undefined) {
-  throw new Error("memory-digest workflow did not export fn");
-}
+// The plugin workflow lives outside this package's rootDir; a literal specifier
+// would pull it into the daemon tsc project, so it is runtime-resolved here.
+const memoryDigestModulePath = "../../../../plugin/workflows/memory-digest/workflow.js";
+const { fn: memoryDigestFn } = (await import(memoryDigestModulePath)) as { fn: WorkflowFn };
 
 const SHARED_TOKEN = "shared-token";
 
-function makeFetcher(
-  services: Services,
-): (input: string | URL | Request, init?: RequestInit) => Promise<Response> {
+function makeFetcher(services: Services): typeof fetch {
   const handler = createDaemonFetchHandler({ services, token: SHARED_TOKEN });
-  return (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+  const impl = (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     return handler(input instanceof Request ? input : new Request(input.toString(), init));
   };
+  // Bun's `typeof fetch` carries a `preconnect` that a bare function lacks.
+  return Object.assign(impl, { preconnect: (): void => undefined });
 }
 
 function makeServices(embedder: Embedder = new TestEmbedder({ dim: 384 })): {
   services: Services;
   db: Database;
-  fetch: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+  fetch: typeof fetch;
   root: string;
 } {
   const db = new Database(":memory:");
@@ -63,6 +62,40 @@ function makeServices(embedder: Embedder = new TestEmbedder({ dim: 384 })): {
     fetch: makeFetcher(services),
     root,
   };
+}
+
+interface RegisterWorkerForTestArgs {
+  baseUrl: string;
+  sharedBearer: string;
+  worker_id: string;
+  metadata?: Record<string, unknown>;
+  fetcher?: typeof fetch;
+}
+
+interface RegisterWorkerForTestResult {
+  worker_token: string;
+  worker_id: string;
+}
+
+async function registerWorkerForTest(
+  args: RegisterWorkerForTestArgs,
+): Promise<RegisterWorkerForTestResult> {
+  const fetcher = args.fetcher ?? fetch;
+  const res = await fetcher(`${args.baseUrl}/worker/register`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${args.sharedBearer}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ worker_id: args.worker_id, metadata: args.metadata }),
+  });
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => null);
+    throw new Error(
+      `registerWorkerForTest: HTTP ${String(res.status)}: ${JSON.stringify(errorBody)}`,
+    );
+  }
+  return (await res.json()) as RegisterWorkerForTestResult;
 }
 
 function seedMemory(
@@ -105,6 +138,62 @@ function seedMemory(
       input.origin ?? null,
     ],
   );
+}
+
+const EMPTY_RECALL: RecallBundle = { byKey: {}, warnings: [], estimatedTokens: 0 };
+
+function makeDigestCtx(input: {
+  projectDir: string;
+  projectId: string;
+  storageRoot: string;
+  db: Database;
+}): WorkflowCtx {
+  return {
+    config: {},
+    cwd: input.projectDir,
+    storageRoot: input.storageRoot,
+    project: input.projectId,
+    args: {},
+    db: (): Database => input.db,
+    dispatch: () => Promise.resolve({ conversation_id: "conversation", handoff_id: "handoff" }),
+    awaitChain: () =>
+      Promise.resolve({ status: "timeout" as const, final_agent: null, response_text: null }),
+    cancel: (): Promise<void> => Promise.resolve(),
+    fileWrite: () => Promise.resolve("/tmp/out"),
+  };
+}
+
+function makeDreamConfig(overrides?: Partial<DreamConfig>): DreamConfig {
+  return {
+    enabled: true,
+    cronMinutes: 30,
+    perCycleUsd: 1.0,
+    dailyUsd: 100.0,
+    pressureGuardEnabled: false,
+    perCycleEmbeddingUsd: 0.1,
+    perCycleResearchUsd: 0.25,
+    linkAutoThreshold: 0.75,
+    p1BatchSize: 10,
+    contentQualityThreshold: 0.5,
+    reembedBatchSize: 100,
+    skipPhases: new Set<string>(),
+    eventTriggerEnabled: false,
+    idleMinutes: 15,
+    triggerCooldownMinutes: 5,
+    briefRefreshHours: 24,
+    pc1BatchSize: 100,
+    pc2MinClusterSize: 3,
+    pc2ClusterLinkThreshold: 0.85,
+    pc2AutoThreshold: 0.97,
+    curatorEnabled: false,
+    rewriterEnabled: false,
+    rewriterBaseUrl: "http://127.0.0.1:1",
+    rewriterModel: "test-rewriter",
+    rewriterTimeoutMs: 1000,
+    rewriterCacheTtlMs: 60_000,
+    rewriterConcurrency: 1,
+    ...overrides,
+  };
 }
 
 function seedCycle(db: Database, cycleId: string): void {
@@ -301,20 +390,8 @@ describe("POST /memory/write", () => {
       expect(rowCount.c).toBe(0);
 
       const digest = await memoryDigestFn(
-        {
-          config: {},
-          cwd: projectDir,
-          storageRoot: join(root, "storage"),
-          project: projectId,
-          args: {},
-          db: (): Database => db,
-          dispatch: () =>
-            Promise.resolve({ conversation_id: "conversation", handoff_id: "handoff" }),
-          awaitChain: () =>
-            Promise.resolve({ status: "timeout" as const, final_agent: null, response_text: null }),
-          fileWrite: () => Promise.resolve("/tmp/out"),
-        },
-        { byKey: {}, warnings: [] },
+        makeDigestCtx({ projectDir, projectId, storageRoot: join(root, "storage"), db }),
+        EMPTY_RECALL,
       );
       expect(digest).toBe("");
     } finally {
@@ -392,20 +469,8 @@ describe("POST /memory/write", () => {
       expect(res.status).toBe(200);
 
       const digest = await memoryDigestFn(
-        {
-          config: {},
-          cwd: projectDir,
-          storageRoot: join(root, "storage"),
-          project: projectId,
-          args: {},
-          db: (): Database => db,
-          dispatch: () =>
-            Promise.resolve({ conversation_id: "conversation", handoff_id: "handoff" }),
-          awaitChain: () =>
-            Promise.resolve({ status: "timeout" as const, final_agent: null, response_text: null }),
-          fileWrite: () => Promise.resolve("/tmp/out"),
-        },
-        { byKey: {}, warnings: [] },
+        makeDigestCtx({ projectDir, projectId, storageRoot: join(root, "storage"), db }),
+        EMPTY_RECALL,
       );
 
       expect(digest).toContain("Loaded 1 digest row");
@@ -583,12 +648,15 @@ describe("POST /memory/write", () => {
     const written = (await res.json()) as { memory_id: string };
 
     const target = db
-      .prepare<{ memory_id: string }>(`SELECT memory_id FROM t2_memories WHERE slug = 'target-a'`)
+      .prepare<
+        { memory_id: string },
+        []
+      >(`SELECT memory_id FROM t2_memories WHERE slug = 'target-a'`)
       .get()!;
     const wikiCount = db
       .query<
         { c: number },
-        [string]
+        [string, string]
       >(`SELECT COUNT(*) AS c FROM memory_links WHERE src_id = ? AND dst_id = ? AND link_type = 'wiki'`)
       .get(written.memory_id, target.memory_id)!.c;
     expect(wikiCount).toBe(1);
@@ -600,7 +668,7 @@ describe("POST /memory/write", () => {
           link_type: string;
           metadata_json: string;
         },
-        [string, string, string]
+        [string, string]
       >(
         `
       SELECT link_id, dst_id, link_type, metadata_json
@@ -754,7 +822,7 @@ describe("POST /memory/write", () => {
     const projectBBody = (await projectB.json()) as { memory_id: string };
 
     const link = db
-      .prepare<{ dst_id: string | null }>(
+      .prepare<{ dst_id: string | null }, [string]>(
         `
         SELECT dst_id FROM memory_links WHERE src_id = ? AND link_type IN ('wiki', 'wiki_unresolved')
       `,
@@ -764,9 +832,10 @@ describe("POST /memory/write", () => {
     expect(link?.dst_id === projectBBody.memory_id || link?.dst_id === null).toBe(true);
     if (link?.dst_id) {
       const resolved = db
-        .prepare<{
-          project_id: string | null;
-        }>(`SELECT project_id FROM t2_memories WHERE memory_id = ?`)
+        .prepare<
+          { project_id: string | null },
+          [string]
+        >(`SELECT project_id FROM t2_memories WHERE memory_id = ?`)
         .get(link.dst_id);
       expect(resolved?.project_id).toBe("project-b");
     }
@@ -968,7 +1037,10 @@ describe("POST /memory/write", () => {
       .run();
 
     const beforeUpdated = seedDb
-      .query<{ updated_at: string }>(`SELECT updated_at FROM t2_memories WHERE memory_id = ?`)
+      .query<
+        { updated_at: string },
+        [string]
+      >(`SELECT updated_at FROM t2_memories WHERE memory_id = ?`)
       .get("source-memory")!;
 
     const res = await createDaemonFetchHandler({ services: failingServices, token: SHARED_TOKEN })(
@@ -998,7 +1070,10 @@ describe("POST /memory/write", () => {
     expect(remaining.c).toBe(1);
 
     const afterUpdated = seedDb
-      .query<{ updated_at: string }>(`SELECT updated_at FROM t2_memories WHERE memory_id = ?`)
+      .query<
+        { updated_at: string },
+        [string]
+      >(`SELECT updated_at FROM t2_memories WHERE memory_id = ?`)
       .get("source-memory")!;
     expect(afterUpdated.updated_at).toBe(beforeUpdated.updated_at);
   });
@@ -1110,12 +1185,15 @@ describe("POST /memory/write", () => {
     const body = (await res.json()) as { memory_id: string; created: boolean };
 
     const row = db
-      .query<{
-        kind: string;
-        origin: string | null;
-        project_id: string | null;
-        cc_kind: string | null;
-      }>(
+      .query<
+        {
+          kind: string;
+          origin: string | null;
+          project_id: string | null;
+          cc_kind: string | null;
+        },
+        [string]
+      >(
         `SELECT kind, origin, project_id, cc_kind FROM t2_memories WHERE slug = 'legacy' AND memory_id = ?`,
       )
       .get(body.memory_id)!;
@@ -1146,7 +1224,7 @@ describe("POST /memory/write", () => {
         origin: null,
       });
 
-      runPC1Phase(db, "cycle-1", {}, {});
+      runPC1Phase(db, "cycle-1", makeDreamConfig(), {});
 
       const directRow = db
         .query<
@@ -1215,7 +1293,11 @@ describe("POST /memory/write", () => {
       runPC2Phase(
         db,
         "cycle-2",
-        { pc2MinClusterSize: 3, pc2ClusterLinkThreshold: 0.85, pc2AutoThreshold: 0.97 },
+        makeDreamConfig({
+          pc2MinClusterSize: 3,
+          pc2ClusterLinkThreshold: 0.85,
+          pc2AutoThreshold: 0.97,
+        }),
         {},
       );
 
