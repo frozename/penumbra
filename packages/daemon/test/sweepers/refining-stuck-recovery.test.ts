@@ -368,14 +368,10 @@ test("poison-pill row does not block recovery of other stuck drafts", () => {
   expect(tickSummary?.obj).toMatchObject({ recovered: 1, skipped_invalid: 1 });
 
   // Second tick: poison row no longer surfaces, no new events on either id.
-  const beforeSecondTick = db.query<{ n: number }>(`SELECT COUNT(*) AS n FROM t0_events`).get() as {
-    n: number;
-  };
+  const beforeSecondTick = db.query<{ n: number }, []>(`SELECT COUNT(*) AS n FROM t0_events`).get();
   sweeper.tick();
-  const afterSecondTick = db.query<{ n: number }>(`SELECT COUNT(*) AS n FROM t0_events`).get() as {
-    n: number;
-  };
-  expect(afterSecondTick.n).toBe(beforeSecondTick.n);
+  const afterSecondTick = db.query<{ n: number }, []>(`SELECT COUNT(*) AS n FROM t0_events`).get();
+  expect(afterSecondTick?.n).toBe(beforeSecondTick?.n);
 });
 
 test("already-open draft is untouched on subsequent tick", () => {
