@@ -82,7 +82,7 @@ function identityField(
 }
 
 export const ModelIdentitySchema = z.strictObject({
-  declared: identityField(["declared", "unknown"]),
+  requested: identityField(["declared", "unknown"]),
   effective: identityField([
     "acp_selected",
     "acp_current",
@@ -90,7 +90,6 @@ export const ModelIdentitySchema = z.strictObject({
     "unattested",
     "unknown",
   ]),
-  provider: identityField(["declared", "qualified_artifact", "unknown"]),
   quant: identityField(["declared", "qualified_artifact", "unknown"]).optional(),
   engine: identityField(["declared", "qualified_artifact", "unknown"]).optional(),
   adapter: identityField(["declared", "qualified_artifact", "unknown"]).optional(),
@@ -114,7 +113,7 @@ export const ReceiptKindSchema = z.enum([
 
 const ReceiptClaimInnerSchema = z.strictObject({
   kind: ReceiptKindSchema,
-  sha: GitShaSchema.nullish(),
+  sha: GitShaSchema.nullable(),
   producer: z.string().min(1),
   claimed_verdict: z.enum(["pass", "fail", "unknown"]),
   fail_reason: z
@@ -126,11 +125,11 @@ const ReceiptClaimInnerSchema = z.strictObject({
       "nondeterministic",
     ])
     .nullable(),
-  assertion_set_digest: Sha256HexSchema.nullish(),
-  grader_build: Sha256HexSchema.nullish(),
-  per_check: z.array(PerCheckSchema).nullish(),
-  control_verdict: z.enum(["pass", "fail", "timeout"]).nullish(),
-  receipt_digest: Sha256HexSchema.nullish(),
+  assertion_set_digest: Sha256HexSchema.nullable(),
+  grader_build: Sha256HexSchema.nullable(),
+  per_check: z.array(PerCheckSchema).nullable(),
+  control_verdict: z.enum(["pass", "fail", "timeout"]).nullable(),
+  receipt_digest: Sha256HexSchema.nullable(),
 });
 
 export type ReceiptClaimBody = z.infer<typeof ReceiptClaimInnerSchema>;
@@ -140,12 +139,12 @@ export function receiptDigest(claim: ReceiptClaimBody): string {
 }
 
 function isReceiptSignedByDigest(claim: ReceiptClaimBody): boolean {
-  if (claim.receipt_digest === undefined || claim.receipt_digest === null) return true;
+  if (claim.receipt_digest === null) return true;
   return receiptDigest({ ...claim, receipt_digest: null }) === claim.receipt_digest;
 }
 
 function checkLaneGate(claim: ReceiptClaimBody, report: (message: string) => void): void {
-  if (claim.kind === "lane_gate" && claim.sha !== null && claim.sha !== undefined) {
+  if (claim.kind === "lane_gate" && claim.sha !== null) {
     report("lane_gate receipts must carry a null sha");
   }
 }
@@ -153,14 +152,14 @@ function checkLaneGate(claim: ReceiptClaimBody, report: (message: string) => voi
 function checkHiddenAssertion(claim: ReceiptClaimBody, report: (message: string) => void): void {
   if (claim.kind !== "hidden_assertion") return;
   if (claim.producer !== "grader") report("hidden_assertion receipts must be produced by grader");
-  if (claim.sha === null || claim.sha === undefined) report("hidden_assertion requires sha");
-  if (claim.assertion_set_digest === null || claim.assertion_set_digest === undefined) {
+  if (claim.sha === null) report("hidden_assertion requires sha");
+  if (claim.assertion_set_digest === null) {
     report("hidden_assertion requires assertion_set_digest");
   }
-  if (claim.grader_build === null || claim.grader_build === undefined) {
+  if (claim.grader_build === null) {
     report("hidden_assertion requires grader_build");
   }
-  if (claim.per_check === null || claim.per_check === undefined) {
+  if (claim.per_check === null) {
     report("hidden_assertion requires per_check");
   }
   if (claim.control_verdict !== "pass") {
@@ -223,10 +222,14 @@ export const EnvEvidenceSourceSchema = z.enum([
   "worktree_setup_failed",
 ]);
 
+function isAtOrAfter(lhs: string, rhs: string): boolean {
+  return Date.parse(lhs) >= Date.parse(rhs);
+}
+
 export const EnvEvidenceSchema = z
   .strictObject({
     source: EnvEvidenceSourceSchema,
-    ref: z.string().min(1).nullish(),
+    ref: z.string().min(1).nullable(),
     observed_at: IsoTsSchema.nullish(),
     first_model_turn_at: IsoTsSchema.nullish(),
   })
@@ -242,7 +245,7 @@ export const EnvEvidenceSchema = z
     if (
       evidence.first_model_turn_at !== null &&
       evidence.first_model_turn_at !== undefined &&
-      evidence.observed_at >= evidence.first_model_turn_at
+      isAtOrAfter(evidence.observed_at, evidence.first_model_turn_at)
     ) {
       ctx.addIssue({
         code: "custom",
@@ -259,47 +262,13 @@ const ModelFailureOutcomeSchema = z.strictObject({
   env_evidence: EnvEvidenceSchema.nullish(),
 });
 
-function checkWorktreeSetupOrdering(
-  outcome: {
-    reason?: string | null;
-    env_evidence?: { observed_at?: string | null; first_model_turn_at?: string | null } | null;
-  },
-  ctx: z.RefinementCtx,
-): void {
-  if (outcome.reason !== "worktree_setup_failed") return;
-  const evidence = outcome.env_evidence;
-  if (evidence === null || evidence === undefined) return;
-  if (evidence.observed_at === null || evidence.observed_at === undefined) {
-    ctx.addIssue({
-      code: "custom",
-      message: "worktree_setup_failed requires observed_at",
-    });
-    return;
-  }
-  if (
-    evidence.first_model_turn_at !== null &&
-    evidence.first_model_turn_at !== undefined &&
-    evidence.observed_at >= evidence.first_model_turn_at
-  ) {
-    ctx.addIssue({
-      code: "custom",
-      message: "worktree_setup_failed must be observed before the first model turn",
-    });
-  }
-}
-
-const EnvironmentFailureOutcomeSchema = z
-  .strictObject({
-    class: z.literal("environment_failure"),
-    kind: z.enum(["environment", "baseline", "resource", "auth"]).nullish(),
-    reason: z.string().nullish(),
-    missing_reason: z.string().nullish(),
-    env_evidence: EnvEvidenceSchema,
-    expectation_ref: z.string().nullish(),
-  })
-  .superRefine((outcome, ctx) => {
-    checkWorktreeSetupOrdering(outcome, ctx);
-  });
+const EnvironmentFailureOutcomeSchema = z.strictObject({
+  class: z.literal("environment_failure"),
+  kind: z.enum(["environment", "baseline", "resource", "auth"]).nullable(),
+  missing_reason: z.string().nullish(),
+  env_evidence: EnvEvidenceSchema,
+  expectation_ref: z.string().nullish(),
+});
 
 const BlockedCorrectOutcomeSchema = z.strictObject({
   class: z.literal("blocked_correct"),
@@ -384,7 +353,7 @@ export const UsageSchema = z
 
 export const AttemptSchema = z.strictObject({
   n: z.number().int().min(1),
-  handoff_id: z.string().min(1).nullish(),
+  handoff_id: z.string().min(1).nullable(),
   dispatch_attempt: z.number().int().min(1).nullable(),
   head_sha: GitShaSchema.nullable(),
   commits: AttemptCommitsSchema,
@@ -396,7 +365,7 @@ export const AttemptSchema = z.strictObject({
       check_ms: z.number().int().min(0).nullable(),
       e2e_ms: z.number().int().min(0).nullable(),
     })
-    .nullish(),
+    .nullable(),
   started_at: IsoTsSchema.nullish(),
   first_model_turn_at: IsoTsSchema.nullish(),
   ended_at: IsoTsSchema.nullish(),
@@ -415,7 +384,7 @@ export const AssistanceSchema = z.strictObject({
     "human_takeover",
     "operator_note",
   ]),
-  attempt_n: z.number().int().min(1).nullish(),
+  attempt_n: z.number().int().min(1).nullable(),
   ref: z.string().nullish(),
 });
 
@@ -535,12 +504,12 @@ export const RecipeSchema = z
     blocked_on: z
       .string()
       .regex(/^#\d+$/)
-      .nullish(),
+      .nullable(),
     components: z.record(z.string(), RecipeComponentSchema).optional(),
     limits: z.record(z.string(), z.number().int().min(1)),
     seed: z.strictObject({ value: z.number().int().nullable(), supported: z.boolean() }).optional(),
-    notes: z.string().nullish(),
-    created_at: z.string().nullish(),
+    notes: z.string().nullable(),
+    created_at: z.string().nullable(),
   })
   .superRefine((recipe, ctx) => {
     if (!("max_rounds" in recipe.limits)) {
