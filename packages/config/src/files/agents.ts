@@ -434,6 +434,12 @@ export const ThoughtCaptureConfigSchema = z
   .object({
     max_text_bytes: z.number().int().positive().default(16384),
     max_stream_bytes: z.number().int().positive().default(1048576),
+    // #297: max ms a coalesced thought row buffers since its first chunk.
+    // 0 writes one row per streamed chunk and is for debugging only; 0 also
+    // redacts each chunk on its own, which disables cross-chunk credential
+    // redaction, so a secret split across chunks can be stored unredacted.
+    // Keep in step with agentchat config/types.ts + thought-config.ts.
+    coalesce_ms: z.number().int().nonnegative().default(1000),
     adapters: z.record(z.string(), z.boolean()).default({}),
     per_agent_overrides: z.record(z.string(), z.boolean()).default({}),
   })

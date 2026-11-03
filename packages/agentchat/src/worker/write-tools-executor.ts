@@ -1,4 +1,4 @@
-import type { Logger, PermissionProfile } from "@penumbra/core";
+import type { HeavyJobGate, Logger, PermissionProfile } from "@penumbra/core";
 
 import {
   FsPathError,
@@ -57,6 +57,13 @@ export interface WriteToolsExecutorOpts {
    * outside the worktree just because terminal cwd resolution differs.
    */
   sandboxDenyRoots?: readonly string[];
+  /**
+   * Host-wide heavy-job gate (lock + memory floor) applied to terminal spawns
+   * whose command classifies as lint / typecheck / test / build, so agent-run
+   * heavy commands queue behind reconciler stages instead of driving the host
+   * into a global OOM (penumbra#250).
+   */
+  heavyJobGate?: HeavyJobGate;
 }
 
 export interface ExitStatus {
@@ -382,6 +389,7 @@ export class WriteToolsExecutor {
         signal: controller.signal,
         path: this.opts.sandboxConfig.path,
         sandboxProfile: await this.renderTerminalSandboxProfile(),
+        heavyJobGate: this.opts.heavyJobGate,
       });
 
       const handle: TerminalHandle = {

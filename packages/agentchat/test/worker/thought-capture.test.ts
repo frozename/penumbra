@@ -35,7 +35,10 @@ function metaOf(event: DispatchEventInput): Record<string, unknown> {
   return event.meta ?? {};
 }
 
-function makeCoalescingCapture(maxTextBytes = 16384): {
+function makeCoalescingCapture(
+  maxTextBytes = 16384,
+  coalesceMs?: number,
+): {
   cap: ThoughtCapture;
   enqueued: DispatchEventInput[];
   tsOf: (chunkIndex: number) => string;
@@ -50,6 +53,7 @@ function makeCoalescingCapture(maxTextBytes = 16384): {
         maxStreamBytes: 1_048_576,
         adapters: { "stdio-acp": true },
         perAgentOverrides: {},
+        ...(coalesceMs !== undefined ? { coalesceMs } : {}),
       },
     }),
     enqueue: (e: DispatchEventInput): void => {
@@ -485,5 +489,52 @@ describe("ThoughtCapture.appendThoughtChunk (#297)", () => {
       expect(e.kind).toBe("agent.thought");
       expect(JSON.stringify(metaOf(e)).length).toBeLessThan(4096);
     }
+  });
+});
+
+describe("ThoughtCapture coalesce_ms (#297)", () => {
+  it("flushes a coalesced row once coalesce_ms has passed since its first chunk", () => {
+    const { cap, enqueued, tsOf } = makeCoalescingCapture(16384, 2500);
+    appendChunks(
+      cap,
+      Array.from({ length: 10 }, (_, i) => ` t${String(i)}`),
+    );
+    expect(thoughtTexts(enqueued)).toEqual([" t0 t1 t2 t3", " t4 t5 t6 t7"]);
+    expect(enqueued.map((e) => e.ts)).toEqual([tsOf(0), tsOf(4)]);
+    expect(enqueued.map((e) => metaOf(e).chunk_count)).toEqual([4, 4]);
+    expect(enqueued.map((e) => metaOf(e).sequence_n)).toEqual([0, 1]);
+    cap.flush("h-1");
+    expect(thoughtTexts(enqueued)).toEqual([" t0 t1 t2 t3", " t4 t5 t6 t7", " t8 t9"]);
+    expect(enqueued[2]!.ts).toBe(tsOf(8));
+    expect(metaOf(enqueued[2]!).sequence_n).toBe(2);
+    expect(metaOf(enqueued[2]!).chunk_count).toBe(2);
+  });
+
+  it("flushes when elapsed time equals coalesce_ms exactly, splitting the row at chunk 3", () => {
+    const { cap, enqueued, tsOf } = makeCoalescingCapture(16384, 3000);
+    appendChunks(
+      cap,
+      Array.from({ length: 7 }, (_, i) => ` t${String(i)}`),
+    );
+    expect(thoughtTexts(enqueued)).toEqual([" t0 t1 t2 t3"]);
+    expect(enqueued.map((e) => e.ts)).toEqual([tsOf(0)]);
+    expect(enqueued.map((e) => metaOf(e).chunk_count)).toEqual([4]);
+    expect(enqueued.map((e) => metaOf(e).sequence_n)).toEqual([0]);
+    cap.flush("h-1");
+    expect(thoughtTexts(enqueued)).toEqual([" t0 t1 t2 t3", " t4 t5 t6"]);
+    expect(enqueued[1]!.ts).toBe(tsOf(4));
+    expect(metaOf(enqueued[1]!).chunk_count).toBe(3);
+    expect(metaOf(enqueued[1]!).sequence_n).toBe(1);
+  });
+
+  it("coalesce_ms 0 writes one row per chunk, as streamed", () => {
+    const { cap, enqueued, tsOf } = makeCoalescingCapture(16384, 0);
+    appendChunks(cap, ["Let", "'s", " start", " now"]);
+    expect(thoughtTexts(enqueued)).toEqual(["Let", "'s", " start", " now"]);
+    expect(enqueued.map((e) => metaOf(e).sequence_n)).toEqual([0, 1, 2, 3]);
+    expect(enqueued.map((e) => metaOf(e).chunk_count)).toEqual([1, 1, 1, 1]);
+    expect(enqueued.map((e) => e.ts)).toEqual([tsOf(0), tsOf(1), tsOf(2), tsOf(3)]);
+    cap.flush("h-1");
+    expect(enqueued).toHaveLength(4);
   });
 });
