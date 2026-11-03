@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import { EventEmitter } from "node:events";
 import {
   chmodSync,
+  createWriteStream,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -29,6 +29,7 @@ const EXPECTED_KEYS = [
   "error_kind",
   "ok",
   "origin",
+  "pid",
   "result_bytes",
   "ts",
   "tool",
@@ -39,6 +40,7 @@ let dir = "";
 function makeRow(overrides: Partial<InvocationRow> = {}): InvocationRow {
   return {
     ts: "2026-01-01T00:00:00.000Z",
+    pid: process.pid,
     tool: "test_tool",
     origin: "mcp",
     args_bytes: 10,
@@ -119,7 +121,7 @@ describe("invocation sink", () => {
     expect(statSync(dirname(filePath)).mode & 0o777).toBe(0o700);
   });
 
-  it("security: schema keys are exactly the documented 8 fields", async () => {
+  it("security: schema keys are exactly the documented 9 fields", async () => {
     const filePath = join(dir, "inv.jsonl");
     const sink = openInvocationSink(filePath);
     sink.write(makeRow());
@@ -342,20 +344,14 @@ describe("invocation sink", () => {
   });
 
   it("closeWriteStream rejects on error instead of hanging forever", async () => {
-    class FakeStream extends EventEmitter {
-      end(): void {
-        this.emit("error", new Error("flush failed"));
-      }
-    }
+    const filePath = join(dir, "inv.jsonl");
+    const stream = createWriteStream(filePath);
+    const closed = closeWriteStream(stream);
+    stream.destroy(new Error("flush failed"));
 
     let thrown: unknown = null;
     try {
-      await closeWriteStream(
-        new FakeStream() as unknown as {
-          once: (event: string, cb: (...args: unknown[]) => void) => void;
-          end: () => void;
-        },
-      );
+      await closed;
     } catch (err) {
       thrown = err;
     }
@@ -366,7 +362,7 @@ describe("invocation sink", () => {
   it("writes continue while background gzip is still running after day rollover", async () => {
     const filePath = join(dir, "mcp-invocations.jsonl");
     let now = "2026-01-01T12:00:00.000Z";
-    let releaseCompression: (() => void) | null = null;
+    let releaseCompression: () => void = () => undefined;
     const compressionGate = new Promise<void>((resolve) => {
       releaseCompression = resolve;
     });
@@ -407,7 +403,7 @@ describe("invocation sink", () => {
     sink.write(makeRow({ ts: now, tool: "day2-b" }));
     expect(syncWrites).toBeGreaterThanOrEqual(2);
 
-    releaseCompression?.();
+    releaseCompression();
     await sink.close();
     const liveContent = readFileSync(filePath, "utf8");
     expect(liveContent).toContain('"tool":"day2-a"');
@@ -501,7 +497,7 @@ describe("invocation sink", () => {
   it("pending buffer during rotation drops newest rows at cap with one warning", async () => {
     const filePath = join(dir, "mcp-invocations.jsonl");
     let now = "2026-01-01T12:00:00.000Z";
-    let releasePause: (() => void) | null = null;
+    let releasePause: () => void = () => undefined;
     const pause = new Promise<void>((resolve) => {
       releasePause = resolve;
     });
@@ -526,7 +522,7 @@ describe("invocation sink", () => {
       sink.write(makeRow({ ts: now, tool: `queued_${String(i)}` }));
     }
 
-    releasePause?.();
+    releasePause();
     await sink.close();
 
     const warnMessages = warnSpy.mock.calls
