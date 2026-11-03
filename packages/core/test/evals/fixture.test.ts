@@ -5,11 +5,11 @@ import {
   bundleContentDigest,
   familyIdForRoot,
   FixturePublicSchema,
-  FixtureRootSchema,
   HiddenAssertionSchema,
   HoldoutBundleSchema,
   HoldoutLockEntrySchema,
   HoldoutLockSchema,
+  RootRefSchema,
 } from "@src/evals/fixture.js";
 
 type JsonObject = Record<string, unknown>;
@@ -130,7 +130,7 @@ test("case 17: family_id derives from root; variants keep the root family", () =
   expect(familyIdForRoot({ kind: "synthetic", id: "contract-validator" })).toBe(
     "fam-syn-contract-validator",
   );
-  rejects(FixtureRootSchema, { kind: "synthetic", id: "390" });
+  rejects(RootRefSchema, { kind: "synthetic", id: "390" });
 });
 
 test("case 18: synthetic flag, reconstructs, failure_type and digest rules", () => {
@@ -403,5 +403,42 @@ test("case 50: plan-exact bundle parses; assertion digest sorts by id", () => {
   const c2 = { id: "c2", kind: "file_absent", path: "src/y.ts" };
   expect(assertionSetDigest({ assertions: [c1, c2] })).toBe(
     assertionSetDigest({ assertions: [c2, c1] }),
+  );
+});
+
+test("case 64: RootRefSchema pins the three root kinds and their id shapes", () => {
+  parses(RootRefSchema, { kind: "issue", number: 390 });
+  parses(RootRefSchema, { kind: "operator_bundle", id: "kapitsa-fixture-contract" });
+  parses(RootRefSchema, { kind: "synthetic", id: "missed-commit" });
+  rejects(RootRefSchema, { kind: "pull_request", number: 1 });
+  rejects(RootRefSchema, { kind: "issue", number: 390, extra: 1 });
+  rejects(RootRefSchema, { kind: "issue", number: 0 });
+  rejects(RootRefSchema, { kind: "issue", number: 1.5 });
+  rejects(RootRefSchema, { kind: "operator_bundle", id: "AB" });
+  rejects(RootRefSchema, { kind: "operator_bundle", id: "a".repeat(49) });
+  rejects(RootRefSchema, { kind: "synthetic", id: "s" });
+  rejects(RootRefSchema, { kind: "synthetic", id: "Missed" });
+});
+
+test("case 65: familyIdForRoot maps the issue root to its family prefix", () => {
+  expect(familyIdForRoot({ kind: "issue", number: 390 })).toBe("fam-390");
+});
+
+test("case 66: lock entry synthetic flag couples to root kind both ways", () => {
+  rejects(
+    HoldoutLockEntrySchema,
+    lockEntry({ root: { kind: "issue", number: 390 }, synthetic: true }),
+  );
+  rejects(
+    HoldoutLockEntrySchema,
+    lockEntry({ root: { kind: "synthetic", id: "s01" }, family_id: "fam-syn-s01" }),
+  );
+  parses(
+    HoldoutLockEntrySchema,
+    lockEntry({
+      root: { kind: "synthetic", id: "s01" },
+      family_id: "fam-syn-s01",
+      synthetic: true,
+    }),
   );
 });

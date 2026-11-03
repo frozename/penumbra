@@ -24,13 +24,13 @@ export const SyntheticRootSchema = z.strictObject({
   id: z.string().regex(/^[a-z][a-z0-9-]{2,47}$/),
 });
 
-export const FixtureRootSchema = z.discriminatedUnion("kind", [
+export const RootRefSchema = z.discriminatedUnion("kind", [
   IssueRootSchema,
   OperatorBundleRootSchema,
   SyntheticRootSchema,
 ]);
 
-export type RootRef = z.infer<typeof FixtureRootSchema>;
+export type RootRef = z.infer<typeof RootRefSchema>;
 
 export function familyIdForRoot(root: RootRef): string {
   if (root.kind === "issue") return `fam-${String(root.number)}`;
@@ -43,8 +43,8 @@ export const FixturePublicSchema = z
     schema_version: z.literal(1),
     family_id: z.string().min(1),
     variant_id: z.string().regex(/^[a-z0-9-]+$/),
-    root: FixtureRootSchema,
-    reconstructs: FixtureRootSchema.nullable(),
+    root: RootRefSchema,
+    reconstructs: RootRefSchema.nullable(),
     failure_type: FailureTypeSchema.nullable(),
     split: z.enum(["train", "dev", "holdout"]),
     synthetic: z.boolean(),
@@ -162,7 +162,7 @@ export const HoldoutLockEntrySchema = z
   .strictObject({
     family_id: z.string().min(1),
     variant_id: z.string().regex(/^[a-z0-9-]+$/),
-    root: FixtureRootSchema,
+    root: RootRefSchema,
     failure_type: FailureTypeSchema.nullable(),
     synthetic: z.boolean(),
     expect_blocked: z.boolean(),

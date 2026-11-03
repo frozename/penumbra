@@ -330,6 +330,7 @@ test("case 6: hidden_assertion receipt semantic guards", () => {
 test("case 7: observed_outcome class and expectation_ref rules", () => {
   for (const cls of ["solved_verified", "solved_unverified", "blocked_incorrect"]) {
     rejects(ObservedOutcomeSchema, out({ class: cls }));
+    rejects(ObservedOutcomeSchema, { class: cls });
   }
   parses(ObservedOutcomeSchema, { class: "model_failure", reason: "incorrect_blocked" });
   rejects(ObservedOutcomeSchema, {
@@ -504,7 +505,7 @@ test("case 12: attempt_history status/count rules vs attempts", () => {
   rejects(
     EpisodeSchema,
     ep({
-      attempt_history: history("partial", "claims_pruned", 2, "handoff_counter"),
+      attempt_history: history("partial", "claims_pruned", 1, "handoff_counter"),
       attempts: [att(1, SHA40)],
       final_sha: SHA40,
     }),
@@ -1049,5 +1050,71 @@ test("case P34d: unknown attribution rejects the dispatch_end_autocommitted basi
   rejects(
     AttemptSchema,
     att(1, SHA40, { commits: commits("unknown", "dispatch_end_autocommitted", null) }),
+  );
+});
+
+test("case 60: complete attempt_history count must equal the last attempt n", () => {
+  rejects(
+    EpisodeSchema,
+    ep({
+      attempt_history: history("complete", null, 2, "claim_events"),
+      attempts: [att(1, SHA40)],
+      final_sha: SHA40,
+    }),
+  );
+  parses(
+    EpisodeSchema,
+    ep({
+      attempt_history: history("complete", null, 1, "claim_events"),
+      attempts: [att(1, SHA40)],
+      final_sha: SHA40,
+    }),
+  );
+  parses(
+    EpisodeSchema,
+    ep({
+      attempt_history: history("complete", null, 2, "claim_events"),
+      attempts: [att(1, SHA40), att(2, SHA40)],
+      final_sha: SHA40,
+    }),
+  );
+});
+
+test("case 61: complete attempt_history must start at n=1 when the count matches", () => {
+  rejects(
+    EpisodeSchema,
+    ep({
+      attempt_history: history("complete", null, 2, "claim_events"),
+      attempts: [att(2, SHA40)],
+      final_sha: SHA40,
+    }),
+  );
+});
+
+test("case 62: AttemptHistorySchema pins reason and count to the status", () => {
+  parses(AttemptHistorySchema, history("complete", null, 1, "claim_events"));
+  rejects(AttemptHistorySchema, history("complete", "claims_pruned", 1, "claim_events"));
+  parses(AttemptHistorySchema, history("partial", "claims_pruned", 1, "handoff_counter"));
+  rejects(AttemptHistorySchema, history("partial", null, 1, "handoff_counter"));
+  rejects(AttemptHistorySchema, history("partial", "claims_pruned", null, "handoff_counter"));
+  parses(AttemptHistorySchema, history("unavailable", "retention_window", null, "unknown"));
+});
+
+test("case 63: worktree setup failure rejects observed_at equal to the first model turn", () => {
+  rejects(
+    EnvEvidenceSchema,
+    envEvidence({
+      source: "worktree_setup_failed",
+      observed_at: "2026-11-01T10:00:05Z",
+      first_model_turn_at: "2026-11-01T10:00:05Z",
+    }),
+  );
+  parses(
+    EnvEvidenceSchema,
+    envEvidence({
+      source: "worktree_setup_failed",
+      observed_at: "2026-11-01T10:00:04Z",
+      first_model_turn_at: "2026-11-01T10:00:05Z",
+    }),
   );
 });
