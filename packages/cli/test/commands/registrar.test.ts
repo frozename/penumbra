@@ -58,19 +58,22 @@ test("register POSTs a body that passes RegistrarCreateRequestSchema.safeParse",
   let capturedUrl: string | undefined;
   const output: string[] = [];
 
-  const fetch = (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
-    capturedUrl = typeof url === "string" ? url : url instanceof URL ? url.toString() : url.url;
-    capturedMethod = init?.method;
-    capturedBody = JSON.parse(typeof init?.body === "string" ? init.body : "null") as unknown;
-    return Promise.resolve(
-      new Response(JSON.stringify({ registrar_id: "registrar-1" }), { status: 201 }),
-    );
-  };
+  const fetchImpl = Object.assign(
+    (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      capturedUrl = typeof url === "string" ? url : url instanceof URL ? url.toString() : url.url;
+      capturedMethod = init?.method;
+      capturedBody = JSON.parse(typeof init?.body === "string" ? init.body : "null") as unknown;
+      return Promise.resolve(
+        new Response(JSON.stringify({ registrar_id: "registrar-1" }), { status: 201 }),
+      );
+    },
+    { preconnect: fetch.preconnect.bind(fetch) },
+  );
 
   const code = await runRegistrarRegister({
     path,
     storageRoot: workDir,
-    fetch,
+    fetch: fetchImpl,
     out: (line) => output.push(line),
     err: () => undefined,
   });
@@ -98,10 +101,13 @@ test("a plan doc path that does not exist exits non-zero and never POSTs", async
   const code = await runRegistrarRegister({
     path,
     storageRoot: workDir,
-    fetch: () => {
-      postCount += 1;
-      return Promise.resolve(new Response(null, { status: 201 }));
-    },
+    fetch: Object.assign(
+      () => {
+        postCount += 1;
+        return Promise.resolve(new Response(null, { status: 201 }));
+      },
+      { preconnect: fetch.preconnect.bind(fetch) },
+    ),
     out: () => undefined,
     err: (line) => errors.push(line),
   });
@@ -119,10 +125,13 @@ test("a daemon error exits non-zero and writes the failure to stderr", async () 
   const code = await runRegistrarRegister({
     path,
     storageRoot: workDir,
-    fetch: () =>
-      Promise.resolve(
-        new Response(JSON.stringify({ error: "registrar_storage_unavailable" }), { status: 503 }),
-      ),
+    fetch: Object.assign(
+      () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: "registrar_storage_unavailable" }), { status: 503 }),
+        ),
+      { preconnect: fetch.preconnect.bind(fetch) },
+    ),
     out: () => undefined,
     err: (line) => errors.push(line),
   });
@@ -142,14 +151,17 @@ test("re-registering the same slug surfaces the daemon's slug-taken 409 as a cle
   const code = await runRegistrarRegister({
     path,
     storageRoot: workDir,
-    fetch: () => {
-      postCount += 1;
-      return Promise.resolve(
-        new Response(JSON.stringify({ error: "registrar_slug_taken", slug: "plan-registrar" }), {
-          status: 409,
-        }),
-      );
-    },
+    fetch: Object.assign(
+      () => {
+        postCount += 1;
+        return Promise.resolve(
+          new Response(JSON.stringify({ error: "registrar_slug_taken", slug: "plan-registrar" }), {
+            status: 409,
+          }),
+        );
+      },
+      { preconnect: fetch.preconnect.bind(fetch) },
+    ),
     out: (line) => output.push(line),
     err: (line) => errors.push(line),
   });

@@ -2,6 +2,7 @@ import { type TaskRouterConfig, TaskRouterConfigSchema } from "@penumbra/config"
 import {
   type AaSnapshotStore,
   type AaSnapshotStorePayload,
+  type AaSnapshotStoreReadResult,
   AgentPerformanceWriter,
   type AgentRoutingConfig,
   createAaSnapshotStore,
@@ -58,7 +59,7 @@ function writePerf(db: Database, agent: string): void {
     cost_usd: null,
     tokens_used: 100,
     latency_ms: 10_000,
-    source: "test",
+    source: "manual_seed",
     notes: null,
     metadata_json: "{}",
   });
@@ -128,10 +129,13 @@ function routing(): AgentRoutingConfig {
 
 function missingAaSnapshotStore(): AaSnapshotStore {
   return {
-    read: () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
+    read: () =>
+      Promise.resolve({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
     readSync: () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
-    write: () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
-    refresh: () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
+    write: () =>
+      Promise.resolve({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
+    refresh: () =>
+      Promise.resolve({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
   };
 }
 
@@ -482,30 +486,33 @@ describe("resolveSingleRoute — model task router modes", () => {
     svc.taskRouterConfig = routerConfig("shadow");
     svc.modelAliasMap = {};
     svc.aaSnapshotStore = {
-      read: (): { state: "missing"; stale: false; ageSeconds: null; source: "missing" } => ({
-        state: "missing",
-        stale: false,
-        ageSeconds: null,
-        source: "missing",
-      }),
-      readSync: (): { state: "corrupt"; stale: false; ageSeconds: null; source: "corrupt" } => ({
+      read: (): Promise<AaSnapshotStoreReadResult> =>
+        Promise.resolve({
+          state: "missing",
+          stale: false,
+          ageSeconds: null,
+          source: "missing",
+        }),
+      readSync: (): AaSnapshotStoreReadResult => ({
         state: "corrupt",
         stale: false,
         ageSeconds: null,
         source: "corrupt",
       }),
-      write: (): { state: "missing"; stale: false; ageSeconds: null; source: "missing" } => ({
-        state: "missing",
-        stale: false,
-        ageSeconds: null,
-        source: "missing",
-      }),
-      refresh: (): { state: "missing"; stale: false; ageSeconds: null; source: "missing" } => ({
-        state: "missing",
-        stale: false,
-        ageSeconds: null,
-        source: "missing",
-      }),
+      write: (): Promise<AaSnapshotStoreReadResult> =>
+        Promise.resolve({
+          state: "missing",
+          stale: false,
+          ageSeconds: null,
+          source: "missing",
+        }),
+      refresh: (): Promise<AaSnapshotStoreReadResult> =>
+        Promise.resolve({
+          state: "missing",
+          stale: false,
+          ageSeconds: null,
+          source: "missing",
+        }),
     };
 
     const sink: RouterDecisionSink = { decision: null };
@@ -590,7 +597,7 @@ describe("resolveSingleRoute — model task router modes", () => {
     });
     const warning = warnSpy.mock.calls[0];
     expect(warning?.[0]).toMatchObject({ role: "reviewer", mode: "auto" });
-    expect(typeof warning?.[0]?.error).toBe("string");
+    expect(warning?.[0]).toHaveProperty("error", expect.any(String));
     expect(typeof warning?.[1]).toBe("string");
   });
 

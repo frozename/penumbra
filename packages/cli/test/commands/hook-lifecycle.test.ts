@@ -6,19 +6,19 @@ import { join } from "node:path";
 import {
   claudeCodeEventToLifecycle,
   defaultLifecycleForwardFn,
+  type LifecycleEvent,
+  type LifecycleHookContext,
   runLifecycleForward,
 } from "@src/commands/hook.js";
 import type { DaemonFetch } from "@src/commands/workflow.js";
 
-interface LifecycleEvent {
-  kind: "lifecycle";
-  event: string;
-  hookContext?: { tool_name?: string | null; file_path?: string | null };
-}
-
 test("runLifecycleForward calls forwardFn with kind=lifecycle and the given event", async () => {
   const calls: { event: string; toolName: string | null | undefined }[] = [];
-  const fakeForward = (event: LifecycleEvent): Promise<void> => {
+  const fakeForward = (event: {
+    kind: "lifecycle";
+    event: LifecycleEvent;
+    hookContext?: LifecycleHookContext;
+  }): Promise<void> => {
     calls.push({ event: event.event, toolName: event.hookContext?.tool_name });
     return Promise.resolve();
   };
@@ -142,8 +142,14 @@ test("defaultLifecycleForwardFn maps user-prompt-submit / post-tool-use to UserP
   }
 });
 
-interface ForwardRequestBody {
+interface ForwardRequestEnvelope {
+  kind: "lifecycle";
   event: LifecycleEvent;
+  hookContext?: LifecycleHookContext;
+}
+
+interface ForwardRequestBody {
+  event: ForwardRequestEnvelope;
   cwd: string;
   hookContext: { tool_name: string | null; file_path: string | null };
   session_id: string | null;
@@ -153,16 +159,17 @@ interface ForwardRequestBody {
 test("defaultLifecycleForwardFn forwards hookContext.tool_name in the request body", async () => {
   const root = makeStorageRoot();
   try {
-    let requestBody: ForwardRequestBody | null = null;
+    const capturedBodies: ForwardRequestBody[] = [];
     const fakeFetch: DaemonFetch = (_input, init) => {
       const bodyStr = typeof init?.body === "string" ? init.body : "null";
-      requestBody = JSON.parse(bodyStr) as ForwardRequestBody;
+      capturedBodies.push(JSON.parse(bodyStr) as ForwardRequestBody);
       return Promise.resolve(fakeResponse({ matched: [], additionalContext: null }));
     };
     const fn = defaultLifecycleForwardFn(root, "/tmp", undefined, { fetch: fakeFetch });
     await fn({ kind: "lifecycle", event: "post-tool-use", hookContext: { tool_name: "Edit" } });
 
-    expect(requestBody).toEqual({
+    expect(capturedBodies).toHaveLength(1);
+    expect(capturedBodies[0]).toEqual({
       event: {
         kind: "lifecycle",
         event: "post-tool-use",
@@ -181,10 +188,10 @@ test("defaultLifecycleForwardFn forwards hookContext.tool_name in the request bo
 test("defaultLifecycleForwardFn forwards hookContext.file_path for pre-tool-use events", async () => {
   const root = makeStorageRoot();
   try {
-    let requestBody: ForwardRequestBody | null = null;
+    const capturedBodies: ForwardRequestBody[] = [];
     const fakeFetch: DaemonFetch = (_input, init) => {
       const bodyStr = typeof init?.body === "string" ? init.body : "null";
-      requestBody = JSON.parse(bodyStr) as ForwardRequestBody;
+      capturedBodies.push(JSON.parse(bodyStr) as ForwardRequestBody);
       return Promise.resolve(fakeResponse({ matched: [], additionalContext: null }));
     };
     const fn = defaultLifecycleForwardFn(root, "/tmp", undefined, { fetch: fakeFetch });
@@ -194,8 +201,9 @@ test("defaultLifecycleForwardFn forwards hookContext.file_path for pre-tool-use 
       hookContext: { tool_name: "Read", file_path: "/tmp/foo.ts" },
     });
 
-    expect(requestBody!.event.event).toBe("pre-tool-use");
-    expect(requestBody!.hookContext).toEqual({ tool_name: "Read", file_path: "/tmp/foo.ts" });
+    expect(capturedBodies).toHaveLength(1);
+    expect(capturedBodies[0]?.event.event).toBe("pre-tool-use");
+    expect(capturedBodies[0]?.hookContext).toEqual({ tool_name: "Read", file_path: "/tmp/foo.ts" });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -164,13 +164,13 @@ async function waitForRowCount(
 ): Promise<void> {
   for (let i = 0; i < 50; i++) {
     const row = daemon.services.db
-      .query<{ n: number }>("SELECT COUNT(*) AS n FROM agent_performance")
+      .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM agent_performance")
       .get();
     if ((row?.n ?? 0) === expected) return;
     await Bun.sleep(10);
   }
   const row = daemon.services.db
-    .query<{ n: number }>("SELECT COUNT(*) AS n FROM agent_performance")
+    .query<{ n: number }, []>("SELECT COUNT(*) AS n FROM agent_performance")
     .get();
   expect(row?.n ?? 0).toBe(expected);
 }
@@ -182,12 +182,15 @@ function readLedgerRows(daemon: ReturnType<typeof startTestDaemon>): {
   notes: string | null;
 }[] {
   return daemon.services.db
-    .query<{
-      agent_name: string;
-      task_type: string;
-      outcome: string;
-      notes: string | null;
-    }>(
+    .query<
+      {
+        agent_name: string;
+        task_type: string;
+        outcome: string;
+        notes: string | null;
+      },
+      []
+    >(
       "SELECT agent_name, task_type, outcome, notes FROM agent_performance ORDER BY ts ASC, performance_id ASC",
     )
     .all();

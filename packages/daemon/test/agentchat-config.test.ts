@@ -1,3 +1,5 @@
+import type { AgentChatConfig } from "@penumbra/config";
+
 import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -102,14 +104,18 @@ test("loadAgentRoutingFromConfig preserves the legacy boot routing shape with pr
       {
         name: "planner",
         adapter: "stdio-acp",
+        options: {},
         roles: ["planner"],
+        auto_approve_to: [],
         pricing_mode: "subscription" as const,
         subscription_provider: "anthropic",
       },
       {
         name: "executor",
         adapter: "openai-compat-http",
+        options: {},
         roles: ["executor", "reviewer"],
+        auto_approve_to: [],
         pricing_mode: "api" as const,
         api_provider: "openai",
       },
@@ -121,7 +127,7 @@ test("loadAgentRoutingFromConfig preserves the legacy boot routing shape with pr
     role_routing: {
       headroom_weighting: true,
       latency_weighting: false,
-    },
+    } as AgentChatConfig["role_routing"],
     providers: [],
   };
 

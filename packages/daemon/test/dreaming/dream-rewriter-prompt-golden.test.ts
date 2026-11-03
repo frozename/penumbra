@@ -45,10 +45,10 @@ describe("dream rewriter prompt content", () => {
     expect(messages).toHaveLength(expectedMessageCount);
 
     const [systemMessage, ...rest] = messages as PromptMessage[];
-    expect(systemMessage.role).toBe("system");
+    expect(systemMessage?.role).toBe("system");
     for (let i = 0; i < FEW_SHOT_EXAMPLES.length; i++) {
-      expect(rest[i * 2].role).toBe("user");
-      expect(rest[i * 2 + 1].role).toBe("assistant");
+      expect(rest[i * 2]?.role).toBe("user");
+      expect(rest[i * 2 + 1]?.role).toBe("assistant");
     }
 
     const final = messages[messages.length - 1] as PromptMessage;

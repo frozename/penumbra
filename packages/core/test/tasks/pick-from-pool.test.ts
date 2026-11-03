@@ -74,7 +74,7 @@ function writePerf(
     tokens_used: 100,
     latency_ms: overrides.latency_ms ?? 10_000,
     exec_ms: overrides.exec_ms ?? null,
-    source: "test",
+    source: "manual_seed",
     notes: null,
     metadata_json: "{}",
   });
@@ -243,7 +243,9 @@ describe("pickFromPool", () => {
         ),
       ).toBe("a");
       expect(warnSpy).toHaveBeenCalledTimes(1);
-      expect(warnSpy.mock.calls[0][0]).toMatch(/\[pick-from-pool\].*re-admit/);
+      const [firstWarnCall] = warnSpy.mock.calls;
+      expect(firstWarnCall).toBeDefined();
+      expect(firstWarnCall?.[0]).toMatch(/\[pick-from-pool\].*re-admit/);
     } finally {
       warnSpy.mockRestore();
     }

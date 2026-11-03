@@ -1,4 +1,4 @@
-import type { AgentConfig } from "@penumbra/agentchat/config";
+import type { AgentConfig } from "@penumbra/agentchat/config/types";
 
 import { applySchema, loadSqliteVec } from "@penumbra/core";
 import { type ActionGate, createActionGate } from "@penumbra/daemon/long-lived/action-gate";
@@ -455,7 +455,7 @@ describe("action gate", () => {
     const db = setup();
     // Register a second agent so the FK constraint on agent_id resolves; the
     // gate request will still run against 'home' below.
-    reconcileLongLivedAgents(db, [{ ...longLivedAgentConfig(), name: "other" } as AgentConfig], {
+    reconcileLongLivedAgents(db, [{ ...longLivedAgentConfig(), name: "other" }], {
       now: 1,
     });
     const exec = mock(executeOk);

@@ -5,6 +5,14 @@ import {
   discoverHttpModels,
 } from "@src/commands/generator/discovery-http.js";
 
+// Bun's `typeof fetch` carries a static `preconnect` that bare mock functions
+// lack; Object.assign closes the structural gap without laundering the type.
+function asFetchMock(
+  impl: (url: string | URL | Request, init?: RequestInit) => Promise<Response>,
+): typeof fetch {
+  return Object.assign(impl, { preconnect: (): void => undefined });
+}
+
 describe("HTTP model discovery", () => {
   test("discoverHttpModels resolves a keychain bearer token and fetches /v1/models", async () => {
     let resolvedAccount: string | undefined;
@@ -15,15 +23,17 @@ describe("HTTP model discovery", () => {
         resolvedAccount = account;
         return "resolved-sakana-token";
       },
-      fetch: (input, init) => {
+      fetch: asFetchMock((input, init) => {
         expect(input).toBe("https://api.sakana.ai/v1/models");
         expect(new Headers(init?.headers).get("Authorization")).toBe(
           "Bearer resolved-sakana-token",
         );
-        return Response.json({
-          data: [{ id: "fugu-base", display_name: "Fugu Base" }],
-        });
-      },
+        return Promise.resolve(
+          Response.json({
+            data: [{ id: "fugu-base", display_name: "Fugu Base" }],
+          }),
+        );
+      }),
     });
 
     expect(resolvedAccount).toBe("llamactl/sakana");
@@ -44,11 +54,14 @@ describe("HTTP model discovery", () => {
     const result = await discoverHttpModels({
       provider: DEFAULT_HTTP_PROVIDER_SPECS[1],
       resolveKeychain: () => "resolved-deepseek-token",
-      fetch: () =>
-        new Response(JSON.stringify({ error: "invalid token" }), {
-          status: 401,
-          statusText: "Unauthorized",
-        }),
+      fetch: asFetchMock(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: "invalid token" }), {
+            status: 401,
+            statusText: "Unauthorized",
+          }),
+        ),
+      ),
     });
 
     expect(result).toEqual({
