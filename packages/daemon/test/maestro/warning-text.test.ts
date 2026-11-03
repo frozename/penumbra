@@ -19,6 +19,7 @@ const BASE_CONSUMED: BoundsConsumed = {
     wall_clock: 0.8,
     cost: 0.8,
     sub_dispatches: 0.8,
+    subscription_pressure: 0.8,
   },
 };
 

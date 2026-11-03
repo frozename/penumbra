@@ -8,7 +8,7 @@ import { readUtf8 } from "@src/files/node-fs.js";
 import { type QuotasConfig, QuotasConfigSchema } from "@src/files/quotas.js";
 import { type RoutingConfig, RoutingConfigSchema } from "@src/files/routing.js";
 
-import type { AgentChatConfig as LegacyAgentChatConfig } from "../../../agentchat/src/config/types.js";
+import type { ParsedAgentChatConfig as LegacyParsedAgentChatConfig } from "../../../agentchat/src/config/types.js";
 
 function loadFixture(name: "agents" | "routing" | "quotas"): string {
   return readUtf8(join(import.meta.dir, "fixtures", `${name}.yaml`));
@@ -30,7 +30,9 @@ describe("AgentsConfigSchema", () => {
       ],
       thoughts: { enabled: true },
       shell: { enabled: true },
-    } satisfies Partial<AgentsConfig>);
+    } satisfies Partial<Omit<AgentsConfig, "shell">> & {
+      shell?: Partial<NonNullable<AgentsConfig["shell"]>>;
+    });
   });
 
   test("unknown top-level key throws", () => {
@@ -776,11 +778,16 @@ describe("QuotasConfigSchema", () => {
 describe("AgentChatConfig type compatibility", () => {
   test("composite type remains structurally compatible with legacy AgentChatConfig", () => {
     type LegacyComparable = Pick<
-      LegacyAgentChatConfig,
+      LegacyParsedAgentChatConfig,
       "agents" | "default_roles" | "role_routing" | "providers" | "thoughts" | "shell"
     >;
 
-    expectTypeOf<AgentChatConfig>().toMatchObjectType<LegacyComparable>();
+    expectTypeOf<AgentChatConfig>().toExtend<Omit<LegacyComparable, "role_routing">>();
+    // The split role_routing config widened headroom/latency weighting to optional
+    // and added new keys, so the legacy parsed shape extends the split shape.
+    expectTypeOf<LegacyParsedAgentChatConfig["role_routing"]>().toExtend<
+      AgentChatConfig["role_routing"]
+    >();
   });
 });
 

@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
 import { tasksCancelRoute } from "@src/routes/tasks.js";
-import type { GhClient } from "@src/services/gh-client.js";
+import type { GhClient, GhCreateIssueInput } from "@src/services/gh-client.js";
 import { createGhTaskSyncService } from "@src/sweepers/gh-task-sync.js";
 
 try {
@@ -17,6 +17,9 @@ try {
 function createGhClientMock(commentBodies: string[]): GhClient {
   let viewCalls = 0;
   return {
+    createIssue(_input: GhCreateIssueInput): Promise<{ number: number; url: string }> {
+      return Promise.reject(new Error("createIssue not expected in this test"));
+    },
     viewIssue(): Promise<{
       number: number;
       state: "OPEN" | "CLOSED";
