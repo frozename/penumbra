@@ -142,6 +142,7 @@ describe("recordOperatorAgentPerformance", () => {
 
     const ranked = rankAgentsViaRoute({
       db,
+      detail: "rank",
       taskType: "implement_substantial",
       minSamples: 1,
       includeNeutral: true,
