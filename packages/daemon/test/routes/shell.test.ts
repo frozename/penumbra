@@ -53,9 +53,11 @@ interface TestAgentchatAgent {
 interface TestAgentchatConfig {
   agents: TestAgentchatAgent[];
 }
-type TestServices = Services & {
+type TestServices = Omit<Services, "shellConfig" | "agentchatConfig"> & {
   shellSessionPool?: ShellSessionPool;
-  shellConfig?: RuntimeShellConfig | Record<string, never>;
+  // The malformed-config case intentionally holds a partial shape the route
+  // rejects at runtime via its dangerousCommandsForAgent guard.
+  shellConfig?: RuntimeShellConfig | Record<string, unknown>;
   agentchatConfig?: TestAgentchatConfig;
   permissionService?: TestPermissionService;
 };
@@ -109,7 +111,6 @@ function makeShellConfig(
     outputByteLimit: 16384,
     redactOutput: true,
     unsetEnv: [],
-    dangerousCommands: baseDangerous,
     dangerousCommandsForAgent: () => baseDangerous,
     redactOutputForAgent: () => true,
   };

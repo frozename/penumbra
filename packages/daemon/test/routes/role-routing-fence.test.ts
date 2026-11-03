@@ -3,6 +3,7 @@ import {
   type AaSnapshotStore,
   AgentPerformanceWriter,
   type AgentRoutingConfig,
+  type AgentTaskType,
   createLogger,
   loadSqliteVec,
   migrate,
@@ -31,7 +32,7 @@ function freshDb(): Database {
   return db;
 }
 
-function writePerf(db: Database, agent: string, taskType = "implement_small"): void {
+function writePerf(db: Database, agent: string, taskType: AgentTaskType = "implement_small"): void {
   new AgentPerformanceWriter(db).upsert({
     performance_id: `perf-${taskType}-${agent}`,
     ts: NOW,
@@ -49,7 +50,7 @@ function writePerf(db: Database, agent: string, taskType = "implement_small"): v
     tokens_used: 100,
     latency_ms: 1_000,
     exec_ms: 1_000,
-    source: "test",
+    source: "manual_seed",
     notes: null,
     metadata_json: "{}",
   });
@@ -57,10 +58,13 @@ function writePerf(db: Database, agent: string, taskType = "implement_small"): v
 
 function missingAaSnapshotStore(): AaSnapshotStore {
   return {
-    read: () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
+    read: () =>
+      Promise.resolve({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
     readSync: () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
-    write: () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
-    refresh: () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
+    write: () =>
+      Promise.resolve({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
+    refresh: () =>
+      Promise.resolve({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
   };
 }
 
@@ -216,8 +220,8 @@ describe("role routing hard fences", () => {
 
   test("tool_free:true keeps a text-only HTTP seat eligible in the auto-router path", () => {
     const db = freshDb();
-    writePerf(db, "http-seat", "summarization");
-    writePerf(db, "tool-seat", "summarization");
+    writePerf(db, "http-seat", "unknown");
+    writePerf(db, "tool-seat", "unknown");
     const svc = services(db, {
       agents: [
         {
@@ -240,7 +244,7 @@ describe("role routing hard fences", () => {
     });
 
     const sink: RouterDecisionSink = { decision: null };
-    const route = resolveSingleRoute(svc, "executor", "summarize this", "summarization", {
+    const route = resolveSingleRoute(svc, "executor", "summarize this", "unknown", {
       tool_free: true,
       decisionSink: sink,
     });

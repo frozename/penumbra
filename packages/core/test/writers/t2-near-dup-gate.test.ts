@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
+import type { Embedder } from "@src/embedder/interface.js";
 import { loadSqliteVec, migrate } from "@src/index.js";
 import { type T2MemoryExtraction, T2Promotion } from "@src/writers/t2.js";
 
@@ -31,7 +32,10 @@ type Extraction = {
   promote?: boolean;
 };
 
-class DeterministicEmbedder {
+class DeterministicEmbedder implements Embedder {
+  readonly name = "deterministic-test";
+  readonly dim = 4;
+
   constructor(private readonly vectors: Map<string, Float32Array>) {}
 
   embed(input: string[]): Promise<Float32Array[]> {
@@ -411,13 +415,16 @@ describe("T2Promotion creation gate + near-dup gate", () => {
         "SELECT action_type, phase, status, target_ids, confidence FROM dream_actions WHERE action_type = 'retire' ORDER BY rowid DESC LIMIT 1",
       )
       .get();
-    expect(retireAction).toEqual({
-      action_type: "retire",
-      phase: "P3",
-      status: "queued",
-      target_ids: JSON.stringify([existingWeak?.memory_id]),
-      confidence: retireAction?.confidence,
-    });
+    expect(retireAction).not.toBeNull();
+    if (retireAction !== null) {
+      expect(retireAction).toEqual({
+        action_type: "retire",
+        phase: "P3",
+        status: "queued",
+        target_ids: JSON.stringify([existingWeak?.memory_id]),
+        confidence: retireAction.confidence,
+      });
+    }
     expect(retireAction?.confidence).toBeGreaterThan(0.95);
     expect(retireAction?.confidence).toBeLessThan(1);
 

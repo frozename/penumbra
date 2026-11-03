@@ -122,14 +122,24 @@ function fetchInputUrl(input: Parameters<typeof fetch>[0]): string {
   return input.url;
 }
 
+// `typeof fetch` requires `preconnect`; bare mock functions don't satisfy it.
+function asFetchMock(
+  impl: (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+  ) => Promise<Response>,
+): typeof fetch {
+  return Object.assign(impl, { preconnect: (): void => undefined });
+}
+
 describe("BriefSynthesizer.synthesize", () => {
   it("fans out to configured agent and returns markdown + source_memory_ids", async () => {
     const callLog: string[] = [];
     const fakeMarkdown = "# Project Brief: test-proj\n\nThis is the synthesized brief.";
-    const fakeFetch: typeof fetch = (input) => {
+    const fakeFetch = asFetchMock((input) => {
       callLog.push(fetchInputUrl(input));
       return Promise.resolve(makeMarkdownResponse(fakeMarkdown));
-    };
+    });
 
     const synthesizer = createBriefSynthesizer(
       [{ name: "s1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" }],
@@ -157,8 +167,9 @@ describe("BriefSynthesizer.synthesize", () => {
   });
 
   it("strips code fences from agent response", async () => {
-    const fakeFetch: typeof fetch = () =>
-      Promise.resolve(makeMarkdownResponse("```markdown\n# Project Brief: proj\n\nContent.\n```"));
+    const fakeFetch = asFetchMock(() =>
+      Promise.resolve(makeMarkdownResponse("```markdown\n# Project Brief: proj\n\nContent.\n```")),
+    );
 
     const synthesizer = createBriefSynthesizer(
       [{ name: "s1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" }],
@@ -171,8 +182,9 @@ describe("BriefSynthesizer.synthesize", () => {
   });
 
   it("throws when agent returns non-2xx", async () => {
-    const fakeFetch: typeof fetch = () =>
-      Promise.resolve(new Response("server error", { status: 500 }));
+    const fakeFetch = asFetchMock(() =>
+      Promise.resolve(new Response("server error", { status: 500 })),
+    );
     const synthesizer = createBriefSynthesizer(
       [{ name: "s1", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" }],
       fakeFetch,
@@ -188,14 +200,14 @@ describe("BriefSynthesizer.synthesize", () => {
 
   it("fails over to a healthy agent when the first is down", async () => {
     const callLog: string[] = [];
-    const fakeFetch: typeof fetch = (input) => {
+    const fakeFetch = asFetchMock((input) => {
       const url = fetchInputUrl(input);
       callLog.push(url);
       if (url.includes("1111")) return Promise.reject(new Error("ConnectionRefused"));
       return Promise.resolve(
         makeMarkdownResponse("# Project Brief: proj\n\nFrom the healthy seat."),
       );
-    };
+    });
     const synthesizer = createBriefSynthesizer(
       [
         { name: "down", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" },
@@ -210,7 +222,7 @@ describe("BriefSynthesizer.synthesize", () => {
   });
 
   it("throws only when EVERY agent fails (caller then falls back to stub)", async () => {
-    const fakeFetch: typeof fetch = () => Promise.resolve(new Response("err", { status: 502 }));
+    const fakeFetch = asFetchMock(() => Promise.resolve(new Response("err", { status: 502 })));
     const synthesizer = createBriefSynthesizer(
       [
         { name: "a", baseUrl: "http://localhost:1111/v1", apiKey: "", model: "local" },
