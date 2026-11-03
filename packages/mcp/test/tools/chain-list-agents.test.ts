@@ -24,8 +24,10 @@ test("chainListAgentsHandler calls daemon.listChainAgents and formats output", a
   const res = await handler({});
 
   expect(listChainAgents).toHaveBeenCalledTimes(1);
-  expect(res.content[0].type).toBe("text");
-  const text = res.content[0].text;
+  const block = res.content[0];
+  if (block === undefined) throw new Error("expected content[0]");
+  expect(block.type).toBe("text");
+  const text = block.text;
   if (typeof text !== "string") throw new Error("expected text content");
   expect(JSON.parse(text)).toEqual({
     agents: [{ name: "planner" }, { name: "executor" }],
