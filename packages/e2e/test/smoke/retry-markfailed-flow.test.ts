@@ -3,7 +3,7 @@ import type { AgentChatConfig } from "@penumbra/agentchat/config/types";
 import { clearCustomAdapters, registerAdapter } from "@penumbra/agentchat/adapters/registry";
 import { dispatchHandoff } from "@penumbra/agentchat/cli/dispatch-handoff";
 import { createWorkerDispatcher } from "@penumbra/agentchat/worker/dispatcher";
-import { createLogger } from "@penumbra/core";
+import { createLogger, type HandoffRow } from "@penumbra/core";
 import { expect, test } from "bun:test";
 
 import { withDaemon } from "../helpers/with-daemon.js";
@@ -59,7 +59,7 @@ test("retry exhaustion marks failed + emits chain-terminated(error) without reje
     };
 
     // Use a real worker dispatcher with real dispatchHandoff
-    const dispatcher = createWorkerDispatcher({
+    const dispatcher = createWorkerDispatcher<HandoffRow>({
       log: createLogger({ component: "e2e-worker" }),
       concurrency: 1,
       claim: (id) => client.claimHandoff(id, "e2e-worker"),
@@ -71,7 +71,7 @@ test("retry exhaustion marks failed + emits chain-terminated(error) without reje
       markFailed: async (id, reason): Promise<void> => {
         await client.markFailed(id, reason);
       },
-      dispatch: async (h: Parameters<typeof dispatchHandoff>[0]["handoff"], onChunk, signal) => {
+      dispatch: async (h, onChunk, signal) => {
         return await dispatchHandoff({
           handoff: h,
           config,
@@ -103,6 +103,9 @@ test("retry exhaustion marks failed + emits chain-terminated(error) without reje
 
     // Manually drive the dispatcher
     const handoff1 = services.handoffReader.get(start.handoff_id);
+    if (!handoff1) {
+      throw new Error("expected start handoff row");
+    }
     await dispatcher.handle(handoff1);
     await dispatcher.idle();
 
@@ -112,9 +115,13 @@ test("retry exhaustion marks failed + emits chain-terminated(error) without reje
       conversation_id: conversation.id,
     });
     expect(handoffs.length).toBe(1);
-    expect(handoffs[0].to_agent).toBe("executor");
+    const execHandoff = handoffs[0];
+    if (!execHandoff) {
+      throw new Error("expected executor handoff row");
+    }
+    expect(execHandoff.to_agent).toBe("executor");
 
-    await dispatcher.handle(handoffs[0]);
+    await dispatcher.handle(execHandoff);
     await dispatcher.idle();
 
     expect(execAttempts).toBe(4); // 1 initial + 3 retries
@@ -124,8 +131,8 @@ test("retry exhaustion marks failed + emits chain-terminated(error) without reje
       conversation_id: conversation.id,
     });
     expect(failedHandoffs.length).toBe(1);
-    expect(failedHandoffs[0].status).toBe("failed");
-    expect(failedHandoffs[0].resolution_reason).toBe(errMsg);
+    expect(failedHandoffs[0]?.status).toBe("failed");
+    expect(failedHandoffs[0]?.resolution_reason).toBe(errMsg);
   } finally {
     stop();
     clearCustomAdapters();

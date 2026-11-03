@@ -104,13 +104,15 @@ describe("instrumentHandler", () => {
 
     const rows = readRows(path);
     expect(rows).toHaveLength(1);
-    expect(rows[0].tool).toBe("my_tool");
-    expect(rows[0].origin).toBe("claude-code");
-    expect(rows[0].ok).toBe(true);
-    expect(rows[0].error_kind).toBeNull();
-    expect(typeof rows[0].duration_ms).toBe("number");
-    expect(rows[0].args_bytes).toBe(Buffer.byteLength(JSON.stringify({ x: 1 }), "utf8"));
-    expect(rows[0].result_bytes).toBe(Buffer.byteLength(JSON.stringify({ result: "ok" }), "utf8"));
+    const row = rows[0];
+    if (row === undefined) throw new Error("row is undefined");
+    expect(row.tool).toBe("my_tool");
+    expect(row.origin).toBe("claude-code");
+    expect(row.ok).toBe(true);
+    expect(row.error_kind).toBeNull();
+    expect(typeof row.duration_ms).toBe("number");
+    expect(row.args_bytes).toBe(Buffer.byteLength(JSON.stringify({ x: 1 }), "utf8"));
+    expect(row.result_bytes).toBe(Buffer.byteLength(JSON.stringify({ result: "ok" }), "utf8"));
   });
 
   it("resolves origin per-call via header (not closure-captured)", async () => {
@@ -123,8 +125,11 @@ describe("instrumentHandler", () => {
 
     const rows = readRows(path);
     expect(rows).toHaveLength(2);
-    expect(rows[0].origin).toBe("caller-A");
-    expect(rows[1].origin).toBe("caller-B");
+    const [row0, row1] = rows;
+    if (row0 === undefined) throw new Error("row0 is undefined");
+    if (row1 === undefined) throw new Error("row1 is undefined");
+    expect(row0.origin).toBe("caller-A");
+    expect(row1.origin).toBe("caller-B");
   });
 
   it('defaults origin to "unknown" when extra has no origin signal', async () => {
@@ -136,7 +141,9 @@ describe("instrumentHandler", () => {
 
     const rows = readRows(path);
     expect(rows).toHaveLength(1);
-    expect(rows[0].origin).toBe("unknown");
+    const row = rows[0];
+    if (row === undefined) throw new Error("row is undefined");
+    expect(row.origin).toBe("unknown");
   });
 
   it("uses PENUMBRA_MCP_ORIGIN when request metadata/header is absent", async () => {
@@ -151,7 +158,9 @@ describe("instrumentHandler", () => {
 
       const rows = readRows(path);
       expect(rows).toHaveLength(1);
-      expect(rows[0].origin).toBe("fleet-worker");
+      const row = rows[0];
+      if (row === undefined) throw new Error("row is undefined");
+      expect(row.origin).toBe("fleet-worker");
     } finally {
       if (prev === undefined) {
         delete process.env.PENUMBRA_MCP_ORIGIN;
@@ -173,7 +182,9 @@ describe("instrumentHandler", () => {
 
       const rows = readRows(path);
       expect(rows).toHaveLength(1);
-      expect(rows[0].origin).toBe("maestro");
+      const row = rows[0];
+      if (row === undefined) throw new Error("row is undefined");
+      expect(row.origin).toBe("maestro");
     } finally {
       if (prev === undefined) {
         delete process.env.PENUMBRA_MCP_ORIGIN;
@@ -192,8 +203,11 @@ describe("instrumentHandler", () => {
     await sink.close();
 
     const rows = readRows(path);
-    expect(rows[0].origin).toHaveLength(128);
-    expect(rows[0].origin).toBe("A".repeat(128));
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    if (row === undefined) throw new Error("row is undefined");
+    expect(row.origin).toHaveLength(128);
+    expect(row.origin).toBe("A".repeat(128));
   });
 
   it("counts args_bytes / result_bytes as UTF-8 bytes, not UTF-16 code units", async () => {
@@ -206,10 +220,13 @@ describe("instrumentHandler", () => {
     await sink.close();
 
     const rows = readRows(path);
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    if (row === undefined) throw new Error("row is undefined");
     // '€' is 1 UTF-16 code unit but 3 UTF-8 bytes; the field's name says "bytes".
-    expect(rows[0].args_bytes).toBe(Buffer.byteLength(JSON.stringify({ payload: "€" }), "utf8"));
-    expect(rows[0].args_bytes).toBeGreaterThan(JSON.stringify({ payload: "€" }).length);
-    expect(rows[0].result_bytes).toBe(Buffer.byteLength(JSON.stringify({ symbol: "€" }), "utf8"));
+    expect(row.args_bytes).toBe(Buffer.byteLength(JSON.stringify({ payload: "€" }), "utf8"));
+    expect(row.args_bytes).toBeGreaterThan(JSON.stringify({ payload: "€" }).length);
+    expect(row.result_bytes).toBe(Buffer.byteLength(JSON.stringify({ symbol: "€" }), "utf8"));
   });
 
   it("records -1 sentinel for result_bytes when serialized payload exceeds 1 MiB cap", async () => {
@@ -223,7 +240,10 @@ describe("instrumentHandler", () => {
     await sink.close();
 
     const rows = readRows(path);
-    expect(rows[0].result_bytes).toBe(-1);
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    if (row === undefined) throw new Error("row is undefined");
+    expect(row.result_bytes).toBe(-1);
   });
 
   it("logs a failing call with error_kind from constructor name when error.name is default", async () => {
@@ -239,9 +259,12 @@ describe("instrumentHandler", () => {
     await sink.close();
 
     const rows = readRows(path);
-    expect(rows[0].ok).toBe(false);
-    expect(rows[0].error_kind).toBe("TimeoutError");
-    expect(rows[0].result_bytes).toBe(-1);
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    if (row === undefined) throw new Error("row is undefined");
+    expect(row.ok).toBe(false);
+    expect(row.error_kind).toBe("TimeoutError");
+    expect(row.result_bytes).toBe(-1);
   });
 
   it("logs a failing call preferring explicit error.name over constructor name", async () => {
@@ -261,7 +284,10 @@ describe("instrumentHandler", () => {
     await sink.close();
 
     const rows = readRows(path);
-    expect(rows[0].error_kind).toBe("NetworkTimeout");
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    if (row === undefined) throw new Error("row is undefined");
+    expect(row.error_kind).toBe("NetworkTimeout");
   });
 
   it("caps error_kind at 64 chars", async () => {
@@ -280,7 +306,10 @@ describe("instrumentHandler", () => {
     await sink.close();
 
     const rows = readRows(path);
-    expect(rows[0].error_kind).toHaveLength(64);
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    if (row === undefined) throw new Error("row is undefined");
+    expect(row.error_kind).toHaveLength(64);
   });
 
   it('returns "unknown" error_kind for non-Error throws', async () => {
@@ -303,7 +332,10 @@ describe("instrumentHandler", () => {
     await sink.close();
 
     const rows = readRows(path);
-    expect(rows[0].error_kind).toBe("unknown");
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    if (row === undefined) throw new Error("row is undefined");
+    expect(row.error_kind).toBe("unknown");
   });
 
   it("records args_bytes = -1 for circular args", async () => {
@@ -317,7 +349,9 @@ describe("instrumentHandler", () => {
 
     const rows = readRows(path);
     expect(rows).toHaveLength(1);
-    expect(rows[0].args_bytes).toBe(-1);
+    const row = rows[0];
+    if (row === undefined) throw new Error("row is undefined");
+    expect(row.args_bytes).toBe(-1);
   });
 
   it("records ts at invocation start, not completion", async () => {
@@ -336,7 +370,10 @@ describe("instrumentHandler", () => {
     await sink.close();
 
     const rows = readRows(path);
-    const tsMs = new Date(rows[0].ts).getTime();
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    if (row === undefined) throw new Error("row is undefined");
+    const tsMs = new Date(row.ts).getTime();
     // ts should be at or just after invocation start (within ~5ms), well before completion (+40ms).
     expect(tsMs).toBeGreaterThanOrEqual(beforeWall);
     expect(tsMs - beforeWall).toBeLessThan(20);
@@ -357,7 +394,10 @@ describe("instrumentHandler", () => {
     await sink.close();
 
     const rows = readRows(path);
-    expect(Number.isInteger(rows[0].duration_ms)).toBe(true);
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    if (row === undefined) throw new Error("row is undefined");
+    expect(Number.isInteger(row.duration_ms)).toBe(true);
   });
 
   it("is a no-op when opts.enabled is false (raw handler returned)", async () => {
@@ -396,8 +436,10 @@ describe("instrumentHandler", () => {
     expect(result).toBe(errorEnvelope);
     const rows = readRows(path);
     expect(rows).toHaveLength(1);
-    expect(rows[0].ok).toBe(false);
-    expect(rows[0].error_kind).toBe("mcp_error_envelope");
+    const row = rows[0];
+    if (row === undefined) throw new Error("row is undefined");
+    expect(row.ok).toBe(false);
+    expect(row.error_kind).toBe("mcp_error_envelope");
   });
 
   it("swallows getSink throw (uninitialized sink) and emits a one-shot warning", async () => {
@@ -567,6 +609,8 @@ describe("instrumentHandler response budget", () => {
 
     const rows = readRows(path);
     expect(rows).toHaveLength(1);
-    expect(rows[0].pid).toBe(process.pid);
+    const row = rows[0];
+    if (row === undefined) throw new Error("row is undefined");
+    expect(row.pid).toBe(process.pid);
   });
 });

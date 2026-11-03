@@ -170,7 +170,7 @@ test("startStaleWorkerTokensSweeper returns a stop function that clears the inte
   }) as unknown as typeof global.setInterval;
 
   global.clearInterval = mock((id: { unref: () => void }) => {
-    expect(id).toBe(timerId);
+    expect<{ unref: () => void } | null>(id).toBe(timerId);
   }) as unknown as typeof global.clearInterval;
 
   try {

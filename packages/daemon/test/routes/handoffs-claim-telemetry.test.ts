@@ -118,7 +118,7 @@ test("single-chain claim emits event with one root in per_root_top3", async () =
   const rows = db
     .query<
       { kind: string; meta_json: string | null },
-      []
+      [string]
     >("SELECT kind, meta_json FROM dispatch_events WHERE handoff_id = ?")
     .all("h-single");
   expect(rows).toHaveLength(1);
@@ -192,7 +192,7 @@ test("two-chain claim emits event with both roots in per_root_top3", async () =>
   const rows = db
     .query<
       { meta_json: string | null },
-      []
+      [string]
     >("SELECT meta_json FROM dispatch_events WHERE handoff_id = ? ORDER BY id ASC")
     .all("root-b");
   const meta = JSON.parse(rows[0]?.meta_json ?? "null") as ClaimMeta;

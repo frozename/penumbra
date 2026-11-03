@@ -31,7 +31,7 @@ function freshDb(path: string): Database {
 }
 
 async function expectResolvesEqual<T>(promise: Promise<T>, expected: unknown): Promise<void> {
-  expect(await promise).toEqual(expected);
+  expect(await promise).toEqual(expected as Awaited<T>);
 }
 
 async function expectResolvesMatchObject<T>(promise: Promise<T>, expected: object): Promise<void> {
@@ -754,11 +754,15 @@ test("readPayload rejects traversal, absolute paths, and symlink escapes", async
         persistence_status: "persisted",
       },
     );
-    const realpathSpy = spyOn(fsPromises, "realpath").mockImplementation((path: string) => {
-      if (path === root) return root;
-      if (path === join(root, ".penumbra", "workflow-runs", "escape.json")) return outsideFile;
+    const realpathSpy = spyOn(fsPromises, "realpath").mockImplementation(((
+      path: string,
+      options?: unknown,
+    ): Promise<string> => {
+      if (path === root) return Promise.resolve(root);
+      if (path === join(root, ".penumbra", "workflow-runs", "escape.json"))
+        return Promise.resolve(outsideFile);
       return Promise.resolve(path);
-    });
+    }) as typeof fsPromises.realpath);
     db.query(`UPDATE workflow_runs SET result_spill_path = ? WHERE id = ?`).run(
       join(".penumbra", "workflow-runs", "escape.json"),
       "wfrun-1",

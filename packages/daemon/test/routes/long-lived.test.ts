@@ -1,3 +1,5 @@
+import type { AgentConfig } from "@penumbra/agentchat/config/types";
+
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
@@ -27,18 +29,23 @@ type ReactorStub = NonNullable<Services["longLivedReactor"]>;
 type ManualTick = ReactorStub["manualTick"];
 type ManualTickResult = ReturnType<ManualTick>;
 
-interface SeedAgentInput {
-  name: string;
-  display_name: string;
-  long_lived: true;
-  long_lived_config: {
-    schedule_cron?: string;
-    subscriptions: { server: string; event: string }[];
-    mcp_allowlist: string[];
-    bounds: { wall_clock_ms: number; cost_cents: number; max_sub_dispatches: number };
-    circuit_breaker_threshold: number;
-    standing_brief: string;
-  };
+type HandoffEventPayload = Parameters<Services["handoffEvents"]["emit"]>[0];
+
+interface LongLivedActionDecidedEvent {
+  event: string;
+  agent_id: string;
+  payload: { action_id: string; decision: string };
+}
+
+function isLongLivedActionDecidedEvent(
+  evt: HandoffEventPayload,
+): evt is HandoffEventPayload & LongLivedActionDecidedEvent {
+  return (
+    "event" in evt &&
+    evt.event === "long_lived_action_decided" &&
+    "agent_id" in evt &&
+    "payload" in evt
+  );
 }
 
 function makeReactor(overrides: Partial<ReactorStub> = {}): ReactorStub {
@@ -72,28 +79,29 @@ function tempServices(): Services {
 }
 
 function seedAgent(services: Services): void {
-  const input: SeedAgentInput = {
+  const input: AgentConfig & { display_name: string } = {
     name: "operator1",
     display_name: "Operator",
+    adapter: "test",
+    options: {},
+    roles: [],
+    auto_approve_to: [],
+    pricing_mode: "api",
     long_lived: true,
     long_lived_config: {
       schedule_cron: "*/15 * * * *",
       subscriptions: [{ server: "ha", event: "state_changed" }],
+      hosted_mcp_servers: [],
       mcp_allowlist: ["ha:state.*"],
+      require_snapshot: false,
       bounds: { wall_clock_ms: 180000, cost_cents: 50, max_sub_dispatches: 1 },
       circuit_breaker_threshold: 3,
       standing_brief: "watch home state",
     },
   };
-  // reconcileLongLivedAgents expects the full AgentConfig (with adapter/options
-  // and other defaulted fields). The reconciler only reads the fields covered
-  // by SeedAgentInput, so this seed launders the partial fixture through
-  // unknown once instead of fabricating an entire AgentConfig literal.
-  reconcileLongLivedAgents(
-    services.db,
-    [input as unknown as Parameters<typeof reconcileLongLivedAgents>[1][number]],
-    { now: Date.parse("2026-05-10T00:00:00.000Z") },
-  );
+  reconcileLongLivedAgents(services.db, [input], {
+    now: Date.parse("2026-05-10T00:00:00.000Z"),
+  });
 }
 
 test("GET /long-lived lists reconciled agents", async () => {
@@ -208,11 +216,14 @@ test("GET /long-lived/:id returns agent detail with related rows", async () => {
   expect(body.agent.display_name).toBe("Operator");
   expect(body.agent.working_memory.version).toBe(1);
   expect(body.recent_ticks).toHaveLength(1);
-  expect(body.recent_ticks[0].trigger_payload).toEqual({ scheduled: true });
+  expect(body.recent_ticks[0]).toBeDefined();
+  expect(body.recent_ticks[0]!.trigger_payload).toEqual({ scheduled: true });
   expect(body.pending_actions).toHaveLength(2);
-  expect(body.pending_actions[0].payload).toEqual({ message: "pong" });
+  expect(body.pending_actions[0]).toBeDefined();
+  expect(body.pending_actions[0]!.payload).toEqual({ message: "pong" });
   expect(body.recent_audit).toHaveLength(1);
-  expect(body.recent_audit[0].decision).toBe("approved");
+  expect(body.recent_audit[0]).toBeDefined();
+  expect(body.recent_audit[0]!.decision).toBe("approved");
 });
 
 test("POST /long-lived/reconcile-orphans reconciles orphaned ticks", async () => {
@@ -534,9 +545,9 @@ test("operator1 long-lived routes are reachable and respond", async () => {
     services,
   );
   expect(auditRes.status).toBe(200);
-  expect(((await auditRes.json()) as { audit: { agent_id: string }[] }).audit[0].agent_id).toBe(
-    "operator1",
-  );
+  const auditArr = (await auditRes.json()) as { audit: { agent_id: string }[] };
+  expect(auditArr.audit[0]).toBeDefined();
+  expect(auditArr.audit[0]!.agent_id).toBe("operator1");
 
   const ticksRes = longLivedTicksRoute(
     new Request("http://x/long-lived/operator1/ticks"),
@@ -544,9 +555,9 @@ test("operator1 long-lived routes are reachable and respond", async () => {
     services,
   );
   expect(ticksRes.status).toBe(200);
-  expect(((await ticksRes.json()) as { ticks: { agent_id: string }[] }).ticks[0].agent_id).toBe(
-    "operator1",
-  );
+  const ticksArr = (await ticksRes.json()) as { ticks: { agent_id: string }[] };
+  expect(ticksArr.ticks[0]).toBeDefined();
+  expect(ticksArr.ticks[0]!.agent_id).toBe("operator1");
 });
 
 test("serve.ts wires long-lived operator routes", async () => {
@@ -1015,10 +1026,8 @@ test("POST /long-lived/pending-actions/:id/approve publishes decision event and 
     payload: { action_id: string; decision: string };
   }[] = [];
   const unsubscribe = services.handoffEvents.subscribe((evt) => {
-    if ((evt as { event?: string }).event === "long_lived_action_decided") {
-      decidedEvents.push(
-        evt as { event: string; payload: { action_id: string; decision: string } },
-      );
+    if (isLongLivedActionDecidedEvent(evt)) {
+      decidedEvents.push(evt);
     }
   });
 

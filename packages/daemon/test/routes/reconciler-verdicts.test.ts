@@ -116,6 +116,7 @@ function writeVerdictEvent(
       summary: "ready to land",
     },
     payload_summary: "ready to land",
+    origin: null,
   });
 }
 

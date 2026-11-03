@@ -15,8 +15,16 @@ interface MockDaemonResponse {
   doneInLastHour: number;
 }
 
+// Bun's `typeof fetch` carries a static `preconnect` that bare mock functions
+// lack; Object.assign closes the structural gap without laundering the type.
+function asFetchMock(
+  impl: (url: string | URL | Request, init?: RequestInit) => Promise<Response>,
+): typeof fetch {
+  return Object.assign(impl, { preconnect: (): void => undefined });
+}
+
 function makeMockFetch(response: MockDaemonResponse | "offline"): typeof globalThis.fetch {
-  return () => {
+  return asFetchMock(() => {
     if (response === "offline") return Promise.reject(new Error("connect ECONNREFUSED"));
     // simulate three daemon route calls — we don't actually distinguish here, just return
     // a synthetic merged response
@@ -35,7 +43,7 @@ function makeMockFetch(response: MockDaemonResponse | "offline"): typeof globalT
         headers: { "content-type": "application/json" },
       }),
     );
-  };
+  });
 }
 
 describe("penumbra statusline", () => {
@@ -63,10 +71,10 @@ describe("penumbra statusline", () => {
     await writeFile(CACHE_PATH, JSON.stringify({ ts: Date.now(), line: cached }));
     let fetchCalls = 0;
     const out = await runStatusline({
-      fetch: () => {
+      fetch: asFetchMock(() => {
         fetchCalls++;
         throw new Error("shouldnt-call");
-      },
+      }),
     });
     expect(out).toBe(cached);
     expect(fetchCalls).toBe(0);

@@ -353,6 +353,7 @@ export class HandoffWriter {
       maxWorkflowSiblingsPerWorker?: number | null;
       providerSeatNames?: string[] | null;
       maxProviderInFlight?: number | null;
+      maxSeatInFlight?: number | null;
     },
   ): boolean {
     const last_dispatch_started_at = new Date().toISOString();
@@ -398,6 +399,24 @@ export class HandoffWriter {
                AND provider_sibling.to_agent IN (${seatPlaceholders})
           ) < ?`);
       params.push(...opts.providerSeatNames, opts.maxProviderInFlight);
+    }
+
+    // #257: the per-seat cap correlates on the row's own to_agent — the seat
+    // counted is by construction the handoff being claimed, so a caller cannot
+    // scope the check to the wrong seat.
+    if (
+      opts?.maxSeatInFlight !== null &&
+      opts?.maxSeatInFlight !== undefined &&
+      Number.isFinite(opts.maxSeatInFlight) &&
+      opts.maxSeatInFlight >= 0
+    ) {
+      whereClauses.push(`(
+            SELECT COUNT(*)
+              FROM handoffs seat_sibling
+             WHERE seat_sibling.status='dispatched'
+               AND seat_sibling.to_agent = handoffs.to_agent
+          ) < ?`);
+      params.push(opts.maxSeatInFlight);
     }
 
     const changes = this.db

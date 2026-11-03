@@ -1,6 +1,5 @@
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { registerWorkerForTest } from "@penumbra/daemon/test-utils";
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, it } from "bun:test";
 
@@ -14,6 +13,43 @@ import {
   agentsRecommendRoute,
 } from "@src/routes/agents.js";
 import { createDaemonFetchHandler } from "@src/serve.js";
+
+// File-local copy of the daemon test-utils helper: importing the shared
+// module via "@penumbra/daemon/test-utils" pulls it into tsconfig.test.json's
+// program outside its file list and trips TS6307 for this project.
+interface RegisterWorkerForTestArgs {
+  baseUrl: string;
+  sharedBearer: string;
+  worker_id: string;
+  metadata?: Record<string, unknown>;
+  fetcher?: typeof fetch;
+}
+
+interface RegisterWorkerForTestResult {
+  worker_token: string;
+  worker_id: string;
+}
+
+async function registerWorkerForTest(
+  args: RegisterWorkerForTestArgs,
+): Promise<RegisterWorkerForTestResult> {
+  const fetcher = args.fetcher ?? fetch;
+  const res = await fetcher(`${args.baseUrl}/worker/register`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${args.sharedBearer}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ worker_id: args.worker_id, metadata: args.metadata }),
+  });
+  if (!res.ok) {
+    const errorBody = await res.json().catch(() => null);
+    throw new Error(
+      `registerWorkerForTest: HTTP ${String(res.status)}: ${JSON.stringify(errorBody)}`,
+    );
+  }
+  return (await res.json()) as RegisterWorkerForTestResult;
+}
 
 try {
   if (process.platform === "darwin") {
@@ -70,10 +106,11 @@ interface DispatchCaptureResponse {
 }
 
 function makeHandlerFetcher(handler: (req: Request) => Promise<Response>): typeof fetch {
-  return (input, init): Promise<Response> => {
-    const req = input instanceof Request ? input : new Request(input, init);
+  const impl = (input: string | Request | URL, init?: RequestInit): Promise<Response> => {
+    const req = input instanceof Request ? input : new Request(input.toString(), init);
     return handler(req);
   };
+  return Object.assign(impl, { preconnect: (): void => undefined });
 }
 
 describe("agent routes", () => {
@@ -390,7 +427,10 @@ describe("agent routes", () => {
     const body = (await res.json()) as RankResponse;
     // rank now defaults to a bounded 30-day window, so window.from is the cutoff, not null.
     expect(typeof body.window.from).toBe("string");
-    expect(body.candidates[0].agent_name).toBe("claude");
+    const [topCandidate] = body.candidates;
+    expect(topCandidate).toBeDefined();
+    if (topCandidate === undefined) throw new Error("expected a rank candidate");
+    expect(topCandidate.agent_name).toBe("claude");
   });
 
   it("filters rank output to configured agent names when agentchatConfig is present", async () => {
@@ -484,7 +524,10 @@ describe("agent routes", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { candidates: { agent_name: string }[] };
     expect(body.candidates).toHaveLength(1);
-    expect(body.candidates[0].agent_name).toBe("orch");
+    const [orchCandidate] = body.candidates;
+    expect(orchCandidate).toBeDefined();
+    if (orchCandidate === undefined) throw new Error("expected a rank candidate");
+    expect(orchCandidate.agent_name).toBe("orch");
   });
 
   it("returns 400 for invalid task_type", () => {
@@ -582,7 +625,10 @@ describe("agent routes", () => {
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { agent_name: string }[];
-    expect(body[0].agent_name).toBe("claude");
+    const [topRecommendation] = body;
+    expect(topRecommendation).toBeDefined();
+    if (topRecommendation === undefined) throw new Error("expected a recommendation");
+    expect(topRecommendation.agent_name).toBe("claude");
   });
 
   it("returns recommend output for long-lived rows only when requested", async () => {
@@ -625,7 +671,10 @@ describe("agent routes", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { agent_name: string }[];
     expect(body).toHaveLength(1);
-    expect(body[0].agent_name).toBe("orch");
+    const [orchRecommendation] = body;
+    expect(orchRecommendation).toBeDefined();
+    if (orchRecommendation === undefined) throw new Error("expected a recommendation");
+    expect(orchRecommendation.agent_name).toBe("orch");
   });
 
   it("captures operator results and persists the row", async () => {

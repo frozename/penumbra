@@ -76,12 +76,34 @@ function makeDaemon(): {
     services,
     db,
     root,
-    fetch: (input, init) => handler(input instanceof Request ? input : new Request(input, init)),
+    fetch: (input, init) =>
+      handler(input instanceof Request ? input : new Request(input.toString(), init)),
   };
 }
 
 function requestUrl(input: string | URL | Request): string {
   return input instanceof Request ? input.url : String(input);
+}
+
+function makeMockFetch(
+  handler: (input: string | URL | Request) => Response | Promise<Response>,
+): typeof fetch {
+  const fn = (input: string | URL | Request): Response | Promise<Response> =>
+    Promise.resolve(handler(input));
+  return Object.assign(fn, { preconnect: (): void => undefined }) as typeof fetch;
+}
+
+function makeMockFetchWithInit(
+  handler: (
+    input: string | URL | Request,
+    init?: RequestInit | BunFetchRequestInit,
+  ) => Response | Promise<Response>,
+): typeof fetch {
+  const fn = (
+    input: string | URL | Request,
+    init?: RequestInit | BunFetchRequestInit,
+  ): Response | Promise<Response> => Promise.resolve(handler(input, init));
+  return Object.assign(fn, { preconnect: (): void => undefined }) as typeof fetch;
 }
 
 function seedT0(db: Database, sessionId: string): void {
@@ -209,7 +231,7 @@ describe("POST /memory/session-extract", () => {
     seedT0(daemon.db, "session-extract-route");
     seedExistingT2(daemon.db);
 
-    globalThis.fetch = (): Promise<Response> =>
+    globalThis.fetch = makeMockFetch(() =>
       Promise.resolve(
         new Response(
           JSON.stringify({
@@ -241,7 +263,8 @@ describe("POST /memory/session-extract", () => {
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
-      );
+      ),
+    );
 
     const res = await daemon.fetch("http://x/memory/session-extract", {
       method: "POST",
@@ -287,7 +310,7 @@ describe("POST /memory/session-extract", () => {
     );
 
     const judgeRequests: string[] = [];
-    globalThis.fetch = (input: string | URL | Request): Promise<Response> => {
+    globalThis.fetch = makeMockFetch((input) => {
       judgeRequests.push(requestUrl(input));
       return Promise.resolve(
         new Response(
@@ -314,7 +337,7 @@ describe("POST /memory/session-extract", () => {
           { status: 200, headers: { "content-type": "application/json" } },
         ),
       );
-    };
+    });
 
     const res = await daemon.fetch("http://x/memory/session-extract", {
       method: "POST",
@@ -370,13 +393,14 @@ describe("POST /memory/session-extract", () => {
     process.env.PENUMBRA_CONFIG_DIR = writeAgentchatConfigWithoutJudge(daemon.root);
     seedT0(daemon.db, "session-extract-judge-fails");
 
-    globalThis.fetch = (): Promise<Response> =>
+    globalThis.fetch = makeMockFetch(() =>
       Promise.resolve(
         new Response("backend offline", {
           status: 500,
           headers: { "content-type": "text/plain" },
         }),
-      );
+      ),
+    );
 
     const res = await daemon.fetch("http://x/memory/session-extract", {
       method: "POST",
@@ -421,10 +445,7 @@ describe("POST /memory/session-extract", () => {
 
     let judgePrompt = "";
     let fetchCalls = 0;
-    globalThis.fetch = async (
-      _input: string | URL | Request,
-      init?: RequestInit,
-    ): Promise<Response> => {
+    globalThis.fetch = makeMockFetchWithInit(async (_input, init) => {
       fetchCalls += 1;
       let bodyText = "";
       if (typeof init?.body === "string") {
@@ -462,7 +483,7 @@ describe("POST /memory/session-extract", () => {
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
-    };
+    });
 
     const res = await daemon.fetch("http://x/memory/session-extract", {
       method: "POST",
@@ -512,10 +533,7 @@ describe("POST /memory/session-extract", () => {
     );
 
     let judgePrompt = "";
-    globalThis.fetch = async (
-      _input: string | URL | Request,
-      init?: RequestInit,
-    ): Promise<Response> => {
+    globalThis.fetch = makeMockFetchWithInit(async (_input, init) => {
       if (typeof init?.body === "string") {
         judgePrompt = init.body;
       } else if (_input instanceof Request && !_input.bodyUsed) {
@@ -544,7 +562,7 @@ describe("POST /memory/session-extract", () => {
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
-    };
+    });
 
     const res = await daemon.fetch("http://x/memory/session-extract", {
       method: "POST",
@@ -585,10 +603,7 @@ describe("POST /memory/session-extract", () => {
     );
 
     let judgePrompt = "";
-    globalThis.fetch = async (
-      _input: string | URL | Request,
-      init?: RequestInit,
-    ): Promise<Response> => {
+    globalThis.fetch = makeMockFetchWithInit(async (_input, init) => {
       if (typeof init?.body === "string") {
         judgePrompt = init.body;
       } else if (_input instanceof Request && !_input.bodyUsed) {
@@ -617,7 +632,7 @@ describe("POST /memory/session-extract", () => {
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
-    };
+    });
 
     const res = await daemon.fetch("http://x/memory/session-extract", {
       method: "POST",
@@ -656,27 +671,23 @@ describe("POST /memory/session-extract", () => {
     );
 
     let judgeCalled = false;
-    globalThis.fetch = (): Promise<Response> => {
+    globalThis.fetch = makeMockFetch((): Response => {
       judgeCalled = true;
-      return Promise.resolve(
-        new Response(
-          JSON.stringify({
-            choices: [
-              {
-                message: {
-                  content: JSON.stringify({
-                    memories: [
-                      { title: "unused", body: "n/a", kind: "fact", why: "skip", depth: 2 },
-                    ],
-                  }),
-                },
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  memories: [{ title: "unused", body: "n/a", kind: "fact", why: "skip", depth: 2 }],
+                }),
               },
-            ],
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
       );
-    };
+    });
 
     const res = await daemon.fetch("http://x/memory/session-extract", {
       method: "POST",
@@ -724,10 +735,7 @@ describe("POST /memory/session-extract", () => {
 
     let judgeCalls = 0;
     let overflowResponses = 0;
-    globalThis.fetch = async (
-      _input: string | URL | Request,
-      init?: RequestInit,
-    ): Promise<Response> => {
+    globalThis.fetch = makeMockFetchWithInit(async (_input, init) => {
       judgeCalls++;
       let bodyText = "";
       if (typeof init?.body === "string") {
@@ -788,7 +796,7 @@ describe("POST /memory/session-extract", () => {
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
-    };
+    });
 
     const res = await daemon.fetch("http://x/memory/session-extract", {
       method: "POST",
@@ -843,18 +851,15 @@ describe("POST /memory/session-extract", () => {
 
     const seenErrors: string[] = [];
     const originalWarn = daemon.services.log.warn;
-    daemon.services.log.warn = (...args: unknown[]): void => {
-      const record = args[0];
+    daemon.services.log.warn = (obj: unknown, msg?: string, ...rest: unknown[]): void => {
+      const record = obj;
       if (record && typeof record === "object" && "err" in record) {
         const err = record.err;
         seenErrors.push(err instanceof Error ? err.message : String(err));
       }
-      originalWarn.apply(daemon.services.log, args);
+      originalWarn.apply(daemon.services.log, [obj, msg, ...rest]);
     };
-    globalThis.fetch = async (
-      _input: string | URL | Request,
-      init?: RequestInit,
-    ): Promise<Response> => {
+    globalThis.fetch = makeMockFetchWithInit(async (_input, init) => {
       let bodyText = "";
       if (typeof init?.body === "string") {
         bodyText = init.body;
@@ -913,7 +918,7 @@ describe("POST /memory/session-extract", () => {
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       );
-    };
+    });
 
     try {
       const res = await daemon.fetch("http://x/memory/session-extract", {
@@ -959,13 +964,14 @@ describe("POST /memory/session-extract", () => {
       ["e-offline-1", "2026-06-11T12:00:00.000Z", "2026-06-11T12:00:00.000Z", longBody],
     );
 
-    globalThis.fetch = (): Promise<Response> =>
+    globalThis.fetch = makeMockFetch(() =>
       Promise.resolve(
         new Response("backend offline", {
           status: 500,
           headers: { "content-type": "text/plain" },
         }),
-      );
+      ),
+    );
 
     const res = await daemon.fetch("http://x/memory/session-extract", {
       method: "POST",
@@ -990,7 +996,7 @@ describe("POST /memory/session-extract", () => {
     process.env.PENUMBRA_CONFIG_DIR = writeAgentchatConfigWithoutJudge(daemon.root);
     seedT0(daemon.db, "session-extract-invalid-request");
 
-    globalThis.fetch = (): Promise<Response> =>
+    globalThis.fetch = makeMockFetch(() =>
       Promise.resolve(
         new Response(
           JSON.stringify({
@@ -1001,7 +1007,8 @@ describe("POST /memory/session-extract", () => {
           }),
           { status: 400, headers: { "content-type": "application/json" } },
         ),
-      );
+      ),
+    );
 
     const res = await daemon.fetch("http://x/memory/session-extract", {
       method: "POST",
@@ -1034,7 +1041,7 @@ describe("POST /memory/session-extract", () => {
 
     let inFlight = 0;
     let maxInFlight = 0;
-    globalThis.fetch = (): Promise<Response> => {
+    globalThis.fetch = makeMockFetch((): Promise<Response> => {
       inFlight++;
       maxInFlight = Math.max(maxInFlight, inFlight);
       return new Promise((resolve) => {
@@ -1056,7 +1063,7 @@ describe("POST /memory/session-extract", () => {
           );
         }, 10);
       });
-    };
+    });
 
     const res = await daemon.fetch("http://x/memory/session-extract", {
       method: "POST",

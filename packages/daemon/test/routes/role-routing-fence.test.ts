@@ -3,6 +3,8 @@ import {
   type AaSnapshotStore,
   AgentPerformanceWriter,
   type AgentRoutingConfig,
+  type AgentTaskType,
+  createLogger,
   loadSqliteVec,
   migrate,
   RoutingDecisionSchema,
@@ -30,7 +32,7 @@ function freshDb(): Database {
   return db;
 }
 
-function writePerf(db: Database, agent: string, taskType = "implement_small"): void {
+function writePerf(db: Database, agent: string, taskType: AgentTaskType = "implement_small"): void {
   new AgentPerformanceWriter(db).upsert({
     performance_id: `perf-${taskType}-${agent}`,
     ts: NOW,
@@ -48,7 +50,7 @@ function writePerf(db: Database, agent: string, taskType = "implement_small"): v
     tokens_used: 100,
     latency_ms: 1_000,
     exec_ms: 1_000,
-    source: "test",
+    source: "manual_seed",
     notes: null,
     metadata_json: "{}",
   });
@@ -56,10 +58,13 @@ function writePerf(db: Database, agent: string, taskType = "implement_small"): v
 
 function missingAaSnapshotStore(): AaSnapshotStore {
   return {
-    read: () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
+    read: () =>
+      Promise.resolve({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
     readSync: () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
-    write: () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
-    refresh: () => ({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
+    write: () =>
+      Promise.resolve({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
+    refresh: () =>
+      Promise.resolve({ state: "missing", stale: false, ageSeconds: null, source: "missing" }),
   };
 }
 
@@ -73,7 +78,7 @@ function services(db: Database, agentRouting: AgentRoutingConfig): Services {
     agentRouting,
     agentRegistry: agentRouting.agents.map((agent) => agent.name),
     clock: () => new Date(NOW),
-    log: { warn: () => undefined } as Services["log"],
+    log: createLogger({ component: "test", level: "silent" }),
     aaSnapshotStore: missingAaSnapshotStore(),
     taskRouterConfig: routerConfig("auto"),
     modelAliasMap: {},
@@ -116,12 +121,13 @@ describe("role routing hard fences", () => {
 
       expect(route?.agent).toBe("executor-seat");
       const decision = RoutingDecisionSchema.parse(sink.decision);
-      expect(decision.alternatives).toContainEqual(
+      const alternatives: unknown = decision.alternatives;
+      expect(alternatives).toContainEqual(
         expect.objectContaining({
           routeId: "openai:fenced",
           excluded: true,
           reasons: ["role_routing_roles_empty"],
-        }) as unknown,
+        }),
       );
       expect(decision.alternatives).not.toContainEqual(
         expect.objectContaining({
@@ -201,20 +207,21 @@ describe("role routing hard fences", () => {
 
     expect(route?.agent).toBe("tool-seat");
     const decision = RoutingDecisionSchema.parse(sink.decision);
-    expect(decision.alternatives).toContainEqual(
+    const alternatives: unknown = decision.alternatives;
+    expect(alternatives).toContainEqual(
       expect.objectContaining({
         routeId: "openai:http-seat",
         excluded: true,
         reasons: ["requires_tools_text_only_adapter"],
-      }) as unknown,
+      }),
     );
     expect(decision.fallbackChain).not.toContain("http-seat");
   });
 
   test("tool_free:true keeps a text-only HTTP seat eligible in the auto-router path", () => {
     const db = freshDb();
-    writePerf(db, "http-seat", "summarization");
-    writePerf(db, "tool-seat", "summarization");
+    writePerf(db, "http-seat", "unknown");
+    writePerf(db, "tool-seat", "unknown");
     const svc = services(db, {
       agents: [
         {
@@ -237,7 +244,7 @@ describe("role routing hard fences", () => {
     });
 
     const sink: RouterDecisionSink = { decision: null };
-    const route = resolveSingleRoute(svc, "executor", "summarize this", "summarization", {
+    const route = resolveSingleRoute(svc, "executor", "summarize this", "unknown", {
       tool_free: true,
       decisionSink: sink,
     });

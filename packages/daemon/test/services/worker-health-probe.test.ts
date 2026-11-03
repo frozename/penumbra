@@ -116,15 +116,21 @@ test("tick emits one ping with unique probe_id and worker_id", async () => {
   advance(50);
   await flushPending();
   expect(controlEvents).toHaveLength(1);
-  expect(controlEvents[0]).toMatchObject({ type: "ping", worker_id: "worker-a" });
-  expect(controlEvents[0].probe_id).toContain("uuid-");
+  const [firstPing] = controlEvents;
+  expect(firstPing).toBeDefined();
+  if (firstPing === undefined) throw new Error("expected a ping control event");
+  expect(firstPing).toMatchObject({ type: "ping", worker_id: "worker-a" });
+  expect(firstPing.probe_id).toContain("uuid-");
 
   advance(100);
   await flushPending();
 
   expect(controlEvents).toHaveLength(3);
-  expect(controlEvents[0]).toMatchObject({ type: "ping", worker_id: "worker-a" });
-  expect(controlEvents[0].probe_id).toContain("uuid-");
+  const [firstOfThree] = controlEvents;
+  expect(firstOfThree).toBeDefined();
+  if (firstOfThree === undefined) throw new Error("expected a ping control event");
+  expect(firstOfThree).toMatchObject({ type: "ping", worker_id: "worker-a" });
+  expect(firstOfThree.probe_id).toContain("uuid-");
 });
 
 test("ACK clears pending + resets miss count", async () => {
@@ -483,8 +489,11 @@ test("async onSignal rejection is logged and allows re-signal on next tick", asy
   // First signal reached threshold then rejected — log.error must have been called.
   expect(signalCount).toBe(1);
   expect(errorLogs).toHaveLength(1);
-  expect(errorLogs[0].err.message).toBe("simulated eviction failure");
-  expect(errorLogs[0].worker_id).toBe("worker-a");
+  const [firstErrorLog] = errorLogs;
+  expect(firstErrorLog).toBeDefined();
+  if (firstErrorLog === undefined) throw new Error("expected a logged eviction failure");
+  expect(firstErrorLog.err.message).toBe("simulated eviction failure");
+  expect(firstErrorLog.worker_id).toBe("worker-a");
 
   // Because recoveredThisStreak was NOT set on failure, the next tick re-signals.
   advance(200);

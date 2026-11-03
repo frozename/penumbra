@@ -261,7 +261,7 @@ describe("computeRouteForRole", () => {
     });
 
     expect(out.chosen).not.toBeNull();
-    expect(["local-a", "local-b"]).toContain(out.chosen?.agent);
+    expect<(string | undefined)[]>(["local-a", "local-b"]).toContain(out.chosen?.agent);
     expect(out.chosen?.samples).toBe(0);
 
     const rankedFirst = computeRouteForRole({

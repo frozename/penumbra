@@ -5,13 +5,13 @@ import {
   HandoffWriter,
   loadSqliteVec,
   migrate,
-  type Services,
 } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
 import { handoffsListPendingRoute } from "@src/routes/handoffs.js";
+import type { DaemonServices } from "@src/serve.js";
 
 try {
   if (process.platform === "darwin") {
@@ -21,7 +21,7 @@ try {
   /* already loaded */
 }
 
-function makeServices(db: Database): Services {
+function makeServices(db: Database): DaemonServices {
   const services = buildServices({
     env: {},
     input: {},
@@ -36,7 +36,7 @@ function makeServices(db: Database): Services {
       };
     })(),
     clock: () => new Date("2026-05-20T00:00:00.000Z"),
-  });
+  }) as DaemonServices;
   services.handoffWriter = new HandoffWriter({ db });
   services.handoffReader = new HandoffReader({ db });
   services.dispatchEventLog = new DispatchEventLog(db);

@@ -33,7 +33,7 @@ export function resolveHeavyLock(
   return { path: defaultHeavyJobLockPath(home), source: "default" };
 }
 
-/** Whether a heavy-job lock at `path` built by this CLI would be cross-process (a flock(1) helper exists). */
+/** Whether a heavy-job lock at `path` built by this CLI would be cross-process (flock(1), or the SQLite fallback). */
 export function probeHeavyLockCrossProcess(path: string): boolean {
   const log = createLogger({ component: "penumbra-update", level: "silent" });
   return new HeavyJobLock({ path, log }).crossProcess;

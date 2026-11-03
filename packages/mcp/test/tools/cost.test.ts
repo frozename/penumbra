@@ -1,3 +1,5 @@
+import type { RecentCostOutput } from "@penumbra/core";
+
 import { describe, expect, it } from "bun:test";
 
 import type { DaemonClient } from "@src/daemon-client.js";
@@ -41,8 +43,10 @@ describe("cost.recent handler", () => {
     const calls: CostRecentReq[] = [];
     const costRecent: CostRecentFn = (input) => {
       calls.push(input);
-      return Promise.resolve({
+      const output: RecentCostOutput = {
         total_cost_usd: 1.25,
+        total_cost_usd_billed: 1.25,
+        total_cost_usd_synth: 1.25,
         total_tokens_used: 42,
         handoff_count: 1,
         by_provider: [
@@ -52,9 +56,13 @@ describe("cost.recent handler", () => {
             cost_usd_billed: 0.5,
             cost_usd_synth: 0.75,
             tokens_used: 42,
+            tokens_cache_read: 0,
+            tokens_cache_write: 0,
+            cache_read_pct: 0,
             handoff_count: 1,
             subscription_pressure: [
               {
+                status: "fresh",
                 window_label: "five_hour",
                 used_pct: 55,
                 observed_at: "2026-05-08T11:45:00Z",
@@ -62,6 +70,7 @@ describe("cost.recent handler", () => {
                 resets_at: 1778166000,
               },
               {
+                status: "fresh",
                 window_label: "daily",
                 used_pct: 0,
                 observed_at: "2026-05-08T11:40:00Z",
@@ -73,7 +82,8 @@ describe("cost.recent handler", () => {
         ],
         by_provider_model: [],
         window: { from: "a", to: "b" },
-      });
+      };
+      return Promise.resolve(output);
     };
     const handler = costRecentHandler(fakeDaemon({ costRecent }));
 
@@ -89,6 +99,8 @@ describe("cost.recent handler", () => {
     const [, jsonText] = rendered.split("\n\n");
     expect(JSON.parse(jsonText ?? "")).toEqual({
       total_cost_usd: 1.25,
+      total_cost_usd_billed: 1.25,
+      total_cost_usd_synth: 1.25,
       total_tokens_used: 42,
       handoff_count: 1,
       by_provider: [
@@ -98,9 +110,13 @@ describe("cost.recent handler", () => {
           cost_usd_billed: 0.5,
           cost_usd_synth: 0.75,
           tokens_used: 42,
+          tokens_cache_read: 0,
+          tokens_cache_write: 0,
+          cache_read_pct: 0,
           handoff_count: 1,
           subscription_pressure: [
             {
+              status: "fresh",
               window_label: "five_hour",
               used_pct: 55,
               observed_at: "2026-05-08T11:45:00Z",
@@ -108,6 +124,7 @@ describe("cost.recent handler", () => {
               resets_at: 1778166000,
             },
             {
+              status: "fresh",
               window_label: "daily",
               used_pct: 0,
               observed_at: "2026-05-08T11:40:00Z",

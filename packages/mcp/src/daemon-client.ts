@@ -927,6 +927,12 @@ export class DaemonClient {
         }
       | { error: string };
     provider_quotas?: { provider: string; max_in_flight: number; in_flight: number }[];
+    seat_quotas?: {
+      seat: string;
+      provider: string | null;
+      max_in_flight: number;
+      in_flight: number;
+    }[];
     reloaded_at: string;
   }> {
     return await this.post("/agentchat/reload", {});
@@ -971,7 +977,9 @@ export class DaemonClient {
     agents: {
       name: string;
       // #256: the seat's last local health probe, present only when the daemon has one.
-      health?: { state: string; checked_at: string; http_status?: number };
+      // #360: routable is false when routing excludes the seat; a never-probed seat that
+      // routing excludes reads { state: "unknown", routable: false } with no checked_at.
+      health?: { state: string; checked_at?: string; http_status?: number; routable?: boolean };
     }[];
   }> {
     return await this.get("/chains/agents");

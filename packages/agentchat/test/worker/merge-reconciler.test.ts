@@ -18,8 +18,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { AgentChatConfigSchema, type ParsedAgentChatConfig } from "@src/config/types.js";
 import { PenumbraHttpError } from "@src/penumbra-client.js";
 import { resolveAffectedPackages, scopeDiffToPackages } from "@src/worker/affected-packages.js";
+import { handleAgentchatReload } from "@src/worker/config-reload.js";
 import {
   type CreatePRArgs,
   type CreatePRResult,
@@ -32,8 +34,13 @@ import {
   type ReconcilerDeps,
   type ReconcilerVerdict,
 } from "@src/worker/merge-reconciler.js";
-import type { ThoughtAnalyzerInput, ThoughtRow } from "@src/worker/thought-analyzer.js";
-import type { RuntimeThoughtsConfig } from "@src/worker/thought-config.js";
+import {
+  runThoughtAnalyzer,
+  type ThoughtAnalyzerDeps,
+  type ThoughtAnalyzerInput,
+  type ThoughtRow,
+} from "@src/worker/thought-analyzer.js";
+import { loadThoughtsConfig, type RuntimeThoughtsConfig } from "@src/worker/thought-config.js";
 
 interface ExecResult {
   stdout: string;
@@ -766,6 +773,134 @@ test("does not throw when analyzer throws — logs and continues", async () => {
     { handoffId: "h1", err: "Error: analyzer blew up" },
     "thought analyzer failed",
   );
+});
+
+function makeThoughtsAgentchatConfig(poolAgents: string[]): ParsedAgentChatConfig {
+  const pool = { members: poolAgents.map((agent) => ({ agent })), select: "order" as const };
+  return AgentChatConfigSchema.parse({
+    agents: [
+      { name: "local-granite", adapter: "codex-cli" },
+      { name: "gemini-flash", adapter: "codex-cli" },
+    ],
+    thoughts: {
+      enabled: true,
+      analyze: {
+        enabled: true,
+        only_when: ["pr_opened"],
+        digest: { enabled: true, agent: pool },
+        signals: {
+          enabled: true,
+          agent: pool,
+          definitions: [{ name: "uncertainty", prompt: "list doubts" }],
+        },
+      },
+    },
+  });
+}
+
+test("reconcile after agentchat_reload runs the analyzer with the rebuilt pools (#296)", async () => {
+  const bootConfig = makeThoughtsAgentchatConfig(["local-granite", "gemini-flash"]);
+  const reducedConfig = makeThoughtsAgentchatConfig(["local-granite"]);
+  let config: ParsedAgentChatConfig = bootConfig;
+  let thoughtsConfig: RuntimeThoughtsConfig = loadThoughtsConfig({ agentchat: config });
+  const twoMembers = {
+    members: [{ agent: "local-granite" }, { agent: "gemini-flash" }],
+    select: "order" as const,
+    fallback_to_cloud: true,
+  };
+  const oneMember = {
+    members: [{ agent: "local-granite" }],
+    select: "order" as const,
+    fallback_to_cloud: true,
+  };
+
+  const dispatched: string[] = [];
+  let n = 0;
+  const thoughtAnalyzerDeps: ThoughtAnalyzerDeps = {
+    chainStart: mock((input: Parameters<ThoughtAnalyzerDeps["chainStart"]>[0]) => {
+      n += 1;
+      dispatched.push(input.initial_agent);
+      return Promise.resolve({
+        conversation_id: `conv-${input.initial_agent}-${String(n)}`,
+        handoff_id: `sub-${String(n)}`,
+      });
+    }),
+    // A failing wait makes the "order" pool fall through to every member, so
+    // the boot pool's second member is observable.
+    chainWait: mock(() => Promise.resolve({ status: "failed" as const })),
+    chainResponse: mock(() => Promise.resolve({ responses: [] })),
+    recordEvent: mock(() => undefined),
+    log: makeTestLogger(),
+    // Both seats stay registered, as in the incident. Only the pool changes.
+    agentPool: { registry: ["local-granite", "gemini-flash"] },
+  };
+
+  const analyzerConfigs: RuntimeThoughtsConfig[] = [];
+  const analyzer = mock((input: ThoughtAnalyzerInput) => {
+    analyzerConfigs.push(input.config);
+    return runThoughtAnalyzer(input);
+  });
+
+  const reconcileWithReload = createMergeReconciler({
+    ...mockDeps,
+    get thoughtsConfig(): RuntimeThoughtsConfig {
+      return thoughtsConfig;
+    },
+    thoughtAnalyzerDeps,
+    runThoughtAnalyzer: analyzer,
+    getParentHandoffId: mock(() => Promise.resolve<string | null>(null)),
+    listThoughtEvents: mock(() =>
+      Promise.resolve<ThoughtRow[]>([
+        { sequence_n: 1, adapter: "stdio-acp", agent_name: "claude", text: "consider option A" },
+      ]),
+    ),
+  });
+
+  handoffRows.set(
+    "h_thoughts_boot",
+    makeHandoffRow({ handoff_id: "h_thoughts_boot", open_pr_on_review: true }),
+  );
+  expect((await reconcileWithReload("h_thoughts_boot")).status).toBe("pr_opened");
+  expect(analyzerConfigs[0]?.analyze.digest.pool).toEqual(twoMembers);
+  expect(analyzerConfigs[0]?.analyze.signals.pool).toEqual(twoMembers);
+  // 1 digest + 1 signal definition (uncertainty), each falling through every pool member.
+  expect([...dispatched].sort()).toEqual([
+    "gemini-flash",
+    "gemini-flash",
+    "local-granite",
+    "local-granite",
+  ]);
+
+  dispatched.length = 0;
+  handleAgentchatReload({
+    loadConfig: () => {
+      const previous = config;
+      config = reducedConfig;
+      return { previous, next: config };
+    },
+    rebuildDerivedConfig: (next: ParsedAgentChatConfig): void => {
+      thoughtsConfig = loadThoughtsConfig({ agentchat: next });
+    },
+    invalidateWarmPools: (): void => undefined,
+    refreshPrewarm: (): void => undefined,
+    projectRegistry: { reload: () => Promise.resolve({ ok: true as const, count: 0 }) },
+    log: { info: (): void => undefined, warn: (): void => undefined },
+  });
+  const rebuilt = thoughtsConfig;
+  expect(rebuilt).not.toBe(analyzerConfigs[0]);
+
+  handoffRows.set(
+    "h_thoughts_reload",
+    makeHandoffRow({ handoff_id: "h_thoughts_reload", open_pr_on_review: true }),
+  );
+  expect((await reconcileWithReload("h_thoughts_reload")).status).toBe("pr_opened");
+  expect(analyzer).toHaveBeenCalledTimes(2);
+  expect(analyzerConfigs[1]).toBe(rebuilt);
+  expect(analyzerConfigs[1]?.analyze.digest.pool).toEqual(oneMember);
+  expect(analyzerConfigs[1]?.analyze.signals.pool).toEqual(oneMember);
+  // 1 digest + 1 signal definition (uncertainty), one member.
+  expect(dispatched).toEqual(["local-granite", "local-granite"]);
+  expect(dispatched).not.toContain("gemini-flash");
 });
 
 test("Typecheck fail: returns typecheck_failed and skips PR creation", async () => {

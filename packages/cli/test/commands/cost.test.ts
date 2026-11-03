@@ -2,6 +2,12 @@ import { describe, expect, it } from "bun:test";
 
 import { parseDuration, runCostQuota, runCostRecent } from "@src/commands/cost.js";
 
+// Bun's `typeof fetch` carries a static `preconnect` that bare mock functions
+// lack; Object.assign closes the structural gap without laundering the type.
+function asFetchMock(impl: () => Promise<Response>): typeof fetch {
+  return Object.assign(impl, { preconnect: (): void => undefined });
+}
+
 describe("parseDuration", () => {
   it("parses Nh", () => {
     expect(parseDuration("24h")).toBe(24 * 60 * 60 * 1000);
@@ -20,7 +26,7 @@ describe("runCostRecent", () => {
     await runCostRecent({
       since: "24h",
       json: true,
-      fetch: () =>
+      fetch: asFetchMock(() =>
         Promise.resolve(
           new Response(
             JSON.stringify({
@@ -33,6 +39,7 @@ describe("runCostRecent", () => {
             { status: 200 },
           ),
         ),
+      ),
       print: (s: string) => {
         printed = s;
       },
@@ -48,7 +55,7 @@ describe("runCostQuota", () => {
     await runCostQuota({
       since: undefined,
       json: false,
-      fetch: () =>
+      fetch: asFetchMock(() =>
         Promise.resolve(
           new Response(
             JSON.stringify({
@@ -70,6 +77,7 @@ describe("runCostQuota", () => {
             { status: 200 },
           ),
         ),
+      ),
       print: (s: string) => {
         printed += s + "\n";
       },
@@ -83,7 +91,7 @@ describe("runCostQuota", () => {
     await runCostQuota({
       since: undefined,
       json: false,
-      fetch: () =>
+      fetch: asFetchMock(() =>
         Promise.resolve(
           new Response(
             JSON.stringify({
@@ -129,6 +137,7 @@ describe("runCostQuota", () => {
             { status: 200 },
           ),
         ),
+      ),
       print: (s: string) => {
         printed += s + "\n";
       },

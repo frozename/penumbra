@@ -183,6 +183,33 @@ export function resolveProviderConcurrencyDecision(
   };
 }
 
+// #257: a seat's own max_in_flight is a second, narrower admission cap on the
+// same claim path. In-flight counting reuses countProviderInFlight with a
+// one-element seat list so the drain-hold and heartbeat semantics match the
+// provider cap exactly.
+export interface SeatConcurrencyDecision {
+  seat: string;
+  provider: string | null;
+  max_in_flight: number;
+  in_flight_count: number;
+}
+
+export function resolveSeatConcurrencyDecision(
+  services: ConcurrencyServices,
+  handoff: { to_agent: string },
+): SeatConcurrencyDecision | null {
+  const agents = services.agentchatConfig?.agents;
+  if (!Array.isArray(agents)) return null;
+  const seat = agents.find((agent) => agent.name === handoff.to_agent);
+  if (seat?.max_in_flight === undefined) return null;
+  return {
+    seat: seat.name,
+    provider: resolveProvider(seat),
+    max_in_flight: seat.max_in_flight,
+    in_flight_count: countProviderInFlight(services, [seat.name]),
+  };
+}
+
 export function listCappedProviders(
   services: Pick<Services, "providerQuotas">,
 ): { provider: string; max_in_flight: number }[] {
@@ -191,6 +218,24 @@ export function listCappedProviders(
     row.model === undefined && row.max_in_flight !== undefined
       ? [{ provider: row.provider, max_in_flight: row.max_in_flight }]
       : [],
+  );
+}
+
+export function listCappedSeats(
+  services: Pick<Services, "agentchatConfig">,
+): { seat: string; provider: string | null; max_in_flight: number }[] {
+  const agents = services.agentchatConfig?.agents;
+  if (!Array.isArray(agents)) return [];
+  return agents.flatMap((agent) =>
+    agent.max_in_flight === undefined
+      ? []
+      : [
+          {
+            seat: agent.name,
+            provider: resolveProvider(agent),
+            max_in_flight: agent.max_in_flight,
+          },
+        ],
   );
 }
 
@@ -217,6 +262,68 @@ export function listProviderQuotaStatus(services: ConcurrencyServices): Provider
   }));
 }
 
+export interface SeatQuotaStatus {
+  seat: string;
+  provider: string | null;
+  max_in_flight: number;
+  in_flight: number;
+}
+
+export function listSeatQuotaStatus(services: ConcurrencyServices): SeatQuotaStatus[] {
+  return listCappedSeats(services).map(({ seat, provider, max_in_flight }) => ({
+    seat,
+    provider,
+    max_in_flight,
+    in_flight: countProviderInFlight(services, [seat]),
+  }));
+}
+
+function recordCapRefusal(
+  services: Pick<Services, "db" | "log" | "clock" | "dispatchEventLog">,
+  args: {
+    handoff_id: string;
+    worker_id: string;
+    kind: "claim.provider_cap_refused" | "claim.seat_cap_refused";
+    logMessage: string;
+    path: "precheck" | "cas_loss";
+    fields: Record<string, unknown>;
+  },
+): void {
+  try {
+    services.log.info(
+      {
+        handoff_id: args.handoff_id,
+        worker_id: args.worker_id,
+        ...args.fields,
+        path: args.path,
+      },
+      args.logMessage,
+    );
+    const shouldRecord =
+      args.path === "cas_loss" ||
+      !services.db
+        .query<{ one: number }, [string, string]>(
+          `SELECT 1 AS one
+             FROM dispatch_events
+            WHERE handoff_id=?
+              AND kind=?
+            LIMIT 1`,
+        )
+        .get(args.handoff_id, args.kind);
+    if (!shouldRecord) return;
+    services.dispatchEventLog.record({
+      handoff_id: args.handoff_id,
+      worker_id: args.worker_id,
+      source: "daemon",
+      kind: args.kind,
+      ts: services.clock().toISOString(),
+      meta: { ...args.fields, path: args.path },
+    });
+  } catch {
+    /* observability must not alter claim refusal behavior */
+  }
+}
+
 export function recordProviderCapRefusal(
   services: Pick<Services, "db" | "log" | "clock" | "dispatchEventLog">,
   args: {
@@ -226,44 +333,36 @@ export function recordProviderCapRefusal(
     path: "precheck" | "cas_loss";
   },
 ): void {
-  try {
-    services.log.info(
-      {
-        handoff_id: args.handoff_id,
-        worker_id: args.worker_id,
-        provider: args.decision.provider,
-        max_in_flight: args.decision.max_in_flight,
-        in_flight_count: args.decision.in_flight_count,
-        path: args.path,
-      },
-      "claim refused: provider in-flight cap",
-    );
-    const shouldRecord =
-      args.path === "cas_loss" ||
-      !services.db
-        .query<{ one: number }, [string]>(
-          `SELECT 1 AS one
-             FROM dispatch_events
-            WHERE handoff_id=?
-              AND kind='claim.provider_cap_refused'
-            LIMIT 1`,
-        )
-        .get(args.handoff_id);
-    if (!shouldRecord) return;
-    services.dispatchEventLog.record({
-      handoff_id: args.handoff_id,
-      worker_id: args.worker_id,
-      source: "daemon",
-      kind: "claim.provider_cap_refused",
-      ts: services.clock().toISOString(),
-      meta: {
-        provider: args.decision.provider,
-        max_in_flight: args.decision.max_in_flight,
-        in_flight_count: args.decision.in_flight_count,
-        path: args.path,
-      },
-    });
-  } catch {
-    /* observability must not alter claim refusal behavior */
-  }
+  recordCapRefusal(services, {
+    ...args,
+    kind: "claim.provider_cap_refused",
+    logMessage: "claim refused: provider in-flight cap",
+    fields: {
+      provider: args.decision.provider,
+      max_in_flight: args.decision.max_in_flight,
+      in_flight_count: args.decision.in_flight_count,
+    },
+  });
+}
+
+export function recordSeatCapRefusal(
+  services: Pick<Services, "db" | "log" | "clock" | "dispatchEventLog">,
+  args: {
+    handoff_id: string;
+    worker_id: string;
+    decision: SeatConcurrencyDecision;
+    path: "precheck" | "cas_loss";
+  },
+): void {
+  recordCapRefusal(services, {
+    ...args,
+    kind: "claim.seat_cap_refused",
+    logMessage: "claim refused: seat in-flight cap",
+    fields: {
+      seat: args.decision.seat,
+      provider: args.decision.provider,
+      max_in_flight: args.decision.max_in_flight,
+      in_flight_count: args.decision.in_flight_count,
+    },
+  });
 }

@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 
+import { type AaTransport, fetchAaModels } from "@src/routing/aa-client.js";
 import { buildAliasIndex, reconcileAliases } from "@src/routing/alias-map.js";
 import type { AaModel, AaModelSnapshot } from "@src/routing/schemas.js";
+
+const aaLanguageFreeSample: unknown = JSON.parse(
+  readFileSync(new URL("./fixtures/aa-language-free-sample.json", import.meta.url), "utf8"),
+);
 
 function aaModel(overrides: {
   id: string;
@@ -118,6 +124,38 @@ describe("routing alias-map reconciliation", () => {
 
     expect(Object.keys(result)).toEqual(["codex-seat"]);
     expect(Object.hasOwn(result, "gpt-5")).toBe(false);
+  });
+
+  test("a snapshot fetched from the /language/models/free envelope resolves an alias via the derived creator slug", async () => {
+    const transport: AaTransport = {
+      fetch() {
+        return Promise.resolve(
+          new Response(JSON.stringify(aaLanguageFreeSample), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      },
+    };
+
+    const fetched = await fetchAaModels({ apiKey: "secret-key", transport });
+    if (!fetched.ok) throw new Error("expected the free-envelope fetch to succeed");
+    const [gptModel, llamaModel] = fetched.snapshot.models;
+    if (!gptModel || !llamaModel) throw new Error("expected the fixture to keep both models");
+
+    const result = reconcileAliases(
+      buildAliasIndex({
+        "codex-seat": { aa_creator: "openai", aa_slug: "gpt-5-6-sol" },
+        "llama-seat": { aa_creator: "meta-ai", aa_slug: "llama-4-2-maverick" },
+      }),
+      fetched.snapshot,
+      ["codex-seat", "llama-seat"],
+    );
+
+    expect(result).toEqual({
+      "codex-seat": { matched: gptModel },
+      "llama-seat": { matched: llamaModel },
+    });
   });
 
   test("identical inputs produce byte-identical output", () => {

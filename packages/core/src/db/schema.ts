@@ -96,6 +96,29 @@ const SCHEMA_DDL_BLOCK_01 = `
         )
         WHERE event_type = 'usage-update';
 
+      -- recentCost's per-handoff aggregation re-parses payload_json five times
+      -- for every usage-update row in the window. This covering partial index
+      -- precomputes those expressions at write time so the read path never
+      -- fetches the (multi-GB) payload rows at all. Every CASE must match the
+      -- cost reader's SQL verbatim — parsed-expression equality is what makes
+      -- SQLite treat the index as covering.
+      CREATE INDEX IF NOT EXISTS t0_events_usage_cost_rollup
+        ON t0_events(
+          event_type,
+          ts,
+          project_id,
+          provider,
+          model,
+          lane,
+          cost_usd,
+          CASE WHEN json_valid(payload_json) THEN COALESCE(json_extract(payload_json, '$.handoff_id'), event_id) ELSE event_id END,
+          CASE WHEN json_valid(payload_json) THEN CAST(json_extract(payload_json, '$.used') AS INTEGER) END,
+          CASE WHEN json_valid(payload_json) THEN COALESCE(CAST(json_extract(payload_json, '$.tokens_input') AS INTEGER), tokens_in, 0) ELSE COALESCE(tokens_in, 0) END,
+          CASE WHEN json_valid(payload_json) THEN COALESCE(CAST(json_extract(payload_json, '$.tokens_cache_read') AS INTEGER), 0) ELSE 0 END,
+          CASE WHEN json_valid(payload_json) THEN COALESCE(CAST(json_extract(payload_json, '$.tokens_cache_write') AS INTEGER), 0) ELSE 0 END
+        )
+        WHERE event_type = 'usage-update';
+
       CREATE TABLE IF NOT EXISTS t1_rollups (
         rollup_id               TEXT PRIMARY KEY,
         project_id              TEXT,
@@ -1342,6 +1365,12 @@ function applyRoutingAndNotificationsMigration(db: Database): void {
 
 function applyLateMemoryMigration(db: Database): void {
   addColumnsIfMissing(db, "t1_rollups", T1_ROLLUPS_LATE_ADDITIVE_COLUMNS);
+  // releaseT1RollupClaims runs once per dream cycle (P1) and at boot; only a
+  // handful of rows are claimed at any time, so a partial index over claimed
+  // rows turns its `claimed_at IS NOT NULL AND (...)` scan into a tiny seek.
+  db.run(
+    `CREATE INDEX IF NOT EXISTS t1_claimed_idx ON t1_rollups(claimed_at) WHERE claimed_at IS NOT NULL`,
+  );
   addColumnIfMissing(db, "t2_memories", "embedding_model_version", "TEXT");
   addColumnIfMissing(db, "t2_memories", "retired_at", "INTEGER");
   db.run(`DROP INDEX IF EXISTS idx_t2_memories_slug`);

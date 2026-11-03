@@ -12,6 +12,14 @@ import { runMemoryImport } from "@src/commands/memory.js";
 
 import { urlToString } from "./_helpers.js";
 
+// Bun's `typeof fetch` carries a static `preconnect` that bare mock functions
+// lack; Object.assign closes the structural gap without laundering the type.
+function asFetchMock(
+  impl: (url: string | URL | Request, init?: RequestInit) => Promise<Response>,
+): typeof fetch {
+  return Object.assign(impl, { preconnect: (): void => undefined });
+}
+
 let root = "";
 let db: Database;
 let createdMemoryDbDir = "";
@@ -36,7 +44,7 @@ function makeStorageRoot(): string {
 
 interface MemoryDaemonHandle {
   storageRoot: string;
-  fetch: (path: string | URL, init?: RequestInit) => Promise<Response>;
+  fetch: typeof fetch;
   db: Database;
   stop: () => void;
 }
@@ -59,10 +67,10 @@ function setupMemoryDaemon(): MemoryDaemonHandle {
   return {
     storageRoot,
     db: memoryDb,
-    fetch: (path, init = {}): Promise<Response> => {
+    fetch: asFetchMock((path, init) => {
       const parsed = new URL(urlToString(path));
       const rel = `${parsed.pathname}${parsed.search}`;
-      const existingHeaders = (init.headers ?? {}) as Record<string, string>;
+      const existingHeaders = (init?.headers ?? {}) as Record<string, string>;
       const request = new Request(`http://x${rel}`, {
         ...init,
         headers: {
@@ -71,7 +79,7 @@ function setupMemoryDaemon(): MemoryDaemonHandle {
         },
       });
       return handler(request);
-    },
+    }),
     stop: (): void => {
       try {
         services.supervisor.stopAll();
@@ -376,10 +384,10 @@ Blank body`,
         dryRun: false,
         apply: true,
         storageRoot: daemon.storageRoot,
-        fetch: async (url, init) => {
+        fetch: asFetchMock(async (url, init) => {
           calls.push({ url: urlToString(url), method: init?.method });
           return await daemon.fetch(url, init);
-        },
+        }),
       });
 
       expect(calls).toHaveLength(2);
@@ -497,7 +505,7 @@ Blank body`,
         dryRun: false,
         apply: true,
         storageRoot: daemon.storageRoot,
-        fetch: async (url, init) => {
+        fetch: asFetchMock(async (url, init) => {
           active += 1;
           peak = Math.max(peak, active);
           calls.push({ url: urlToString(url) });
@@ -505,7 +513,7 @@ Blank body`,
           const response = await daemon.fetch(url, init);
           active -= 1;
           return response;
-        },
+        }),
       });
 
       expect(calls).toHaveLength(20);
@@ -661,11 +669,11 @@ Blank body`,
         dryRun: false,
         apply: true,
         storageRoot: daemon.storageRoot,
-        fetch: async (url, init) => {
+        fetch: asFetchMock(async (url, init) => {
           called += 1;
           calls.push({ url: urlToString(url), method: init?.method });
           return await daemon.fetch(url, init);
-        },
+        }),
       });
 
       expect(result.errors).toBe(0);
@@ -701,10 +709,10 @@ Body content`,
         dryRun: false,
         apply: true,
         storageRoot: daemon.storageRoot,
-        fetch: async (url, init) => {
+        fetch: asFetchMock(async (url, init) => {
           calls += 1;
           return await daemon.fetch(url, init);
-        },
+        }),
       });
 
       expect(result.errors).toBe(1);

@@ -24,10 +24,13 @@ function createFetchStub(response: Response): { calls: FetchCall[]; fetch: typeo
   const calls: FetchCall[] = [];
   return {
     calls,
-    fetch: (input: FetchInput, init?: unknown): Promise<Response> => {
-      calls.push([input, init]);
-      return Promise.resolve(response);
-    },
+    fetch: Object.assign(
+      (input: FetchInput, init?: unknown): Promise<Response> => {
+        calls.push([input, init]);
+        return Promise.resolve(response);
+      },
+      { preconnect: (): void => undefined },
+    ),
   };
 }
 
@@ -56,7 +59,8 @@ test("HTTP worker manager relays injects to the worker route", async () => {
   await Promise.resolve(session.inject({ role: "user", text: "hello" }));
 
   expect(fetchStub.calls).toHaveLength(1);
-  const [url, init] = fetchStub.calls[0];
+  const entry = fetchStub.calls[0];
+  const [url, init] = entry!;
   expect(url).toBe("http://worker.local/sessions/h-1/inject");
   expectInjectRequestInit(init);
 });
@@ -75,7 +79,8 @@ test("HTTP worker manager prefers PENUMBRA_WORKER_URL over the port file", async
     if (!session?.inject) throw new Error("expected injectable session");
     await Promise.resolve(session.inject({ role: "user", text: "ping" }));
 
-    const [url] = fetchStub.calls[0];
+    const entry = fetchStub.calls[0];
+    const [url] = entry!;
     expect(url).toBe("http://worker.local/sessions/h-2/inject");
   } finally {
     if (previous === undefined) {

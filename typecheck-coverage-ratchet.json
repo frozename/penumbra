@@ -11,22 +11,22 @@
       "errorCount": 0
     },
     "packages/cli": {
-      "errorCount": 149
+      "errorCount": 0
     },
     "packages/config": {
-      "errorCount": 2
+      "errorCount": 0
     },
     "packages/console": {
       "errorCount": 0
     },
     "packages/core": {
-      "errorCount": 274
+      "errorCount": 0
     },
     "packages/daemon": {
-      "errorCount": 659
+      "errorCount": 0
     },
     "packages/e2e": {
-      "errorCount": 10
+      "errorCount": 0
     },
     "packages/exec-primitives-consumer": {
       "errorCount": 0
@@ -38,7 +38,7 @@
       "errorCount": 0
     },
     "packages/mcp": {
-      "errorCount": 169
+      "errorCount": 0
     },
     "packages/workflows": {
       "errorCount": 0
@@ -47,5 +47,5 @@
       "errorCount": 14
     }
   },
-  "total": 1278
+  "total": 14
 }

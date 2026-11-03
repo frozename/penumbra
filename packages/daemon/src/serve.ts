@@ -108,6 +108,7 @@ import {
 import { dispatchAuditRoute } from "./routes/dispatch-audit.js";
 import {
   dispatchEventsGetRoute,
+  dispatchEventsLastClaimRoute,
   dispatchEventsPostRoute,
   dispatchEventsStreamRoute,
 } from "./routes/dispatch-events.js";
@@ -370,7 +371,7 @@ export type DaemonServices = CoreServices & {
   // reload doesn't touch the operator's real snapshot file.
   aaSnapshotPath?: string;
   agentchatConfig?: {
-    agents?: { name: string; roles?: string[]; [key: string]: unknown };
+    agents?: { name: string; roles?: string[]; [key: string]: unknown }[];
     providers?: { name: string; model: string; [key: string]: unknown }[];
     [key: string]: unknown;
   };
@@ -945,6 +946,9 @@ const ROUTES: Route[] = [
     dispatchEventsStreamRoute(req, ctx.services),
   ),
   staticRoute("GET", "/dispatch/events", (req, ctx) => dispatchEventsGetRoute(req, ctx.services)),
+  staticRoute("GET", "/dispatch/events/last_claim", (req, ctx) =>
+    dispatchEventsLastClaimRoute(req, ctx.services),
+  ),
   staticRoute("POST", "/session-events", (req, ctx) => sessionEventsPostRoute(req, ctx.services)),
   staticRoute("GET", "/session-events", (req, ctx) => sessionEventsGetRoute(req, ctx.services)),
   staticRoute("POST", "/session-notes/approve", (req, ctx) =>

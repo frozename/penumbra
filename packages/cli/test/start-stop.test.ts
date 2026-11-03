@@ -71,7 +71,7 @@ test("start retries pid claim after a stale takeover loses the race", async () =
 
   let wxCalls = 0;
   const openSpy = spyOn(fs, "openSync").mockImplementation(
-    (path: fs.PathLike, flags: fs.OpenMode, mode?: fs.Mode) => {
+    (path: fs.PathLike, flags: fs.OpenMode, mode?: fs.Mode | null) => {
       if (path === pidPath && flags === "wx") {
         wxCalls += 1;
         if (wxCalls <= 2) {
@@ -84,13 +84,27 @@ test("start retries pid claim after a stale takeover loses the race", async () =
     },
   );
 
-  type ReadFileSyncOpts = Parameters<typeof originalReadFileSync>[1];
-  const readSpy = spyOn(fs, "readFileSync").mockImplementation(
-    (path: fs.PathLike, options?: BufferEncoding | { encoding?: BufferEncoding | null }) => {
-      if (path === pidPath) return `${String(stalePid)}\n`;
-      return originalReadFileSync(path, options as ReadFileSyncOpts);
-    },
-  );
+  function fakeReadFileSync(
+    path: fs.PathOrFileDescriptor,
+    options?: { encoding?: null | undefined; flag?: string | undefined } | null,
+  ): Buffer<ArrayBuffer>;
+  function fakeReadFileSync(
+    path: fs.PathOrFileDescriptor,
+    options: BufferEncoding | { encoding: BufferEncoding },
+  ): string;
+  function fakeReadFileSync(
+    path: fs.PathOrFileDescriptor,
+    options?: BufferEncoding | { encoding?: BufferEncoding | null } | null,
+  ): string | Buffer<ArrayBuffer>;
+  function fakeReadFileSync(
+    path: fs.PathOrFileDescriptor,
+    options?: BufferEncoding | { encoding?: BufferEncoding | null } | null,
+  ): string | Buffer<ArrayBuffer> {
+    if (path === pidPath) return `${String(stalePid)}\n`;
+    return originalReadFileSync(path, options);
+  }
+
+  const readSpy = spyOn(fs, "readFileSync").mockImplementation(fakeReadFileSync);
 
   const unlinkSpy = spyOn(fs, "unlinkSync").mockImplementation((path: fs.PathLike) => {
     originalUnlinkSync(path);

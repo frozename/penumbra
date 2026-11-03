@@ -23,8 +23,10 @@ describe("local seat health service", () => {
       agents: () => [localSeat],
       ttlMs: 20_000,
       fetch: () =>
-        new Response(
-          JSON.stringify({ data: [{ id: "bge-m3-GGUF/bge-m3-FP16.gguf" }, { id: "bge-m3" }] }),
+        Promise.resolve(
+          new Response(
+            JSON.stringify({ data: [{ id: "bge-m3-GGUF/bge-m3-FP16.gguf" }, { id: "bge-m3" }] }),
+          ),
         ),
     });
 
@@ -46,7 +48,7 @@ describe("local seat health service", () => {
       ttlMs: 20_000,
       fetch: () => {
         calls += 1;
-        return new Response(JSON.stringify({ data: [{ id: "different-model" }] }));
+        return Promise.resolve(new Response(JSON.stringify({ data: [{ id: "different-model" }] })));
       },
     });
 
@@ -65,7 +67,7 @@ describe("local seat health service", () => {
       now: () => now,
       fetch: () => {
         calls += 1;
-        return new Response(JSON.stringify({ data: [{ id: "bge-m3" }] }));
+        return Promise.resolve(new Response(JSON.stringify({ data: [{ id: "bge-m3" }] })));
       },
     });
 
@@ -461,5 +463,163 @@ describe("seat health states and transitions", () => {
 
     expect(service.getSeatHealth("acp-seat")).toBeUndefined();
     expect(service.getSeatHealth("nope")).toBeUndefined();
+  });
+});
+
+describe("TLS failures (#256)", () => {
+  test("a cert verify error carried on `code` is tls_error with no httpStatus", async () => {
+    const service = createLocalSeatHealthService({
+      agents: () => [
+        declaredAcpSeat({ url: "https://gw.example.invalid:7843/v1", expect_model: "qwen" }),
+      ],
+      ttlMs: 20_000,
+      now: () => 5_000,
+      fetch: () =>
+        Promise.reject(
+          Object.assign(new Error("unable to verify the first certificate"), {
+            code: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+          }),
+        ),
+    });
+
+    await service.refresh();
+
+    const record = service.getSeatHealth("acp-seat");
+    if (record === undefined) throw new Error("expected a record");
+    const observed: { state: string; checkedAtMs: number } = record;
+    expect(observed).toEqual({ state: "tls_error", checkedAtMs: 5_000 });
+    expect("httpStatus" in record).toBe(false);
+    expect(service.getUnhealthyAgents()).toEqual(new Set(["acp-seat"]));
+  });
+
+  test("a SAN/hostname mismatch carried on `code` is tls_error", async () => {
+    const service = createLocalSeatHealthService({
+      agents: () => [
+        declaredAcpSeat({ url: "https://gw.example.invalid:7843/v1", expect_model: "qwen" }),
+      ],
+      ttlMs: 20_000,
+      now: () => 5_000,
+      fetch: () =>
+        Promise.reject(
+          Object.assign(new Error("Hostname/IP does not match certificate's altnames"), {
+            code: "ERR_TLS_CERT_ALTNAME_INVALID",
+          }),
+        ),
+    });
+
+    await service.refresh();
+
+    const record = service.getSeatHealth("acp-seat");
+    if (record === undefined) throw new Error("expected a record");
+    const observed: { state: string; checkedAtMs: number } = record;
+    expect(observed).toEqual({ state: "tls_error", checkedAtMs: 5_000 });
+    expect(service.getUnhealthyAgents()).toEqual(new Set(["acp-seat"]));
+  });
+
+  test("a TLS code carried on the error's cause is tls_error", async () => {
+    const service = createLocalSeatHealthService({
+      agents: () => [
+        declaredAcpSeat({ url: "https://gw.example.invalid:7843/v1", expect_model: "qwen" }),
+      ],
+      ttlMs: 20_000,
+      now: () => 5_000,
+      fetch: () =>
+        Promise.reject(
+          new TypeError("fetch failed", {
+            cause: Object.assign(new Error("x"), { code: "DEPTH_ZERO_SELF_SIGNED_CERT" }),
+          }),
+        ),
+    });
+
+    await service.refresh();
+
+    const record = service.getSeatHealth("acp-seat");
+    if (record === undefined) throw new Error("expected a record");
+    const observed: { state: string; checkedAtMs: number } = record;
+    expect(observed).toEqual({ state: "tls_error", checkedAtMs: 5_000 });
+    expect(service.getUnhealthyAgents()).toEqual(new Set(["acp-seat"]));
+  });
+
+  test("self-signed, expired and untrusted-issuer codes are tls_error", async () => {
+    const codes = [
+      "SELF_SIGNED_CERT_IN_CHAIN",
+      "CERT_HAS_EXPIRED",
+      "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+    ];
+
+    for (const code of codes) {
+      const service = createLocalSeatHealthService({
+        agents: () => [
+          declaredAcpSeat({ url: "https://gw.example.invalid:7843/v1", expect_model: "qwen" }),
+        ],
+        ttlMs: 20_000,
+        now: () => 5_000,
+        fetch: () => Promise.reject(Object.assign(new Error("certificate rejected"), { code })),
+      });
+
+      await service.refresh();
+
+      const record = service.getSeatHealth("acp-seat");
+      if (record === undefined) throw new Error(`expected a record for ${code}`);
+      const observed: { state: string; checkedAtMs: number } = record;
+      expect(observed).toEqual({ state: "tls_error", checkedAtMs: 5_000 });
+      expect(service.getUnhealthyAgents()).toEqual(new Set(["acp-seat"]));
+    }
+  });
+
+  test("non-TLS codes and code-less rejections stay unreachable", async () => {
+    const rejections: { label: string; error: Error }[] = [
+      {
+        label: "ECONNREFUSED",
+        error: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
+      },
+      {
+        label: "ConnectionRefused",
+        error: Object.assign(new Error("connect refused"), { code: "ConnectionRefused" }),
+      },
+      { label: "plain TypeError", error: new TypeError("fetch failed") },
+    ];
+
+    for (const row of rejections) {
+      const service = createLocalSeatHealthService({
+        agents: () => [
+          declaredAcpSeat({ url: "https://gw.example.invalid:7843/v1", expect_model: "qwen" }),
+        ],
+        ttlMs: 20_000,
+        now: () => 5_000,
+        fetch: () => Promise.reject(row.error),
+      });
+
+      await service.refresh();
+
+      expect(service.getSeatHealth("acp-seat")).toEqual({
+        state: "unreachable",
+        checkedAtMs: 5_000,
+      });
+      expect(service.getUnhealthyAgents()).toEqual(new Set(["acp-seat"]));
+    }
+  });
+
+  test("warns once with state tls_error on the failing transition", async () => {
+    const { warns, log } = recordingLog();
+    const service = createLocalSeatHealthService({
+      agents: () => [
+        declaredAcpSeat({ url: "https://gw.example.invalid:7843/v1", expect_model: "qwen" }),
+      ],
+      ttlMs: 20_000,
+      now: () => 5_000,
+      fetch: () =>
+        Promise.reject(
+          Object.assign(new Error("unable to verify the first certificate"), {
+            code: "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+          }),
+        ),
+      log,
+    });
+
+    await service.refresh();
+
+    expect(warns).toHaveLength(1);
+    expect(warns[0]?.obj["state"]).toBe("tls_error");
   });
 });

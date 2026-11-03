@@ -1,6 +1,7 @@
 import {
   applySchema,
   loadSqliteVec,
+  type PressureSnapshot,
   readSubscriptionPressure,
   T0EventSchema,
   T0Writer,
@@ -112,15 +113,17 @@ describe("subscription_pressure_status handler", () => {
     const calls: SubscriptionPressureStatusReq[] = [];
     const subscriptionPressureStatus: SubscriptionPressureStatusFn = (input) => {
       calls.push(input);
+      const snapshot: PressureSnapshot = {
+        provider: "openai",
+        window_label: "24h",
+        model: null,
+        used_pct: 82,
+        resets_at: null,
+        observed_at: "2026-05-07T00:00:00Z",
+        source_kind: "local-state",
+      };
       return Promise.resolve({
-        snapshots: [
-          {
-            provider: "openai",
-            window_label: "24h",
-            observed_at: "2026-05-07T00:00:00Z",
-            state: "warning",
-          },
-        ],
+        snapshots: [snapshot],
         warnings: [],
       });
     };
@@ -136,8 +139,11 @@ describe("subscription_pressure_status handler", () => {
         {
           provider: "openai",
           window_label: "24h",
+          model: null,
+          used_pct: 82,
+          resets_at: null,
           observed_at: "2026-05-07T00:00:00Z",
-          state: "warning",
+          source_kind: "local-state",
         },
       ],
       warnings: [],

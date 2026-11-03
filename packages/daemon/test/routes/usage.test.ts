@@ -115,6 +115,7 @@ function insertSnapshotRow(
 interface ProviderRow {
   remaining_usd: number;
   used_usd: number;
+  quota_tokens?: number;
 }
 interface RecentBody {
   total_cost_usd: number;
@@ -201,8 +202,9 @@ describe("GET /usage/quota_status", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as QuotaBody;
     expect(body.providers).toHaveLength(1);
-    expect(body.providers[0].remaining_usd).toBe(37.6);
-    expect(body.providers[0].used_usd).toBe(12.4);
+    const firstProvider = body.providers[0];
+    expect(firstProvider?.remaining_usd).toBe(37.6);
+    expect(firstProvider?.used_usd).toBe(12.4);
   });
 
   it("returns 400 on malformed since", () => {
@@ -241,7 +243,8 @@ describe("GET /usage/quota_status", () => {
     const res = usageQuotaStatusRoute(req, services);
     expect(res.status).toBe(200);
     const body = (await res.json()) as QuotaBody;
-    expect(body.providers[0].quota_tokens).toBe(7_000_000);
+    const quotaProvider = body.providers[0];
+    expect(quotaProvider?.quota_tokens).toBe(7_000_000);
   });
 
   it("returns 400 on unknown window", () => {
@@ -434,6 +437,7 @@ describe("GET /usage/subscription_pressure", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as PressureBody;
     expect(body.snapshots).toHaveLength(1);
-    expect(body.snapshots[0].provider).toBe("anthropic-claude");
+    const firstSnapshot = body.snapshots[0];
+    expect(firstSnapshot?.provider).toBe("anthropic-claude");
   });
 });

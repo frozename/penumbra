@@ -172,6 +172,8 @@ export const AgentConfigSchema = z
     tier: z.string().optional(),
     /** Estimated per-run cost in cents used by task eligibility filtering. */
     cost_cents_per_run: z.number().nonnegative().optional(),
+    /** #257: per-seat cap on concurrently in-flight dispatches, enforced with the provider-wide cap. */
+    max_in_flight: z.number().int().positive().optional(),
     /** Marks whether the agent can be assigned maestro spawn tasks. */
     maestro_capable: z.boolean().optional(),
     /** Optional per-agent task types this agent supports for maestro routing. */
@@ -364,6 +366,11 @@ export const ThoughtCaptureConfigSchema = z
   .object({
     max_text_bytes: z.number().int().positive().default(16384),
     max_stream_bytes: z.number().int().positive().default(1048576),
+    // #297: max ms a coalesced thought row buffers since its first chunk.
+    // 0 writes one row per streamed chunk and is for debugging only; 0 also
+    // redacts each chunk on its own, which disables cross-chunk credential
+    // redaction, so a secret split across chunks can be stored unredacted.
+    coalesce_ms: z.number().int().nonnegative().default(1000),
     adapters: z.record(z.string(), z.boolean()).default({}),
     per_agent_overrides: z.record(z.string(), z.boolean()).default({}),
   })
