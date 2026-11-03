@@ -53,7 +53,7 @@ function fakeServices(
 }
 
 async function responseJson<T>(res: Response): Promise<T> {
-  return await res.json();
+  return (await res.json()) as T;
 }
 
 describe("worktree fs routes — worker ownership enforcement", () => {

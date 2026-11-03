@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 
 import { migrate } from "@src/db/migrations.js";
 import { loadSqliteVec } from "@src/db/sqlite-vec.js";
-import type { FileTaskInput } from "@src/tasks/schema.js";
+import type { FileTaskInput, TaskPriority } from "@src/tasks/schema.js";
 import { TaskWriter } from "@src/tasks/writer.js";
 
 if (process.platform === "darwin") {
@@ -232,7 +232,7 @@ describe("TaskWriter review pairing", () => {
   });
 
   test("priority bumps one bucket and never drops below normal", () => {
-    const cases: { parent: FileTaskInput["priority"]; child: FileTaskInput["priority"] }[] = [
+    const cases: { parent: TaskPriority; child: TaskPriority }[] = [
       { parent: "low", child: "normal" },
       { parent: "normal", child: "high" },
       { parent: "high", child: "urgent" },

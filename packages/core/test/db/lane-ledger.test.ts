@@ -924,8 +924,9 @@ describe("sweeper close supersede", () => {
   });
 
   it("SQL guard matches the sweeper marker exactly after a stale pre-read", () => {
-    const originalQuery = db.query.bind(db);
-    db.query = (sql: string): ReturnType<typeof db.query> => {
+    type DbQuery = Database["query"];
+    const originalQuery: DbQuery = db.query.bind(db);
+    const guardedQuery: DbQuery = (sql) => {
       if (sql.includes("UPDATE lane_ledger")) {
         db.run("UPDATE lane_ledger SET override_reason=? WHERE lane_id='swept'", [
           ORPHAN_SWEEPER_REASON_PREFIX.toUpperCase(),
@@ -933,6 +934,7 @@ describe("sweeper close supersede", () => {
       }
       return originalQuery(sql);
     };
+    db.query = guardedQuery;
     expect(() =>
       supersedeSweeperClose(db, "swept", {
         ts_closed: closeTime,

@@ -95,7 +95,7 @@ function seedTask(db: Database, taskId: string): void {
 function insertHandoff(db: Database, handoffId: string, parentHandoffId: string | null): void {
   db.query<
     unknown,
-    [string, string, string, string, string, string, string, string, string | null]
+    [string, string, string, string, string, string, string, string | null, string | null]
   >(
     `INSERT INTO handoffs (
       handoff_id, ts, conversation_id, from_agent, to_agent, message, status, project_id, parent_handoff_id
@@ -117,7 +117,10 @@ function insertUsageUpdate(
   db: Database,
   input: { eventId: string; handoffId: string; costUsd: number },
 ): void {
-  db.query<unknown, [string, string, string, string, string, number, string]>(
+  db.query<
+    unknown,
+    [string, string, string, string, string, string, string, string, number, string]
+  >(
     `INSERT INTO t0_events (
       event_id, ts, ingest_ts, source, user_id, machine_id, event_type, lane, provider, model,
       cost_usd, payload_json
@@ -508,15 +511,15 @@ test("each tick logs session count", () => {
 test("scheduled ticks log failures instead of throwing through the timer boundary", () => {
   const originalSetInterval = globalThis.setInterval;
   const originalClearInterval = globalThis.clearInterval;
-  const timer = {};
+  const timer: ReturnType<typeof setInterval> = 42 as unknown as ReturnType<typeof setInterval>;
   const intervals: (() => void)[] = [];
   const logs: { obj: Record<string, unknown>; msg: string }[] = [];
 
   globalThis.setInterval = ((fn: () => void): ReturnType<typeof setInterval> => {
     intervals.push(fn);
-    return timer as ReturnType<typeof setInterval>;
+    return timer;
   }) as typeof setInterval;
-  globalThis.clearInterval = ((handle: Parameters<typeof clearInterval>[0]): void => {
+  globalThis.clearInterval = ((handle: ReturnType<typeof setInterval>): void => {
     expect(handle).toBe(timer);
   }) as typeof clearInterval;
 

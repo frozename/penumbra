@@ -73,6 +73,7 @@ serviceTest(
         >("SELECT worker_id, metadata_json FROM worker_tokens WHERE token_hash = ?")
         .get(hash);
       expect(row).toBeDefined();
+      if (row === null) throw new Error("expected worker_tokens row for hashed token");
       expect(row.worker_id).toBe("W-A");
       expect(row.metadata_json).toBe(JSON.stringify({ host: "x" }));
     });
@@ -95,6 +96,7 @@ serviceTest("registerWorkerForTest without metadata persists metadata_json NULL"
       >("SELECT metadata_json FROM worker_tokens WHERE token_hash = ?")
       .get(hash);
     expect(row).toBeDefined();
+    if (row === null) throw new Error("expected worker_tokens row for hashed token");
     expect(row.metadata_json).toBe(null);
   });
 });

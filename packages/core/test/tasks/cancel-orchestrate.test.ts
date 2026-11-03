@@ -50,6 +50,7 @@ function seedTask(
       number | null,
       number | null,
       number | null,
+      number | null,
       string,
       string | null,
       string | null,

@@ -18,6 +18,9 @@ import tseslint from "typescript-eslint";
 const SOURCE_GLOBS = [
   "packages/**/src/**/*.ts",
   "packages/**/test/**/*.ts",
+  // Package-root test helpers are covered by their package's tsconfig.test.json
+  // and tsconfig.eslint.json, so eslint must lint them too (congruence rule).
+  "packages/daemon/test-utils.ts",
   "packages/**/bin/**/*.ts",
   "packages/**/scripts/**/*.ts",
   "packages/console/src/**/*.tsx",
