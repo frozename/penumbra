@@ -155,6 +155,134 @@ test("cancel broadcasts to pending handoffs when no dispatched/approved handoffs
   });
 });
 
+test("cancel emits for every dispatched handoff in the conversation", async () => {
+  const services = tempServices();
+  const cid = "conv-multi-dispatched";
+
+  for (const [id, message] of [
+    ["e-m1", "m1"],
+    ["e-m2", "m2"],
+  ] as const) {
+    await handoffsCreateRoute(
+      new Request("http://x", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message,
+          conversation_id: cid,
+          triggered_by_event_id: id,
+        }),
+      }),
+      services,
+    );
+  }
+  services.handoffWriter.approve("e-1", { resolved_by: "u", resolved_at: "approved-ts" });
+  services.handoffWriter.approve("e-2", { resolved_by: "u", resolved_at: "approved-ts" });
+  services.handoffWriter.claimDispatch("e-1", "worker-1");
+  services.handoffWriter.claimDispatch("e-2", "worker-2");
+
+  const emitted: CancelTestEvent[] = [];
+  services.workerControl.subscribe((event) => {
+    emitted.push(event);
+  });
+
+  const res = conversationsCancelRoute(new Request("http://x"), cid, services);
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { ok: boolean; changed: boolean };
+  expect(body.ok).toBe(true);
+  expect(body.changed).toBe(true);
+  expect(emitted).toEqual([
+    { type: "cancel", conversation_id: cid, handoff_id: "e-1" },
+    { type: "cancel", conversation_id: cid, handoff_id: "e-2" },
+  ]);
+});
+
+test("cancel fallback targets the most recent eligible handoff", async () => {
+  const services = tempServices();
+  const cid = "conv-latest-eligible";
+
+  for (const [id, message] of [
+    ["e-l1", "m1"],
+    ["e-l2", "m2"],
+  ] as const) {
+    await handoffsCreateRoute(
+      new Request("http://x", {
+        method: "POST",
+        body: JSON.stringify({
+          from: "a",
+          to: "b",
+          message,
+          conversation_id: cid,
+          triggered_by_event_id: id,
+        }),
+      }),
+      services,
+    );
+  }
+  services.handoffWriter.approve("e-1", { resolved_by: "u", resolved_at: "approved-ts" });
+  services.handoffWriter.approve("e-2", { resolved_by: "u", resolved_at: "approved-ts" });
+
+  const eligible = services.handoffReader.listByStatus({
+    statuses: ["approved", "redirected", "pending"],
+    conversation_id: cid,
+  });
+  expect(eligible.map((row) => row.handoff_id)).toEqual(["e-1", "e-2"]);
+
+  const emitted: CancelTestEvent[] = [];
+  services.workerControl.subscribe((event) => {
+    emitted.push(event);
+  });
+
+  const res = conversationsCancelRoute(new Request("http://x"), cid, services);
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { ok: boolean; changed: boolean };
+  expect(body.ok).toBe(true);
+  expect(body.changed).toBe(true);
+  expect(emitted).toEqual([{ type: "cancel", conversation_id: cid, handoff_id: "e-2" }]);
+});
+
+test("cancel fallback broadcasts to a redirected-only conversation", async () => {
+  const services = tempServices();
+  const cid = "conv-redirected";
+
+  await handoffsCreateRoute(
+    new Request("http://x", {
+      method: "POST",
+      body: JSON.stringify({
+        from: "a",
+        to: "b",
+        message: "m",
+        conversation_id: cid,
+        triggered_by_event_id: "e-redirected",
+      }),
+    }),
+    services,
+  );
+  services.handoffWriter.approve("e-1", {
+    resolved_by: "u",
+    resolved_at: "approved-ts",
+    redirect_to: "c",
+  });
+  expect(services.handoffReader.get("e-1")?.status).toBe("redirected");
+
+  let emitted: CancelTestEvent | null = null;
+  services.workerControl.subscribe((event) => {
+    emitted = event;
+  });
+
+  const res = conversationsCancelRoute(new Request("http://x"), cid, services);
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { ok: boolean; changed: boolean };
+  expect(body.ok).toBe(true);
+  expect(body.changed).toBe(true);
+  expect<CancelTestEvent | null>(emitted).toEqual({
+    type: "cancel",
+    conversation_id: cid,
+    handoff_id: "e-1",
+  });
+});
+
 test("cancel returns changed=false when no matching handoffs exist", async () => {
   const services = tempServices();
   const cid = "conv-nonexistent";
@@ -235,9 +363,28 @@ test("cancel is scoped to conversation_id — other conversations are unaffected
   expect(convBRows[0]!.cancel_requested_at).toBeNull();
 });
 
-test("cancel on unknown conversation returns changed=false", async () => {
+test("cancel on conversation with only non-cancellable handoffs returns changed=false", async () => {
   const services = tempServices();
-  const cid = "conv-unknown-no-handoffs";
+  const cid = "conv-only-rejected";
+
+  await handoffsCreateRoute(
+    new Request("http://x", {
+      method: "POST",
+      body: JSON.stringify({
+        from: "a",
+        to: "b",
+        message: "m",
+        conversation_id: cid,
+        triggered_by_event_id: "e-rejected",
+      }),
+    }),
+    services,
+  );
+  services.handoffWriter.reject("e-1", {
+    resolved_by: "u",
+    resolved_at: "rejected-ts",
+    reason: "nope",
+  });
 
   let emitted: CancelTestEvent | null = null;
   services.workerControl.subscribe((event) => {
