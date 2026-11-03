@@ -99,6 +99,12 @@ describe("SessionNoteDraftSchema", () => {
     ).toBe(false);
   });
 
+  test("review_event_id 1.5 fails (must be int)", () => {
+    expect(
+      SessionNoteDraftSchema.safeParse({ ...validFixture, review_event_id: 1.5 }).success,
+    ).toBe(false);
+  });
+
   test("object is non-strict: extra keys are stripped from .data", () => {
     const withExtra = { ...validFixture, extra_field: "ignored" };
     const parsed = SessionNoteDraftSchema.safeParse(withExtra);

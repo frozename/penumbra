@@ -45,6 +45,24 @@ describe("MissionSessionSchema", () => {
     expect(MissionSessionSchema.safeParse({ ...validFixture, dispatched: 1.5 }).success).toBe(
       false,
     );
+    expect(MissionSessionSchema.safeParse({ ...validFixture, resolved: 1.5 }).success).toBe(false);
+    expect(MissionSessionSchema.safeParse({ ...validFixture, failed: 1.5 }).success).toBe(false);
+  });
+
+  test("budget.max_concurrent -1 fails (nonnegative)", () => {
+    const badBudget = {
+      ...validFixture,
+      budget: { ...validFixture.budget, max_concurrent: -1 },
+    };
+    expect(MissionSessionSchema.safeParse(badBudget).success).toBe(false);
+  });
+
+  test("budget.max_concurrent 1.5 fails (must be int)", () => {
+    const badBudget = {
+      ...validFixture,
+      budget: { ...validFixture.budget, max_concurrent: 1.5 },
+    };
+    expect(MissionSessionSchema.safeParse(badBudget).success).toBe(false);
   });
 
   test("budget.current -1 fails (nonnegative)", () => {
@@ -75,5 +93,15 @@ describe("MissionSessionSchema", () => {
     const noBudget: Record<string, unknown> = { ...validFixture };
     delete noBudget.budget;
     expect(MissionSessionSchema.safeParse(noBudget).success).toBe(false);
+  });
+
+  test("project.name missing fails", () => {
+    const noName = { ...validFixture, project: { id: "p-1" } };
+    expect(MissionSessionSchema.safeParse(noName).success).toBe(false);
+  });
+
+  test("project.id mistyped (number) fails", () => {
+    const badId = { ...validFixture, project: { id: 1, name: "test-project" } };
+    expect(MissionSessionSchema.safeParse(badId).success).toBe(false);
   });
 });
