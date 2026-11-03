@@ -104,17 +104,27 @@ describe("resolveInsideWorktree", () => {
     const candidate = path.join(missingAncestor, "child");
     const tmpReal = fs.realpathSync(tmp);
 
-    const realpathSpy = spyOn(fsPromises, "realpath").mockImplementation(((input) => {
+    function fakeRealpath(input: fs.PathLike): Promise<string>;
+    function fakeRealpath(
+      input: fs.PathLike,
+      options: fs.BufferEncodingOption,
+    ): Promise<Buffer<ArrayBuffer>>;
+    function fakeRealpath(
+      input: fs.PathLike,
+      options?: fs.ObjectEncodingOptions | BufferEncoding | null,
+    ): Promise<string | Buffer>;
+    function fakeRealpath(input: fs.PathLike): Promise<string | Buffer<ArrayBuffer>> {
       const inputPath = String(input);
-      if (inputPath === tmp) return tmpReal;
+      if (inputPath === tmp) return Promise.resolve(tmpReal);
       if (inputPath === candidate || inputPath === missingAncestor) {
         throw Object.assign(new Error("missing"), { code: "ENOENT" });
       }
       if (inputPath === cycleAncestor) {
         throw Object.assign(new Error("too many symbolic links"), { code: "ELOOP" });
       }
-      return fs.realpathSync(inputPath);
-    }) as typeof fsPromises.realpath);
+      return Promise.resolve(fs.realpathSync(inputPath));
+    }
+    const realpathSpy = spyOn(fsPromises, "realpath").mockImplementation(fakeRealpath);
 
     try {
       await resolveInsideWorktree(candidate, tmp);

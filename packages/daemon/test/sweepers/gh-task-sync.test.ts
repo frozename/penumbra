@@ -416,7 +416,7 @@ describe("gh-task-sync sweeper/service", () => {
       body: "body",
     });
 
-    let releaseCreate: (() => void) | null = null;
+    let releaseCreate: () => void = () => undefined;
     const firstCreateStarted = new Promise<void>((resolve) => {
       releaseCreate = resolve;
     });
@@ -451,7 +451,7 @@ describe("gh-task-sync sweeper/service", () => {
 
     setupNow = startedAt + 11 * 60 * 1000;
     await sync.syncAllLinkedTasks({ fullReconcile: false });
-    releaseCreate?.();
+    releaseCreate();
     await first;
 
     // Pins the stale-requeue in-flight guard and status-guarded completion: the
@@ -844,7 +844,7 @@ describe("gh-task-sync sweeper/service", () => {
   });
 
   test("sweeper emits skip_tick and does not overlap while prior tick is in flight", async () => {
-    let release: (() => void) | null = null;
+    let release: () => void = () => undefined;
     let calls = 0;
     const warns: { event?: string; sweeper?: string }[] = [];
     const service: Pick<GhTaskSyncService, "syncAllLinkedTasks"> = {
@@ -878,7 +878,7 @@ describe("gh-task-sync sweeper/service", () => {
     sweeper.start();
     await Bun.sleep(20);
     sweeper.stop();
-    release?.();
+    release();
     await Bun.sleep(1);
 
     expect(calls).toBe(1);

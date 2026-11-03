@@ -75,7 +75,8 @@ test("runPermissionTtlSweep transitions stale rows to expired and emits events",
   expect(services.permissionReader.get("p-stale")?.status).toBe("expired");
   expect(services.permissionReader.get("p-fresh")?.status).toBe("pending");
   expect(seen.map((e) => e.kind)).toEqual(["permission.expired"]);
-  expect(seen[0].permission_id).toBe("p-stale");
+  expect(seen.length).toBe(1);
+  expect(seen[0]?.permission_id).toBe("p-stale");
 });
 
 test("runPermissionTtlSweep is idempotent on subsequent calls", () => {

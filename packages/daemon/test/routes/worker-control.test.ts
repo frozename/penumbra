@@ -105,10 +105,13 @@ test("POST /conversations/:id/cancel records in DB and broadcasts", async () => 
   expect(res.status).toBe(200);
 
   // Verify DB
-  const row = services.handoffReader.listByStatus({
+  const rows = services.handoffReader.listByStatus({
     statuses: ["pending"],
     conversation_id: cid,
-  })[0];
+  });
+  expect(rows).toHaveLength(1);
+  const row = rows[0];
+  if (!row) throw new Error("expected pending handoff row after cancel");
   expect(row.cancel_requested_at).toBe("2026-04-26T00:00:00.000Z");
 
   // Verify Broadcast

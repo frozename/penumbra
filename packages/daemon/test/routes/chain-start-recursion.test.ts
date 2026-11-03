@@ -1,4 +1,10 @@
-import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
+import {
+  buildServices,
+  loadSqliteVec,
+  migrate,
+  type Services,
+  type Watchdog,
+} from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeAll, expect, test } from "bun:test";
@@ -45,13 +51,16 @@ function tempServices(): Services {
     uuid: () => `id-${String(++n)}`,
     agentRegistry: ["planner", "executor"],
   });
-  services.watchdog = {
+  const watchdog: Watchdog = {
     recordHeartbeat: (): void => {
       /* no-op */
     },
     hasActiveWorker: (): boolean => true,
+    getStaleWorkers: (): string[] => [],
+    getStaleHeartbeatAges: (): { worker_id: string; last_seen_age_ms: number }[] => [],
     tick: (): Promise<void> => Promise.resolve(),
   };
+  services.watchdog = watchdog;
   return services;
 }
 
