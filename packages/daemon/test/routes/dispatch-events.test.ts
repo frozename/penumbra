@@ -349,8 +349,12 @@ describe("dispatch events routes", () => {
       "worker.recovery.requeued",
       "worker.recovery.exhausted",
     ]);
-    expect(json.events[0].meta).toEqual(body.events[0].meta);
-    expect(json.events[1].meta).toEqual(body.events[1].meta);
+    const [requeued, exhausted] = json.events;
+    expect(requeued).toBeDefined();
+    expect(exhausted).toBeDefined();
+    if (!requeued || !exhausted) throw new Error("expected recovery events in GET response");
+    expect(requeued.meta).toEqual(body.events[0]?.meta);
+    expect(exhausted.meta).toEqual(body.events[1]?.meta);
     expect(services.dispatchEventLog.listByHandoff(handoffId)).toHaveLength(2);
   });
 
@@ -436,7 +440,9 @@ describe("dispatch events routes", () => {
       "dispatch.end",
     ]);
     expect(body.events.every((e) => e.handoff_id === "h-1")).toBe(true);
-    expect(body.events[1].meta).toEqual({ pid: 123 });
+    const procSpawn = body.events[1];
+    expect(procSpawn).toBeDefined();
+    expect(procSpawn?.meta).toEqual({ pid: 123 });
   });
 
   test("GET returns 400 without handoff_id and empty list for unknown handoff", async () => {
