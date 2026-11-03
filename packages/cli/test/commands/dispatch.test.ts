@@ -7,6 +7,14 @@ import { runDispatchTimeline } from "@src/commands/dispatch.js";
 
 import { urlToString } from "./_helpers.js";
 
+// Bun's `typeof fetch` carries a static `preconnect` that bare mock functions
+// lack; Object.assign closes the structural gap without laundering the type.
+function asFetchMock(
+  impl: (url: string | URL | Request, init?: RequestInit) => Promise<Response>,
+): typeof fetch {
+  return Object.assign(impl, { preconnect: (): void => undefined });
+}
+
 let storageRoot = "";
 
 describe("runDispatchTimeline", () => {
@@ -28,7 +36,7 @@ describe("runDispatchTimeline", () => {
       handoffId: "handoff-1",
       json: false,
       storageRoot,
-      fetch: (url, init) => {
+      fetch: asFetchMock((url, init) => {
         calls.push({ url: urlToString(url), init });
         return Promise.resolve(
           new Response(
@@ -47,7 +55,7 @@ describe("runDispatchTimeline", () => {
             { status: 200, headers: { "content-type": "application/json" } },
           ),
         );
-      },
+      }),
       print: (line) => {
         printed.push(line);
       },
@@ -69,7 +77,7 @@ describe("runDispatchTimeline", () => {
       handoffId: "handoff-classifier",
       json: false,
       storageRoot,
-      fetch: () =>
+      fetch: asFetchMock(() =>
         Promise.resolve(
           new Response(
             JSON.stringify({
@@ -91,6 +99,7 @@ describe("runDispatchTimeline", () => {
             { status: 200, headers: { "content-type": "application/json" } },
           ),
         ),
+      ),
       print: (line) => printed.push(line),
     });
 
@@ -106,7 +115,7 @@ describe("runDispatchTimeline", () => {
       handoffId: "handoff-2",
       json: true,
       storageRoot,
-      fetch: () =>
+      fetch: asFetchMock(() =>
         Promise.resolve(
           new Response(
             JSON.stringify({
@@ -124,6 +133,7 @@ describe("runDispatchTimeline", () => {
             { status: 200, headers: { "content-type": "application/json" } },
           ),
         ),
+      ),
       print: (line) => {
         printed = line;
       },
@@ -156,13 +166,14 @@ describe("runDispatchTimeline", () => {
       handoffId: "handoff-empty",
       json: false,
       storageRoot,
-      fetch: () =>
+      fetch: asFetchMock(() =>
         Promise.resolve(
           new Response(JSON.stringify({ events: [] }), {
             status: 200,
             headers: { "content-type": "application/json" },
           }),
         ),
+      ),
       print: (line) => {
         printed.push(line);
       },

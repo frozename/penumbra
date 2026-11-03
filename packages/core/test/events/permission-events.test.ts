@@ -34,7 +34,9 @@ describe("PermissionEventBus", () => {
     const a = bus.emit(sample("p-1", "permission.created"));
     const b = bus.emit(sample("p-2", "permission.created"));
     const c = bus.emit(sample("p-3", "permission.created"));
-    expect(bus.replaySince(a.seq).map((e) => e.permission_id)).toEqual(["p-2", "p-3"]);
+    const afterA = bus.replaySince(a.seq);
+    expect(afterA).not.toBeNull();
+    expect(afterA?.map((e) => e.permission_id)).toEqual(["p-2", "p-3"]);
     expect(bus.replaySince(c.seq)).toEqual([]);
   });
 

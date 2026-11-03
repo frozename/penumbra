@@ -43,6 +43,7 @@ interface ParsedPlanTask {
   files: string[];
   heading?: string;
   id: string;
+  parallel_with?: string[];
   preferred_agent: string;
   project?: string;
   risk_class: string;

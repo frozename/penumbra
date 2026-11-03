@@ -105,6 +105,7 @@ describe("retired t2 memory filtering across recall surfaces", () => {
       project_id: projectId,
       limit: 10,
       include_raw: false,
+      include_untrusted: false,
       min_score: 0,
       sources: ["t2"],
     });

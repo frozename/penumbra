@@ -191,7 +191,7 @@ async function dispatchLeasedOrchestrateTask(opts: {
   bus: TaskEventBus;
   sessions: MaestroSessionWriter;
   taskWriter: TaskWriter;
-  log?: { warn: (obj: Record<string, unknown>, msg: string) => void };
+  log?: { warn: (...args: unknown[]) => void };
 }): Promise<{ reactor: ReturnType<typeof createOrchestrateReactor>; task_id: string }> {
   const reactor = createOrchestrateReactor({
     db: opts.db,
@@ -384,8 +384,8 @@ test("completion backstop: logs and retries recordTerminated failures", async ()
     sessions,
     taskWriter,
     log: {
-      warn: (obj: Record<string, unknown>, msg: string): void => {
-        warnCalls.push([obj, msg]);
+      warn: (...args: unknown[]): void => {
+        warnCalls.push([args[0] as Record<string, unknown>, String(args[1])]);
       },
     },
   });

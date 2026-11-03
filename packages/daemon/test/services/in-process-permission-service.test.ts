@@ -216,8 +216,9 @@ test("aborting a request rejects its waiter and durably removes it from the pend
     handoff: { handoff_id: "h-1", conversation_id: "c-1" },
   });
   const auditEvents: { event_type: string; payload_json: unknown }[] = [];
-  services.t0Writer.write = (event): void => {
+  services.t0Writer.write = (event): string => {
     auditEvents.push({ event_type: event.event_type, payload_json: event.payload_json });
+    return event.event_id;
   };
   const svc = new InProcessPermissionService(services);
   Object.assign(services, { permissionService: svc });

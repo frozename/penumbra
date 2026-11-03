@@ -59,7 +59,7 @@ async function expectRejectsTo<T>(promise: Promise<T>, value: unknown): Promise<
   throw new Error("expected promise to reject but it resolved");
 }
 
-async function expectResolvesEqual<T>(promise: Promise<T>, expected: T): Promise<void> {
+async function expectResolvesEqual(promise: Promise<unknown>, expected: unknown): Promise<void> {
   const actual = await promise;
   expect(actual).toEqual(expected);
 }

@@ -25,8 +25,9 @@ describe("POST /mcp-events/publish", () => {
     const res = await mcpEventsPublishRoute(req);
     expect(res.status).toBe(202);
     expect(received).toHaveLength(1);
-    expect(received[0].payload).toEqual({ entity: "light.kitchen" });
-    expect(typeof received[0].published_at).toBe("number");
+    const event = received[0]!;
+    expect(event.payload).toEqual({ entity: "light.kitchen" });
+    expect(typeof event.published_at).toBe("number");
   });
 
   it("rejects malformed bodies with 400", async () => {

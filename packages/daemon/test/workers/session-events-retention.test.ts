@@ -48,7 +48,9 @@ test("prunes rows older than retentionDays in batches, stops at a partial batch,
     queueMicrotask(() => {
       handler(...args);
     });
-    return 0 as ReturnType<typeof setTimeout>;
+    const id = originalSetTimeout(handler, timeout ?? 0);
+    clearTimeout(id);
+    return id;
   }) as typeof setTimeout;
 
   try {
@@ -96,7 +98,9 @@ test("retention caps each tick and reports backlog remaining", async () => {
     queueMicrotask(() => {
       handler(...args);
     });
-    return 0 as ReturnType<typeof setTimeout>;
+    const id = originalSetTimeout(handler, 0);
+    clearTimeout(id);
+    return id;
   }) as typeof setTimeout;
 
   try {
