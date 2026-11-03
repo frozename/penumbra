@@ -18,12 +18,20 @@ import {
   type AgentPerformanceCaptureFromReconciler,
   AgentPerformanceCaptureFromReconcilerSchema,
   type AgentPerformanceRow,
+  type AgentPerformanceUpsertOptions,
   inferAgentTaskTypeForRole,
   mapDispatchReasonToAgentOutcome,
   mapMergeStatusToAgentOutcome,
   NON_MUTATING_TASK_TYPES,
 } from "../schemas/agent-performance.js";
+import { attemptOfMetadata } from "../writers/agent-performance-merge.js";
 import { AgentPerformanceWriter } from "../writers/agent-performance.js";
+import {
+  CURRENT_ATTEMPT_EVENT_BOUND_SQL,
+  currentAttempt,
+  isStaleAttempt,
+  resolveWorkerHeadSha,
+} from "./agent-performance-identity.js";
 import {
   classifyDispatchReliability,
   type DispatchReliabilityReport,
@@ -110,9 +118,11 @@ function lookupLatestLaneGateOutcome(db: Database, handoffId: string): ClosedLan
 function upsertAgentPerformanceWithGuardedGateOutcome(
   db: Database,
   row: AgentPerformanceRow,
+  writeRow: AgentPerformanceRow,
+  opts: AgentPerformanceUpsertOptions,
 ): AgentPerformanceRow {
   const writer = new AgentPerformanceWriter(db);
-  writer.upsert(row);
+  writer.upsert(writeRow, opts);
   if (row.gate_outcome === null) return row;
   return {
     ...row,
@@ -128,17 +138,57 @@ function carryForwardOutcomeForReconcilerNoChanges(
   db: Database,
   handoffId: string,
   outcome: AgentOutcome,
+  attempt: number | null,
 ): AgentOutcome {
   if (outcome !== "no_changes") return outcome;
   const existing = db
     .prepare<
-      { outcome: string },
+      { outcome: AgentOutcome; metadata_json: string },
       [string]
-    >(`SELECT outcome FROM agent_performance WHERE handoff_id = ?`)
+    >(`SELECT outcome, metadata_json FROM agent_performance WHERE handoff_id = ?`)
     .get(handoffId);
-  return existing?.outcome === "failed" || existing?.outcome === "completed_with_output"
+  if (!existing) return outcome;
+  const storedAttempt = attemptOfMetadata(existing.metadata_json);
+  if (storedAttempt !== null && storedAttempt !== attempt) return outcome;
+  return existing.outcome === "failed" || existing.outcome === "completed_with_output"
     ? existing.outcome
     : outcome;
+}
+
+// Persist-only fields (attempt stamps, worker head) land in the stored row's
+// metadata but not in the producer row the capture returns.
+function persistCaptureRow(
+  db: Database,
+  row: AgentPerformanceRow,
+  ctx: {
+    input: { dispatch_attempt?: number };
+    handoff: HandoffRow;
+    extras: Record<string, unknown>;
+    nonAuthoritative?: boolean;
+  },
+): AgentPerformanceRow {
+  const attempt = currentAttempt(ctx.handoff);
+  if (isStaleAttempt(ctx.input, attempt)) return row;
+  const writeRow: AgentPerformanceRow = {
+    ...row,
+    metadata_json: JSON.stringify({
+      ...(JSON.parse(row.metadata_json) as Record<string, unknown>),
+      ...ctx.extras,
+    }),
+  };
+  const opts: AgentPerformanceUpsertOptions = {};
+  if (attempt !== null) {
+    opts.identity = { dispatch_attempt: attempt };
+    if (ctx.nonAuthoritative === true) opts.outcomeNonAuthoritative = true;
+  }
+  return upsertAgentPerformanceWithGuardedGateOutcome(db, row, writeRow, opts);
+}
+
+function workerHeadExtras(
+  parsedDispatchEndMeta: Record<string, unknown> | null,
+): Record<string, unknown> {
+  const head = resolveWorkerHeadSha(parsedDispatchEndMeta);
+  return head === null ? {} : { worker_head_sha: head };
 }
 
 function hasMeaningfulFinalResponse(db: Database, handoff: HandoffRow, handoffId: string): boolean {
@@ -152,12 +202,14 @@ function resolveReconcilerOutcome(
   db: Database,
   input: AgentPerformanceCaptureFromReconciler,
   handoff: HandoffRow,
-): AgentOutcome {
+): { outcome: AgentOutcome; nonAuthoritative: boolean } {
+  const nonAuthoritative = input.result.status === "no_changes";
   const explicitTaskType = input.task_type ?? handoff.chain_task_type ?? undefined;
   const outcome = carryForwardOutcomeForReconcilerNoChanges(
     db,
     input.handoff_id,
     mapMergeStatusToAgentOutcome(input.result.status),
+    currentAttempt(handoff),
   );
   if (
     outcome === "no_changes" &&
@@ -165,9 +217,9 @@ function resolveReconcilerOutcome(
     (NON_MUTATING_TASK_TYPES as readonly string[]).includes(explicitTaskType) &&
     hasMeaningfulFinalResponse(db, handoff, input.handoff_id)
   ) {
-    return "completed_with_output";
+    return { outcome: "completed_with_output", nonAuthoritative };
   }
-  return outcome;
+  return { outcome, nonAuthoritative };
 }
 
 // A resource kill or admission timeout is the host's fault: class it
@@ -208,7 +260,7 @@ export function captureAgentPerformanceFromReconciler(opts: {
       metadata.autocommit_sha = parsedDispatchEndMeta.autocommit_sha;
     }
   }
-  const outcome = resolveReconcilerOutcome(opts.db, input, handoff);
+  const { outcome, nonAuthoritative } = resolveReconcilerOutcome(opts.db, input, handoff);
   const row: AgentPerformanceRow = {
     performance_id: opts.uuid(),
     ts: nowIso,
@@ -239,16 +291,18 @@ export function captureAgentPerformanceFromReconciler(opts: {
     ...reconcilerFailureClassification(input.result),
     metadata_json: JSON.stringify(metadata),
   };
-  return upsertAgentPerformanceWithGuardedGateOutcome(opts.db, row);
+  const extras: Record<string, unknown> = {};
+  if (input.result.regression_summary) extras.regression_summary = input.result.regression_summary;
+  return persistCaptureRow(opts.db, row, { input, handoff, extras, nonAuthoritative });
 }
 
 function getParsedDispatchEndMeta(db: Database, handoffId: string): Record<string, unknown> | null {
   const row = db
     .prepare<
       { meta_json: string | null },
-      [string]
-    >(`SELECT meta_json FROM dispatch_events WHERE handoff_id = ? AND kind = 'dispatch.end' ORDER BY ts DESC, id DESC LIMIT 1`)
-    .get(handoffId);
+      [string, string]
+    >(`SELECT meta_json FROM dispatch_events WHERE handoff_id = ? AND kind = 'dispatch.end' AND ${CURRENT_ATTEMPT_EVENT_BOUND_SQL} ORDER BY ts DESC, id DESC LIMIT 1`)
+    .get(handoffId, handoffId);
   if (!row?.meta_json) return null;
   try {
     return JSON.parse(row.meta_json) as Record<string, unknown>;
@@ -266,9 +320,9 @@ function getParsedAcpSessionMeta(db: Database, handoffId: string): Record<string
   const row = db
     .prepare<
       { meta_json: string | null },
-      [string]
-    >(`SELECT meta_json FROM dispatch_events WHERE handoff_id = ? AND kind IN ('acp.session.start', 'acp.session.reuse') ORDER BY (kind != 'acp.session.start') ASC, ts DESC, id DESC LIMIT 1`)
-    .get(handoffId);
+      [string, string]
+    >(`SELECT meta_json FROM dispatch_events WHERE handoff_id = ? AND kind IN ('acp.session.start', 'acp.session.reuse') AND ${CURRENT_ATTEMPT_EVENT_BOUND_SQL} ORDER BY (kind != 'acp.session.start') ASC, ts DESC, id DESC LIMIT 1`)
+    .get(handoffId, handoffId);
   if (!row?.meta_json) return null;
   try {
     return JSON.parse(row.meta_json) as Record<string, unknown>;
@@ -288,9 +342,9 @@ function countToolFailuresByKind(
   const rows = db
     .prepare<
       { meta_json: string | null },
-      [string]
-    >(`SELECT meta_json FROM dispatch_events WHERE handoff_id = ? AND kind = 'agent.tool_call.failed'`)
-    .all(handoffId);
+      [string, string]
+    >(`SELECT meta_json FROM dispatch_events WHERE handoff_id = ? AND kind = 'agent.tool_call.failed' AND ${CURRENT_ATTEMPT_EVENT_BOUND_SQL}`)
+    .all(handoffId, handoffId);
   for (const row of rows) {
     let kind: unknown;
     if (row.meta_json) {
@@ -367,9 +421,9 @@ function detectRecoveryCancel(
   const row = db
     .prepare<
       { ts: string },
-      [string]
-    >(`SELECT ts FROM dispatch_events WHERE handoff_id = ? AND kind = 'dispatch.end' ORDER BY ts DESC, id DESC LIMIT 1`)
-    .get(handoffId);
+      [string, string]
+    >(`SELECT ts FROM dispatch_events WHERE handoff_id = ? AND kind = 'dispatch.end' AND ${CURRENT_ATTEMPT_EVENT_BOUND_SQL} ORDER BY ts DESC, id DESC LIMIT 1`)
+    .get(handoffId, handoffId);
   if (!row) {
     // No terminal event yet but capture is being called — likely a synthetic
     // terminal from a sweeper or a force-fail. Treat as recovery.
@@ -391,9 +445,9 @@ function classifyDispatchReliabilityFromDb(
   const eventRows = db
     .prepare<
       { kind: string; ts: string },
-      [string]
-    >(`SELECT kind, ts FROM dispatch_events WHERE handoff_id = ? ORDER BY ts ASC`)
-    .all(handoffId);
+      [string, string]
+    >(`SELECT kind, ts FROM dispatch_events WHERE handoff_id = ? AND ${CURRENT_ATTEMPT_EVENT_BOUND_SQL} ORDER BY ts ASC`)
+    .all(handoffId, handoffId);
   if (
     dispatchEndEmittedHint === true &&
     !eventRows.some((event) => event.kind === "dispatch.end")
@@ -730,5 +784,6 @@ export function captureAgentPerformanceFromDispatch(opts: {
     maestro_takeover_required: maestroTakeover,
     metadata_json: JSON.stringify(metadata),
   };
-  return upsertAgentPerformanceWithGuardedGateOutcome(opts.db, row);
+  const extras = workerHeadExtras(parsedDispatchEndMeta);
+  return persistCaptureRow(opts.db, row, { input, handoff, extras });
 }

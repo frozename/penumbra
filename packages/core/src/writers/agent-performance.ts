@@ -1,11 +1,20 @@
 import type { Database } from "bun:sqlite";
 
-import { type AgentPerformanceRow, DEFAULT_AGENT_KIND } from "../schemas/agent-performance.js";
+import {
+  type AgentPerformanceRow,
+  type AgentPerformanceUpsertOptions,
+  DEFAULT_AGENT_KIND,
+} from "../schemas/agent-performance.js";
+import { mergeAgentPerformance } from "./agent-performance-merge.js";
 
 export class AgentPerformanceWriter {
   private readonly upsertStmt;
+  private readonly selectStmt;
 
   constructor(private readonly db: Database) {
+    this.selectStmt = this.db.prepare<AgentPerformanceRow, [string]>(
+      "SELECT * FROM agent_performance WHERE handoff_id = ?",
+    );
     this.upsertStmt = this.db.prepare(`
       INSERT INTO agent_performance (
         performance_id, ts, handoff_id, conversation_id, project_id, agent_name,
@@ -41,11 +50,11 @@ export class AgentPerformanceWriter {
         framework_overhead_ms=excluded.framework_overhead_ms,
         source=excluded.source,
         notes=excluded.notes,
-        reliability_status=COALESCE(excluded.reliability_status, reliability_status),
-        failure_class=COALESCE(excluded.failure_class, failure_class),
+        reliability_status=excluded.reliability_status,
+        failure_class=excluded.failure_class,
         artifact_present=excluded.artifact_present,
         verification_present=excluded.verification_present,
-        maestro_takeover_required=COALESCE(excluded.maestro_takeover_required, maestro_takeover_required),
+        maestro_takeover_required=excluded.maestro_takeover_required,
         empty_response=excluded.empty_response,
         worktree_changed=excluded.worktree_changed,
         reconcile_status=excluded.reconcile_status,
@@ -56,42 +65,51 @@ export class AgentPerformanceWriter {
     `);
   }
 
-  upsert(row: AgentPerformanceRow): AgentPerformanceRow {
-    this.upsertStmt.run(
-      row.performance_id,
-      row.ts,
-      row.handoff_id,
-      row.conversation_id,
-      row.project_id,
-      row.agent_name,
-      row.task_type,
-      row.outcome,
-      row.gate_outcome ?? null,
-      row.rounds,
-      row.smoke_pass,
-      row.reviewer_findings,
-      row.maestro_score,
-      row.cost_usd,
-      row.tokens_used,
-      row.latency_ms,
-      row.exec_ms ?? null,
-      row.framework_overhead_ms ?? null,
-      row.source,
-      row.notes,
-      row.reliability_status ?? null,
-      row.failure_class ?? null,
-      row.artifact_present ?? null,
-      row.verification_present ?? null,
-      row.maestro_takeover_required ?? null,
-      row.empty_response ?? null,
-      row.worktree_changed ?? null,
-      // reconcile_status is deprecated/dead — always null in production; do not start writing it.
-      row["reconcile_status" as string as keyof typeof row] ?? null,
-      row.environment_failure ?? null,
-      row.trust_score ?? null,
-      row.agent_kind ?? DEFAULT_AGENT_KIND,
-      row.metadata_json,
-    );
+  upsert(row: AgentPerformanceRow, opts: AgentPerformanceUpsertOptions = {}): AgentPerformanceRow {
+    this.db
+      .transaction(() => {
+        const stored = this.selectStmt.get(row.handoff_id);
+        const merged = mergeAgentPerformance(stored, row, opts);
+        if (merged === stored) {
+          return;
+        }
+        this.upsertStmt.run(
+          merged.performance_id,
+          merged.ts,
+          merged.handoff_id,
+          merged.conversation_id,
+          merged.project_id,
+          merged.agent_name,
+          merged.task_type,
+          merged.outcome,
+          merged.gate_outcome ?? null,
+          merged.rounds,
+          merged.smoke_pass,
+          merged.reviewer_findings,
+          merged.maestro_score,
+          merged.cost_usd,
+          merged.tokens_used,
+          merged.latency_ms,
+          merged.exec_ms ?? null,
+          merged.framework_overhead_ms ?? null,
+          merged.source,
+          merged.notes,
+          merged.reliability_status ?? null,
+          merged.failure_class ?? null,
+          merged.artifact_present ?? null,
+          merged.verification_present ?? null,
+          merged.maestro_takeover_required ?? null,
+          merged.empty_response ?? null,
+          merged.worktree_changed ?? null,
+          // reconcile_status is deprecated/dead — always null in production; do not start writing it.
+          merged["reconcile_status" as string as keyof typeof merged] ?? null,
+          merged.environment_failure ?? null,
+          merged.trust_score ?? null,
+          merged.agent_kind ?? DEFAULT_AGENT_KIND,
+          merged.metadata_json,
+        );
+      })
+      .immediate();
     return row;
   }
 }

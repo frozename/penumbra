@@ -1,13 +1,13 @@
 import { expect, test } from "bun:test";
-import { readdirSync, readFileSync, Dirent } from "node:fs";
-import { join, relative, resolve, dirname } from "node:path";
+import { Dirent, readdirSync, readFileSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 
-const REPO_ROOT = resolve(import.meta.dir, "..");
+const REPO_ROOT = resolve(import.meta.dir, "../../..");
 const ROOT_CONFIG = join(REPO_ROOT, "tsconfig.json");
 
 // HOLE 1 fix: only real build/test projects count as coverage.
 // tsconfig.eslint.json is NOT in the tsc --build graph and must not satisfy the census.
-const BUILD_CONFIG_RE = /^tsconfig\.(json|test\.json|scripts\.json)$/;
+const BUILD_CONFIG_RE = /^tsconfig\.(?:json|test\.json|scripts\.json)$/;
 
 function findConfigFiles(): string[] {
   const configs: string[] = [];
@@ -64,8 +64,8 @@ function buildReachableSet(rootConfig: string): Set<string> {
   const reachable = new Set<string>();
   const queue: string[] = [rootConfig];
   while (queue.length > 0) {
-    const cfg = queue.shift()!;
-    if (reachable.has(cfg)) continue;
+    const cfg = queue.shift();
+    if (cfg === undefined || reachable.has(cfg)) continue;
     reachable.add(cfg);
     for (const ref of readReferences(cfg)) {
       if (!reachable.has(ref)) queue.push(ref);
@@ -86,15 +86,15 @@ function getResolvedFiles(configPath: string): string[] {
   if (result.exitCode !== 0) {
     const stderr = result.stderr.toString().trim();
     throw new Error(
-      `tsc --showConfig failed (exit ${result.exitCode}) for ${configPath}` +
+      `tsc --showConfig failed (exit ${String(result.exitCode)}) for ${configPath}` +
         (stderr ? `:\n${stderr}` : ""),
     );
   }
   const output = result.stdout.toString();
   if (!output.trim()) return [];
   try {
-    const parsed = JSON.parse(output);
-    return (parsed.files ?? []) as string[];
+    const parsed = JSON.parse(output) as { files?: string[] };
+    return parsed.files ?? [];
   } catch {
     throw new Error(`tsc --showConfig produced unparseable output for ${configPath}`);
   }
@@ -102,33 +102,47 @@ function getResolvedFiles(configPath: string): string[] {
 
 // HOLE 3 fix: cover .tsx files and root-level .ts/.tsx files.
 // dot:true ensures dot-directories (e.g. .storybook) are not silently skipped.
+const SCAN_PATTERNS = [
+  "packages/**/*.ts",
+  "packages/**/*.tsx",
+  "plugin/**/*.ts",
+  "plugin/**/*.tsx",
+  "scripts/**/*.ts",
+  "scripts/**/*.tsx",
+  "test/**/*.ts",
+  "test/**/*.tsx",
+  "*.ts",
+  "*.tsx",
+];
+
+const IGNORED_PATH_SEGMENTS = [
+  "/node_modules/",
+  "/dist/",
+  "/.penumbra/",
+  "/coverage/",
+  "/storybook-static/",
+];
+
+function isCollectableTsFile(path: string): boolean {
+  for (const segment of IGNORED_PATH_SEGMENTS) {
+    if (path.includes(segment)) {
+      return false;
+    }
+  }
+  return !path.endsWith(".d.ts");
+}
+
 function collectAllTsFiles(): Set<string> {
-  const patterns = [
-    "packages/**/*.ts",
-    "packages/**/*.tsx",
-    "plugin/**/*.ts",
-    "plugin/**/*.tsx",
-    "scripts/**/*.ts",
-    "scripts/**/*.tsx",
-    "test/**/*.ts",
-    "test/**/*.tsx",
-    "*.ts",
-    "*.tsx",
-  ];
   const files = new Set<string>();
-  for (const pattern of patterns) {
+  for (const pattern of SCAN_PATTERNS) {
     for (const path of new Bun.Glob(pattern).scanSync({
       cwd: REPO_ROOT,
       absolute: true,
       dot: true,
     })) {
-      if (path.includes("/node_modules/")) continue;
-      if (path.includes("/dist/")) continue;
-      if (path.includes("/.penumbra/")) continue;
-      if (path.includes("/coverage/")) continue;
-      if (path.includes("/storybook-static/")) continue;
-      if (path.endsWith(".d.ts")) continue;
-      files.add(path);
+      if (isCollectableTsFile(path)) {
+        files.add(path);
+      }
     }
   }
   return files;
@@ -161,11 +175,59 @@ const ALLOWLIST = new Set<string>([
   // raise the ratchet floor — deferred to a dedicated PR.
   "packages/console/scripts/capture-parity-references.ts",
   "packages/core/scripts/bench-embed-recipe.test.ts",
-  "packages/daemon/test-utils.ts",
   "packages/mcp/scripts/invocations-summarize.ts",
 ]);
 
-const ALLOWLIST_EXPECTED_SIZE = 9;
+const ALLOWLIST_EXPECTED_SIZE = 8;
+
+// Coverage configs: only configs that are actually in the build graph
+// (or test configs extending a reachable build config, or the standalone
+// tsconfig.scripts.json that covers scripts/ and test/).
+function buildCoverageConfigs(reachable: Set<string>): string[] {
+  const allConfigs = findConfigFiles();
+  const coverageConfigs: string[] = [];
+  for (const cfg of allConfigs) {
+    if (cfg.endsWith("/tsconfig.test.json")) {
+      const sibling = cfg.replace("/tsconfig.test.json", "/tsconfig.json");
+      if (reachable.has(sibling)) {
+        coverageConfigs.push(cfg);
+      }
+    } else if (cfg.endsWith("/tsconfig.json") && cfg !== ROOT_CONFIG) {
+      if (reachable.has(cfg)) {
+        coverageConfigs.push(cfg);
+      }
+    }
+  }
+  const scriptsConfig = allConfigs.find((c) => c === join(REPO_ROOT, "tsconfig.scripts.json"));
+  if (scriptsConfig) {
+    coverageConfigs.push(scriptsConfig);
+  }
+  return coverageConfigs;
+}
+
+function formatUncovered(unexpected: string[], missingAllowlisted: string[]): string {
+  const lines: string[] = [];
+  if (unexpected.length > 0) {
+    lines.push(
+      `UNCOVERED .ts/.tsx files outside the tsconfig graph (${String(unexpected.length)}):`,
+    );
+    for (const f of unexpected) {
+      lines.push(`  ${f}`);
+    }
+  }
+  if (missingAllowlisted.length > 0) {
+    lines.push(`\nSTALE allowlist entries (declared but now covered or gone):`);
+    for (const f of missingAllowlisted) {
+      lines.push(`  ${f}`);
+    }
+  }
+  lines.push(
+    `\nTo fix: either add the uncovered files to a tsconfig include,` +
+      ` or add them to the ALLOWLIST in this test with a justification` +
+      ` (and bump ALLOWLIST_EXPECTED_SIZE).`,
+  );
+  return lines.join("\n");
+}
 
 test("typecheck census: every package tsconfig.json is reachable from the root build graph", () => {
   const reachable = buildReachableSet(ROOT_CONFIG);
@@ -190,29 +252,8 @@ test("typecheck census: every .ts/.tsx file is in at least one build-graph tscon
 
   const reachable = buildReachableSet(ROOT_CONFIG);
 
-  // Coverage configs: only configs that are actually in the build graph
-  // (or test configs extending a reachable build config, or the standalone
-  // tsconfig.scripts.json that covers scripts/ and test/).
-  const allConfigs = findConfigFiles();
-  const scriptsConfig = allConfigs.find((c) => c === join(REPO_ROOT, "tsconfig.scripts.json"));
-
-  const coverageConfigs: string[] = [];
-  for (const cfg of allConfigs) {
-    if (cfg.endsWith("/tsconfig.test.json")) {
-      const sibling = cfg.replace("/tsconfig.test.json", "/tsconfig.json");
-      if (reachable.has(sibling)) {
-        coverageConfigs.push(cfg);
-      }
-    } else if (cfg.endsWith("/tsconfig.json") && cfg !== ROOT_CONFIG) {
-      if (reachable.has(cfg)) {
-        coverageConfigs.push(cfg);
-      }
-    }
-  }
-  if (scriptsConfig) coverageConfigs.push(scriptsConfig);
-
   const coveredFiles = new Set<string>();
-  for (const configPath of coverageConfigs) {
+  for (const configPath of buildCoverageConfigs(reachable)) {
     const files = getResolvedFiles(configPath);
     for (const file of files) {
       const abs = resolveConfigFile(configPath, file);
@@ -236,25 +277,7 @@ test("typecheck census: every .ts/.tsx file is in at least one build-graph tscon
   const missingAllowlisted = [...ALLOWLIST].filter((f) => !uncovered.includes(f));
 
   if (unexpected.length > 0 || missingAllowlisted.length > 0) {
-    const lines: string[] = [];
-    if (unexpected.length > 0) {
-      lines.push(`UNCOVERED .ts/.tsx files outside the tsconfig graph (${unexpected.length}):`);
-      for (const f of unexpected) {
-        lines.push(`  ${f}`);
-      }
-    }
-    if (missingAllowlisted.length > 0) {
-      lines.push(`\nSTALE allowlist entries (declared but now covered or gone):`);
-      for (const f of missingAllowlisted) {
-        lines.push(`  ${f}`);
-      }
-    }
-    lines.push(
-      `\nTo fix: either add the uncovered files to a tsconfig include,` +
-        ` or add them to the ALLOWLIST in this test with a justification` +
-        ` (and bump ALLOWLIST_EXPECTED_SIZE).`,
-    );
-    expect(lines.join("\n")).toBe("no uncovered files");
+    expect(formatUncovered(unexpected, missingAllowlisted)).toBe("no uncovered files");
   }
 
   expect(unexpected).toEqual([]);
