@@ -868,7 +868,10 @@ test("POST /maestro/sessions/adhoc resolves project_id from mainRepoDir when reg
     expect(body.status).toBe("dispatched");
 
     const task = daemon.services.db
-      .query<{ project_id: string | null }>("SELECT project_id FROM tasks WHERE id = ? LIMIT 1")
+      .query<
+        { project_id: string | null },
+        string
+      >("SELECT project_id FROM tasks WHERE id = ? LIMIT 1")
       .get(body.session.task_id);
     expect(task?.project_id).toBe(projectId);
   } finally {
@@ -923,7 +926,9 @@ test("POST /maestro/sessions/adhoc rejects no_match scope when PENUMBRA_REQUIRE_
 test("POST /maestro/sessions/adhoc falls back when scope cannot be resolved but explicit project_id is omitted", async () => {
   const daemon = startTestDaemon();
   const previous = process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+  const previousDaemonGate = process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
   delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
+  delete process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
   try {
     const mainRepoDir = daemon.mainRepoDir;
     // The route only invokes projectRegistry.list() in this branch; widen a
@@ -954,7 +959,10 @@ test("POST /maestro/sessions/adhoc falls back when scope cannot be resolved but 
     expect(body.status).toBe("dispatched");
 
     const task = daemon.services.db
-      .query<{ project_id: string | null }>("SELECT project_id FROM tasks WHERE id = ? LIMIT 1")
+      .query<
+        { project_id: string | null },
+        string
+      >("SELECT project_id FROM tasks WHERE id = ? LIMIT 1")
       .get(body.session.task_id);
     expect(task?.project_id).toBeNull();
   } finally {
@@ -962,6 +970,11 @@ test("POST /maestro/sessions/adhoc falls back when scope cannot be resolved but 
       delete process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID;
     } else {
       process.env.PENUMBRA_REQUIRE_EXPLICIT_PROJECT_ID = previous;
+    }
+    if (previousDaemonGate === undefined) {
+      delete process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID;
+    } else {
+      process.env.PENUMBRA_DAEMON_REQUIRE_EXPLICIT_PROJECT_ID = previousDaemonGate;
     }
     daemon.stop();
   }

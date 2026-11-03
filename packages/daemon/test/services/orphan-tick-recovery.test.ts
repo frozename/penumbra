@@ -1,6 +1,5 @@
 import { buildServices, loadSqliteVec, migrate, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
-import { registerWorkerForTest } from "@penumbra/daemon/test-utils";
 import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 
@@ -26,6 +25,7 @@ function seedTickDispatch(services: Services, id: string, claimedAt: string): vo
     to: "tick-agent",
     message: "scheduled tick",
     conversation_id: id,
+    triggered_by_event_id: id,
   });
   services.handoffWriter.approve(id, { resolved_by: "test", resolved_at: claimedAt });
   expect(services.handoffWriter.claimDispatch(id, "w1")).toBe(true);
@@ -78,17 +78,18 @@ test.each(["tick-first", "dispatch-first"])(
         token: "test-token",
         orphanHandoffRecovery: recovery,
       });
-      const { worker_token } = await registerWorkerForTest({
-        baseUrl: "http://x",
-        sharedBearer: "test-token",
-        worker_id: "w1",
-        fetcher: ((input: string | URL | Request, init?: RequestInit) =>
-          handler(
-            input instanceof Request
-              ? new Request(input, init)
-              : new Request(input.toString(), init),
-          )) as typeof fetch,
-      });
+      const registerRes = await handler(
+        new Request("http://x/worker/register", {
+          method: "POST",
+          headers: {
+            authorization: "Bearer test-token",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ worker_id: "w1" }),
+        }),
+      );
+      expect(registerRes.ok).toBe(true);
+      const { worker_token } = (await registerRes.json()) as { worker_token: string };
       const tickReconcile = async (): Promise<void> => {
         const res = longLivedReconcileOrphansRoute(new Request("http://x"), services);
         expect(res.status).toBe(200);
