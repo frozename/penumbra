@@ -195,6 +195,7 @@ describe("agent performance gate outcome wiring", () => {
 
     const out = getRecommendationsViaRoute({
       db,
+      detail: "summary",
       taskType: "implement_small",
       now: new Date("2026-05-12T13:00:00Z"),
     });
@@ -230,6 +231,7 @@ describe("agent performance gate outcome wiring", () => {
 
     const out = getRecommendationsViaRoute({
       db,
+      detail: "summary",
       taskType: "implement_small",
       now: new Date("2026-05-12T13:00:00Z"),
     });

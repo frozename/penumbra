@@ -126,7 +126,7 @@ test("strips privacy-tagged text from nested payload_json (objects + arrays)", (
     messages: { role: string; content: string }[];
     meta: { note: string; tags: string[] };
   };
-  expect(payload.messages[0].content).toBe("hello  world");
+  expect(payload.messages[0]?.content).toBe("hello  world");
   expect(payload.meta.note).toBe("outer  tail");
   expect(payload.meta.tags).toEqual(["a", "", "b"]);
 });

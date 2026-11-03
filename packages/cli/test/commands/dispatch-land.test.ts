@@ -9,6 +9,14 @@ import { expectAsyncThrow, parseJson, urlToString } from "./_helpers.js";
 
 let storageRoot = "";
 
+// Bun's `typeof fetch` carries a static `preconnect` that bare mock functions
+// lack; Object.assign closes the structural gap without laundering the type.
+function asFetchMock(
+  impl: (url: string | URL | Request, init?: RequestInit) => Promise<Response>,
+): typeof fetch {
+  return Object.assign(impl, { preconnect: (): void => undefined });
+}
+
 function bodyString(init: RequestInit | undefined): string {
   return typeof init?.body === "string" ? init.body : "";
 }
@@ -33,7 +41,7 @@ describe("runDispatchLand", () => {
       storageRoot,
       mode: "squash",
       deleteBranch: true,
-      fetch: (url, init) => {
+      fetch: asFetchMock((url, init) => {
         const requestUrl = urlToString(url);
         calls.push({ url: requestUrl, init });
         if (requestUrl === "http://127.0.0.1:4242/handoffs/h-editor") {
@@ -58,7 +66,7 @@ describe("runDispatchLand", () => {
             { status: 200, headers: { "content-type": "application/json" } },
           ),
         );
-      },
+      }),
       editCommitMessage: (template) => {
         expect(template).toContain("Curated commit message for landing dispatch h-editor");
         expect(template).toContain("Recent commits on agent branch");
@@ -94,7 +102,7 @@ describe("runDispatchLand", () => {
       storageRoot,
       force: true,
       message: "chore: force",
-      fetch: (url, init) => {
+      fetch: asFetchMock((url, init) => {
         calls.push({ url: urlToString(url), init });
         return Promise.resolve(
           new Response(
@@ -108,7 +116,7 @@ describe("runDispatchLand", () => {
             { status: 200, headers: { "content-type": "application/json" } },
           ),
         );
-      },
+      }),
       confirm: () => {
         confirmCalls += 1;
         return Promise.resolve(true);
@@ -133,7 +141,7 @@ describe("runDispatchLand", () => {
       handoffId: "h-retry",
       storageRoot,
       message: "feat: retry",
-      fetch: (url, init) => {
+      fetch: asFetchMock((url, init) => {
         const requestUrl = urlToString(url);
         calls.push({ url: requestUrl, init });
         if (requestUrl === "http://127.0.0.1:4242/handoffs/h-retry") {
@@ -169,7 +177,7 @@ describe("runDispatchLand", () => {
             { status: 200, headers: { "content-type": "application/json" } },
           ),
         );
-      },
+      }),
       confirm: () => {
         confirmCalls += 1;
         return Promise.resolve(true);
@@ -197,7 +205,7 @@ describe("runDispatchLand", () => {
         handoffId: "h-conflict",
         storageRoot,
         message: "feat: conflict",
-        fetch: () =>
+        fetch: asFetchMock(() =>
           Promise.resolve(
             new Response(
               JSON.stringify({
@@ -210,6 +218,7 @@ describe("runDispatchLand", () => {
               { status: 409, headers: { "content-type": "application/json" } },
             ),
           ),
+        ),
         print: (line) => {
           printed.push(line);
         },
@@ -230,7 +239,7 @@ describe("runDispatchLand", () => {
         handoffId: "h-retry-conflict",
         storageRoot,
         message: "feat: retry conflict",
-        fetch: (_url, init) => {
+        fetch: asFetchMock((_url, init) => {
           const parsed = parseJson(bodyString(init)) as { force?: boolean };
           if (parsed.force === true) {
             return Promise.resolve(
@@ -257,7 +266,7 @@ describe("runDispatchLand", () => {
               { status: 409, headers: { "content-type": "application/json" } },
             ),
           );
-        },
+        }),
         confirm: () => {
           confirmCalls += 1;
           return Promise.resolve(true);
@@ -285,7 +294,7 @@ describe("runDispatchLand", () => {
         handoffId: "h-editor-leak",
         storageRoot,
         editor: "true",
-        fetch: () => Promise.resolve(new Response("{}", { status: 200 })),
+        fetch: asFetchMock(() => Promise.resolve(new Response("{}", { status: 200 }))),
         print: () => {
           /* discard */
         },
@@ -306,7 +315,7 @@ describe("runDispatchLand", () => {
       handoffId: "h-async",
       storageRoot,
       message: "feat: async path",
-      fetch: (url, init) => {
+      fetch: asFetchMock((url, init) => {
         const asString = urlToString(url);
         calls.push({ url: asString, init });
         if (asString.endsWith("/dispatch/land")) {
@@ -357,7 +366,7 @@ describe("runDispatchLand", () => {
           );
         }
         return Promise.resolve(new Response("{}", { status: 404 }));
-      },
+      }),
       print: (line) => {
         printed.push(line);
       },
@@ -383,7 +392,7 @@ describe("runDispatchListPending", () => {
     const printed: string[] = [];
     await runDispatchListPending({
       storageRoot,
-      fetch: () =>
+      fetch: asFetchMock(() =>
         Promise.resolve(
           new Response(
             JSON.stringify({
@@ -404,6 +413,7 @@ describe("runDispatchListPending", () => {
             { status: 200, headers: { "content-type": "application/json" } },
           ),
         ),
+      ),
       print: (line) => {
         printed.push(line);
       },

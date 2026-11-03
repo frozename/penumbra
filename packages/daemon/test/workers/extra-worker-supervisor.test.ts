@@ -213,19 +213,7 @@ function createSupervisor(
   options?: {
     storageRoot?: string;
     spawnImpl?: (args: string[], options: SpawnCall["options"]) => FakeSubprocess;
-    orphanHandoffRecovery?: {
-      recoverForWorker(
-        workerId: string,
-        opts?: { workerKnownDead?: boolean },
-      ): {
-        requeued: number;
-        exhausted: number;
-        requeuedRowIds: string[];
-        exhaustedRowIds: string[];
-        _requeuedRows: unknown[];
-        _exhaustedRows: unknown[];
-      };
-    };
+    orphanHandoffRecovery?: Pick<OrphanHandoffRecoveryService, "recoverForWorker">;
   },
 ): SupervisorHarness {
   const spawnCalls: SpawnCall[] = [];
@@ -1006,14 +994,7 @@ describe("extra worker supervisor", () => {
         (
           workerId: string,
           opts?: { workerKnownDead?: boolean },
-        ): {
-          requeued: number;
-          exhausted: number;
-          requeuedRowIds: string[];
-          exhaustedRowIds: string[];
-          _requeuedRows: unknown[];
-          _exhaustedRows: unknown[];
-        } => {
+        ): ReturnType<OrphanHandoffRecoveryService["recoverForWorker"]> => {
           expect(workerId).toBe("worker-a");
           expect(opts).toEqual({ workerKnownDead: true });
           return {
@@ -1118,7 +1099,6 @@ describe("extra worker supervisor", () => {
       source: "worker",
       kind: "dispatch.start",
       ts: services.clock().toISOString(),
-      meta: null,
     });
 
     await supervisor.start();
