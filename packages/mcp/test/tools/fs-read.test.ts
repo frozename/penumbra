@@ -39,8 +39,8 @@ describe("fs.read handler", () => {
   });
 
   it("forwards path + handoff_id to daemon and returns content", async () => {
-    let receivedId: string | null = null;
-    let receivedPath: string | null = null;
+    let receivedId: string | undefined;
+    let receivedPath: string | undefined;
     const daemon = fakeDaemon((id, args) => {
       receivedId = id;
       receivedPath = args.path;
@@ -61,7 +61,7 @@ describe("fs.read handler", () => {
 
   it("defaults handoff_id from PENUMBRA_HANDOFF_ID env when arg absent", async () => {
     process.env.PENUMBRA_HANDOFF_ID = "H_ENV";
-    let receivedId: string | null = null;
+    let receivedId: string | undefined;
     const daemon = fakeDaemon((id) => {
       receivedId = id;
       return Promise.resolve({ content: "x", path: "f.txt", bytes: 1, truncated: false });

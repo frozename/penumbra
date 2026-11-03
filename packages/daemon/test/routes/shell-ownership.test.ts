@@ -26,7 +26,6 @@ function makeShellConfig(): RuntimeShellConfig {
     outputByteLimit: 16384,
     redactOutput: true,
     unsetEnv: [],
-    dangerousCommands: [],
     dangerousCommandsForAgent: () => [],
     redactOutputForAgent: () => true,
   };

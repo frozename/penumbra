@@ -20,18 +20,21 @@ describe("runAgentRank", () => {
       task_type: "implement_substantial",
       json: true,
       include_cost: true,
-      fetch: (url) => {
-        requestedUrl = urlToString(url);
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              task_type: "implement_substantial",
-              window: { from: "a", to: "b" },
-              candidates: [],
-            }),
-          ),
-        );
-      },
+      fetch: Object.assign(
+        (url: string | URL | Request) => {
+          requestedUrl = urlToString(url);
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                task_type: "implement_substantial",
+                window: { from: "a", to: "b" },
+                candidates: [],
+              }),
+            ),
+          );
+        },
+        { preconnect: fetch.preconnect.bind(fetch) },
+      ),
       print: (s) => lines.push(s),
     });
     expect(requestedUrl).toContain("include_cost=true");
@@ -47,31 +50,34 @@ describe("runAgentRank", () => {
     await runAgentRank({
       task_type: "implement_substantial",
       json: false,
-      fetch: () =>
-        Promise.resolve(
-          new Response(
-            JSON.stringify({
-              task_type: "implement_substantial",
-              window: { from: null, to: "2026-04-30T00:00:00Z" },
-              candidates: [
-                {
-                  agent_name: "claude",
-                  score: 0.9,
-                  samples: 2,
-                  successes: 2,
-                  failures: 0,
-                  neutral: 0,
-                  success_rate: 1,
-                  avg_rounds: 1,
-                  avg_latency_ms: 60000,
-                  cost_per_success_usd: 0.25,
-                  avg_reviewer_findings: 0,
-                  last_outcome_at: "2026-04-29T12:00:00Z",
-                },
-              ],
-            }),
+      fetch: Object.assign(
+        () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                task_type: "implement_substantial",
+                window: { from: null, to: "2026-04-30T00:00:00Z" },
+                candidates: [
+                  {
+                    agent_name: "claude",
+                    score: 0.9,
+                    samples: 2,
+                    successes: 2,
+                    failures: 0,
+                    neutral: 0,
+                    success_rate: 1,
+                    avg_rounds: 1,
+                    avg_latency_ms: 60000,
+                    cost_per_success_usd: 0.25,
+                    avg_reviewer_findings: 0,
+                    last_outcome_at: "2026-04-29T12:00:00Z",
+                  },
+                ],
+              }),
+            ),
           ),
-        ),
+        { preconnect: fetch.preconnect.bind(fetch) },
+      ),
       print: (s) => lines.push(s),
     });
     expect(lines.join("\n")).toContain("Agent rank -- task_type=implement_substantial");
@@ -118,11 +124,14 @@ describe("runAgentLedgerAdd", () => {
       cost_usd: 0.12,
       notes: "Clean",
       json: true,
-      fetch: (url, init) => {
-        requestedUrl = urlToString(url);
-        requestedInit = init;
-        return Promise.resolve(new Response(JSON.stringify({ performance })));
-      },
+      fetch: Object.assign(
+        (url: string | URL | Request, init: RequestInit | BunFetchRequestInit | undefined) => {
+          requestedUrl = urlToString(url);
+          requestedInit = init;
+          return Promise.resolve(new Response(JSON.stringify({ performance })));
+        },
+        { preconnect: fetch.preconnect.bind(fetch) },
+      ),
       print: (s) => lines.push(s),
     });
 
@@ -151,10 +160,13 @@ describe("runAgentLedgerAdd", () => {
         task_type: "implement_small",
         outcome: "merged",
         json: false,
-        fetch: () =>
-          Promise.resolve(
-            new Response(JSON.stringify({ error: { message: "bad request" } }), { status: 400 }),
-          ),
+        fetch: Object.assign(
+          () =>
+            Promise.resolve(
+              new Response(JSON.stringify({ error: { message: "bad request" } }), { status: 400 }),
+            ),
+          { preconnect: fetch.preconnect.bind(fetch) },
+        ),
       }),
       "penumbra agent ledger add: daemon /agents/performance/operator returned HTTP 400",
     );
@@ -172,11 +184,14 @@ describe("runAgentLedgerImport", () => {
     let requestedInit: RequestInit | undefined;
     await runAgentLedgerImport({
       from: inputPath,
-      fetch: (url, init) => {
-        requestedUrl = urlToString(url);
-        requestedInit = init;
-        return Promise.resolve(new Response(JSON.stringify({ imported: 3, skipped: 1 })));
-      },
+      fetch: Object.assign(
+        (url: string | URL | Request, init: RequestInit | BunFetchRequestInit | undefined) => {
+          requestedUrl = urlToString(url);
+          requestedInit = init;
+          return Promise.resolve(new Response(JSON.stringify({ imported: 3, skipped: 1 })));
+        },
+        { preconnect: fetch.preconnect.bind(fetch) },
+      ),
       print: (s) => lines.push(s),
     });
 
@@ -210,10 +225,13 @@ describe("runAgentLedgerRender", () => {
     let requestedUrl = "";
     await runAgentLedgerRender({
       out: outputPath,
-      fetch: (url) => {
-        requestedUrl = urlToString(url);
-        return Promise.resolve(new Response("# Agent performance ledger\n"));
-      },
+      fetch: Object.assign(
+        (url: string | URL | Request) => {
+          requestedUrl = urlToString(url);
+          return Promise.resolve(new Response("# Agent performance ledger\n"));
+        },
+        { preconnect: fetch.preconnect.bind(fetch) },
+      ),
       print: (s) => lines.push(s),
       stdoutWrite,
       stderrWrite,

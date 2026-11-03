@@ -10,6 +10,7 @@ import {
 import { fakeDaemon } from "../helpers.js";
 
 type ReloadConfigFn = DaemonClient["reloadConfig"];
+type ReloadConfigResult = Awaited<ReturnType<ReloadConfigFn>>;
 
 test("DaemonReloadConfigInputShape is empty", () => {
   expect(DaemonReloadConfigInputShape).toEqual({});
@@ -23,19 +24,20 @@ test("daemon reload tool description documents daemon-only reload scope", () => 
 });
 
 test("daemonReloadConfigHandler calls daemon.reloadConfig and formats output", async () => {
-  const reloadConfig: ReloadConfigFn = mock(() =>
-    Promise.resolve({
-      ok: true,
-      agent_count: 5,
-      worker_extras: {
-        started: [],
-        restarted: [],
-        stopped: [],
-        skipped: [],
-        errors: [],
-      },
-      reloaded_at: "2026-04-26T00:00:00.000Z",
-    }),
+  const reloadConfig: ReloadConfigFn = mock(
+    (): Promise<ReloadConfigResult> =>
+      Promise.resolve({
+        ok: true,
+        agent_count: 5,
+        worker_extras: {
+          started: [],
+          restarted: [],
+          stopped: [],
+          skipped: [],
+          errors: [],
+        },
+        reloaded_at: "2026-04-26T00:00:00.000Z",
+      }),
   );
 
   const handler = daemonReloadConfigHandler(fakeDaemon({ reloadConfig }));

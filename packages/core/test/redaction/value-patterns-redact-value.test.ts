@@ -100,7 +100,7 @@ test("redactValue: scans object keys and records key hits", () => {
   const r = new ValuePatternRedactor([
     { id: "soft_ssh", pattern: /\.ssh\/id_ed25519/g, replacement: "[REDACTED:ssh]" },
   ]);
-  const input = { ".ssh/id_ed25519": "<content>" };
+  const input: Record<string, unknown> = { ".ssh/id_ed25519": "<content>" };
 
   const walked = r.redactValue(input);
   expect(walked.hits.find((h) => h.rule_id === "soft_ssh")?.count).toBe(1);
@@ -112,7 +112,7 @@ test("redactValue: rewrites key and preserves clean value", () => {
   const r = new ValuePatternRedactor([
     { id: "soft", pattern: /banana/g, replacement: "[REDACTED:soft]" },
   ]);
-  const input = { "banana-key": "safe-value" };
+  const input: Record<string, unknown> = { "banana-key": "safe-value" };
 
   const walked = r.redactValue(input);
   expect(walked.redacted).toEqual({ "[REDACTED:soft]-key": "safe-value" });
@@ -145,7 +145,7 @@ test("redactValue: mixed clean and rewritten keys returns a new object", () => {
   const r = new ValuePatternRedactor([
     { id: "soft", pattern: /banana/g, replacement: "[REDACTED:soft]" },
   ]);
-  const input = { clean: "v1", "banana-key": "v2" };
+  const input: Record<string, unknown> = { clean: "v1", "banana-key": "v2" };
 
   const walked = r.redactValue(input);
   expect(walked.redacted).toEqual({ clean: "v1", "[REDACTED:soft]-key": "v2" });
@@ -156,7 +156,7 @@ test("redactValue: nested object key hits are redacted recursively", () => {
   const r = new ValuePatternRedactor([
     { id: "soft_ssh", pattern: /\.ssh\/id_ed25519/g, replacement: "[REDACTED:ssh]" },
   ]);
-  const input = { level1: { level2: { ".ssh/id_ed25519": "token" } } };
+  const input: Record<string, unknown> = { level1: { level2: { ".ssh/id_ed25519": "token" } } };
 
   const walked = r.redactValue(input);
   expect(walked.redacted).toEqual({
@@ -184,7 +184,7 @@ test("redactValue: key collisions keep all entries and record walker_key_collisi
       replacement: "[REDACTED:ssh-key-path]",
     },
   ]);
-  const input = { ".ssh/id_rsa": "a", ".ssh/id_ed25519": "b" };
+  const input: Record<string, unknown> = { ".ssh/id_rsa": "a", ".ssh/id_ed25519": "b" };
 
   const walked = r.redactValue(input);
   expect(walked.redacted).toEqual({

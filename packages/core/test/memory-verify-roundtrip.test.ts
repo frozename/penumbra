@@ -100,6 +100,10 @@ test("verifyMemory updates freshness and search surfaces it", () => {
     verifierActor: "machine-1",
     uuid: (): string => "evt-1",
   });
+  expect(verified).not.toBeNull();
+  if (verified === null) {
+    throw new Error("verifyMemory returned null for an existing memory");
+  }
   expect(verified.memory_id).toBe("memory-fresh");
   expect(verified.last_verified_at).toBeTruthy();
 
