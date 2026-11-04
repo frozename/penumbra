@@ -213,6 +213,36 @@ describe("memory-efficacy-jobs — heartbeatJob", () => {
     expect(statusAfter!.lease_expires_at).not.toBe(origLease);
     db.close();
   });
+
+  it("mutation: drop `AND status = 'running'` from the heartbeatJob SQL — heartbeatJob after completion returns false", () => {
+    const db = freshDb();
+    const job = enqueueMemoryEfficacyJob(db, { reviewsDir: "/tmp/reviews" });
+
+    claimNextJob(db, "2026-05-01T13:00:00.000Z", {
+      workerId: "worker-a",
+      leaseTtlMs: LEASE_TTL_MS,
+    });
+
+    const done = completeJob(
+      db,
+      job.job_id,
+      { scanned: 1, classified: 1, skipped: 0 },
+      "2026-05-01T13:02:00.000Z",
+      { workerId: "worker-a" },
+    );
+    expect(done).toBeTrue();
+
+    const late = heartbeatJob(db, job.job_id, "worker-a", "2026-05-01T13:03:00.000Z", {
+      leaseTtlMs: LEASE_TTL_MS,
+    });
+    expect(late).toBeFalse();
+
+    const status = getJobStatus(db, job.job_id);
+    expect(status!.status).toBe("completed");
+    expect(status!.heartbeat_at).toBeNull();
+    expect(status!.lease_expires_at).toBeNull();
+    db.close();
+  });
 });
 
 describe("memory-efficacy-jobs — sweepStaleJobs", () => {
@@ -308,6 +338,29 @@ describe("memory-efficacy-jobs — completeJob with error", () => {
     expect(status!.lease_expires_at).toBeNull();
     db.close();
   });
+
+  it("mutation: drop `AND claimed_by = ?` from the failed+workerId SQL — completeJob with an error and the wrong workerId returns false and leaves the job running", () => {
+    const db = freshDb();
+    const job = enqueueMemoryEfficacyJob(db, { reviewsDir: "/tmp/reviews" });
+
+    claimNextJob(db, "2026-05-01T13:00:00.000Z", {
+      workerId: "worker-a",
+      leaseTtlMs: LEASE_TTL_MS,
+    });
+
+    const now = "2026-05-01T13:02:00.000Z";
+    const result = completeJob(db, job.job_id, { error: "something broke" }, now, {
+      workerId: "worker-b",
+    });
+    expect(result).toBeFalse();
+
+    const status = getJobStatus(db, job.job_id);
+    expect(status!.status).toBe("running");
+    expect(status!.claimed_by).toBe("worker-a");
+    expect(status!.error_message).toBeNull();
+    expect(status!.ts_finished).toBeNull();
+    db.close();
+  });
 });
 
 describe("memory-efficacy-jobs — completeJob unknown job", () => {
@@ -348,6 +401,7 @@ describe("memory-efficacy-jobs — listRecentJobs", () => {
     // (a) limit: 3 returns 3 newest
     const limited = listRecentJobs(db, { limit: 3 });
     expect(limited).toHaveLength(3);
+    expect(limited.map((r) => r.job_id)).toEqual([jobIds[20]!, jobIds[19]!, jobIds[18]!]);
 
     // (b) claimNextJob picks the oldest (first enqueued = oldest ts_enqueued)
     const claimed = claimNextJob(db, "2026-05-01T13:00:00.000Z", {
@@ -368,13 +422,15 @@ describe("memory-efficacy-jobs — listRecentJobs", () => {
     expect(running).toHaveLength(1);
     expect(running[0]!.job_id).toBe(claimedId);
 
-    // (d) listRecentJobs with status:'queued', limit 2 returns 2 non-C queued jobs
+    // (d) listRecentJobs with status:'queued', limit 2 returns the two newest
+    // queued jobs (claimed C excluded), newest-first by ts_enqueued
     const queued = listRecentJobs(db, { status: "queued", limit: 2 });
     expect(queued).toHaveLength(2);
     for (const r of queued) {
       expect(r.job_id).not.toBe(claimedId);
       expect(r.status).toBe("queued");
     }
+    expect(queued.map((r) => r.job_id)).toEqual([jobIds[20]!, jobIds[19]!]);
     db.close();
   });
 });
