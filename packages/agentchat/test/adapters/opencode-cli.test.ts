@@ -7,6 +7,8 @@ import { join } from "node:path";
 import { OpencodeCliAdapter } from "@src/adapters/opencode-cli.js";
 import { buildAdapter } from "@src/adapters/registry.js";
 
+import { useStubbedKeychain } from "../helpers/keychain-stub.js";
+
 interface OpencodeMcpServerCfg {
   type: "local";
   command: string[];
@@ -24,6 +26,8 @@ interface CaptureScript {
   snapshotPath: string;
   scriptPath: string;
 }
+
+useStubbedKeychain();
 
 const tempDirs: string[] = [];
 
