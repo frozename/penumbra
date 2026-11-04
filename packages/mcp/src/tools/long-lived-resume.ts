@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 
+import { isRetiredLongLivedAgent } from "@penumbra/core/long-lived/retired-agents";
 import { z } from "zod";
 
 export const LongLivedResumeArgsSchema = z
@@ -13,6 +14,7 @@ export function handleLongLivedResume(
   args: unknown,
 ): { id: string; status: "active" } {
   const parsed = LongLivedResumeArgsSchema.parse(args ?? {});
+  if (isRetiredLongLivedAgent(parsed.id)) throw new Error("agent_retired");
   const row = db
     .query<{ status: string }, [string]>("SELECT status FROM long_lived_agents WHERE id = ?")
     .get(parsed.id);

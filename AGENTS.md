@@ -242,9 +242,10 @@ And never conclude a feature fired from a substring match on `meta_json` — `LI
 
 Long-lived agents run on cron via the daemon's reactor. They have their own MCP allowlist + approval gate. Built-in roster:
 
-- `home-mgmt` — Home Assistant monitor. Pulses entity state, flags anomalies, requests config changes via approval gate.
 - `task-refiner-primary` — promotes pending task drafts. Model is configurable per the fleet roster.
 - `task-refiner-escalation` — escalates stale or unresolvable drafts.
+
+`home-mgmt` is permanently retired. The reactor ignores its config, reconciliation retires existing rows, and resume, dispatch, approvals, and action execution reject it. Keep historical state and audit records. Follow [the deployment cleanup](docs/deprecations/home-mgmt.md); do not remove the shared runtime while task refiners still use it.
 
 Working memory is stored in `long_lived_state.working_memory_json`. Per-thread `notes` are server-side tail-truncated at 4096 chars (configurable via `PENUMBRA_LONG_LIVED_THREAD_NOTES_MAX_CHARS`) to prevent unbounded growth from append-only tick logs. Truncation is idempotent and aligned on a newline boundary.
 

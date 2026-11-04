@@ -32,12 +32,6 @@ export function stampPrompt(input: { agent: StampInputAgent; tick: StampInputTic
         .join("\n")
     : "  (none)";
 
-  const hasHaTools = agent.mcp_allowlist.some((t) => t.startsWith("ha:") || t.startsWith("ha."));
-  const hasNonHaTools = agent.mcp_allowlist.some(
-    (t) => !t.startsWith("ha:") && !t.startsWith("ha."),
-  );
-  const needsAntiConfusion = hasHaTools && hasNonHaTools;
-
   let result = `You are ${agent.display_name}, a long-lived agent with persistent state.
 
 Standing brief:
@@ -71,12 +65,6 @@ Tool invocation discipline (binding):
   tick, and end.
 `;
 
-  if (needsAntiConfusion) {
-    result += `
-IMPORTANT — tool invocation: the tools above are independent top-level tools. Call them by their full name exactly as listed (e.g. \`mcp__penumbra__chain_start\`). Non-HA tools such as \`mcp__penumbra__*\` are NOT Home Assistant services — never invoke them via \`mcp__ha__ha_call_service\`.
-`;
-  }
-
   const canDispatchSubChains =
     agent.mcp_allowlist.includes("penumbra:chain_start") ||
     agent.mcp_allowlist.includes("penumbra:chain_start_simple");
@@ -101,7 +89,7 @@ Dispatching sub-chains from this tick:
 
 Action policy (binding):
 - You operate under a 3-tier action gate. Tier 1 actions execute immediately.
-- Tier 2 actions take an HA snapshot first and observe a cooldown - the gate handles this.
+- Tier 2 actions follow the configured snapshot policy and observe a cooldown - the gate handles this.
 - Tier 3 actions are queued for user approval - do not retry them in the same tick;
   do not hallucinate that they succeeded.
 - If a tool call returns "queued for approval", record it in working memory and move on.

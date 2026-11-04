@@ -34,6 +34,7 @@ import {
   type TaskClass,
   writeRoutingDecision,
 } from "@penumbra/core";
+import { isRetiredLongLivedAgent } from "@penumbra/core/long-lived/retired-agents";
 import { z } from "zod";
 
 import { autoRecallForDispatch } from "../dispatch/auto-recall.js";
@@ -1789,8 +1790,33 @@ function persistRoutingDecisionForChainStart(
   });
 }
 
-// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve chain-start orchestration while grandfathering its pre-existing complexity.
+function rejectRetiredAgent(agentId?: string | null): Response | null {
+  if (!agentId || !isRetiredLongLivedAgent(agentId)) return null;
+  return json(
+    {
+      error: {
+        code: "agent_retired",
+        agent: agentId,
+        message: "The home-mgmt operator has been retired. Remove its agent configuration.",
+      },
+    },
+    410,
+  );
+}
+
 export async function chainStartInternal(
+  input: ChainStartRequestWithLongLived,
+  services: Services,
+  opts?: { applyMaestroBudgetGate?: boolean },
+): Promise<Response> {
+  const retirementResponse =
+    rejectRetiredAgent(input.initial_agent) ?? rejectRetiredAgent(input.long_lived_agent_id);
+  if (retirementResponse) return retirementResponse;
+  return await startActiveChain(input, services, opts);
+}
+
+// eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve chain-start orchestration while grandfathering its pre-existing complexity.
+async function startActiveChain(
   input: ChainStartRequestWithLongLived,
   services: Services,
   opts?: { applyMaestroBudgetGate?: boolean },
@@ -1870,12 +1896,10 @@ export async function chainStartInternal(
     routingDecision,
   } = routing;
 
-  const profileSeatResponse = enforcePermissionProfileSeatGate(
-    services,
-    routedAgent,
-    input.permission_profile,
-  );
-  if (profileSeatResponse) return profileSeatResponse;
+  const seatResponse =
+    rejectRetiredAgent(routedAgent) ??
+    enforcePermissionProfileSeatGate(services, routedAgent, input.permission_profile);
+  if (seatResponse) return seatResponse;
 
   // A profiled dispatch also requires at least one live worker that declared
   // enforcement at registration — otherwise the approved handoff is

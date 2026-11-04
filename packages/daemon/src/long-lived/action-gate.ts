@@ -1,6 +1,7 @@
 import type { Logger } from "@penumbra/core";
 import type { Database } from "bun:sqlite";
 
+import { isRetiredLongLivedAgent } from "@penumbra/core/long-lived/retired-agents";
 import { randomUUID } from "node:crypto";
 
 import { extractActionTarget } from "./target-extractors.js";
@@ -644,6 +645,18 @@ function pendingActionAuthorizesReplay(deps: ActionGateDeps, req: ActionGateRequ
 export function createActionGate(deps: ActionGateDeps): ActionGate {
   return {
     async handleCall(req): Promise<ActionGateResult> {
+      if (isRetiredLongLivedAgent(req.agent_id)) {
+        audit(deps, {
+          agentId: req.agent_id,
+          tickId: req.tick_id,
+          pendingActionId: req.pending_action_id,
+          tool: req.tool,
+          target: extractActionTarget(req.tool, req.args),
+          decision: "gate_failed",
+          reason: "agent_retired",
+        });
+        return { kind: "rejected", error: "agent_retired" };
+      }
       const effectiveMeta = loadEffectiveMeta(deps, req);
       const agent = loadAgentConfig(deps, req.agent_id);
       if (!agent) return { kind: "rejected", error: "agent_not_found" };
@@ -699,9 +712,7 @@ export function createActionGate(deps: ActionGateDeps): ActionGate {
       // supplied pending_action_id row exists, matches the agent, is approved,
       // and names the same tool and args. A stale or mismatched id falls
       // through to the normal tier-3 queue path.
-      const replayAuthorized = req.pending_action_id
-        ? pendingActionAuthorizesReplay(deps, req)
-        : false;
+      const replayAuthorized = pendingActionAuthorizesReplay(deps, req);
       if (replayAuthorized) {
         tier = tier === 3 ? 1 : tier;
         if (baselineTier === 2) tier = 2;

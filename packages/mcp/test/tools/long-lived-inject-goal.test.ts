@@ -86,6 +86,30 @@ describe("long_lived_inject_goal", () => {
     ).toThrow(/not_active/);
   });
 
+  it("rejects the retired home-mgmt id before any reconcile has marked its row", () => {
+    const db = new Database(":memory:");
+    seedLongLivedAgent(db, { name: "a", standing_brief: "x" });
+    // A pre-reconcile legacy row is still 'active', so the status gate alone
+    // would let a goal land in home-mgmt working memory.
+    db.query(
+      `INSERT INTO long_lived_agents
+        (id, display_name, working_memory_json, standing_brief, mcp_allowlist_json, created_at, updated_at)
+       VALUES ('home-mgmt', 'Home management', '{}', 'legacy', '[]', 1, 1)`,
+    ).run();
+    const fireTick = mock(noopFireTick);
+
+    expect(() =>
+      handleLongLivedInjectGoal(
+        db,
+        { fireTick, now: () => 5 },
+        { id: "home-mgmt", goal: "toggle the lights" },
+      ),
+    ).toThrow(/agent_retired/);
+
+    expect(fireTick).not.toHaveBeenCalled();
+    expect(readWorkingMemory(db, "home-mgmt")).toEqual({});
+  });
+
   it("acquires the write lock so a concurrent writer cannot slip in between SELECT and UPDATE", () => {
     // Two connections to the same WAL-mode file DB. Without BEGIN IMMEDIATE on
     // the inject's transaction, a separate connection could write its own

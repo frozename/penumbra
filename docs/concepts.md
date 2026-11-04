@@ -159,7 +159,7 @@ A **long-lived agent** is an agent that runs unattended on a schedule, carrying 
 
 ### Cron ticks
 
-Each agent has a `schedule_cron` field. The daemon's scheduler (`packages/daemon/src/long-lived/cron-scheduler.ts`, built on `croner`) fires a **tick** on that schedule. A tick spawns one dispatch on the agent's behalf — read or write the schedule and trigger ticks manually via `long_lived_tick`, `long_lived_ticks`, and `long_lived_list`. Built-in agents (`AGENTS.md` → "Long-lived agents"): `home-mgmt`, `task-refiner-primary`, and `task-refiner-escalation`. Register your own.
+Each agent has a `schedule_cron` field. The daemon's scheduler (`packages/daemon/src/long-lived/cron-scheduler.ts`, built on `croner`) fires a **tick** on that schedule. A tick spawns one dispatch on the agent's behalf — read or write the schedule and trigger ticks manually via `long_lived_tick`, `long_lived_ticks`, and `long_lived_list`. Built-in agents (`AGENTS.md` → "Long-lived agents"): `task-refiner-primary` and `task-refiner-escalation`. Register your own. The former `home-mgmt` operator is [permanently retired](./deprecations/home-mgmt.md).
 
 ### Persistent working memory
 
@@ -167,7 +167,7 @@ Across ticks, an agent carries **working memory** — `working_memory_json` on i
 
 ### MCP allowlist + approval gate
 
-A long-lived agent does **not** get the full MCP surface. Each agent carries an `mcp_allowlist_json` (the tools it may call) and an `approval_required_globs_json` (file patterns that require human approval). The action gate (`packages/daemon/src/long-lived/action-gate.ts`) enforces both on every tool call: a tool not on the allowlist is refused; a write matching an approval glob is held as a **pending action**. You review pending actions with `long_lived_pending_actions`, then `long_lived_approve_action` / `long_lived_reject_action`. This is how an unattended agent (e.g. one that can change Home Assistant config) is kept from acting unilaterally on consequential changes.
+A long-lived agent does **not** get the full MCP surface. Each agent carries an `mcp_allowlist_json` (the tools it may call) and an `approval_required_globs_json` (tool or action-target patterns that require human approval). The action gate (`packages/daemon/src/long-lived/action-gate.ts`) enforces both on every federated tool call: a tool not on the allowlist is refused; an action matching an approval glob is held as a **pending action**. You review pending actions with `long_lived_pending_actions`, then `long_lived_approve_action` / `long_lived_reject_action`. This keeps unattended agents from acting unilaterally on consequential changes.
 
 ### Circuit breaker + resume
 
