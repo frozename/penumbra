@@ -14,7 +14,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import {
   createDefaultDependencyProvider,
@@ -304,16 +304,22 @@ test("a crash after freeze but before the marker write rejects the cache", async
   expect(res).toEqual({ ok: false, reason: "deps_cache_missing" });
 });
 
-// A throwing install must also sweep <lockSha>.install-* staging dirs — both
-// its own abandoned one and leftovers from earlier crashed runs — so they
-// cannot accumulate next to cacheDir.
-test("a throwing install sweeps leftover install staging dirs", async () => {
+// A throwing install must remove ONLY its own staging dir. A sibling
+// ensure() for the same lockSha installs concurrently under the same
+// <lockSha>.install-* prefix, so the old cross-call sweep of
+// .install-*/.stale-* deleted the sibling's live staging dir mid-install.
+// Leftovers from earlier crashed runs survive until a future owner decides
+// what to do with them.
+test("a throwing install removes only its own staging dir, not a sibling's", async () => {
   const cacheRoot = mkCacheRoot();
   const lockfileBytes = Buffer.from("lock\n", "utf8");
   const lockSha256 = sha256Hex(lockfileBytes);
-  const leftover = join(cacheRoot, `${lockSha256}.install-crashed`);
-  mkdirSync(join(leftover, "node_modules"), { recursive: true });
-  writeFileSync(join(leftover, "node_modules", "partial.txt"), "partial\n", "utf8");
+  const installLeftover = join(cacheRoot, `${lockSha256}.install-crashed`);
+  mkdirSync(join(installLeftover, "node_modules"), { recursive: true });
+  writeFileSync(join(installLeftover, "node_modules", "partial.txt"), "partial\n", "utf8");
+  const staleLeftover = join(cacheRoot, `${lockSha256}.stale-crashed`);
+  mkdirSync(staleLeftover, { recursive: true });
+  writeFileSync(join(staleLeftover, "old.txt"), "old\n", "utf8");
 
   const provider = createDefaultDependencyProvider({
     cacheRoot,
@@ -333,7 +339,80 @@ test("a throwing install sweeps leftover install staging dirs", async () => {
   expect((rejection as Error | null)?.message).toBe("injected crash");
 
   expect(existsSync(join(cacheRoot, lockSha256))).toBe(false);
-  expect(readdirSync(cacheRoot)).toEqual([]);
+  expect(existsSync(installLeftover)).toBe(true);
+  expect(existsSync(staleLeftover)).toBe(true);
+  expect(readdirSync(cacheRoot).sort()).toEqual([
+    `${lockSha256}.install-crashed`,
+    `${lockSha256}.stale-crashed`,
+  ]);
+});
+
+// The provider A / provider B interleave the regression needs: A throws
+// after freeze while B is still installing. A must not touch B's staging
+// dir; B's committed cache carries B's install output and the marker, and
+// A's own staging dir is gone. With the old cross-call sweep in ensure()'s
+// finally, B's staging dir (and its sentinel) vanish mid-install and B
+// fails deps_install_failed.
+test("a throwing ensure() does not destroy a concurrent ensure()'s staging dir", async () => {
+  const cacheRoot = mkCacheRoot();
+  const lockfileBytes = Buffer.from("lock\n", "utf8");
+  const lockSha256 = sha256Hex(lockfileBytes);
+  const finalDir = join(cacheRoot, lockSha256);
+
+  const failingRun: RunCommand = () =>
+    new Promise((resolve) => {
+      setTimeout(() => {
+        resolve({ code: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) });
+      }, 5);
+    });
+  const slowRun: RunCommand = (_cmd, _args, opts) => {
+    const cwd = opts?.cwd ?? "";
+    writeFileSync(join(cwd, "b-sentinel"), "sentinel\n", "utf8");
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        if (!existsSync(join(cwd, "b-sentinel"))) {
+          resolve({
+            code: 1,
+            stdout: Buffer.alloc(0),
+            stderr: Buffer.from("staging dir deleted mid-install\n"),
+          });
+          return;
+        }
+        mkdirSync(join(cwd, "node_modules"), { recursive: true });
+        writeFileSync(join(cwd, "install-id"), "B\n", "utf8");
+        resolve({ code: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) });
+      }, 60);
+    });
+  };
+
+  const failing = createDefaultDependencyProvider({
+    cacheRoot,
+    allowInstall: true,
+    runCommand: failingRun,
+    onAfterFreeze: () => {
+      throw new Error("injected crash");
+    },
+  });
+  const slow = createDefaultDependencyProvider({
+    cacheRoot,
+    allowInstall: true,
+    runCommand: slowRun,
+  });
+
+  const input = { lockSha256, lockfileBytes, manifests: [] };
+  const [a, b] = await Promise.allSettled([failing.ensure(input), slow.ensure(input)]);
+
+  expect(a.status).toBe("rejected");
+  if (a.status === "rejected") {
+    expect((a.reason as Error).message).toBe("injected crash");
+  }
+  expect(b.status).toBe("fulfilled");
+  if (b.status === "fulfilled") {
+    expect(b.value).toEqual({ ok: true, cacheDir: finalDir });
+  }
+  expect(readFileSync(join(finalDir, "install-id"), "utf8")).toBe("B\n");
+  expect(readFileSync(join(finalDir, ".penumbra-deps-cache-ok"), "utf8")).toBe(`${lockSha256}\n`);
+  expect(readdirSync(cacheRoot)).toEqual([lockSha256]);
 });
 
 // A crash between freezeTree and the marker write leaves a frozen, unmarked
@@ -359,6 +438,7 @@ test("a frozen but unmarked cache dir is recovered and reinstalled", async () =>
   const res = await provider.ensure({ lockSha256, lockfileBytes, manifests: [] });
 
   expect(res).toEqual({ ok: true, cacheDir: staleDir });
+  expect(statSync(staleDir).mode & 0o777).toBe(0o555);
   expect(readFileSync(join(staleDir, "bun.lock"), "utf8")).toBe("lock\n");
   expect(existsSync(join(staleDir, "node_modules", "partial"))).toBe(false);
   expect(existsSync(join(staleDir, "node_modules", ".bin", "tool"))).toBe(true);
@@ -485,6 +565,87 @@ test("two concurrent ensure() calls for the same lockSha both succeed", async ()
   expect(readFileSync(join(finalDir, "install-id"), "utf8")).toBe(winner.id);
   expect(statSync(finalDir).ino).toBe(winner.ino);
   expect(readFileSync(join(finalDir, ".penumbra-deps-cache-ok"), "utf8")).toBe(`${lockSha256}\n`);
+  expect(readdirSync(cacheRoot)).toEqual([lockSha256]);
+});
+
+// Pins the rename-aside commit sequence: the stale slot is moved to a
+// unique <lockSha>.stale-* name BEFORE anything is deleted, observed from
+// inside the commit at a point where the residue is still on disk. An
+// in-place removeStaleCacheDir(cacheDir) vacates the slot too and still
+// ends with a marked cache in place — but nothing ever appears at
+// staleAside, so the residue assertions fail only on the rename path.
+test("a stale cache slot is vacated by a rename to <lockSha>.stale-* before deletion", async () => {
+  const cacheRoot = mkCacheRoot();
+  const lockfileBytes = Buffer.from("lock\n", "utf8");
+  const lockSha256 = sha256Hex(lockfileBytes);
+  const cacheDir = join(cacheRoot, lockSha256);
+  mkdirSync(join(cacheDir, "node_modules"), { recursive: true });
+  writeFileSync(join(cacheDir, "old.txt"), "old\n", "utf8");
+
+  const observed: { staleAside: string; slotVacated: boolean; residueAtAside: boolean }[] = [];
+  const provider = createDefaultDependencyProvider({
+    cacheRoot,
+    allowInstall: true,
+    runCommand: fakeInstall(),
+    onAfterRenameStaleAside: (staleAside) => {
+      observed.push({
+        staleAside,
+        slotVacated: !existsSync(cacheDir),
+        residueAtAside: existsSync(join(staleAside, "old.txt")),
+      });
+    },
+  });
+
+  const res = await provider.ensure({ lockSha256, lockfileBytes, manifests: [] });
+
+  expect(res).toEqual({ ok: true, cacheDir });
+  expect(observed).toHaveLength(1);
+  const aside = observed[0]!;
+  expect(basename(aside.staleAside)).toMatch(new RegExp(`^${lockSha256}\\.stale-.+$`));
+  expect(dirname(aside.staleAside)).toBe(cacheRoot);
+  expect(aside.slotVacated).toBe(true);
+  expect(aside.residueAtAside).toBe(true);
+  expect(readFileSync(join(cacheDir, ".penumbra-deps-cache-ok"), "utf8")).toBe(`${lockSha256}\n`);
+  expect(existsSync(join(cacheDir, "old.txt"))).toBe(false);
+  expect(readdirSync(cacheRoot)).toEqual([lockSha256]);
+});
+
+// Cross-process TOCTOU: another process can commit a valid (marked) cache
+// into the slot between our marker check and our rename-aside. After the
+// rename the aside carries the marker; deleting it would destroy a sealed
+// cache, so the aside must be renamed back into place and this call's
+// staged install discarded. Without the post-rename marker check the
+// other process's committed cache is deleted and replaced by ours.
+test("a cache committed by another process mid-rename-aside is restored, not deleted", async () => {
+  const cacheRoot = mkCacheRoot();
+  const lockfileBytes = Buffer.from("lock\n", "utf8");
+  const lockSha256 = sha256Hex(lockfileBytes);
+  const cacheDir = join(cacheRoot, lockSha256);
+  mkdirSync(join(cacheDir, "node_modules"), { recursive: true });
+  writeFileSync(join(cacheDir, "old.txt"), "old\n", "utf8");
+
+  let simulated = false;
+  const provider = createDefaultDependencyProvider({
+    cacheRoot,
+    allowInstall: true,
+    runCommand: fakeInstall(),
+    onBeforeRenameStaleAside: () => {
+      simulated = true;
+      rmSync(cacheDir, { recursive: true, force: true });
+      mkdirSync(cacheDir, { recursive: true });
+      writeFileSync(join(cacheDir, "committed-by-other"), "other\n", "utf8");
+      writeFileSync(join(cacheDir, ".penumbra-deps-cache-ok"), `${lockSha256}\n`, "utf8");
+    },
+  });
+
+  const res = await provider.ensure({ lockSha256, lockfileBytes, manifests: [] });
+
+  expect(simulated).toBe(true);
+  expect(res).toEqual({ ok: true, cacheDir });
+  expect(readFileSync(join(cacheDir, "committed-by-other"), "utf8")).toBe("other\n");
+  expect(existsSync(join(cacheDir, "old.txt"))).toBe(false);
+  // This call's staged install was discarded, not committed over the sealed cache.
+  expect(existsSync(join(cacheDir, "node_modules", ".bin", "tool"))).toBe(false);
   expect(readdirSync(cacheRoot)).toEqual([lockSha256]);
 });
 

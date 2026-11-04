@@ -58,6 +58,13 @@ export interface DefaultDependencyProviderOptions {
   // Test seam: called after freezeTree, before the CACHE_MARKER write, so a
   // throwing hook can pin that the marker is committed only on a frozen cache.
   onAfterFreeze?: () => void;
+  // Test seams around the rename-aside of an unmarked cacheDir slot in
+  // commitStagedInstall: the before-hook can simulate a cross-process commit
+  // landing in the slot between the marker check and the rename; the
+  // after-hook observes the commit sequence while the .stale-* residue is
+  // still in place to inspect.
+  onBeforeRenameStaleAside?: (staleAside: string) => void;
+  onAfterRenameStaleAside?: (staleAside: string) => void;
 }
 
 const LOCKFILE_NAME = "bun.lock";
@@ -228,25 +235,6 @@ function removeStaleCacheDir(cacheDir: string): void {
   rmSync(cacheDir, { recursive: true, force: true });
 }
 
-// An install that throws abandons its staging dir, and earlier crashed runs
-// can leave <lockSha>.install-* / <lockSha>.stale-* leftovers behind; sweep
-// them all so they cannot accumulate next to cacheDir.
-function sweepStaleCacheDirs(cacheRoot: string, lockSha256: string): void {
-  try {
-    for (const ent of readdirSync(cacheRoot, { withFileTypes: true })) {
-      if (
-        ent.name.startsWith(`${lockSha256}.install-`) ||
-        ent.name.startsWith(`${lockSha256}.stale-`)
-      ) {
-        removeStaleCacheDir(join(cacheRoot, ent.name));
-      }
-    }
-  } catch {
-    // Best-effort sweep: a vanished cacheRoot or a racing removal must not
-    // mask the original install error.
-  }
-}
-
 async function installIntoCache(
   run: RunCommand,
   cacheDir: string,
@@ -293,11 +281,16 @@ function tryRenameIntoCache(stagedDir: string, cacheDir: string): boolean {
 // while we installed is accepted as-is; a stale (unmarked) slot is renamed
 // aside atomically to a unique .stale-* name and deleted there — never
 // rm'd in place, so the cacheDir path never carries a half-removed tree and
-// a crash mid-delete leaves identifiable .stale-* residue instead.
+// a crash mid-delete leaves identifiable .stale-* residue instead. The
+// hooks are test seams around the rename-aside: they let tests pin the
+// commit sequence and simulate a cross-process commit landing in the slot
+// between the marker check and the rename.
 function commitStagedInstall(
   cacheRoot: string,
   lockSha256: string,
   stagedDir: string,
+  onBeforeRenameStaleAside?: (staleAside: string) => void,
+  onAfterRenameStaleAside?: (staleAside: string) => void,
 ): EnsureResult {
   const cacheDir = join(cacheRoot, lockSha256);
   if (tryRenameIntoCache(stagedDir, cacheDir)) {
@@ -309,6 +302,8 @@ function commitStagedInstall(
     return { ok: true, cacheDir };
   }
   const staleAside = join(cacheRoot, `${lockSha256}.stale-${randomUUID()}`);
+  onBeforeRenameStaleAside?.(staleAside);
+  let renamedAside = false;
   try {
     // BSD/macOS refuse rename(2) on a read-only directory: restore u+w on the
     // stale root alone first — one atomic chmod leaving the same "frozen
@@ -319,11 +314,29 @@ function commitStagedInstall(
       chmodSync(cacheDir, st.mode | 0o700);
     }
     renameSync(cacheDir, staleAside);
+    renamedAside = true;
   } catch {
     // The slot emptied between the marker check and the rename (a concurrent
     // ensure() committed or swept it); nothing to move aside.
   }
-  removeStaleCacheDir(staleAside);
+  if (renamedAside) {
+    onAfterRenameStaleAside?.(staleAside);
+    if (existsSync(join(staleAside, CACHE_MARKER))) {
+      // Another process committed a valid cache into the slot between our
+      // marker check and the rename, and we just moved it aside. Restore it
+      // and discard our staged install instead of deleting a sealed cache.
+      removeStaleCacheDir(stagedDir);
+      try {
+        renameSync(staleAside, cacheDir);
+      } catch {
+        // The slot was refilled after our rename-aside; the newest committed
+        // cache wins and the restored aside is garbage.
+        removeStaleCacheDir(staleAside);
+      }
+      return { ok: true, cacheDir };
+    }
+    removeStaleCacheDir(staleAside);
+  }
   if (tryRenameIntoCache(stagedDir, cacheDir)) {
     chmodSync(cacheDir, 0o555);
     return { ok: true, cacheDir };
@@ -368,13 +381,22 @@ export function createDefaultDependencyProvider(
         threw = false;
       } finally {
         if (threw) {
-          sweepStaleCacheDirs(opts.cacheRoot, input.lockSha256);
+          // Remove only this call's own staging dir: a sibling ensure() for
+          // the same lockSha may be installing live under the same
+          // <lockSha>.install-* prefix right now.
+          removeStaleCacheDir(stagedDir);
         }
       }
       if (!installed.ok) {
         return installed;
       }
-      return commitStagedInstall(opts.cacheRoot, input.lockSha256, stagedDir);
+      return commitStagedInstall(
+        opts.cacheRoot,
+        input.lockSha256,
+        stagedDir,
+        opts.onBeforeRenameStaleAside,
+        opts.onAfterRenameStaleAside,
+      );
     },
   };
 }
