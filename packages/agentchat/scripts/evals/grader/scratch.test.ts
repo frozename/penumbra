@@ -587,16 +587,16 @@ test("inherited GIT_INDEX_FILE is replaced by the scratch-local index", async ()
 }, 30_000);
 
 test("non-GIT_* env still reaches scratch git calls", async () => {
-  process.env.PENUMBRA_SCRUB_CANARY = "carried-through";
+  process.env.GRADER_SCRUB_CANARY = "carried-through";
   try {
     const { envs } = await scratchEnvWithInherited({ GIT_DIR: "/tmp/penumbra-scratch-evil" });
     expect(envs.length).toBeGreaterThanOrEqual(5);
     for (const env of envs) {
       expect(typeof env.PATH).toBe("string");
-      expect(env.PENUMBRA_SCRUB_CANARY).toBe("carried-through");
+      expect(env.GRADER_SCRUB_CANARY).toBe("carried-through");
     }
   } finally {
-    delete process.env.PENUMBRA_SCRUB_CANARY;
+    delete process.env.GRADER_SCRUB_CANARY;
   }
 }, 30_000);
 
