@@ -421,6 +421,25 @@ test("buildLineages still returns both rows when parent_handoff_ids form a two-c
   expect(lineageByRoot(result, "D")?.handoff_ids).toEqual(["D"]);
 });
 
+test("buildLineages breaks a parent cycle before successor linking so descendant checks terminate", async () => {
+  const fn = mod?.["buildLineages"];
+  expect(typeof fn).toBe("function");
+  const build = fn as BuildLineagesFn;
+  const result = await build([
+    row({ handoff_id: "C", ts: T1, parent_handoff_id: "D", branch_name: "agent/c" }),
+    row({ handoff_id: "D", ts: T2, parent_handoff_id: "C", branch_name: "agent/d" }),
+    row({ handoff_id: "E", ts: T3, branch_base: "agent/d" }),
+  ]);
+  expect(result.lineages).toHaveLength(2);
+  const lineageC = lineageByRoot(result, "C");
+  expect(lineageC?.handoff_ids).toEqual(["C"]);
+  expect(lineageC?.shape).toBe("single");
+  const lineageD = lineageByRoot(result, "D");
+  expect(lineageD?.handoff_ids).toEqual(["D", "E"]);
+  expect(lineageD?.shape).toBe("chain");
+  expect(lineageD?.assistance).toEqual([{ kind: "fix_round", attempt_n: 2, ref: "D" }]);
+}, 2000);
+
 test("buildLineages still returns all rows when parent and successor links form a mixed cycle", async () => {
   const fn = mod?.["buildLineages"];
   expect(typeof fn).toBe("function");
