@@ -242,6 +242,36 @@ describe("home-mgmt retirement", () => {
     }
   });
 
+  it("rejects initial_agent=home-mgmt before routing runs, writing no pre-routing rows", async () => {
+    const db = makeDb();
+    seedLegacyHome(db);
+    const services = makeServices(db);
+    // With a registry that cannot resolve home-mgmt, a dispatch that reached
+    // routing would fail the unknown-agent gate with 400; the 410 plus the
+    // absence of routing_decisions rows proves the guard ran before routing,
+    // not via the later routedAgent check.
+    services.agentRegistry = ["task-refiner-primary"];
+    const response = await chainStartInternal(
+      {
+        initial_agent: "home-mgmt",
+        message: "legacy work",
+        project_id: "penumbra",
+        max_hops: 1,
+        trust_mode: "all",
+        use_worktree: false,
+      },
+      services,
+    );
+    expect(response.status).toBe(410);
+    expect(await response.json()).toMatchObject({
+      error: { code: "agent_retired", agent: "home-mgmt" },
+    });
+    expect(
+      db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM routing_decisions").get(),
+    ).toEqual({ n: 0 });
+    expect(db.query("SELECT handoff_id FROM handoffs").all()).toEqual([]);
+  });
+
   it("uses a domain-neutral action policy in task-refiner prompts", () => {
     const prompt = stampPrompt({
       agent: {
