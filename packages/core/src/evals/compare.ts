@@ -257,20 +257,16 @@ function prefixLength(lhs: readonly string[], rhs: readonly string[]): number {
 }
 
 function counterpartReason(unit: Unit, pool: readonly Unit[]): string {
-  if (pool.length === 0) {
-    return "no_partner";
-  }
-  const sorted = [...pool].sort((lhs, rhs) => {
-    const left = canonicalJson(lhs.key);
-    const right = canonicalJson(rhs.key);
-    return left < right ? -1 : left > right ? 1 : 0;
-  });
   let bestMatch = -1;
-  for (const candidate of sorted) {
+  for (const candidate of pool) {
     const match = prefixLength(unit.key, candidate.key);
     if (match > bestMatch) {
       bestMatch = match;
     }
+  }
+  // bestMatch 0 means no opposite-arm unit shares the fixture at all.
+  if (bestMatch < 1) {
+    return "no_partner";
   }
   const differingKey = PAIR_KEYS[bestMatch];
   return differingKey === undefined ? "no_partner" : `mismatch:${differingKey}`;

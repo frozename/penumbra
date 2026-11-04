@@ -9,8 +9,10 @@ type JsonObject = Record<string, unknown>;
 // base, so no value or type may be imported from it.
 type FixtureInput = { family_id: string; variant_id: string; split: string };
 type ScheduleItem = {
+  block: number;
   family_id: string;
   variant_id: string;
+  repeat: number;
   arm: string;
   recipe_id: string;
 };
@@ -308,4 +310,103 @@ test("10b-plan: a tampered lock fails closed", () => {
     ),
   );
   expect(name).toBe("HoldoutLockError");
+});
+
+test("11: repeats > 1 honours the repeat count and stays deterministic for the seed", () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const fixtures: FixtureInput[] = [
+    { family_id: "fam-syn-f00", variant_id: "v1", split: "dev" },
+    { family_id: "fam-syn-f01", variant_id: "v1", split: "dev" },
+  ];
+  const first = planPairedRun()(baseOpts({ fixtures, repeats: 3 }));
+  const second = planPairedRun()(baseOpts({ fixtures, repeats: 3 }));
+  expect(first).toEqual(second);
+  expect(first.schedule).toHaveLength(12);
+  const byBlock = new Map<number, ScheduleItem[]>();
+  for (const item of first.schedule) {
+    const list = byBlock.get(item.block) ?? [];
+    list.push(item);
+    byBlock.set(item.block, list);
+  }
+  expect([...byBlock.keys()].sort((lhs, rhs) => lhs - rhs)).toEqual([0, 1, 2, 3, 4, 5]);
+  for (const [block, items] of byBlock) {
+    expect(items).toHaveLength(2);
+    expect(items.map((item) => item.arm).sort()).toEqual(["bounded_repair", "minimal"]);
+    expect(items.every((item) => item.repeat === (block % 3) + 1)).toBe(true);
+    const expectedFamily = fixtures[Math.floor(block / 3)]?.family_id;
+    expect(items.every((item) => item.family_id === expectedFamily)).toBe(true);
+  }
+  const counts = new Map<string, number>();
+  for (const item of first.schedule) {
+    const key = `${item.family_id}:${item.arm}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  expect([...counts.values()].sort()).toEqual([3, 3, 3, 3]);
+});
+
+test("12: duplicate fixtures collapse to one scheduled fixture per repeat", () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const dup = planPairedRun()(
+    baseOpts({
+      fixtures: [
+        { family_id: "fam-syn-a", variant_id: "v1", split: "dev" },
+        { family_id: "fam-syn-a", variant_id: "v1", split: "dev" },
+        { family_id: "fam-syn-b", variant_id: "v1", split: "dev" },
+      ],
+      repeats: 2,
+    }),
+  );
+  expect(dup.schedule).toHaveLength(8);
+  const blockFixture = new Map<number, string>();
+  const perBlockCount = new Map<number, number>();
+  for (const item of dup.schedule) {
+    const fixtureKey = `${item.family_id}/${item.variant_id}`;
+    const seen = blockFixture.get(item.block);
+    if (seen === undefined) {
+      blockFixture.set(item.block, fixtureKey);
+    } else {
+      expect(seen).toBe(fixtureKey);
+    }
+    perBlockCount.set(item.block, (perBlockCount.get(item.block) ?? 0) + 1);
+  }
+  expect(blockFixture.size).toBe(4);
+  expect([...perBlockCount.values()].sort()).toEqual([2, 2, 2, 2]);
+  expect(new Set(blockFixture.values()).size).toBe(2);
+  const overlap = planPairedRun()(
+    baseOpts({
+      fixtures: [
+        { family_id: "fam-syn-a", variant_id: "v1", split: "dev" },
+        { family_id: "fam-777", variant_id: "v1", split: "dev" },
+      ],
+      lock: LOCK777,
+      unseal: TOKEN,
+    }),
+  );
+  expect(overlap.holdout).toBe("unsealed");
+  const locked = overlap.schedule.filter((item) => item.family_id === "fam-777");
+  expect(locked).toHaveLength(2);
+  expect(new Set(locked.map((item) => item.block)).size).toBe(1);
+});
+
+test("12b: a real-entry lock without a token seals the plan even with dev-only fixtures", () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const sealed = planPairedRun()(
+    baseOpts({
+      fixtures: [{ family_id: "fam-syn-a", variant_id: "v1", split: "dev" }],
+      lock: LOCK777,
+      unseal: null,
+    }),
+  );
+  expect(sealed.holdout).toBe("sealed");
+  expect(sealed.schedule.every((item) => item.family_id === "fam-syn-a")).toBe(true);
+  expect(sealed.schedule).toHaveLength(2);
 });

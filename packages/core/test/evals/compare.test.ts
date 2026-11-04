@@ -366,7 +366,7 @@ test("1: observational episodes are rejected, while B and T alone pair", async (
   expect(res.n_pairs).toBe(1);
 });
 
-test("2: each mismatched pair key excludes both sides with its reason", async () => {
+test("2: each mismatched pair key excludes both sides; fixture divergence is no_partner", async () => {
   expect(mod).not.toBeNull();
   if (!mod) {
     return;
@@ -380,23 +380,23 @@ test("2: each mismatched pair key excludes both sides with its reason", async ()
     "limits",
     "seed",
   ]);
-  const rows: { key: string; tweak: JsonObject; recipes?: JsonObject[] }[] = [
-    { key: "fixture_ref", tweak: { fixture_ref: pairFixture("fam-syn-a", "v2") } },
+  const rows: { reason: string; tweak: JsonObject; recipes?: JsonObject[] }[] = [
+    { reason: "no_partner", tweak: { fixture_ref: pairFixture("fam-syn-a", "v2") } },
     {
-      key: "base_sha",
+      reason: "mismatch:base_sha",
       tweak: { repo: { base_sha: BASE_SHA_ALT, dependency_lock_sha256: DEP_LOCK } },
     },
     {
-      key: "dependency_lock_sha256",
+      reason: "mismatch:dependency_lock_sha256",
       tweak: { repo: { base_sha: BASE_SHA, dependency_lock_sha256: DEP_LOCK_ALT } },
     },
     {
-      key: "effective_model",
+      reason: "mismatch:effective_model",
       tweak: { model_identity: modelIdentity({ value: "qwen3-y", provenance: "acp_selected" }) },
     },
-    { key: "tools_sha", tweak: { harness_build: { sha: TOOLS_SHA_ALT } } },
+    { reason: "mismatch:tools_sha", tweak: { harness_build: { sha: TOOLS_SHA_ALT } } },
     {
-      key: "limits",
+      reason: "mismatch:limits",
       tweak: {},
       recipes: [
         MINIMAL,
@@ -408,7 +408,7 @@ test("2: each mismatched pair key excludes both sides with its reason", async ()
       ],
     },
     {
-      key: "seed",
+      reason: "mismatch:seed",
       tweak: {},
       recipes: [
         MINIMAL,
@@ -429,8 +429,8 @@ test("2: each mismatched pair key excludes both sides with its reason", async ()
     );
     expect(res.n_pairs).toBe(0);
     expect(res.excluded).toEqual([
-      { episode_id: "B", reason: `mismatch:${row.key}` },
-      { episode_id: "T", reason: `mismatch:${row.key}` },
+      { episode_id: "B", reason: row.reason },
+      { episode_id: "T", reason: row.reason },
     ]);
   }
 });
@@ -768,4 +768,136 @@ test("11: paired statistics count discordance and per-arm verified rates", async
   expect(wilson!.hi).toBeGreaterThan(2 / 3);
   expect(res.treatment.s).toBe(3);
   expect(res.treatment.n).toBe(4);
+});
+
+test("12: a mixed solve/fail repeat set collapses to fail, never to a solve", async () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const table = new Map<string, VerifyResultLike | "throw">();
+  const episodes = [
+    solveEp(table, { episode_id: "B1", recipe_id: "minimal-v1" }),
+    failEp({ episode_id: "B2", recipe_id: "minimal-v1" }),
+    failEp({ episode_id: "T", recipe_id: "bounded_repair-v1" }),
+  ];
+  const res = await comparePaired()(episodes, baseOpts({ verifier: fakeVerifier(table) }));
+  expect(res.n_pairs).toBe(1);
+  expect(res.excluded).toEqual([]);
+  expect(res.baseline.s).toBe(0);
+  expect(res.baseline.n).toBe(1);
+  expect(res.baseline.n_unknown).toBe(0);
+  expect(res.discordant).toEqual({ baseline_only: 0, treatment_only: 0 });
+  const table2 = new Map<string, VerifyResultLike | "throw">();
+  const withUnknown = [
+    solveEp(table2, { episode_id: "C1", recipe_id: "minimal-v1" }),
+    makeEpisode({ episode_id: "C2", recipe_id: "minimal-v1" }),
+    failEp({ episode_id: "U", recipe_id: "bounded_repair-v1" }),
+  ];
+  const res2 = await comparePaired()(withUnknown, baseOpts({ verifier: fakeVerifier(table2) }));
+  expect(res2.n_pairs).toBe(1);
+  expect(res2.baseline.s).toBe(0);
+  expect(res2.baseline.n).toBe(0);
+  expect(res2.baseline.n_unknown).toBe(1);
+});
+
+test("13: a third-arm episode is excluded as arm_not_compared, leaving the pair intact", async () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const table = new Map<string, VerifyResultLike | "throw">();
+  const verifiedMemory = makeRecipe({
+    recipe_id: "verified_memory-v1",
+    arm: "verified_memory",
+  });
+  const episodes = [
+    solveEp(table, { episode_id: "B", recipe_id: "minimal-v1" }),
+    failEp({ episode_id: "T", recipe_id: "bounded_repair-v1" }),
+    solveEp(table, { episode_id: "V", recipe_id: "verified_memory-v1" }),
+  ];
+  const res = await comparePaired()(
+    episodes,
+    baseOpts({ verifier: fakeVerifier(table), recipes: [MINIMAL, BOUNDED, verifiedMemory] }),
+  );
+  expect(res.n_pairs).toBe(1);
+  expect(res.excluded).toEqual([{ episode_id: "V", reason: "arm_not_compared" }]);
+  expect(res.baseline.s).toBe(1);
+  expect(res.baseline.n).toBe(1);
+  expect(res.treatment.s).toBe(0);
+  expect(res.treatment.n).toBe(1);
+});
+
+test("14: an episode whose recipe id resolves to no recipe is excluded as recipe_unresolved", async () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const B = makeEpisode({ episode_id: "B", recipe_id: "minimal-v1" });
+  const ghost = makeEpisode({ episode_id: "G", recipe_id: "ghost-v9" });
+  const res = await comparePaired()([B, ghost], baseOpts());
+  expect(res.n_pairs).toBe(0);
+  expect(res.excluded).toEqual([
+    { episode_id: "B", reason: "no_partner" },
+    { episode_id: "G", reason: "recipe_unresolved" },
+  ]);
+});
+
+test("15: a null dependency_lock_sha256 excludes both sides as missing", async () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const repo = { base_sha: BASE_SHA, dependency_lock_sha256: null };
+  const B = makeEpisode({ episode_id: "B", recipe_id: "minimal-v1", repo });
+  const T = makeEpisode({ episode_id: "T", recipe_id: "bounded_repair-v1", repo });
+  const res = await comparePaired()([B, T], baseOpts());
+  expect(res.n_pairs).toBe(0);
+  expect(res.excluded).toEqual([
+    { episode_id: "B", reason: "missing:dependency_lock_sha256" },
+    { episode_id: "T", reason: "missing:dependency_lock_sha256" },
+  ]);
+});
+
+test("16: a real-entry lock without an unseal token reports sealed even for a dev-only cohort", async () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const table = new Map<string, VerifyResultLike | "throw">();
+  const dev = [
+    solveEp(table, { episode_id: "dev-B", recipe_id: "minimal-v1" }),
+    failEp({ episode_id: "dev-T", recipe_id: "bounded_repair-v1" }),
+  ];
+  const sealed = await comparePaired()(
+    dev,
+    baseOpts({ verifier: fakeVerifier(table), lock: LOCK777, unseal: null }),
+  );
+  expect(sealed.holdout).toBe("sealed");
+  expect(sealed.n_pairs).toBe(1);
+  const unsealed = await comparePaired()(
+    dev,
+    baseOpts({ verifier: fakeVerifier(table), lock: LOCK777, unseal: TOKEN }),
+  );
+  expect(unsealed.holdout).toBe("unsealed");
+  expect(unsealed.n_pairs).toBe(1);
+});
+
+test("17: an opposite-arm unit on a foreign fixture yields no_partner, not a key mismatch", async () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const B = makeEpisode({ episode_id: "B", recipe_id: "minimal-v1", family_id: "fam-syn-a" });
+  const T = makeEpisode({
+    episode_id: "T",
+    recipe_id: "bounded_repair-v1",
+    family_id: "fam-syn-b",
+  });
+  const res = await comparePaired()([B, T], baseOpts());
+  expect(res.n_pairs).toBe(0);
+  expect(res.excluded).toEqual([
+    { episode_id: "B", reason: "no_partner" },
+    { episode_id: "T", reason: "no_partner" },
+  ]);
 });
