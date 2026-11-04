@@ -11,6 +11,9 @@ import {
 import type { DispatchInput } from "@src/sdk/adapter.js";
 
 import { expectRejection } from "../helpers/cli-spawn-fixtures.js";
+import { useStubbedKeychain } from "../helpers/keychain-stub.js";
+
+useStubbedKeychain();
 
 function makeInput(overrides: Partial<DispatchInput> = {}): DispatchInput {
   return {
