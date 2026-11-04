@@ -208,20 +208,28 @@ async function makeMktreeCommit(root: string, entries: MktreeEntry[]): Promise<s
 // Generalized mktree builder: root-level blobs AND arbitrarily nested
 // subtrees, for layouts makeMktreeCommit's flat {name, inner} shape cannot
 // express (e.g. a bare-repo root with HEAD, config, objects/ and refs/).
+interface MktreeFile {
+  bytes: string;
+  mode?: "100644" | "100755";
+}
+
 interface MktreeSpec {
-  files?: Record<string, string>;
+  files?: Record<string, string | MktreeFile>;
   dirs?: Record<string, MktreeSpec>;
 }
 
 async function writeMktreeTree(repo: string, spec: MktreeSpec): Promise<string> {
   const lines: string[] = [];
-  for (const [name, bytes] of Object.entries(spec.files ?? {})) {
+  for (const [name, file] of Object.entries(spec.files ?? {})) {
+    const entry: MktreeFile = typeof file === "string" ? { bytes: file } : file;
     const oid = (
-      await git(repo, ["hash-object", "-w", "--stdin"], { input: Buffer.from(bytes, "utf8") })
+      await git(repo, ["hash-object", "-w", "--stdin"], {
+        input: Buffer.from(entry.bytes, "utf8"),
+      })
     )
       .toString("utf8")
       .trim();
-    lines.push(`100644 blob ${oid}\t${name}`);
+    lines.push(`${entry.mode ?? "100644"} blob ${oid}\t${name}`);
   }
   for (const [name, inner] of Object.entries(spec.dirs ?? {})) {
     const oid = await writeMktreeTree(repo, inner);
@@ -616,6 +624,57 @@ test("materialize rejects a case-folded bare-repo root layout as contract_violat
     dirs: {
       OBJECTS: { files: { keep: "" } },
       Refs: { dirs: { heads: { files: { keep: "" } } } },
+    },
+  });
+  const outDir = join(root, "tree");
+
+  const result = await materialize({ repo: join(root, "repo"), sha, outDir, gitEnv: FIXTURE_ENV });
+
+  expect(result.ok).toBe(false);
+  if (result.ok) {
+    return;
+  }
+  expect(result.model_failure?.reason).toBe("contract_violation");
+  expect(result.model_failure?.detail.bare_repo_layout).toBe(true);
+  expect(existsSync(outDir)).toBe(false);
+}, 30_000);
+
+// is_git_directory() checks access(objects, X_OK) and access(refs, X_OK), so
+// executable root BLOBS named objects/refs satisfy it without any directory
+// at all: HEAD + config + 100755 objects/refs blobs is a working bare repo.
+test("materialize rejects executable 'objects'/'refs' root blobs as a bare-repo layout", async () => {
+  const root = mkdtempSync(join(tmpdir(), "penumbra-materialize-bareblob-"));
+  tempDirs.push(root);
+  const sha = await commitMktreeSpec(root, {
+    files: {
+      HEAD: "ref: refs/heads/main\n",
+      config: "[core]\n\tfsmonitor = true\n",
+      objects: { bytes: "", mode: "100755" },
+      refs: { bytes: "", mode: "100755" },
+    },
+  });
+  const outDir = join(root, "tree");
+
+  const result = await materialize({ repo: join(root, "repo"), sha, outDir, gitEnv: FIXTURE_ENV });
+
+  expect(result.ok).toBe(false);
+  if (result.ok) {
+    return;
+  }
+  expect(result.model_failure?.reason).toBe("contract_violation");
+  expect(result.model_failure?.detail.bare_repo_layout).toBe(true);
+  expect(existsSync(outDir)).toBe(false);
+}, 30_000);
+
+test("materialize rejects case-folded 'OBJECTS'/'Refs' root blobs as a bare-repo layout", async () => {
+  const root = mkdtempSync(join(tmpdir(), "penumbra-materialize-blobcase-"));
+  tempDirs.push(root);
+  const sha = await commitMktreeSpec(root, {
+    files: {
+      head: "ref: refs/heads/main\n",
+      config: "[core]\n\tfsmonitor = true\n",
+      OBJECTS: { bytes: "", mode: "100755" },
+      Refs: { bytes: "", mode: "100755" },
     },
   });
   const outDir = join(root, "tree");

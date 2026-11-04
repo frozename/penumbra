@@ -1,7 +1,8 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -191,7 +192,14 @@ function freezeTree(dir: string, includeRoot = true): void {
 
 function chmodTreeWritable(dir: string): void {
   try {
-    chmodSync(dir, statSync(dir).mode | 0o700);
+    const st = lstatSync(dir);
+    // A stray file or symlink needs no tree walk: rmSync removes it directly.
+    // Never follow the link either — chmodding through it would mutate
+    // whatever external directory the stale slot happened to point at.
+    if (!st.isDirectory() || st.isSymbolicLink()) {
+      return;
+    }
+    chmodSync(dir, st.mode | 0o700);
   } catch {
     return;
   }
@@ -218,6 +226,25 @@ function chmodTreeWritable(dir: string): void {
 function removeStaleCacheDir(cacheDir: string): void {
   chmodTreeWritable(cacheDir);
   rmSync(cacheDir, { recursive: true, force: true });
+}
+
+// An install that throws abandons its staging dir, and earlier crashed runs
+// can leave <lockSha>.install-* / <lockSha>.stale-* leftovers behind; sweep
+// them all so they cannot accumulate next to cacheDir.
+function sweepStaleCacheDirs(cacheRoot: string, lockSha256: string): void {
+  try {
+    for (const ent of readdirSync(cacheRoot, { withFileTypes: true })) {
+      if (
+        ent.name.startsWith(`${lockSha256}.install-`) ||
+        ent.name.startsWith(`${lockSha256}.stale-`)
+      ) {
+        removeStaleCacheDir(join(cacheRoot, ent.name));
+      }
+    }
+  } catch {
+    // Best-effort sweep: a vanished cacheRoot or a racing removal must not
+    // mask the original install error.
+  }
 }
 
 async function installIntoCache(
@@ -262,6 +289,49 @@ function tryRenameIntoCache(stagedDir: string, cacheDir: string): boolean {
   }
 }
 
+// Commits a marked, frozen stagedDir at cacheDir. A winner that committed
+// while we installed is accepted as-is; a stale (unmarked) slot is renamed
+// aside atomically to a unique .stale-* name and deleted there — never
+// rm'd in place, so the cacheDir path never carries a half-removed tree and
+// a crash mid-delete leaves identifiable .stale-* residue instead.
+function commitStagedInstall(
+  cacheRoot: string,
+  lockSha256: string,
+  stagedDir: string,
+): EnsureResult {
+  const cacheDir = join(cacheRoot, lockSha256);
+  if (tryRenameIntoCache(stagedDir, cacheDir)) {
+    chmodSync(cacheDir, 0o555);
+    return { ok: true, cacheDir };
+  }
+  if (existsSync(join(cacheDir, CACHE_MARKER))) {
+    removeStaleCacheDir(stagedDir);
+    return { ok: true, cacheDir };
+  }
+  const staleAside = join(cacheRoot, `${lockSha256}.stale-${randomUUID()}`);
+  try {
+    // BSD/macOS refuse rename(2) on a read-only directory: restore u+w on the
+    // stale root alone first — one atomic chmod leaving the same "frozen
+    // tree, writable root" state the seal path already tolerates — then move
+    // it. Files and symlinks rename without any chmod.
+    const st = lstatSync(cacheDir);
+    if (st.isDirectory() && !st.isSymbolicLink()) {
+      chmodSync(cacheDir, st.mode | 0o700);
+    }
+    renameSync(cacheDir, staleAside);
+  } catch {
+    // The slot emptied between the marker check and the rename (a concurrent
+    // ensure() committed or swept it); nothing to move aside.
+  }
+  removeStaleCacheDir(staleAside);
+  if (tryRenameIntoCache(stagedDir, cacheDir)) {
+    chmodSync(cacheDir, 0o555);
+    return { ok: true, cacheDir };
+  }
+  removeStaleCacheDir(stagedDir);
+  return { ok: false, reason: "deps_install_failed" };
+}
+
 // Installs run in a unique staging dir next to cacheDir and are renamed into
 // place only after freeze + marker, so a concurrent ensure() for the same
 // lockSha can never removeStaleCacheDir the other's in-flight install. The
@@ -292,30 +362,19 @@ export function createDefaultDependencyProvider(
       mkdirSync(opts.cacheRoot, { recursive: true });
       const stagedDir = mkdtempSync(join(opts.cacheRoot, `${input.lockSha256}.install-`));
       let installed: EnsureResult;
+      let threw = true;
       try {
         installed = await installIntoCache(run, stagedDir, input, opts.onAfterFreeze);
-      } catch (err) {
-        removeStaleCacheDir(stagedDir);
-        throw err;
+        threw = false;
+      } finally {
+        if (threw) {
+          sweepStaleCacheDirs(opts.cacheRoot, input.lockSha256);
+        }
       }
       if (!installed.ok) {
         return installed;
       }
-      if (tryRenameIntoCache(stagedDir, cacheDir)) {
-        chmodSync(cacheDir, 0o555);
-        return { ok: true, cacheDir };
-      }
-      if (existsSync(join(cacheDir, CACHE_MARKER))) {
-        removeStaleCacheDir(stagedDir);
-        return { ok: true, cacheDir };
-      }
-      removeStaleCacheDir(cacheDir);
-      if (tryRenameIntoCache(stagedDir, cacheDir)) {
-        chmodSync(cacheDir, 0o555);
-        return { ok: true, cacheDir };
-      }
-      removeStaleCacheDir(stagedDir);
-      return { ok: false, reason: "deps_install_failed" };
+      return commitStagedInstall(opts.cacheRoot, input.lockSha256, stagedDir);
     },
   };
 }

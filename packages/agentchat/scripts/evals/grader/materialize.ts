@@ -256,13 +256,17 @@ function findCaseCollisions(entries: TreeEntry[]): string[] {
 }
 
 // git's is_git_directory() accepts any directory holding HEAD plus objects/
-// and refs/ subdirs as a bare repository (case-insensitive on case-insensitive
+// and refs/ as a bare repository (case-insensitive on case-insensitive
 // filesystems), so a candidate tree with that root layout would be picked up
-// as a git dir by the grader's own git calls. It also follows a root
-// `commondir` / `gitdir` pointer file (git 2.56 repro: HEAD + commondir='c\n'
-// + c/{config, objects/, refs/}), so the objects/refs markers can hide behind
-// the pointer; any root HEAD (any case) together with a root commondir or
-// gitdir entry (any case) is rejected regardless of what the pointer targets.
+// as a git dir by the grader's own git calls. The objects/refs check is only
+// access(<root>/objects, X_OK) and access(<root>/refs, X_OK): an executable
+// root blob named objects or refs satisfies it just like a real directory,
+// so ANY root entry whose first segment lower-cases to objects/refs counts,
+// whatever its depth or mode. It also follows a root `commondir` / `gitdir`
+// pointer file (git 2.56 repro: HEAD + commondir='c\n' + c/{config, objects/,
+// refs/}), so the objects/refs markers can hide behind the pointer; any root
+// HEAD (any case) together with a root commondir or gitdir entry (any case)
+// is rejected regardless of what the pointer targets.
 function findBareRepoLayout(entries: TreeEntry[]): ModelFailure | null {
   let hasHead = false;
   let hasObjects = false;
@@ -271,13 +275,11 @@ function findBareRepoLayout(entries: TreeEntry[]): ModelFailure | null {
   for (const entry of entries) {
     const segments = entry.path.split("/");
     const first = (segments[0] ?? "").toLowerCase();
+    hasObjects ||= first === "objects";
+    hasRefs ||= first === "refs";
     if (segments.length === 1) {
       hasHead ||= first === "head";
       hasRepoPointer ||= first === "commondir" || first === "gitdir";
-    } else if (first === "objects") {
-      hasObjects = true;
-    } else if (first === "refs") {
-      hasRefs = true;
     }
   }
   if (hasHead && hasRepoPointer) {
