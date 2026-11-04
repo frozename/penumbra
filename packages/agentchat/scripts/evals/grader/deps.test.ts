@@ -2,9 +2,12 @@ import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -12,8 +15,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createDefaultDependencyProvider, readBaseDepsInput } from "./deps.js";
-import { defaultRunCommand, type RunCommand } from "./materialize.js";
+import { createDefaultDependencyProvider, linkDeps, readBaseDepsInput } from "./deps.js";
+import { defaultRunCommand, isSafeRelativePath, type RunCommand } from "./materialize.js";
 
 const tempDirs: string[] = [];
 
@@ -46,6 +49,12 @@ function sha256Hex(bytes: Uint8Array): string {
 
 function mkCacheRoot(): string {
   const dir = mkdtempSync(join(tmpdir(), "penumbra-deps-cache-"));
+  tempDirs.push(dir);
+  return dir;
+}
+
+function mkScratchDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
   tempDirs.push(dir);
   return dir;
 }
@@ -114,6 +123,154 @@ test("frozen executable in the dependency cache still runs", async () => {
   const ran = await defaultRunCommand(exe, []);
   expect(ran.code).toBe(0);
   expect(ran.stdout.toString("utf8").trim()).toBe("ran");
+});
+
+test("isSafeRelativePath rejects traversal, empty, dot, .git and absolute paths", () => {
+  expect(isSafeRelativePath("package.json")).toBe(true);
+  expect(isSafeRelativePath("packages/a/package.json")).toBe(true);
+  expect(isSafeRelativePath("")).toBe(false);
+  expect(isSafeRelativePath("../evil/package.json")).toBe(false);
+  expect(isSafeRelativePath("packages/../evil/package.json")).toBe(false);
+  expect(isSafeRelativePath("./x/package.json")).toBe(false);
+  expect(isSafeRelativePath(".git/package.json")).toBe(false);
+  expect(isSafeRelativePath("packages//pkg/package.json")).toBe(false);
+  expect(isSafeRelativePath("/abs/package.json")).toBe(false);
+});
+
+test("manifest with an unsafe path returns deps_input_unsafe without installing", async () => {
+  const cacheRoot = mkCacheRoot();
+  const lockfileBytes = Buffer.from("lock\n", "utf8");
+  const lockSha256 = sha256Hex(lockfileBytes);
+  let calls = 0;
+  const run: RunCommand = () => {
+    calls += 1;
+    return Promise.resolve({ code: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) });
+  };
+  const provider = createDefaultDependencyProvider({
+    cacheRoot,
+    allowInstall: true,
+    runCommand: run,
+  });
+
+  for (const bad of [
+    "../evil/package.json",
+    "packages/../evil/package.json",
+    ".git/package.json",
+    "packages//pkg/package.json",
+  ]) {
+    const res = await provider.ensure({
+      lockSha256,
+      lockfileBytes,
+      manifests: [{ path: bad, bytes: Buffer.from('{"name":"x"}\n', "utf8") }],
+    });
+    expect(res).toEqual({ ok: false, reason: "deps_input_unsafe" });
+  }
+
+  expect(calls).toBe(0);
+  expect(readdirSync(cacheRoot)).toEqual([]);
+});
+
+test("failed install removes the cache dir", async () => {
+  const cacheRoot = mkCacheRoot();
+  const lockfileBytes = Buffer.from("lock\n", "utf8");
+  const lockSha256 = sha256Hex(lockfileBytes);
+  let ranInstall = false;
+  const run: RunCommand = (_cmd, _args, opts) => {
+    ranInstall = true;
+    mkdirSync(join(opts?.cwd ?? "", "partial"), { recursive: true });
+    return Promise.resolve({ code: 1, stdout: Buffer.alloc(0), stderr: Buffer.from("boom\n") });
+  };
+  const provider = createDefaultDependencyProvider({
+    cacheRoot,
+    allowInstall: true,
+    runCommand: run,
+  });
+
+  const res = await provider.ensure({
+    lockSha256,
+    lockfileBytes,
+    manifests: [{ path: "package.json", bytes: Buffer.from('{"name":"x"}\n', "utf8") }],
+  });
+
+  expect(res).toEqual({ ok: false, reason: "deps_install_failed" });
+  expect(ranInstall).toBe(true);
+  expect(existsSync(join(cacheRoot, lockSha256))).toBe(false);
+});
+
+test("cache dir without CACHE_MARKER is not treated as valid", async () => {
+  const cacheRoot = mkCacheRoot();
+  const lockfileBytes = Buffer.from("lock\n", "utf8");
+  const lockSha256 = sha256Hex(lockfileBytes);
+  const crashedDir = join(cacheRoot, lockSha256);
+  mkdirSync(join(crashedDir, "node_modules", "leftover"), { recursive: true });
+
+  const provider = createDefaultDependencyProvider({
+    cacheRoot,
+    allowInstall: false,
+    runCommand: fakeInstall(),
+  });
+  const res = await provider.ensure({
+    lockSha256,
+    lockfileBytes,
+    manifests: [],
+  });
+
+  expect(res).toEqual({ ok: false, reason: "deps_cache_missing" });
+});
+
+test("CACHE_MARKER is committed last so an accepted cache is always frozen and sealed", async () => {
+  const cacheRoot = mkCacheRoot();
+  const lockfileBytes = Buffer.from("fake-lock\n", "utf8");
+  const lockSha256 = sha256Hex(lockfileBytes);
+  const provider = createDefaultDependencyProvider({
+    cacheRoot,
+    allowInstall: true,
+    runCommand: fakeInstall(),
+  });
+
+  const res = await provider.ensure({
+    lockSha256,
+    lockfileBytes,
+    manifests: [],
+  });
+
+  expect(res.ok).toBe(true);
+  if (!res.ok) {
+    return;
+  }
+  expect(readFileSync(join(res.cacheDir, ".penumbra-deps-cache-ok"), "utf8")).toBe(
+    `${lockSha256}\n`,
+  );
+  expect(statSync(res.cacheDir).mode & 0o777).toBe(0o555);
+  let sealed = false;
+  try {
+    writeFileSync(join(res.cacheDir, "late-write.txt"), "x\n", "utf8");
+  } catch (err) {
+    sealed = true;
+    expect((err as NodeJS.ErrnoException).code).toBe("EACCES");
+  }
+  expect(sealed).toBe(true);
+});
+
+test("linkDeps links root and per-workspace node_modules and skips missing workspace targets", async () => {
+  const treeDir = mkScratchDir("penumbra-deps-tree-");
+  const cacheDir = mkScratchDir("penumbra-deps-src-");
+  mkdirSync(join(treeDir, "packages", "a"), { recursive: true });
+  mkdirSync(join(treeDir, "packages", "b"), { recursive: true });
+  mkdirSync(join(cacheDir, "node_modules", "rootdep"), { recursive: true });
+  writeFileSync(join(cacheDir, "node_modules", "rootdep", "index.js"), "root\n", "utf8");
+  mkdirSync(join(cacheDir, "packages", "a", "node_modules", "adep"), { recursive: true });
+  writeFileSync(join(cacheDir, "packages", "a", "node_modules", "adep", "index.js"), "a\n", "utf8");
+
+  await linkDeps({ treeDir, cacheDir, workspaces: ["packages/a", "packages/b"] });
+
+  expect(lstatSync(join(treeDir, "node_modules")).isSymbolicLink()).toBe(true);
+  expect(readFileSync(join(treeDir, "node_modules", "rootdep", "index.js"), "utf8")).toBe("root\n");
+  expect(lstatSync(join(treeDir, "packages", "a", "node_modules")).isSymbolicLink()).toBe(true);
+  expect(
+    readFileSync(join(treeDir, "packages", "a", "node_modules", "adep", "index.js"), "utf8"),
+  ).toBe("a\n");
+  expect(existsSync(join(treeDir, "packages", "b", "node_modules"))).toBe(false);
 });
 
 test("readBaseDepsInput reports base_missing when the base tree cannot be listed", async () => {

@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -156,6 +157,46 @@ async function makeRepo(opts: {
     shas.push(sha);
   }
   return { dir, shas };
+}
+
+// `git mktree` does not sanitize entry names the way update-index does, so a
+// candidate-controlled commit can carry '..' / '.' / '.git' subtrees that
+// `ls-tree -r --full-tree` flattens into escaping paths.
+interface MktreeEntry {
+  name: string;
+  inner: { name: string; bytes: string }[];
+}
+
+async function makeMktreeCommit(root: string, entries: MktreeEntry[]): Promise<string> {
+  const repo = join(root, "repo");
+  mkdirSync(repo);
+  await git(repo, ["init", "-b", "main"]);
+  const lines: string[] = [];
+  for (const outer of entries) {
+    let innerLines = "";
+    for (const inner of outer.inner) {
+      const oid = (
+        await git(repo, ["hash-object", "-w", "--stdin"], {
+          input: Buffer.from(inner.bytes, "utf8"),
+        })
+      )
+        .toString("utf8")
+        .trim();
+      innerLines += `100644 blob ${oid}\t${inner.name}\n`;
+    }
+    const innerTree = (await git(repo, ["mktree"], { input: Buffer.from(innerLines, "utf8") }))
+      .toString("utf8")
+      .trim();
+    lines.push(`40000 tree ${innerTree}\t${outer.name}`);
+  }
+  const tree = (
+    await git(repo, ["mktree"], { input: Buffer.from(`${lines.join("\n")}\n`, "utf8") })
+  )
+    .toString("utf8")
+    .trim();
+  return (await git(repo, ["commit-tree", tree, "-m", "evil"], { env: GIT_IDENTITY }))
+    .toString("utf8")
+    .trim();
 }
 
 function readMaybe(path: string): Buffer | null {
@@ -340,6 +381,86 @@ test("materialize rejects case-colliding paths as contract_violation", async () 
   expect(result.model_failure?.detail.case_collision).toEqual(
     expect.arrayContaining(["A.ts", "a.ts"]),
   );
+}, 30_000);
+
+test("materialize rejects a '..' subtree as contract_violation and writes nothing outside outDir", async () => {
+  const root = mkdtempSync(join(tmpdir(), "penumbra-materialize-trav-"));
+  tempDirs.push(root);
+  const sha = await makeMktreeCommit(root, [
+    { name: "..", inner: [{ name: "escaped.txt", bytes: "escaped\n" }] },
+  ]);
+  const outDir = join(root, "tree");
+
+  const result = await materialize({ repo: join(root, "repo"), sha, outDir, gitEnv: FIXTURE_ENV });
+
+  expect(result.ok).toBe(false);
+  if (result.ok) {
+    return;
+  }
+  expect(result.model_failure?.reason).toBe("contract_violation");
+  expect(result.model_failure?.detail.path).toBe("../escaped.txt");
+  expect(result.model_failure?.detail.unsafe_path).toBe(true);
+  expect(existsSync(join(root, "escaped.txt"))).toBe(false);
+  expect(existsSync(outDir)).toBe(false);
+}, 30_000);
+
+test("materialize rejects a .git directory entry as contract_violation", async () => {
+  const root = mkdtempSync(join(tmpdir(), "penumbra-materialize-gitdir-"));
+  tempDirs.push(root);
+  const sha = await makeMktreeCommit(root, [
+    { name: ".git", inner: [{ name: "settings", bytes: "injected\n" }] },
+  ]);
+  const outDir = join(root, "tree");
+
+  const result = await materialize({ repo: join(root, "repo"), sha, outDir, gitEnv: FIXTURE_ENV });
+
+  expect(result.ok).toBe(false);
+  if (result.ok) {
+    return;
+  }
+  expect(result.model_failure?.reason).toBe("contract_violation");
+  expect(result.model_failure?.detail.path).toBe(".git/settings");
+  expect(result.model_failure?.detail.unsafe_path).toBe(true);
+  expect(existsSync(join(outDir, ".git"))).toBe(false);
+  expect(existsSync(outDir)).toBe(false);
+}, 30_000);
+
+test("materialize rejects a '.' directory entry as contract_violation", async () => {
+  const root = mkdtempSync(join(tmpdir(), "penumbra-materialize-dot-"));
+  tempDirs.push(root);
+  const sha = await makeMktreeCommit(root, [{ name: ".", inner: [{ name: "cfg", bytes: "x\n" }] }]);
+  const outDir = join(root, "tree");
+
+  const result = await materialize({ repo: join(root, "repo"), sha, outDir, gitEnv: FIXTURE_ENV });
+
+  expect(result.ok).toBe(false);
+  if (result.ok) {
+    return;
+  }
+  expect(result.model_failure?.reason).toBe("contract_violation");
+  expect(result.model_failure?.detail.path).toBe("./cfg");
+  expect(result.model_failure?.detail.unsafe_path).toBe(true);
+  expect(existsSync(outDir)).toBe(false);
+}, 30_000);
+
+test("materialize preserves the executable bit on 100755 entries", async () => {
+  const { dir, shas } = await makeRepo({
+    commits: [
+      {
+        "bin/tool": { bytes: "#!/bin/sh\necho ran\n", mode: "100755" },
+        "plain.txt": { bytes: "data\n" },
+      },
+    ],
+  });
+  const outDir = mkOutDir();
+
+  const result = await materialize({ repo: dir, sha: shas[0]!, outDir, gitEnv: FIXTURE_ENV });
+
+  expect(result.ok).toBe(true);
+  if (!result.ok) {
+    return;
+  }
+  expect(statSync(join(outDir, "bin/tool")).mode & 0o777).toBe(0o755);
 }, 30_000);
 
 test("materialize rejects a short sha as base_missing, not model_failure", async () => {

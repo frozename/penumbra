@@ -9,11 +9,12 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import {
   defaultRunCommand,
   type GitLocator,
+  isSafeRelativePath,
   listTreeEntries,
   readBlob,
   type RunCommand,
@@ -166,11 +167,7 @@ export async function readBaseDepsInput(opts: ReadBaseDepsInputOptions): Promise
   return { lockSha256: sha256Hex(lockfileBytes), lockfileBytes, manifests };
 }
 
-function isSafeRelativePath(path: string): boolean {
-  return path.length > 0 && !isAbsolute(path) && !path.split("/").includes("..");
-}
-
-function freezeTree(dir: string): void {
+function freezeTree(dir: string, includeRoot = true): void {
   for (const ent of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, ent.name);
     if (ent.isSymbolicLink()) {
@@ -182,7 +179,9 @@ function freezeTree(dir: string): void {
       chmodSync(p, statSync(p).mode & ~0o222);
     }
   }
-  chmodSync(dir, 0o555);
+  if (includeRoot) {
+    chmodSync(dir, 0o555);
+  }
 }
 
 async function installIntoCache(
@@ -209,8 +208,13 @@ async function installIntoCache(
     rmSync(cacheDir, { recursive: true, force: true });
     return { ok: false, reason: "deps_install_failed" };
   }
+  // Freeze contents first, commit the marker last, then seal the root. A
+  // crash anywhere before the marker write leaves an unmarked cache that
+  // ensure() refuses to accept; a crash after the marker but before sealing
+  // only leaves the root dir writable, never a half-installed accepted cache.
+  freezeTree(cacheDir, false);
   writeFileSync(join(cacheDir, CACHE_MARKER), `${input.lockSha256}\n`, "utf8");
-  freezeTree(cacheDir);
+  chmodSync(cacheDir, 0o555);
   return { ok: true, cacheDir };
 }
 

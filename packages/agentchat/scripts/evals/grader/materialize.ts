@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export interface RunCommandResult {
   code: number;
@@ -167,6 +167,23 @@ export async function readBlob(
   return res.code === 0 ? res.stdout : null;
 }
 
+export function isSafeRelativePath(path: string): boolean {
+  if (path.length === 0 || isAbsolute(path)) {
+    return false;
+  }
+  for (const segment of path.split("/")) {
+    if (segment === "" || segment === "." || segment === ".." || segment === ".git") {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isContainedIn(root: string, target: string): boolean {
+  const rel = relative(root, target);
+  return rel.length > 0 && !rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel);
+}
+
 function findCaseCollisions(entries: TreeEntry[]): string[] {
   const groups = new Map<string, string[]>();
   for (const entry of entries) {
@@ -187,12 +204,22 @@ function findCaseCollisions(entries: TreeEntry[]): string[] {
   return collided.sort();
 }
 
-function findContractViolation(entries: TreeEntry[]): ModelFailure | null {
+function findContractViolation(entries: TreeEntry[], outDir: string): ModelFailure | null {
+  const root = resolve(outDir);
   for (const entry of entries) {
     if (entry.type !== "blob" || !BLOB_MODES.has(entry.mode)) {
       return {
         reason: "contract_violation",
         detail: { path: entry.path, mode: entry.mode },
+      };
+    }
+    // The graded commit is candidate-controlled; git mktree can carry '..'
+    // subtrees that ls-tree flattens into '../...' paths. Reject before any
+    // write so traversal cannot escape outDir.
+    if (!isSafeRelativePath(entry.path) || !isContainedIn(root, resolve(root, entry.path))) {
+      return {
+        reason: "contract_violation",
+        detail: { path: entry.path, unsafe_path: true },
       };
     }
   }
@@ -301,7 +328,7 @@ export async function materialize(opts: MaterializeOptions): Promise<Materialize
   if (entries === null) {
     return { ok: false, unknown: { reason: "materialize_error", detail: { step: "ls-tree" } } };
   }
-  const violation = findContractViolation(entries);
+  const violation = findContractViolation(entries, opts.outDir);
   if (violation !== null) {
     return { ok: false, model_failure: violation };
   }
