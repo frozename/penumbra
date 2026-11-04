@@ -732,6 +732,8 @@ test("P5-25: each metric gates on its own observed family count, not the solved 
   expect(g?.solved_verified.n_families).toBe(3);
   expect(g?.solved_verified.underpowered).toBe(false);
   expect(g?.solved_verified.cluster_ci).not.toBeNull();
+  expect(g?.n_families).toBe(3);
+  expect(g?.underpowered).toBe(false);
   expect(g?.first_attempt.s).toBe(1);
   expect(g?.first_attempt.n).toBe(1);
   expect(g?.first_attempt.n_unknown).toBe(2);
