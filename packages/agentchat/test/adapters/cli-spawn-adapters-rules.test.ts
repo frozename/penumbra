@@ -1,4 +1,4 @@
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 
 import {
@@ -12,14 +12,8 @@ import type { DispatchEvent, DispatchInput } from "@src/sdk/adapter.js";
 import type { NotificationEvent } from "@src/worker/capture-port.js";
 
 import { expectRejection, makeThoughtCaptureStub } from "../helpers/cli-spawn-fixtures.js";
+import { STUBBED_KEYCHAIN_KEY, useStubbedKeychain } from "../helpers/keychain-stub.js";
 import { makeMockCapturePort } from "../helpers/stdio-acp-fixtures.js";
-
-// `security find-generic-password -w` blocks on an ACL prompt under a
-// non-GUI session, so the keychain shell-out is stubbed at the module seam.
-// Pinning the OPENCODE_API_KEY value is out of scope for these tests.
-void mock.module("@src/adapters/secret.js", () => ({
-  resolveAdapterApiKey: (): string => "stubbed-key",
-}));
 
 function makeInput(overrides: Partial<DispatchInput> = {}): DispatchInput {
   return {
@@ -206,6 +200,8 @@ describe("makeCliSpawnAdapter", () => {
 });
 
 describe("buildOpencodeCliSpawnOpts", () => {
+  const keychain = useStubbedKeychain();
+
   test("defaults pass_via to argv", async () => {
     const opts = await buildOpencodeCliSpawnOpts({}, "opencode", ["run"], null, makeInput());
     expect(opts.pass_via).toBe("argv");
@@ -242,7 +238,13 @@ describe("buildOpencodeCliSpawnOpts", () => {
       null,
       makeInput(),
     );
-    expect(opts.env?.OPENCODE_API_KEY).not.toBe("from-opts");
+    expect(opts.env?.OPENCODE_API_KEY).toBe(STUBBED_KEYCHAIN_KEY);
+    const { exec } = keychain();
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(exec.mock.calls[0]?.slice(0, 2)).toEqual([
+      "security",
+      ["find-generic-password", "-s", "llamactl", "-a", "opencode", "-w"],
+    ]);
   });
 
   test("undefined and empty mcpServers produce no XDG_CONFIG_HOME and no cleanup", async () => {
@@ -280,6 +282,8 @@ describe("buildOpencodeCliSpawnOpts", () => {
 });
 
 describe("makeOpencodeCliAdapter", () => {
+  useStubbedKeychain();
+
   test("throws when model is missing", () => {
     expect(() => makeOpencodeCliAdapter({}, null)).toThrow("opencode-cli: model is required");
   });
