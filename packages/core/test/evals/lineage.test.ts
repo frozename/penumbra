@@ -63,7 +63,7 @@ type LineageUsageFn = (
   db: Database,
   scope: { handoff_ids: readonly string[]; start_ts: string },
   opts: { now: number; t0RetentionDays: number },
-) => LineageUsage | Promise<LineageUsage>;
+) => LineageUsage | null | Promise<LineageUsage | null>;
 
 type TaskRefs = { issues: number[]; bundle_ids: string[] };
 
@@ -313,6 +313,51 @@ test("buildLineages prefers the message stamp over a conflicting event-mapped pa
   expect(lineageC?.labels["retry_link_conflict"]).toBeUndefined();
 });
 
+test("buildLineages labels a parent_handoff_id that disagrees with the retry stamp", async () => {
+  const fn = mod?.["buildLineages"];
+  expect(typeof fn).toBe("function");
+  const build = fn as BuildLineagesFn;
+  const result = await build([
+    row({ handoff_id: "A", ts: T1 }),
+    row({ handoff_id: "B", ts: T2, message: RETRY_MSG, parent_handoff_id: "D" }),
+    row({ handoff_id: "C", ts: T3 }),
+    row({ handoff_id: "D", ts: T4 }),
+  ]);
+  expect(result.lineages).toHaveLength(3);
+  const lineageD = lineageByRoot(result, "D");
+  expect(lineageD?.handoff_ids).toEqual(["D", "B"]);
+  expect(lineageD?.shape).toBe("chain");
+  expect(lineageD?.labels["retry_link_conflict"]).toBe("true");
+  expect(lineageD?.assistance).toEqual([{ kind: "retry_child", attempt_n: 2, ref: "D" }]);
+  expect(lineageByRoot(result, "A")?.handoff_ids).toEqual(["A"]);
+  expect(lineageByRoot(result, "A")?.labels["retry_link_conflict"]).toBeUndefined();
+});
+
+test("buildLineages labels a parent_handoff_id that disagrees with the event-mapped target", async () => {
+  const fn = mod?.["buildLineages"];
+  expect(typeof fn).toBe("function");
+  const build = fn as BuildLineagesFn;
+  const result = await build(
+    [
+      row({ handoff_id: "A", ts: T1 }),
+      row({
+        handoff_id: "B",
+        ts: T2,
+        parent_handoff_id: "D",
+        triggered_by_event_id: "eB",
+      }),
+      row({ handoff_id: "D", ts: T4 }),
+    ],
+    new Map([["eB", "A"]]),
+  );
+  expect(result.lineages).toHaveLength(2);
+  const lineageD = lineageByRoot(result, "D");
+  expect(lineageD?.handoff_ids).toEqual(["D", "B"]);
+  expect(lineageD?.labels["retry_link_conflict"]).toBe("true");
+  expect(lineageD?.assistance).toEqual([{ kind: "retry_child", attempt_n: 2, ref: "D" }]);
+  expect(lineageByRoot(result, "A")?.handoff_ids).toEqual(["A"]);
+});
+
 test("buildLineages records a retry to a missing parent on the child's own lineage", async () => {
   const fn = mod?.["buildLineages"];
   expect(typeof fn).toBe("function");
@@ -340,6 +385,78 @@ test("buildLineages chains a later dispatch that builds on the prior branch", as
   expect(lin.handoff_ids).toEqual(["A", "B"]);
   expect(lin.shape).toBe("chain");
   expect(lin.assistance).toEqual([{ kind: "fix_round", attempt_n: 2, ref: "A" }]);
+});
+
+test("buildLineages still returns both rows when parent_handoff_ids form a two-cycle", async () => {
+  const fn = mod?.["buildLineages"];
+  expect(typeof fn).toBe("function");
+  const build = fn as BuildLineagesFn;
+  const result = await build([
+    row({ handoff_id: "C", ts: T1, parent_handoff_id: "D" }),
+    row({ handoff_id: "D", ts: T2, parent_handoff_id: "C" }),
+  ]);
+  expect(result.lineages).toHaveLength(2);
+  expect(lineageByRoot(result, "C")?.handoff_ids).toEqual(["C"]);
+  expect(lineageByRoot(result, "D")?.handoff_ids).toEqual(["D"]);
+});
+
+test("buildLineages picks the nearest predecessor when two producers share one branch_name", async () => {
+  const fn = mod?.["buildLineages"];
+  expect(typeof fn).toBe("function");
+  const build = fn as BuildLineagesFn;
+  const result = await build([
+    row({
+      handoff_id: "P1",
+      ts: T1,
+      branch_name: "agent/a",
+      branch_base: "main",
+      workflow_run_id: "w1",
+    }),
+    row({
+      handoff_id: "P2",
+      ts: T2,
+      branch_name: "agent/a",
+      branch_base: "main",
+      workflow_run_id: "w1",
+    }),
+    row({ handoff_id: "C", ts: T3, branch_base: "agent/a", workflow_run_id: "w1" }),
+  ]);
+  expect(result.lineages).toHaveLength(2);
+  const lineageP2 = lineageByRoot(result, "P2");
+  expect(lineageP2?.handoff_ids).toEqual(["P2", "C"]);
+  expect(lineageP2?.shape).toBe("chain");
+  expect(lineageP2?.assistance).toEqual([{ kind: "fix_round", attempt_n: 2, ref: "P2" }]);
+  const lineageP1 = lineageByRoot(result, "P1");
+  expect(lineageP1?.handoff_ids).toEqual(["P1"]);
+  expect(lineageP1?.shape).toBe("single");
+});
+
+test("buildLineages does not chain a branch_base link when producer and consumer share a ts", async () => {
+  const fn = mod?.["buildLineages"];
+  expect(typeof fn).toBe("function");
+  const build = fn as BuildLineagesFn;
+  const result = await build([
+    row({ handoff_id: "P", ts: T1, branch_name: "agent/a" }),
+    row({ handoff_id: "C", ts: T1, branch_base: "agent/a" }),
+  ]);
+  expect(result.lineages).toHaveLength(2);
+  expect(lineageByRoot(result, "P")?.handoff_ids).toEqual(["P"]);
+  expect(lineageByRoot(result, "C")?.handoff_ids).toEqual(["C"]);
+});
+
+test("buildLineages rejects a successor link that would close a loop", async () => {
+  const fn = mod?.["buildLineages"];
+  expect(typeof fn).toBe("function");
+  const build = fn as BuildLineagesFn;
+  const result = await build([
+    row({ handoff_id: "P", ts: T1, parent_handoff_id: "C", branch_name: "agent/x" }),
+    row({ handoff_id: "C", ts: T2, branch_base: "agent/x" }),
+  ]);
+  expect(result.lineages).toHaveLength(1);
+  const lin = result.lineages[0]!;
+  expect(lin.root_handoff_id).toBe("C");
+  expect(lin.handoff_ids).toEqual(["C", "P"]);
+  expect(lin.shape).toBe("chain");
 });
 
 test("buildLineages ignores a branch_base link when the child predates the parent", async () => {
@@ -498,10 +615,10 @@ test("lineageUsage sums usage-update tokens across the lineage handoffs", async 
     { handoff_ids: ["A", "B"], start_ts: "2026-11-02T00:00:00Z" },
     { now: NOW, t0RetentionDays: 30 },
   );
-  expect(result.tokens).toBe(150);
-  expect(result.handoff_ids_counted).toBe(2);
-  expect(result.complete).toBe(true);
-  expect(result.incomplete_reason).toBeNull();
+  expect(result?.tokens).toBe(150);
+  expect(result?.handoff_ids_counted).toBe(2);
+  expect(result?.complete).toBe(true);
+  expect(result?.incomplete_reason).toBeNull();
   expect(LineageUsageSchema.safeParse(result).success).toBe(true);
 });
 
@@ -516,11 +633,24 @@ test("lineageUsage reports handoff_usage_missing when a member has no usage rows
     { handoff_ids: ["A", "B"], start_ts: "2026-11-02T00:00:00Z" },
     { now: NOW, t0RetentionDays: 30 },
   );
-  expect(result.tokens).toBe(100);
-  expect(result.handoff_ids_counted).toBe(1);
-  expect(result.complete).toBe(false);
-  expect(result.incomplete_reason).toBe("handoff_usage_missing");
+  expect(result?.tokens).toBe(100);
+  expect(result?.handoff_ids_counted).toBe(1);
+  expect(result?.complete).toBe(false);
+  expect(result?.incomplete_reason).toBe("handoff_usage_missing");
   expect(LineageUsageSchema.safeParse(result).success).toBe(true);
+});
+
+test("lineageUsage returns null instead of a fake count when no handoff had usage", async () => {
+  const fn = mod?.["lineageUsage"];
+  expect(typeof fn).toBe("function");
+  const usage = fn as LineageUsageFn;
+  const db = freshDb();
+  const result = await usage(
+    db,
+    { handoff_ids: ["A", "B"], start_ts: "2026-11-02T00:00:00Z" },
+    { now: NOW, t0RetentionDays: 30 },
+  );
+  expect(result).toBeNull();
 });
 
 test("lineageUsage reports t0_retention_window when the lineage predates retention", async () => {
@@ -535,8 +665,8 @@ test("lineageUsage reports t0_retention_window when the lineage predates retenti
     { handoff_ids: ["A", "B"], start_ts: "2026-10-03T00:00:00Z" },
     { now: NOW, t0RetentionDays: 30 },
   );
-  expect(result.complete).toBe(false);
-  expect(result.incomplete_reason).toBe("t0_retention_window");
+  expect(result?.complete).toBe(false);
+  expect(result?.incomplete_reason).toBe("t0_retention_window");
   expect(LineageUsageSchema.safeParse(result).success).toBe(true);
 });
 

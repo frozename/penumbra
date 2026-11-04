@@ -108,13 +108,18 @@ function parentLinkFor(
       ? (retryEvents.get(row.triggered_by_event_id) ?? null)
       : null;
   const stamped = parseRetryOf(row.message);
+  const stampedConflict = stamped !== null && stamped !== row.parent_handoff_id;
+  const eventConflict =
+    eventTarget !== null &&
+    eventTarget !== row.parent_handoff_id &&
+    (stamped === null || stamped !== eventTarget);
+  const conflict = stampedConflict || eventConflict;
 
   if (linkable(row.parent_handoff_id)) {
     const kind: LinkKind = stamped !== null || eventTarget !== null ? "retry_child" : "chain_hop";
-    return { parent: row.parent_handoff_id, kind, conflict: false };
+    return { parent: row.parent_handoff_id, kind, conflict };
   }
   if (stamped !== null) {
-    const conflict = eventTarget !== null && eventTarget !== stamped;
     if (linkable(stamped)) return { parent: stamped, kind: "retry_child", conflict };
     if (linkable(eventTarget)) return { parent: eventTarget, kind: "retry_child", conflict };
     return { parent: null, kind: null, conflict };
@@ -376,7 +381,7 @@ export function lineageUsage(
   db: Database,
   lineage: Pick<BuiltLineage, "handoff_ids" | "start_ts">,
   opts: { now: number; t0RetentionDays: number },
-): z.infer<typeof LineageUsageSchema> {
+): z.infer<typeof LineageUsageSchema> | null {
   const usages = lineage.handoff_ids.map((id) => aggregateHandoffUsage(db, id));
 
   const tokenValues = usages
@@ -391,6 +396,10 @@ export function lineageUsage(
   const counted = usages.filter(
     (usage) => usage.tokens_used !== null || usage.cost_usd !== null,
   ).length;
+  // LineageUsageSchema floors handoff_ids_counted at min(1), so a lineage with
+  // zero counted handoffs has no honest usage block; null (the manifest's
+  // lineage_usage is nullable) keeps the missingness explicit.
+  if (counted === 0) return null;
 
   let incompleteReason: z.infer<typeof LineageUsageSchema>["incomplete_reason"] = null;
   if (opts.now - Date.parse(lineage.start_ts) > opts.t0RetentionDays * 86_400_000) {
@@ -402,9 +411,7 @@ export function lineageUsage(
   return LineageUsageSchema.parse({
     tokens,
     cost_usd: costUsd,
-    // LineageUsageSchema floors handoff_ids_counted at 1; a lineage with fully
-    // absent usage still counts the one handoff under review.
-    handoff_ids_counted: Math.max(1, counted),
+    handoff_ids_counted: counted,
     complete: incompleteReason === null,
     incomplete_reason: incompleteReason,
   });
