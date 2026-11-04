@@ -53,6 +53,8 @@ type Metric = {
   s: number;
   n: number;
   n_unknown: number;
+  n_families: number;
+  underpowered: boolean;
   rate: number | null;
   wilson: Interval | null;
   manski: Interval | null;
@@ -316,16 +318,20 @@ function groupKeyOf(ep: Episode, groupBy: GroupByKey): string {
 
 function finalizeMetric(
   acc: MetricAcc,
-  opts: { underpowered: boolean; seed: number; B: number },
+  opts: { minFamilies: number; seed: number; B: number },
 ): Metric {
+  const nFamilies = acc.families.size;
+  const underpowered = nFamilies < opts.minFamilies;
   const clusters = [...acc.families.values()].map((family) => ({ s: family.s, n: family.n }));
-  const clusterCi = opts.underpowered
+  const clusterCi = underpowered
     ? null
     : clusterBootstrap(clusters, { seed: opts.seed, B: opts.B });
   return {
     s: acc.s,
     n: acc.n,
     n_unknown: acc.nUnknown,
+    n_families: nFamilies,
+    underpowered,
     rate: acc.n === 0 ? null : acc.s / acc.n,
     wilson: wilson(acc.s, acc.n),
     manski: manskiBounds(acc.s, acc.n - acc.s, acc.nUnknown),
@@ -337,19 +343,17 @@ function buildGroup(
   acc: GroupAcc,
   opts: { minFamilies: number; seed: number; B: number },
 ): GroupReport {
-  const nFamilies = acc.solved.families.size;
-  const underpowered = nFamilies < opts.minFamilies;
-  const finalize = (metric: MetricAcc): Metric =>
-    finalizeMetric(metric, { underpowered, seed: opts.seed, B: opts.B });
+  const solvedVerified = finalizeMetric(acc.solved, opts);
+  const firstAttempt = finalizeMetric(acc.firstAttempt, opts);
   return {
     key: acc.key,
     n_episodes: acc.nEpisodes,
-    n_families: nFamilies,
-    underpowered,
+    n_families: solvedVerified.n_families,
+    underpowered: solvedVerified.underpowered,
     n_excluded: { ...acc.nExcluded },
     failures: acc.failures,
-    solved_verified: finalize(acc.solved),
-    first_attempt: finalize(acc.firstAttempt),
+    solved_verified: solvedVerified,
+    first_attempt: firstAttempt,
     tokens: {
       sum: acc.tokens.sum,
       n_missing: acc.tokens.nMissing,

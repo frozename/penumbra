@@ -11,12 +11,16 @@ type SolvedVerifiedReport = {
   s: number;
   n: number;
   n_unknown: number;
+  n_families: number;
+  underpowered: boolean;
   cluster_ci: Interval | null;
 };
 type FirstAttemptReport = {
   s: number;
   n: number;
   n_unknown: number;
+  n_families: number;
+  underpowered: boolean;
   cluster_ci: Interval | null;
 };
 type TokenReport = { sum: number; n_missing: number; n_incomplete: number; complete: boolean };
@@ -684,6 +688,55 @@ test("P5-19: all-unknown families do not count toward n_families or the power ga
   expect(g?.first_attempt.s).toBe(0);
   expect(g?.first_attempt.n).toBe(1);
   expect(g?.first_attempt.n_unknown).toBe(2);
+  expect(g?.first_attempt.cluster_ci).toBeNull();
+});
+
+test("P5-25: each metric gates on its own observed family count, not the solved metric's", async () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const d1 = digest(1);
+  const partial = {
+    status: "partial",
+    reason: "claims_pruned",
+    count: 2,
+    count_basis: "handoff_counter",
+  };
+  const eps = [
+    makeEpisode({
+      episode_id: "e-f1",
+      family_id: "fam-1",
+      receipts: [hiddenReceipt({ digest: d1 })],
+    }),
+    makeEpisode({
+      episode_id: "e-f2",
+      family_id: "fam-2",
+      attempts: [att(2, SHA_A)],
+      attempt_history: partial,
+      observed_outcome: { class: "model_failure", reason: "hidden_failed" },
+    }),
+    makeEpisode({
+      episode_id: "e-f3",
+      family_id: "fam-3",
+      attempts: [att(2, SHA_A)],
+      attempt_history: partial,
+      observed_outcome: { class: "model_failure", reason: "hidden_failed" },
+    }),
+  ];
+  const table = new Map<string, VerifyResultLike | "throw">([
+    [`e-f1:${d1}`, verifiedResult("pass", null, SHA_A)],
+  ]);
+  const res = await runAgg(eps, { verifier: fakeVerifier(table), minFamilies: 3 });
+  const g = res.groups[0];
+  expect(g?.solved_verified.n_families).toBe(3);
+  expect(g?.solved_verified.underpowered).toBe(false);
+  expect(g?.solved_verified.cluster_ci).not.toBeNull();
+  expect(g?.first_attempt.s).toBe(1);
+  expect(g?.first_attempt.n).toBe(1);
+  expect(g?.first_attempt.n_unknown).toBe(2);
+  expect(g?.first_attempt.n_families).toBe(1);
+  expect(g?.first_attempt.underpowered).toBe(true);
   expect(g?.first_attempt.cluster_ci).toBeNull();
 });
 
