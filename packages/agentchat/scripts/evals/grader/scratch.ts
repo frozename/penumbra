@@ -14,6 +14,9 @@ export interface GraderScratch {
   repoDir: string;
   gitEnv: NodeJS.ProcessEnv;
   git(args: string[], input?: Uint8Array): Promise<RunCommandResult>;
+  // buildBase and applyPatch share one GIT_INDEX_FILE per scratch: read-tree,
+  // update-index and write-tree interleave if the calls overlap, so callers
+  // must await them serially and never run two against the same scratch.
   buildBase(files: Record<string, string>): Promise<string>;
   applyPatch(baseSha: string, patchText: string): Promise<string>;
   newTree(id: string): string;
@@ -179,14 +182,19 @@ async function applyPatchImpl(
 export async function openGraderScratch(opts: OpenOptions): Promise<GraderScratch> {
   const run = opts.runCommand ?? defaultRunCommand;
   const dir = mkdtempSync(join(opts.tmpRoot ?? tmpdir(), "penumbra-grader-"));
-  chmodSync(dir, 0o700);
-  mkdirSync(join(dir, "home"));
-  mkdirSync(join(dir, "trees"));
-  mkdirSync(join(dir, "legs"));
   const core: ScratchCore = { dir, repoDir: join(dir, "repo"), gitEnv: scrubbedGitEnv(dir), run };
-  requireOk(await gitAt(core, dir, ["init", "-q", "repo"]), "init");
-  if (opts.sourceRepo !== null) {
-    await installAlternates(core, opts.sourceRepo);
+  try {
+    chmodSync(dir, 0o700);
+    mkdirSync(join(dir, "home"));
+    mkdirSync(join(dir, "trees"));
+    mkdirSync(join(dir, "legs"));
+    requireOk(await gitAt(core, dir, ["init", "-q", "repo"]), "init");
+    if (opts.sourceRepo !== null) {
+      await installAlternates(core, opts.sourceRepo);
+    }
+  } catch (err) {
+    rmSync(dir, { recursive: true, force: true });
+    throw err;
   }
 
   const cleanup = (): void => {
