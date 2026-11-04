@@ -52,6 +52,9 @@ export interface DefaultDependencyProviderOptions {
   cacheRoot: string;
   allowInstall: boolean;
   runCommand?: RunCommand;
+  // Test seam: called after freezeTree, before the CACHE_MARKER write, so a
+  // throwing hook can pin that the marker is committed only on a frozen cache.
+  onAfterFreeze?: () => void;
 }
 
 const LOCKFILE_NAME = "bun.lock";
@@ -188,6 +191,7 @@ async function installIntoCache(
   run: RunCommand,
   cacheDir: string,
   input: BaseDepsInput,
+  onAfterFreeze?: () => void,
 ): Promise<EnsureResult> {
   for (const manifest of input.manifests) {
     if (!isSafeRelativePath(manifest.path)) {
@@ -213,6 +217,7 @@ async function installIntoCache(
   // ensure() refuses to accept; a crash after the marker but before sealing
   // only leaves the root dir writable, never a half-installed accepted cache.
   freezeTree(cacheDir, false);
+  onAfterFreeze?.();
   writeFileSync(join(cacheDir, CACHE_MARKER), `${input.lockSha256}\n`, "utf8");
   chmodSync(cacheDir, 0o555);
   return { ok: true, cacheDir };
@@ -234,7 +239,7 @@ export function createDefaultDependencyProvider(
       if (!opts.allowInstall) {
         return { ok: false, reason: "deps_cache_missing" };
       }
-      const result = await installIntoCache(run, cacheDir, input);
+      const result = await installIntoCache(run, cacheDir, input, opts.onAfterFreeze);
       return result;
     },
   };

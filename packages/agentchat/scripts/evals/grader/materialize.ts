@@ -167,12 +167,31 @@ export async function readBlob(
   return res.code === 0 ? res.stdout : null;
 }
 
+// git recognizes a .git directory case-insensitively and through HFS+
+// ignorable-Unicode and NTFS short-name / trailing-dot-space aliases
+// (is_hfs_dotgit / is_ntfs_dotgit). On case-insensitive filesystems those
+// aliases land as a real .git and let the candidate drive git (core.fsmonitor).
+const HFS_IGNORABLE_CODEPOINTS = /[\u200C-\u200F\u202A-\u202E\u206A-\u206F\uFEFF]/g;
+const NTFS_SHORT_NAME_DOTGIT = /^git~\d+$/i;
+
+function isGitDirSegment(segment: string): boolean {
+  const stripped = segment.replaceAll(HFS_IGNORABLE_CODEPOINTS, "");
+  if (stripped.toLowerCase() === ".git" || NTFS_SHORT_NAME_DOTGIT.test(stripped)) {
+    return true;
+  }
+  const trimmed = stripped.replaceAll(/[. ]+$/g, "");
+  return (
+    trimmed !== stripped &&
+    (trimmed.toLowerCase() === ".git" || NTFS_SHORT_NAME_DOTGIT.test(trimmed))
+  );
+}
+
 export function isSafeRelativePath(path: string): boolean {
   if (path.length === 0 || isAbsolute(path)) {
     return false;
   }
   for (const segment of path.split("/")) {
-    if (segment === "" || segment === "." || segment === ".." || segment === ".git") {
+    if (segment === "" || segment === "." || segment === ".." || isGitDirSegment(segment)) {
       return false;
     }
   }
