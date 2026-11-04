@@ -72,6 +72,23 @@ function makeServices(db: Database): Services {
   });
 }
 
+type ReactorLoggerArg = NonNullable<Parameters<typeof createLongLivedReactor>[0]["log"]>;
+
+function stubReactorLog(warn: (obj: unknown, msg?: string) => void): ReactorLoggerArg {
+  const noop = (): undefined => undefined;
+  const base = {
+    error: noop,
+    warn,
+    info: noop,
+    debug: noop,
+    trace: noop,
+    fatal: noop,
+    child: (): unknown => base,
+    level: "silent",
+  };
+  return base as unknown as ReactorLoggerArg;
+}
+
 describe("home-mgmt retirement", () => {
   it("ignores obsolete YAML while registering both task refiners", () => {
     const db = makeDb();
@@ -147,6 +164,40 @@ describe("home-mgmt retirement", () => {
     }
   });
 
+  it("warns once per reload while retired home-mgmt remains in the config", async () => {
+    const db = makeDb();
+    seedLegacyHome(db);
+    const warn = mock(() => undefined);
+    const reactor = createLongLivedReactor({
+      db,
+      bus: createMcpEventBus(),
+      spawn: mock(() => Promise.resolve({ chain_id: "unused" })),
+      now: () => 100,
+      isChainActive: () => false,
+      mcpPool: {
+        ensureRunning: mock(() => Promise.resolve()),
+        acquire: mock(() => undefined),
+        release: mock(() => undefined),
+        shutdown: () => Promise.resolve(),
+        callTool: () => Promise.resolve({}),
+        listTools: () => Promise.resolve([]),
+        getFederationHealth: () => ({ registered: [], skipped: [] }),
+      },
+      loadAgentchatYaml: () => Promise.resolve({ agents: [configuredAgent("home-mgmt")] }),
+      log: stubReactorLog(warn),
+    });
+    try {
+      await reactor.reload();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        { agent_ids: ["home-mgmt"] },
+        "retired long-lived agents ignored; remove their config",
+      );
+    } finally {
+      await reactor.shutdown();
+    }
+  });
+
   it("blocks ticks even before legacy state has been reconciled", () => {
     const db = makeDb();
     seedLegacyHome(db);
@@ -198,6 +249,19 @@ describe("home-mgmt retirement", () => {
     });
     expect(executeTool).not.toHaveBeenCalled();
     expect(takeSnapshot).not.toHaveBeenCalled();
+    expect(
+      db
+        .query<{ pending_action_id: string | null; decision: string; reason: string }, []>(
+          `SELECT pending_action_id, decision, reason
+           FROM long_lived_action_audit
+           WHERE agent_id='home-mgmt' AND tick_id='legacy-tick'
+           ORDER BY id`,
+        )
+        .all(),
+    ).toEqual([
+      { pending_action_id: null, decision: "gate_failed", reason: "agent_retired" },
+      { pending_action_id: "legacy-action", decision: "gate_failed", reason: "agent_retired" },
+    ]);
   });
 
   it("rejects pending approvals without modifying state or emitting a goal", () => {
