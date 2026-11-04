@@ -187,6 +187,37 @@ function freezeTree(dir: string, includeRoot = true): void {
   }
 }
 
+function chmodTreeWritable(dir: string): void {
+  try {
+    chmodSync(dir, statSync(dir).mode | 0o700);
+  } catch {
+    return;
+  }
+  for (const ent of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, ent.name);
+    if (ent.isSymbolicLink()) {
+      continue;
+    }
+    if (ent.isDirectory()) {
+      chmodTreeWritable(p);
+    } else {
+      try {
+        chmodSync(p, statSync(p).mode | 0o700);
+      } catch {
+        // rmSync force tolerates entries chmod could not reach.
+      }
+    }
+  }
+}
+
+// A crash between freezeTree and the CACHE_MARKER write leaves a frozen,
+// unmarked cacheDir; a plain reinstall would EACCES writing bun.lock.
+// Restore u+w, drop the stale dir, and let the install start from scratch.
+function removeStaleCacheDir(cacheDir: string): void {
+  chmodTreeWritable(cacheDir);
+  rmSync(cacheDir, { recursive: true, force: true });
+}
+
 async function installIntoCache(
   run: RunCommand,
   cacheDir: string,
@@ -238,6 +269,9 @@ export function createDefaultDependencyProvider(
       }
       if (!opts.allowInstall) {
         return { ok: false, reason: "deps_cache_missing" };
+      }
+      if (existsSync(cacheDir)) {
+        removeStaleCacheDir(cacheDir);
       }
       const result = await installIntoCache(run, cacheDir, input, opts.onAfterFreeze);
       return result;

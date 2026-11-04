@@ -98,6 +98,7 @@ test("freeze strips write bits but keeps execute bits on cached binaries", async
   const plain = join(res.cacheDir, "node_modules", "plain.txt");
   expect(statSync(exe).mode & 0o777).toBe(0o555);
   expect(statSync(plain).mode & 0o777).toBe(0o444);
+  expect(statSync(join(res.cacheDir, "node_modules")).mode & 0o777).toBe(0o555);
 });
 
 test("frozen executable in the dependency cache still runs", async () => {
@@ -250,6 +251,75 @@ test("CACHE_MARKER is committed last so an accepted cache is always frozen and s
     expect((err as NodeJS.ErrnoException).code).toBe("EACCES");
   }
   expect(sealed).toBe(true);
+});
+
+// Pins the freeze -> hook -> marker -> seal order: a crash at the seam must
+// leave the cache unmarked (so a later ensure() refuses it). Moving the
+// marker write before freezeTree/onAfterFreeze makes this fail.
+test("a crash after freeze but before the marker write rejects the cache", async () => {
+  const cacheRoot = mkCacheRoot();
+  const lockfileBytes = Buffer.from("fake-lock\n", "utf8");
+  const lockSha256 = sha256Hex(lockfileBytes);
+  const crashProvider = createDefaultDependencyProvider({
+    cacheRoot,
+    allowInstall: true,
+    runCommand: fakeInstall(),
+    onAfterFreeze: () => {
+      throw new Error("injected crash");
+    },
+  });
+
+  let rejection: unknown = null;
+  try {
+    await crashProvider.ensure({
+      lockSha256,
+      lockfileBytes,
+      manifests: [{ path: "package.json", bytes: Buffer.from('{"name":"x"}\n', "utf8") }],
+    });
+  } catch (err) {
+    rejection = err;
+  }
+  expect((rejection as Error | null)?.message).toBe("injected crash");
+
+  const cacheDir = join(cacheRoot, lockSha256);
+  expect(existsSync(join(cacheDir, ".penumbra-deps-cache-ok"))).toBe(false);
+
+  const reader = createDefaultDependencyProvider({
+    cacheRoot,
+    allowInstall: false,
+    runCommand: fakeInstall(),
+  });
+  const res = await reader.ensure({ lockSha256, lockfileBytes, manifests: [] });
+  expect(res).toEqual({ ok: false, reason: "deps_cache_missing" });
+});
+
+// A crash between freezeTree and the marker write leaves a frozen, unmarked
+// cacheDir; ensure({allowInstall:true}) must recover it (unseal, remove,
+// reinstall) instead of throwing EACCES on the bun.lock rewrite.
+test("a frozen but unmarked cache dir is recovered and reinstalled", async () => {
+  const cacheRoot = mkCacheRoot();
+  const lockfileBytes = Buffer.from("lock\n", "utf8");
+  const lockSha256 = sha256Hex(lockfileBytes);
+  const staleDir = join(cacheRoot, lockSha256);
+  mkdirSync(join(staleDir, "node_modules", "partial"), { recursive: true });
+  writeFileSync(join(staleDir, "bun.lock"), "stale-lock\n", "utf8");
+  chmodSync(join(staleDir, "bun.lock"), 0o444);
+  chmodSync(join(staleDir, "node_modules", "partial"), 0o555);
+  chmodSync(join(staleDir, "node_modules"), 0o555);
+  chmodSync(staleDir, 0o555);
+
+  const provider = createDefaultDependencyProvider({
+    cacheRoot,
+    allowInstall: true,
+    runCommand: fakeInstall(),
+  });
+  const res = await provider.ensure({ lockSha256, lockfileBytes, manifests: [] });
+
+  expect(res).toEqual({ ok: true, cacheDir: staleDir });
+  expect(readFileSync(join(staleDir, "bun.lock"), "utf8")).toBe("lock\n");
+  expect(existsSync(join(staleDir, "node_modules", "partial"))).toBe(false);
+  expect(existsSync(join(staleDir, "node_modules", ".bin", "tool"))).toBe(true);
+  expect(existsSync(join(staleDir, ".penumbra-deps-cache-ok"))).toBe(true);
 });
 
 test("linkDeps links root and per-workspace node_modules and skips missing workspace targets", async () => {

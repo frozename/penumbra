@@ -60,6 +60,31 @@ export function defaultRunCommand(
   });
 }
 
+const BARE_REPO_GUARD_ARGS = ["-c", "safe.bareRepository=explicit"] as const;
+
+// A candidate tree can carry a HEAD + objects/ + refs/ root layout that git's
+// implicit bare-repo discovery accepts; any git command the grader runs
+// inside treeDir would then treat the candidate checkout as a git dir and
+// execute candidate-controlled config (core.fsmonitor). Every git invocation
+// inside treeDir must go through this command: bare discovery is refused
+// (safe.bareRepository=explicit) and upward repository discovery stops at
+// treeDir's parent (GIT_CEILING_DIRECTORIES). Non-git commands pass through.
+export function createCandidateTreeGitRun(
+  treeDir: string,
+  base: RunCommand = defaultRunCommand,
+): RunCommand {
+  const ceiling = dirname(resolve(treeDir));
+  return (cmd, args, opts = {}) => {
+    if (cmd !== "git") {
+      return base(cmd, args, opts);
+    }
+    return base(cmd, [...BARE_REPO_GUARD_ARGS, ...args], {
+      ...opts,
+      env: { ...(opts.env ?? {}), GIT_CEILING_DIRECTORIES: ceiling },
+    });
+  };
+}
+
 export interface ModelFailure {
   reason: "contract_violation";
   detail: Record<string, unknown>;
@@ -74,6 +99,10 @@ export interface MaterializeOk {
   ok: true;
   treeDir: string;
   removed: string[];
+  // Hardened command for git work inside treeDir: every invocation carries
+  // -c safe.bareRepository=explicit and GIT_CEILING_DIRECTORIES pinned to
+  // treeDir's parent (see createCandidateTreeGitRun).
+  gitInTree: RunCommand;
 }
 
 export interface MaterializeFail {
@@ -223,6 +252,30 @@ function findCaseCollisions(entries: TreeEntry[]): string[] {
   return collided.sort();
 }
 
+// git's is_git_directory() accepts any directory holding HEAD plus objects/
+// and refs/ subdirs as a bare repository (case-insensitive on case-insensitive
+// filesystems), so a candidate tree with that root layout would be picked up
+// as a git dir by the grader's own git calls.
+function findBareRepoLayout(entries: TreeEntry[]): ModelFailure | null {
+  let hasHead = false;
+  let hasObjects = false;
+  let hasRefs = false;
+  for (const entry of entries) {
+    const segments = entry.path.split("/");
+    const first = (segments[0] ?? "").toLowerCase();
+    if (segments.length === 1) {
+      hasHead ||= first === "head";
+    } else if (first === "objects") {
+      hasObjects = true;
+    } else if (first === "refs") {
+      hasRefs = true;
+    }
+  }
+  return hasHead && hasObjects && hasRefs
+    ? { reason: "contract_violation", detail: { bare_repo_layout: true } }
+    : null;
+}
+
 function findContractViolation(entries: TreeEntry[], outDir: string): ModelFailure | null {
   const root = resolve(outDir);
   for (const entry of entries) {
@@ -246,7 +299,7 @@ function findContractViolation(entries: TreeEntry[], outDir: string): ModelFailu
   if (collisions.length > 0) {
     return { reason: "contract_violation", detail: { case_collision: collisions } };
   }
-  return null;
+  return findBareRepoLayout(entries);
 }
 
 function isDroppedPath(path: string): boolean {
@@ -362,5 +415,10 @@ export async function materialize(opts: MaterializeOptions): Promise<Materialize
       removed.push(outcome.removedTag);
     }
   }
-  return { ok: true, treeDir: opts.outDir, removed: removed.sort() };
+  return {
+    ok: true,
+    treeDir: opts.outDir,
+    removed: removed.sort(),
+    gitInTree: createCandidateTreeGitRun(opts.outDir, run),
+  };
 }

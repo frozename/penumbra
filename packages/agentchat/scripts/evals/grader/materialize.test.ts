@@ -24,7 +24,13 @@ import {
   linkDeps,
   readBaseDepsInput,
 } from "./deps.js";
-import { materialize, type RunCommand, type RunCommandResult } from "./materialize.js";
+import {
+  createCandidateTreeGitRun,
+  defaultRunCommand,
+  materialize,
+  type RunCommand,
+  type RunCommandResult,
+} from "./materialize.js";
 
 // No global/system config (gpgsign, eol/ident redefinitions) and no inherited
 // GIT_* variables (GIT_DIR from a hook, identity overrides) reach the fixture.
@@ -199,6 +205,42 @@ async function makeMktreeCommit(root: string, entries: MktreeEntry[]): Promise<s
     .trim();
 }
 
+// Generalized mktree builder: root-level blobs AND arbitrarily nested
+// subtrees, for layouts makeMktreeCommit's flat {name, inner} shape cannot
+// express (e.g. a bare-repo root with HEAD, config, objects/ and refs/).
+interface MktreeSpec {
+  files?: Record<string, string>;
+  dirs?: Record<string, MktreeSpec>;
+}
+
+async function writeMktreeTree(repo: string, spec: MktreeSpec): Promise<string> {
+  const lines: string[] = [];
+  for (const [name, bytes] of Object.entries(spec.files ?? {})) {
+    const oid = (
+      await git(repo, ["hash-object", "-w", "--stdin"], { input: Buffer.from(bytes, "utf8") })
+    )
+      .toString("utf8")
+      .trim();
+    lines.push(`100644 blob ${oid}\t${name}`);
+  }
+  for (const [name, inner] of Object.entries(spec.dirs ?? {})) {
+    const oid = await writeMktreeTree(repo, inner);
+    lines.push(`40000 tree ${oid}\t${name}`);
+  }
+  const input = Buffer.from(lines.map((line) => `${line}\n`).join(""), "utf8");
+  return (await git(repo, ["mktree"], { input })).toString("utf8").trim();
+}
+
+async function commitMktreeSpec(root: string, spec: MktreeSpec): Promise<string> {
+  const repo = join(root, "repo");
+  mkdirSync(repo);
+  await git(repo, ["init", "-b", "main"]);
+  const tree = await writeMktreeTree(repo, spec);
+  return (await git(repo, ["commit-tree", tree, "-m", "spec"], { env: GIT_IDENTITY }))
+    .toString("utf8")
+    .trim();
+}
+
 function readMaybe(path: string): Buffer | null {
   try {
     return readFileSync(path);
@@ -293,6 +335,7 @@ test("materialize writes blob bytes without applying eol=crlf attributes", async
     return;
   }
   expect(result.treeDir).toBe(outDir);
+  expect(typeof result.gitInTree).toBe("function");
   expect(readMaybe(join(outDir, "a.txt"))).toEqual(lfBytes);
 }, 30_000);
 
@@ -442,6 +485,143 @@ test("materialize rejects a '.' directory entry as contract_violation", async ()
   expect(result.model_failure?.detail.unsafe_path).toBe(true);
   expect(existsSync(outDir)).toBe(false);
 }, 30_000);
+
+// git recognizes these as .git (case-folded, HFS+ ignorable-Unicode, NTFS
+// short-name, trailing-dot/space); on case-insensitive filesystems they land
+// as a real .git, so materialize must reject them without creating outDir.
+async function expectGitAliasRejected(alias: string): Promise<void> {
+  const root = mkdtempSync(join(tmpdir(), "penumbra-materialize-alias-"));
+  tempDirs.push(root);
+  const sha = await makeMktreeCommit(root, [
+    { name: alias, inner: [{ name: "settings", bytes: "injected\n" }] },
+  ]);
+  const outDir = join(root, "tree");
+
+  const result = await materialize({ repo: join(root, "repo"), sha, outDir, gitEnv: FIXTURE_ENV });
+
+  expect(result.ok).toBe(false);
+  if (result.ok) {
+    return;
+  }
+  expect(result.model_failure?.reason).toBe("contract_violation");
+  expect(result.model_failure?.detail.path).toBe(`${alias}/settings`);
+  expect(result.model_failure?.detail.unsafe_path).toBe(true);
+  expect(existsSync(outDir)).toBe(false);
+}
+
+test("materialize rejects a '.GIT' subtree as contract_violation and leaves no file", async () => {
+  await expectGitAliasRejected(".GIT");
+}, 30_000);
+
+test("materialize rejects a '.Git' subtree as contract_violation and leaves no file", async () => {
+  await expectGitAliasRejected(".Git");
+}, 30_000);
+
+test("materialize rejects a .git+U+200C subtree as contract_violation and leaves no file", async () => {
+  await expectGitAliasRejected(".git\u200C");
+}, 30_000);
+
+test("materialize rejects a 'git~1' subtree as contract_violation and leaves no file", async () => {
+  await expectGitAliasRejected("git~1");
+}, 30_000);
+
+test("materialize rejects a '.git.' subtree as contract_violation and leaves no file", async () => {
+  await expectGitAliasRejected(".git.");
+}, 30_000);
+
+test("materialize rejects a '.git ' subtree as contract_violation and leaves no file", async () => {
+  await expectGitAliasRejected(".git ");
+}, 30_000);
+
+test("materialize rejects a bare-repo root layout as contract_violation and writes nothing", async () => {
+  const root = mkdtempSync(join(tmpdir(), "penumbra-materialize-bare-"));
+  tempDirs.push(root);
+  const sha = await commitMktreeSpec(root, {
+    files: {
+      HEAD: "ref: refs/heads/main\n",
+      config: "[core]\n\tfsmonitor = true\n",
+    },
+    dirs: {
+      objects: { files: { keep: "" } },
+      refs: { dirs: { heads: { files: { keep: "" } } } },
+    },
+  });
+  const outDir = join(root, "tree");
+
+  const result = await materialize({ repo: join(root, "repo"), sha, outDir, gitEnv: FIXTURE_ENV });
+
+  expect(result.ok).toBe(false);
+  if (result.ok) {
+    return;
+  }
+  expect(result.model_failure?.reason).toBe("contract_violation");
+  expect(result.model_failure?.detail.bare_repo_layout).toBe(true);
+  expect(existsSync(outDir)).toBe(false);
+}, 30_000);
+
+test("materialize accepts a repo-like tree that lacks the full bare-marker set", async () => {
+  const root = mkdtempSync(join(tmpdir(), "penumbra-materialize-nearmiss-"));
+  tempDirs.push(root);
+  const sha = await commitMktreeSpec(root, {
+    files: { HEAD: "ref: refs/heads/main\n" },
+    dirs: {
+      objects: { files: { keep: "" } },
+      src: { files: { "a.ts": "export const a = 1;\n" } },
+    },
+  });
+  const outDir = join(root, "tree");
+
+  const result = await materialize({ repo: join(root, "repo"), sha, outDir, gitEnv: FIXTURE_ENV });
+
+  expect(result.ok).toBe(true);
+  if (!result.ok) {
+    return;
+  }
+  expect(readMaybe(join(outDir, "src", "a.ts"))).toEqual(
+    Buffer.from("export const a = 1;\n", "utf8"),
+  );
+}, 30_000);
+
+test("createCandidateTreeGitRun guards git invocations and passes other commands through", async () => {
+  const parent = mkOutDir();
+  const treeDir = join(parent, "tree");
+  const calls: { cmd: string; args: string[]; env?: NodeJS.ProcessEnv }[] = [];
+  const base: RunCommand = (cmd, args, opts): Promise<RunCommandResult> => {
+    calls.push({ cmd, args, env: opts?.env });
+    return Promise.resolve({ code: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) });
+  };
+
+  const gitInTree = createCandidateTreeGitRun(treeDir, base);
+  await gitInTree("git", ["status"], { cwd: treeDir, env: { KEEP_ME: "1" } });
+  await gitInTree("bun", ["test"], { cwd: treeDir });
+
+  expect(calls).toHaveLength(2);
+  expect(calls[0]?.cmd).toBe("git");
+  expect(calls[0]?.args).toEqual(["-c", "safe.bareRepository=explicit", "status"]);
+  expect(calls[0]?.env?.GIT_CEILING_DIRECTORIES).toBe(parent);
+  expect(calls[0]?.env?.KEEP_ME).toBe("1");
+  expect(calls[1]?.cmd).toBe("bun");
+  expect(calls[1]?.args).toEqual(["test"]);
+  expect(calls[1]?.env).toBeUndefined();
+});
+
+test("hardened git invocation refuses a candidate tree that looks like a bare repository", async () => {
+  const root = mkdtempSync(join(tmpdir(), "penumbra-materialize-hardened-"));
+  tempDirs.push(root);
+  const treeDir = join(root, "tree");
+  mkdirSync(join(treeDir, "objects"), { recursive: true });
+  mkdirSync(join(treeDir, "refs"), { recursive: true });
+  writeFileSync(join(treeDir, "HEAD"), "ref: refs/heads/main\n", "utf8");
+  writeFileSync(join(treeDir, "config"), "[core]\n\tfsmonitor = true\n", "utf8");
+  writeFileSync(join(treeDir, "objects", "keep"), "", "utf8");
+  writeFileSync(join(treeDir, "refs", "keep"), "", "utf8");
+
+  const gitInTree = createCandidateTreeGitRun(treeDir, defaultRunCommand);
+  const res = await gitInTree("git", ["status"], { cwd: treeDir, env: FIXTURE_ENV });
+
+  expect(res.code).not.toBe(0);
+  expect(res.stderr.toString("utf8")).toContain("safe.bareRepository");
+});
 
 test("materialize preserves the executable bit on 100755 entries", async () => {
   const { dir, shas } = await makeRepo({
