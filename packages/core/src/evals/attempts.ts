@@ -239,6 +239,9 @@ export function firstAttemptEligibility(
   if (ep.lineage.shape === "branching") {
     return "unknown";
   }
+  if (ep.attempts.length === 0) {
+    return "unknown";
+  }
   if (ep.attempts.length > 1) {
     return "ineligible";
   }

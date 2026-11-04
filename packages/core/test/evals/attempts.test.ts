@@ -385,6 +385,90 @@ test("R3c: invalid commit_integrity gives null flags with source none", () => {
   expect(result.attempts[0]?.attempt.head_sha).toBeNull();
 });
 
+test("R3d: identity_mismatch reads mismatched_total as strictly greater than zero", () => {
+  expect(typeof mod?.["sliceHandoffAttempts"]).toBe("function");
+  const nonzero = sliceFn()(
+    handoff(TS_1D, 1),
+    [
+      ev(1, "claim"),
+      ev(2, "dispatch.end", { commit_integrity: integrity(SHA_B, { mismatched_total: 2 }) }),
+    ],
+    opts(),
+  );
+  expect(nonzero.attempts[0]?.attempt.contract_flags.identity_mismatch).toBe(true);
+  const zero = sliceFn()(
+    handoff(TS_1D, 1),
+    [
+      ev(1, "claim"),
+      ev(2, "dispatch.end", { commit_integrity: integrity(SHA_B, { mismatched_total: 0 }) }),
+    ],
+    opts(),
+  );
+  expect(zero.attempts[0]?.attempt.contract_flags.identity_mismatch).toBe(false);
+});
+
+test("R3e: absent mismatched_total falls back to the mismatched_commits list", () => {
+  expect(typeof mod?.["sliceHandoffAttempts"]).toBe("function");
+  const nonEmpty = sliceFn()(
+    handoff(TS_1D, 1),
+    [
+      ev(1, "claim"),
+      ev(2, "dispatch.end", {
+        commit_integrity: integrity(SHA_B, {
+          mismatched_commits: [SHA_B],
+          mismatched_total: undefined,
+        }),
+      }),
+    ],
+    opts(),
+  );
+  expect(nonEmpty.attempts[0]?.attempt.contract_flags.source).toBe("attempt_dispatch_end");
+  expect(nonEmpty.attempts[0]?.attempt.contract_flags.identity_mismatch).toBe(true);
+  const empty = sliceFn()(
+    handoff(TS_1D, 1),
+    [
+      ev(1, "claim"),
+      ev(2, "dispatch.end", {
+        commit_integrity: integrity(SHA_B, {
+          mismatched_commits: [],
+          mismatched_total: undefined,
+        }),
+      }),
+    ],
+    opts(),
+  );
+  expect(empty.attempts[0]?.attempt.contract_flags.identity_mismatch).toBe(false);
+});
+
+test("R3f: within one attempt the last dispatch.end wins for head and flags", () => {
+  expect(typeof mod?.["sliceHandoffAttempts"]).toBe("function");
+  const result = sliceFn()(
+    handoff(TS_1D, 1),
+    [
+      ev(1, "claim"),
+      ev(2, "dispatch.end", {
+        autocommitted: true,
+        autocommit_sha: SHA_A,
+        commit_integrity: integrity(SHA_C, {
+          base_is_ancestor: false,
+          mismatched_total: 3,
+        }),
+      }),
+      ev(3, "dispatch.end", dispatchEndMeta(SHA_B)),
+    ],
+    opts(),
+  );
+  const attempt = result.attempts[0]?.attempt;
+  expect(attempt?.head_sha).toBe(SHA_B);
+  expect(attempt?.commits).toEqual({
+    final_commit_attribution: "unknown",
+    attribution_basis: "none",
+    autocommit_flag: null,
+  });
+  expect(attempt?.contract_flags.base_not_ancestor).toBe(false);
+  expect(attempt?.contract_flags.identity_mismatch).toBe(false);
+});
+
 test("R4: only autocommitted === true marks the commit a recovery", () => {
   expect(typeof mod?.["sliceHandoffAttempts"]).toBe("function");
   const unknownAttribution = {
@@ -491,6 +575,41 @@ test("R5d: acp.model_selected attests the model, set_model_sent picks the proven
   ).toBe(true);
 });
 
+test("R5e: the last acp model event wins - select_failed then selected attests", () => {
+  expect(typeof mod?.["sliceHandoffAttempts"]).toBe("function");
+  const result = sliceFn()(
+    handoff(TS_1D, 1),
+    [
+      ev(1, "claim"),
+      ev(2, "acp.model_select_failed", { model: "qwen", error: "rejected" }),
+      ev(3, "acp.model_selected", { model: "m", set_model_sent: true }),
+      ev(4, "dispatch.end", dispatchEndMeta(SHA_B)),
+    ],
+    opts(),
+  );
+  const effective = result.attempts[0]?.effective_model;
+  expect(effective).toMatchObject({ value: "m", provenance: "acp_selected" });
+  expect(ModelIdentitySchema.shape.effective.safeParse(effective).success).toBe(true);
+});
+
+test("R5f: the last acp model event wins - selected then unavailable de-attests", () => {
+  expect(typeof mod?.["sliceHandoffAttempts"]).toBe("function");
+  const result = sliceFn()(
+    handoff(TS_1D, 1),
+    [
+      ev(1, "claim"),
+      ev(2, "acp.model_selected", { model: "m", set_model_sent: true }),
+      ev(3, "acp.model_unavailable", { model: "m", advertised: false }),
+      ev(4, "dispatch.end", dispatchEndMeta(SHA_B)),
+    ],
+    opts(),
+  );
+  const effective = result.attempts[0]?.effective_model;
+  expect(effective?.value).toBeNull();
+  expect(effective?.provenance).toBe("unattested");
+  expect(ModelIdentitySchema.shape.effective.safeParse(effective).success).toBe(true);
+});
+
 test("R6a: an old handoff with pruned events is unavailable inside the retention window", () => {
   expect(typeof mod?.["sliceHandoffAttempts"]).toBe("function");
   const result = sliceFn()(handoff(TS_20D, 2), [], opts());
@@ -574,6 +693,15 @@ test("R10a: a complete single-attempt episode is eligible for first-attempt eval
     final_sha: SHA_A,
   });
   expect(eligibilityFn()(episode)).toBe("eligible");
+});
+
+test("R10a2: a complete history with zero attempts is unknown, not eligible", () => {
+  expect(typeof mod?.["firstAttemptEligibility"]).toBe("function");
+  const episode = ep({
+    attempt_history: history("complete", null, 0, "claim_events"),
+    attempts: [],
+  });
+  expect(eligibilityFn()(episode)).toBe("unknown");
 });
 
 test("R10b: more than one attempt makes the episode ineligible", () => {
