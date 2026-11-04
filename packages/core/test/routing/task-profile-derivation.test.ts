@@ -131,7 +131,7 @@ describe("task type mapping and order", () => {
   });
 
   test("a smoke_test hint merges with a summarization signal in canonical order", () => {
-    const profile = profileTaskDeterministic("Summarize the check output.", undefined, {
+    const profile = profileTaskDeterministic("Summarize the output.", undefined, {
       taskType: "smoke_test",
     });
 
@@ -139,7 +139,7 @@ describe("task type mapping and order", () => {
   });
 
   test("a docs_mechanical hint maps to writing with no other types", () => {
-    const profile = profileTaskDeterministic("Update the README copy.", undefined, {
+    const profile = profileTaskDeterministic("Tidy the changelog wording.", undefined, {
       taskType: "docs_mechanical",
     });
 
