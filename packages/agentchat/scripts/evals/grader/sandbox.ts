@@ -311,16 +311,19 @@ function killChild(child: ChildProcess): void {
 // The default spawn routes fd 3 to a real file, not a pipe: Bun's
 // node:child_process polyfill wraps pipe fds >= 3 in net.Socket via
 // connect({fd}), which races child exit and intermittently fails ENOENT,
-// losing the frame and emitting an unhandled Socket 'error'. A plain file
-// under legTmp has no such machinery and is writable under the seatbelt
-// profile's TMP subpath.
+// losing the frame and emitting an unhandled Socket 'error'. The file is
+// opened write-only + append: the child cannot pread the nonce over the fd
+// nor rewrite a committed frame, only append (which classifyFd3 rejects as a
+// multi-line tamper). The file lives in a parent-only directory that is not
+// bound into the sandbox and not referenced in the profile or bwrap argv; the
+// child sees the inherited fd only.
 const defaultProbeSpawn: SpawnFn = (cmd, args, opts) => {
   const fd3Path = opts?.[PROBE_FD3];
   const baseStdio = opts?.stdio;
   if (fd3Path === undefined || !Array.isArray(baseStdio) || baseStdio.length < 4) {
     return spawn(cmd, args, { cwd: opts?.cwd, env: opts?.env, stdio: baseStdio });
   }
-  const fd3 = openSync(fd3Path, "w+");
+  const fd3 = openSync(fd3Path, "a");
   try {
     const stdio = baseStdio.map((entry, i) => (i === 3 ? fd3 : entry));
     return spawn(cmd, args, { cwd: opts?.cwd, env: opts?.env, stdio });
@@ -416,11 +419,13 @@ function classifyFd3(buf: Buffer, nonce: string, leg: ProbeLeg, state: Fd3State)
   if (state.timedOut) {
     return { kind: "timeout" };
   }
+  if (state.overflow) {
+    // Checked before the empty-buffer branch: a stream spawn can cross the
+    // cap in a single chunk, leaving nothing accepted but the overflow flag.
+    return { kind: "tamper" };
+  }
   if (buf.length === 0) {
     return { kind: "no_output" };
-  }
-  if (state.overflow) {
-    return { kind: "tamper" };
   }
   const text = buf.toString("utf8");
   if (!text.endsWith("\n")) {
@@ -439,6 +444,7 @@ function runLegChild(
   bun: string,
   spawnFn: SpawnFn,
   legTmp: string,
+  fd3Path: string,
 ): Promise<LegResult> {
   const nonce = randomBytes(16).toString("hex");
   const payload = buildPayload(nonce, opts.leg, opts.dirs.treeDir);
@@ -453,7 +459,6 @@ function runLegChild(
     },
     HARNESS_ARGS,
   );
-  const fd3Path = join(legTmp, FD3_FILE_NAME);
   return new Promise<LegResult>((resolve) => {
     let child: ChildProcess;
     try {
@@ -504,15 +509,23 @@ export async function runProbeLeg(opts: RunProbeLegOptions): Promise<LegResult> 
   if (!isSafeRelativePath(opts.leg.module_rel)) {
     throw new Error(`runProbeLeg: unsafe module_rel ${opts.leg.module_rel}`);
   }
-  const legTmp = realpathSync(mkdtempSync(join(opts.tmpRoot ?? tmpdir(), "probe-leg-")));
+  const scratch = opts.tmpRoot ?? tmpdir();
+  // The frame file lives in its own mkdtemp (0700) directory, a sibling of
+  // the leg HOME: legTmp is bound read-write under bwrap and writable under
+  // seatbelt, so a frame inside legTmp would be readable (nonce leak) and
+  // renamable by the candidate.
+  const legTmp = realpathSync(mkdtempSync(join(scratch, "probe-leg-")));
+  const fd3Dir = realpathSync(mkdtempSync(join(scratch, "probe-fd3-")));
   try {
     return await runLegChild(
       opts,
       opts.bun ?? process.execPath,
       opts.spawn ?? defaultProbeSpawn,
       legTmp,
+      join(fd3Dir, FD3_FILE_NAME),
     );
   } finally {
     rmSync(legTmp, { recursive: true, force: true });
+    rmSync(fd3Dir, { recursive: true, force: true });
   }
 }

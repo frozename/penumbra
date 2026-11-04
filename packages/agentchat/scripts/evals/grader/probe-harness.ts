@@ -22,6 +22,28 @@ const exit = process.exit.bind(process);
 const isFiniteNumber = Number.isFinite;
 const joinPath = path.join;
 const toFileHref = url.pathToFileURL;
+const pid = process.pid;
+const killPid = process.kill.bind(process);
+const fsyncFd = fs.fsyncSync.bind(fs);
+
+// process.exit runs 'exit' listeners, so a candidate's process.on("exit")
+// hook would fire after the frame is written and could rewrite fd 3 while the
+// parent reads it. Terminate with SIGKILL instead: no listeners, no
+// finalization registry, nothing left to run. fsync first so the frame is
+// durable before the process dies.
+function hardStop(): void {
+  try {
+    fsyncFd(3);
+  } catch {
+    /* fd 3 may already be gone; the write itself happened */
+  }
+  try {
+    killPid(pid, "SIGKILL");
+  } catch {
+    /* kill failed (e.g. PID reuse guard): nothing else can stop us */
+  }
+  exit(1);
+}
 
 interface ProbeCallSpec {
   id: string;
@@ -176,7 +198,7 @@ function assembleLine(rendered: string[]): string {
 async function main(): Promise<void> {
   const req = readRequest();
   if (req === null) {
-    exit(1);
+    hardStop();
     return;
   }
   let mod: Record<string, unknown> | null;
@@ -200,11 +222,11 @@ async function main(): Promise<void> {
       mod === null ? renderError(call.id, "import_failed") : await runCall(mod, call);
   }
   writeSync(3, `${req.nonce} ${assembleLine(rendered)}\n`);
-  exit(0);
+  hardStop();
 }
 
 try {
   await main();
 } catch {
-  exit(1);
+  hardStop();
 }
