@@ -223,14 +223,14 @@ describe("memory-efficacy-jobs — heartbeatJob", () => {
       leaseTtlMs: LEASE_TTL_MS,
     });
 
-    const done = completeJob(
-      db,
-      job.job_id,
-      { scanned: 1, classified: 1, skipped: 0 },
-      "2026-05-01T13:02:00.000Z",
-      { workerId: "worker-a" },
+    // Non-running row that still carries claimed_by: completeJob nulls it, so a
+    // direct UPDATE isolates the status guard from the worker-ownership guard.
+    db.run(
+      `UPDATE memory_efficacy_jobs
+       SET status = 'completed', heartbeat_at = NULL, lease_expires_at = NULL
+       WHERE job_id = ?`,
+      [job.job_id],
     );
-    expect(done).toBeTrue();
 
     const late = heartbeatJob(db, job.job_id, "worker-a", "2026-05-01T13:03:00.000Z", {
       leaseTtlMs: LEASE_TTL_MS,
