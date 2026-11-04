@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 
+import { isRetiredLongLivedAgent } from "@penumbra/core/long-lived/retired-agents";
 import { z } from "zod";
 
 export const LongLivedApproveActionArgsSchema = z
@@ -47,6 +48,7 @@ export function handleLongLivedApproveAction(
   if (!row) {
     throw new Error("not_found");
   }
+  if (isRetiredLongLivedAgent(row.agent_id)) throw new Error("agent_retired");
 
   const now = deps.now();
   db.transaction(() => {

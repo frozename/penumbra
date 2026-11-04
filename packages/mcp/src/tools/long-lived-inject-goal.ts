@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 
+import { isRetiredLongLivedAgent } from "@penumbra/core/long-lived/retired-agents";
 import { z } from "zod";
 
 export const LongLivedInjectGoalArgsSchema = z
@@ -24,6 +25,11 @@ export function handleLongLivedInjectGoal(
   args: unknown,
 ): { ok: true } {
   const { id, goal } = LongLivedInjectGoalArgsSchema.parse(args ?? {});
+  // Gate on the roster, not the row status: a legacy home-mgmt row is still
+  // 'active' until the first reconcile retires it.
+  if (isRetiredLongLivedAgent(id)) {
+    throw new Error("agent_retired");
+  }
   const now = deps.now();
 
   const injectTx = db.transaction(() => {

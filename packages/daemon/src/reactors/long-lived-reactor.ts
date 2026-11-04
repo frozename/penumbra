@@ -6,6 +6,7 @@ import type {
 import type { Database } from "bun:sqlite";
 
 import { createLogger } from "@penumbra/core";
+import { isRetiredLongLivedAgent } from "@penumbra/core/long-lived/retired-agents";
 
 import type { McpEventBus } from "../events/mcp-event-bus.js";
 import type { McpPool } from "../long-lived/mcp-pool.js";
@@ -105,7 +106,9 @@ type ActiveLongLivedAgent = LongLivedAgentYamlAgent & {
 function activeAgents(agents: readonly LongLivedAgentYamlAgent[]): ActiveLongLivedAgent[] {
   return agents.filter(
     (agent): agent is ActiveLongLivedAgent =>
-      agent.long_lived === true && agent.long_lived_config !== undefined,
+      agent.long_lived === true &&
+      agent.long_lived_config !== undefined &&
+      !isRetiredLongLivedAgent(agent.name),
   );
 }
 
@@ -368,6 +371,12 @@ export function createLongLivedReactor(deps: LongLivedReactorDeps): LongLivedRea
 
   async function doReload(): Promise<void> {
     const yaml = await deps.loadAgentchatYaml();
+    const retiredIds = yaml.agents
+      .filter((agent) => isRetiredLongLivedAgent(agent.name))
+      .map((agent) => agent.name);
+    if (retiredIds.length > 0) {
+      log.warn({ agent_ids: retiredIds }, "retired long-lived agents ignored; remove their config");
+    }
     const agents = activeAgents(yaml.agents);
     reconcileLongLivedAgents(deps.db, toReconcilerAgents(agents), { now: deps.now() });
 

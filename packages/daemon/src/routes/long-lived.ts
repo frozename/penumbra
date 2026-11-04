@@ -101,6 +101,7 @@ function errorBody(
 }
 
 function classifyErrorStatus(code: string, fallback: number): number {
+  if (code === "agent_retired") return 410;
   if (code === "not_found" || code === "agent_not_found") return 404;
   if (
     code === "not_active" ||
