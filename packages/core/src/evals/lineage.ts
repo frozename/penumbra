@@ -108,7 +108,8 @@ function parentLinkFor(
       ? (retryEvents.get(row.triggered_by_event_id) ?? null)
       : null;
   const stamped = parseRetryOf(row.message);
-  const stampedConflict = stamped !== null && stamped !== row.parent_handoff_id;
+  const stampedConflict =
+    stamped !== null && row.parent_handoff_id !== null && stamped !== row.parent_handoff_id;
   const eventConflict =
     eventTarget !== null &&
     eventTarget !== row.parent_handoff_id &&

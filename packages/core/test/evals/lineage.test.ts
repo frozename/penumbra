@@ -288,6 +288,26 @@ test("buildLineages links a stamped retry message to the stamped parent", async 
   expect(lin.handoff_ids).toEqual(["A", "B"]);
   expect(lin.shape).toBe("chain");
   expect(lin.assistance).toEqual([{ kind: "retry_child", attempt_n: 2, ref: "A" }]);
+  expect(lin.labels["retry_link_conflict"]).toBeUndefined();
+});
+
+test("buildLineages does not label an event-agrees-with-stamp retry as a conflict", async () => {
+  const fn = mod?.["buildLineages"];
+  expect(typeof fn).toBe("function");
+  const build = fn as BuildLineagesFn;
+  const result = await build(
+    [
+      row({ handoff_id: "A", ts: T1 }),
+      row({ handoff_id: "B", ts: T2, message: RETRY_MSG, triggered_by_event_id: "eB" }),
+    ],
+    new Map([["eB", "A"]]),
+  );
+  expect(result.lineages).toHaveLength(1);
+  const lin = result.lineages[0]!;
+  expect(lin.root_handoff_id).toBe("A");
+  expect(lin.handoff_ids).toEqual(["A", "B"]);
+  expect(lin.assistance).toEqual([{ kind: "retry_child", attempt_n: 2, ref: "A" }]);
+  expect(lin.labels["retry_link_conflict"]).toBeUndefined();
 });
 
 test("buildLineages prefers the message stamp over a conflicting event-mapped parent", async () => {
@@ -369,6 +389,7 @@ test("buildLineages records a retry to a missing parent on the child's own linea
   expect(lin.handoff_ids).toEqual(["B"]);
   expect(lin.shape).toBe("single");
   expect(lin.assistance).toEqual([{ kind: "retry_child", attempt_n: 1, ref: "Z" }]);
+  expect(lin.labels["retry_link_conflict"]).toBeUndefined();
 });
 
 test("buildLineages chains a later dispatch that builds on the prior branch", async () => {
@@ -398,6 +419,43 @@ test("buildLineages still returns both rows when parent_handoff_ids form a two-c
   expect(result.lineages).toHaveLength(2);
   expect(lineageByRoot(result, "C")?.handoff_ids).toEqual(["C"]);
   expect(lineageByRoot(result, "D")?.handoff_ids).toEqual(["D"]);
+});
+
+test("buildLineages still returns all rows when parent and successor links form a mixed cycle", async () => {
+  const fn = mod?.["buildLineages"];
+  expect(typeof fn).toBe("function");
+  const build = fn as BuildLineagesFn;
+  const result = await build([
+    row({ handoff_id: "Y1", ts: T1, parent_handoff_id: "X2", branch_name: "agent/y1" }),
+    row({ handoff_id: "Y2", ts: T2, parent_handoff_id: "X1", branch_name: "agent/y2" }),
+    row({ handoff_id: "X1", ts: T3, branch_base: "agent/y1" }),
+    row({ handoff_id: "X2", ts: T4, branch_base: "agent/y2" }),
+  ]);
+  const present = new Set(result.lineages.flatMap((lin) => lin.handoff_ids));
+  expect(present.has("X1")).toBe(true);
+  expect(present.has("X2")).toBe(true);
+  expect(present.has("Y1")).toBe(true);
+  expect(present.has("Y2")).toBe(true);
+  expect(result.lineages).toHaveLength(4);
+});
+
+test("buildLineages keeps an orphan-stamped retry as a seeded root instead of a fix round", async () => {
+  const fn = mod?.["buildLineages"];
+  expect(typeof fn).toBe("function");
+  const build = fn as BuildLineagesFn;
+  const result = await build([
+    row({ handoff_id: "A", ts: T1, branch_name: "agent/a" }),
+    row({ handoff_id: "B", ts: T2, message: RETRY_ORPHAN_MSG, branch_base: "agent/a" }),
+  ]);
+  expect(result.lineages).toHaveLength(2);
+  const linA = lineageByRoot(result, "A");
+  expect(linA?.handoff_ids).toEqual(["A"]);
+  expect(linA?.shape).toBe("single");
+  const linB = lineageByRoot(result, "B");
+  expect(linB?.handoff_ids).toEqual(["B"]);
+  expect(linB?.shape).toBe("single");
+  expect(linB?.assistance).toEqual([{ kind: "retry_child", attempt_n: 1, ref: "Z" }]);
+  expect(linB?.assistance.some((entry) => entry.kind === "fix_round")).toBe(false);
 });
 
 test("buildLineages picks the nearest predecessor when two producers share one branch_name", async () => {
