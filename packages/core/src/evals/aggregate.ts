@@ -240,6 +240,10 @@ function accumulateSolved(group: GroupAcc, familyId: string, cls: ClassifiedEpis
     return;
   }
   const acc = group.solved;
+  if (cls.kind === "unknown") {
+    acc.nUnknown += 1;
+    return;
+  }
   const family = familyTally(acc.families, familyId);
   if (cls.kind === "solve") {
     acc.s += 1;
@@ -248,13 +252,9 @@ function accumulateSolved(group: GroupAcc, familyId: string, cls: ClassifiedEpis
     family.n += 1;
     return;
   }
-  if (cls.kind === "model_failure") {
-    acc.n += 1;
-    family.n += 1;
-    group.failures[cls.reason] += 1;
-    return;
-  }
-  acc.nUnknown += 1;
+  acc.n += 1;
+  family.n += 1;
+  group.failures[cls.reason] += 1;
 }
 
 function accumulateFirstAttempt(
@@ -266,7 +266,6 @@ function accumulateFirstAttempt(
   if (cls.kind === "excluded") {
     return;
   }
-  const family = familyTally(acc.families, familyId);
   if (cls.kind === "unknown") {
     acc.nUnknown += 1;
     return;
@@ -276,6 +275,7 @@ function accumulateFirstAttempt(
     acc.nUnknown += 1;
     return;
   }
+  const family = familyTally(acc.families, familyId);
   if (eligibility === "eligible" && cls.kind === "solve") {
     acc.s += 1;
     acc.n += 1;

@@ -13,7 +13,12 @@ type SolvedVerifiedReport = {
   n_unknown: number;
   cluster_ci: Interval | null;
 };
-type FirstAttemptReport = { s: number; n: number; n_unknown: number };
+type FirstAttemptReport = {
+  s: number;
+  n: number;
+  n_unknown: number;
+  cluster_ci: Interval | null;
+};
 type TokenReport = { sum: number; n_missing: number; n_incomplete: number; complete: boolean };
 type GroupReport = {
   n_families: number;
@@ -230,6 +235,16 @@ function usageMissing(): JsonObject {
     handoff_ids_counted: 1,
     complete: false,
     incomplete_reason: "handoff_usage_missing",
+  };
+}
+
+function usageIncompleteWithTokens(tokens: number): JsonObject {
+  return {
+    tokens,
+    cost_usd: null,
+    handoff_ids_counted: 1,
+    complete: false,
+    incomplete_reason: "t0_retention_window",
   };
 }
 
@@ -643,4 +658,157 @@ test("P5-18: the first failing receipt in order supplies the fail_reason", async
   const res = await runAgg([ep], { verifier: fakeVerifier(table) });
   expect(res.groups[0]?.failures.candidate_timeout).toBe(1);
   expect(res.groups[0]?.failures.hidden_failed).toBe(0);
+});
+
+test("P5-19: all-unknown families do not count toward n_families or the power gate", async () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const eps = [
+    makeEpisode({
+      episode_id: "e-o1",
+      family_id: "fam-o1",
+      observed_outcome: { class: "model_failure", reason: "hidden_failed" },
+    }),
+    makeEpisode({ episode_id: "e-o2", family_id: "fam-o2" }),
+    makeEpisode({ episode_id: "e-o3", family_id: "fam-o3" }),
+  ];
+  const res = await runAgg(eps, { minFamilies: 2 });
+  const g = res.groups[0];
+  expect(g?.n_families).toBe(1);
+  expect(g?.underpowered).toBe(true);
+  expect(g?.solved_verified.n).toBe(1);
+  expect(g?.solved_verified.n_unknown).toBe(2);
+  expect(g?.solved_verified.cluster_ci).toBeNull();
+  expect(g?.first_attempt.s).toBe(0);
+  expect(g?.first_attempt.n).toBe(1);
+  expect(g?.first_attempt.n_unknown).toBe(2);
+  expect(g?.first_attempt.cluster_ci).toBeNull();
+});
+
+test("P5-20: a receipt whose sha is not the final_sha never verifies", async () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const d = digest(1);
+  const ep = makeEpisode({
+    attempts: [att(1, SHA_B)],
+    final_sha: SHA_B,
+    receipts: [hiddenReceipt({ digest: d, sha: SHA_A })],
+  });
+  const table = new Map<string, VerifyResultLike | "throw">([
+    [`e1:${d}`, verifiedResult("pass", null, SHA_B)],
+  ]);
+  const res = await runAgg([ep], { verifier: fakeVerifier(table) });
+  const g = res.groups[0];
+  expect(g?.solved_verified.s).toBe(0);
+  expect(g?.solved_verified.n).toBe(0);
+  expect(g?.solved_verified.n_unknown).toBe(1);
+  expect(g?.first_attempt.s).toBe(0);
+});
+
+test("P5-21: a verifier result whose sha is not the final_sha never counts", async () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const d = digest(1);
+  const ep = makeEpisode({ receipts: [hiddenReceipt({ digest: d, sha: SHA_A })] });
+  const table = new Map<string, VerifyResultLike | "throw">([
+    [`e1:${d}`, verifiedResult("pass", null, SHA_B)],
+  ]);
+  const res = await runAgg([ep], { verifier: fakeVerifier(table) });
+  const g = res.groups[0];
+  expect(g?.solved_verified.s).toBe(0);
+  expect(g?.solved_verified.n).toBe(0);
+  expect(g?.solved_verified.n_unknown).toBe(1);
+  expect(g?.first_attempt.s).toBe(0);
+});
+
+test("P5-22: a multi-attempt ineligible solve is not a first-attempt solve", async () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const d = digest(1);
+  const ep = makeEpisode({
+    attempts: [att(1, SHA_A), att(2, SHA_B)],
+    attempt_history: {
+      status: "complete",
+      reason: null,
+      count: 2,
+      count_basis: "claim_events",
+    },
+    final_sha: SHA_B,
+    receipts: [hiddenReceipt({ digest: d, sha: SHA_B })],
+  });
+  const table = new Map<string, VerifyResultLike | "throw">([
+    [`e1:${d}`, verifiedResult("pass", null, SHA_B)],
+  ]);
+  const res = await runAgg([ep], { verifier: fakeVerifier(table) });
+  const g = res.groups[0];
+  expect(g?.solved_verified.s).toBe(1);
+  expect(g?.first_attempt.s).toBe(0);
+  expect(g?.first_attempt.n).toBe(1);
+  expect(g?.first_attempt.n_unknown).toBe(0);
+});
+
+test("P5-23: a non-hidden_assertion receipt never verifies", async () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const d = digest(1);
+  const ep = makeEpisode({
+    receipts: [
+      {
+        kind: "reviewer",
+        sha: SHA_A,
+        producer: "human",
+        claimed_verdict: "pass",
+        fail_reason: null,
+        assertion_set_digest: d,
+        grader_build: null,
+        per_check: null,
+        control_verdict: null,
+        receipt_digest: null,
+      },
+    ],
+  });
+  const table = new Map<string, VerifyResultLike | "throw">([
+    [`e1:${d}`, verifiedResult("pass", null, SHA_A)],
+  ]);
+  const res = await runAgg([ep], { verifier: fakeVerifier(table) });
+  const g = res.groups[0];
+  expect(g?.solved_verified.s).toBe(0);
+  expect(g?.solved_verified.n).toBe(0);
+  expect(g?.solved_verified.n_unknown).toBe(1);
+});
+
+test("P5-24: incomplete token usage counts toward the sum and the incomplete counter", async () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const eps = [
+    makeEpisode({
+      episode_id: "e-i1",
+      family_id: "fam-i1",
+      lineage_usage: usageIncompleteWithTokens(120),
+    }),
+    makeEpisode({
+      episode_id: "e-i2",
+      family_id: "fam-i2",
+      lineage_usage: usagePresent(80),
+    }),
+  ];
+  const res = await runAgg(eps);
+  expect(res.groups[0]?.tokens).toEqual({
+    sum: 200,
+    n_missing: 0,
+    n_incomplete: 1,
+    complete: false,
+  });
 });
