@@ -3,7 +3,9 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -224,11 +226,6 @@ async function installIntoCache(
   input: BaseDepsInput,
   onAfterFreeze?: () => void,
 ): Promise<EnsureResult> {
-  for (const manifest of input.manifests) {
-    if (!isSafeRelativePath(manifest.path)) {
-      return { ok: false, reason: "deps_input_unsafe" };
-    }
-  }
   mkdirSync(cacheDir, { recursive: true });
   writeFileSync(join(cacheDir, LOCKFILE_NAME), input.lockfileBytes);
   for (const manifest of input.manifests) {
@@ -243,17 +240,34 @@ async function installIntoCache(
     rmSync(cacheDir, { recursive: true, force: true });
     return { ok: false, reason: "deps_install_failed" };
   }
-  // Freeze contents first, commit the marker last, then seal the root. A
-  // crash anywhere before the marker write leaves an unmarked cache that
-  // ensure() refuses to accept; a crash after the marker but before sealing
-  // only leaves the root dir writable, never a half-installed accepted cache.
+  // Freeze contents first, commit the marker last. The root stays writable
+  // until ensure() renames the staging dir into place (macOS rejects renaming
+  // a read-only directory with EACCES) and seals it there. A crash anywhere
+  // before the marker write leaves an unmarked cache that ensure() refuses to
+  // accept; a crash after the marker but before sealing only leaves the root
+  // dir writable, never a half-installed accepted cache.
   freezeTree(cacheDir, false);
   onAfterFreeze?.();
   writeFileSync(join(cacheDir, CACHE_MARKER), `${input.lockSha256}\n`, "utf8");
-  chmodSync(cacheDir, 0o555);
   return { ok: true, cacheDir };
 }
 
+function tryRenameIntoCache(stagedDir: string, cacheDir: string): boolean {
+  try {
+    renameSync(stagedDir, cacheDir);
+    return true;
+  } catch {
+    // EEXIST/ENOTEMPTY: another ensure() committed its install first.
+    return false;
+  }
+}
+
+// Installs run in a unique staging dir next to cacheDir and are renamed into
+// place only after freeze + marker, so a concurrent ensure() for the same
+// lockSha can never removeStaleCacheDir the other's in-flight install. The
+// loser of the rename accepts the winner's committed cache; the slot is only
+// cleared for a rename onto a directory that lacks the marker (stale, since
+// a committed cache is always marked before it is visible at cacheDir).
 export function createDefaultDependencyProvider(
   opts: DefaultDependencyProviderOptions,
 ): DependencyProvider {
@@ -263,6 +277,11 @@ export function createDefaultDependencyProvider(
       if (sha256Hex(input.lockfileBytes) !== input.lockSha256) {
         return { ok: false, reason: "deps_lock_mismatch" };
       }
+      for (const manifest of input.manifests) {
+        if (!isSafeRelativePath(manifest.path)) {
+          return { ok: false, reason: "deps_input_unsafe" };
+        }
+      }
       const cacheDir = join(opts.cacheRoot, input.lockSha256);
       if (existsSync(join(cacheDir, CACHE_MARKER))) {
         return { ok: true, cacheDir };
@@ -270,11 +289,33 @@ export function createDefaultDependencyProvider(
       if (!opts.allowInstall) {
         return { ok: false, reason: "deps_cache_missing" };
       }
-      if (existsSync(cacheDir)) {
-        removeStaleCacheDir(cacheDir);
+      mkdirSync(opts.cacheRoot, { recursive: true });
+      const stagedDir = mkdtempSync(join(opts.cacheRoot, `${input.lockSha256}.install-`));
+      let installed: EnsureResult;
+      try {
+        installed = await installIntoCache(run, stagedDir, input, opts.onAfterFreeze);
+      } catch (err) {
+        removeStaleCacheDir(stagedDir);
+        throw err;
       }
-      const result = await installIntoCache(run, cacheDir, input, opts.onAfterFreeze);
-      return result;
+      if (!installed.ok) {
+        return installed;
+      }
+      if (tryRenameIntoCache(stagedDir, cacheDir)) {
+        chmodSync(cacheDir, 0o555);
+        return { ok: true, cacheDir };
+      }
+      if (existsSync(join(cacheDir, CACHE_MARKER))) {
+        removeStaleCacheDir(stagedDir);
+        return { ok: true, cacheDir };
+      }
+      removeStaleCacheDir(cacheDir);
+      if (tryRenameIntoCache(stagedDir, cacheDir)) {
+        chmodSync(cacheDir, 0o555);
+        return { ok: true, cacheDir };
+      }
+      removeStaleCacheDir(stagedDir);
+      return { ok: false, reason: "deps_install_failed" };
     },
   };
 }

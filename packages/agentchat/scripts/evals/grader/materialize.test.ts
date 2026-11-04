@@ -559,6 +559,78 @@ test("materialize rejects a bare-repo root layout as contract_violation and writ
   expect(existsSync(outDir)).toBe(false);
 }, 30_000);
 
+// git's is_git_directory() follows a root commondir/gitdir pointer file, so a
+// bare layout can hide its objects//refs behind the pointer
+// (git 2.56 repro: HEAD + commondir='c\n' + c/{config, objects/, refs/}). Any
+// root HEAD with a root commondir/gitdir entry (any case) must be rejected
+// before any write, even though the classic HEAD+objects+refs markers are
+// absent at root.
+async function expectRepoPointerRejected(pointer: string): Promise<void> {
+  const root = mkdtempSync(join(tmpdir(), "penumbra-materialize-pointer-"));
+  tempDirs.push(root);
+  const sha = await commitMktreeSpec(root, {
+    files: {
+      HEAD: "ref: refs/heads/main\n",
+      [pointer]: "c\n",
+    },
+    dirs: {
+      c: {
+        files: { config: "[core]\n\tfsmonitor = true\n" },
+        dirs: {
+          objects: { files: { keep: "" } },
+          refs: { dirs: { heads: { files: { keep: "" } } } },
+        },
+      },
+    },
+  });
+  const outDir = join(root, "tree");
+
+  const result = await materialize({ repo: join(root, "repo"), sha, outDir, gitEnv: FIXTURE_ENV });
+
+  expect(result.ok).toBe(false);
+  if (result.ok) {
+    return;
+  }
+  expect(result.model_failure?.reason).toBe("contract_violation");
+  expect(result.model_failure?.detail.git_repo_pointer).toBe(true);
+  expect(existsSync(outDir)).toBe(false);
+}
+
+test("materialize rejects a commondir-pointer bare layout as contract_violation and writes nothing", async () => {
+  await expectRepoPointerRejected("commondir");
+}, 30_000);
+
+test("materialize rejects a gitdir-pointer bare layout as contract_violation and writes nothing", async () => {
+  await expectRepoPointerRejected("gitdir");
+}, 30_000);
+
+test("materialize rejects a case-folded 'CommonDir' pointer bare layout as contract_violation", async () => {
+  await expectRepoPointerRejected("CommonDir");
+}, 30_000);
+
+test("materialize rejects a case-folded bare-repo root layout as contract_violation", async () => {
+  const root = mkdtempSync(join(tmpdir(), "penumbra-materialize-barecase-"));
+  tempDirs.push(root);
+  const sha = await commitMktreeSpec(root, {
+    files: { head: "ref: refs/heads/main\n" },
+    dirs: {
+      OBJECTS: { files: { keep: "" } },
+      Refs: { dirs: { heads: { files: { keep: "" } } } },
+    },
+  });
+  const outDir = join(root, "tree");
+
+  const result = await materialize({ repo: join(root, "repo"), sha, outDir, gitEnv: FIXTURE_ENV });
+
+  expect(result.ok).toBe(false);
+  if (result.ok) {
+    return;
+  }
+  expect(result.model_failure?.reason).toBe("contract_violation");
+  expect(result.model_failure?.detail.bare_repo_layout).toBe(true);
+  expect(existsSync(outDir)).toBe(false);
+}, 30_000);
+
 test("materialize accepts a repo-like tree that lacks the full bare-marker set", async () => {
   const root = mkdtempSync(join(tmpdir(), "penumbra-materialize-nearmiss-"));
   tempDirs.push(root);
@@ -603,6 +675,51 @@ test("createCandidateTreeGitRun guards git invocations and passes other commands
   expect(calls[1]?.cmd).toBe("bun");
   expect(calls[1]?.args).toEqual(["test"]);
   expect(calls[1]?.env).toBeUndefined();
+});
+
+test("createCandidateTreeGitRun falls back to the ambient env when opts.env is omitted", async () => {
+  const parent = mkOutDir();
+  const treeDir = join(parent, "tree");
+  const calls: { cmd: string; args: string[]; env?: NodeJS.ProcessEnv }[] = [];
+  const base: RunCommand = (cmd, args, opts): Promise<RunCommandResult> => {
+    calls.push({ cmd, args, env: opts?.env });
+    return Promise.resolve({ code: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) });
+  };
+
+  const gitInTree = createCandidateTreeGitRun(treeDir, base);
+  await gitInTree("git", ["status"], { cwd: treeDir });
+
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.env?.GIT_CEILING_DIRECTORIES).toBe(parent);
+  expect(calls[0]?.env?.PATH).toBe(process.env.PATH);
+  expect(calls[0]?.env?.HOME).toBe(process.env.HOME);
+});
+
+test("materialize's gitInTree pins the bare-repo guard args and the ceiling dir", async () => {
+  const outDir = mkOutDir();
+  const calls: { cmd: string; args: string[]; env?: NodeJS.ProcessEnv }[] = [];
+  const recording: RunCommand = (cmd, args, opts): Promise<RunCommandResult> => {
+    calls.push({ cmd, args, env: opts?.env });
+    return Promise.resolve({ code: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) });
+  };
+
+  const result = await materialize({
+    repo: join(outDir, "repo"),
+    sha: "0".repeat(40),
+    outDir,
+    runCommand: recording,
+  });
+
+  expect(result.ok).toBe(true);
+  if (!result.ok) {
+    return;
+  }
+  await result.gitInTree("git", ["status"], { cwd: outDir });
+
+  const guarded = calls.at(-1);
+  expect(guarded?.cmd).toBe("git");
+  expect(guarded?.args).toEqual(["-c", "safe.bareRepository=explicit", "status"]);
+  expect(guarded?.env?.GIT_CEILING_DIRECTORIES).toBe(dirname(outDir));
 });
 
 test("hardened git invocation refuses a candidate tree that looks like a bare repository", async () => {
@@ -821,13 +938,18 @@ test("default provider runs bun install --frozen-lockfile --ignore-scripts in th
   });
 
   expect(res).toEqual({ ok: true, cacheDir: join(cacheRoot, lockSha256) });
-  expect(calls).toEqual([
-    {
-      cmd: "bun",
-      args: ["install", "--frozen-lockfile", "--ignore-scripts"],
-      cwd: join(cacheRoot, lockSha256),
-    },
-  ]);
+  expect(calls).toHaveLength(1);
+  expect(calls[0]?.cmd).toBe("bun");
+  expect(calls[0]?.args).toEqual(["install", "--frozen-lockfile", "--ignore-scripts"]);
+  // The install runs in a unique staging dir next to cacheDir, never in the
+  // final cacheDir itself; only the frozen + marked result is renamed in.
+  const finalDir = join(cacheRoot, lockSha256);
+  const stagedDir = calls[0]?.cwd ?? "";
+  expect(stagedDir.startsWith(`${finalDir}.install-`)).toBe(true);
+  expect(stagedDir).not.toBe(finalDir);
+  expect(existsSync(stagedDir)).toBe(false);
+  expect(readFileSync(join(finalDir, "bun.lock"), "utf8")).toBe("lockfile-bytes-v1\n");
+  expect(existsSync(join(finalDir, ".penumbra-deps-cache-ok"))).toBe(true);
 });
 
 test("default provider rejects a mismatched lockSha256 without running install", async () => {

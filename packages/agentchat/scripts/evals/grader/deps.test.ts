@@ -322,6 +322,41 @@ test("a frozen but unmarked cache dir is recovered and reinstalled", async () =>
   expect(existsSync(join(staleDir, ".penumbra-deps-cache-ok"))).toBe(true);
 });
 
+// Two ensures for the same lockSha must overlap: each installs into its own
+// staging dir next to cacheDir (so neither removeStaleCacheDir's the other's
+// in-flight work), and the loser of the atomic rename accepts the winner's
+// committed cache instead of failing or deleting it.
+test("two concurrent ensure() calls for the same lockSha both succeed", async () => {
+  const cacheRoot = mkCacheRoot();
+  const lockfileBytes = Buffer.from("lock\n", "utf8");
+  const lockSha256 = sha256Hex(lockfileBytes);
+  const slowInstall: RunCommand = (_cmd, _args, opts) => {
+    const cwd = opts?.cwd ?? "";
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        mkdirSync(join(cwd, "node_modules"), { recursive: true });
+        writeFileSync(join(cwd, "node_modules", "dep.txt"), "dep\n", "utf8");
+        resolve({ code: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) });
+      }, 25);
+    });
+  };
+  const provider = createDefaultDependencyProvider({
+    cacheRoot,
+    allowInstall: true,
+    runCommand: slowInstall,
+  });
+
+  const input = { lockSha256, lockfileBytes, manifests: [] };
+  const [first, second] = await Promise.all([provider.ensure(input), provider.ensure(input)]);
+
+  const finalDir = join(cacheRoot, lockSha256);
+  expect(first).toEqual({ ok: true, cacheDir: finalDir });
+  expect(second).toEqual({ ok: true, cacheDir: finalDir });
+  expect(readFileSync(join(finalDir, ".penumbra-deps-cache-ok"), "utf8")).toBe(`${lockSha256}\n`);
+  expect(readFileSync(join(finalDir, "node_modules", "dep.txt"), "utf8")).toBe("dep\n");
+  expect(readdirSync(cacheRoot)).toEqual([lockSha256]);
+});
+
 test("linkDeps links root and per-workspace node_modules and skips missing workspace targets", async () => {
   const treeDir = mkScratchDir("penumbra-deps-tree-");
   const cacheDir = mkScratchDir("penumbra-deps-src-");

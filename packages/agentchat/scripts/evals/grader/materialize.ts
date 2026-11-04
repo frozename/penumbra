@@ -80,7 +80,10 @@ export function createCandidateTreeGitRun(
     }
     return base(cmd, [...BARE_REPO_GUARD_ARGS, ...args], {
       ...opts,
-      env: { ...(opts.env ?? {}), GIT_CEILING_DIRECTORIES: ceiling },
+      // The guard env must stay a superset of what git needs to run at all:
+      // without opts.env, spawn would otherwise inherit nothing and git loses
+      // PATH/HOME, so fall back to the ambient environment.
+      env: { ...process.env, ...(opts.env ?? {}), GIT_CEILING_DIRECTORIES: ceiling },
     });
   };
 }
@@ -255,21 +258,30 @@ function findCaseCollisions(entries: TreeEntry[]): string[] {
 // git's is_git_directory() accepts any directory holding HEAD plus objects/
 // and refs/ subdirs as a bare repository (case-insensitive on case-insensitive
 // filesystems), so a candidate tree with that root layout would be picked up
-// as a git dir by the grader's own git calls.
+// as a git dir by the grader's own git calls. It also follows a root
+// `commondir` / `gitdir` pointer file (git 2.56 repro: HEAD + commondir='c\n'
+// + c/{config, objects/, refs/}), so the objects/refs markers can hide behind
+// the pointer; any root HEAD (any case) together with a root commondir or
+// gitdir entry (any case) is rejected regardless of what the pointer targets.
 function findBareRepoLayout(entries: TreeEntry[]): ModelFailure | null {
   let hasHead = false;
   let hasObjects = false;
   let hasRefs = false;
+  let hasRepoPointer = false;
   for (const entry of entries) {
     const segments = entry.path.split("/");
     const first = (segments[0] ?? "").toLowerCase();
     if (segments.length === 1) {
       hasHead ||= first === "head";
+      hasRepoPointer ||= first === "commondir" || first === "gitdir";
     } else if (first === "objects") {
       hasObjects = true;
     } else if (first === "refs") {
       hasRefs = true;
     }
+  }
+  if (hasHead && hasRepoPointer) {
+    return { reason: "contract_violation", detail: { git_repo_pointer: true } };
   }
   return hasHead && hasObjects && hasRefs
     ? { reason: "contract_violation", detail: { bare_repo_layout: true } }
