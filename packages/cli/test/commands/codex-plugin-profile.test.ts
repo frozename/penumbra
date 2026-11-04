@@ -101,6 +101,17 @@ describe("validateCodexPluginProfilePath", () => {
       validateCodexPluginProfilePath(path);
     }).toThrow(/not owned by uid/);
   });
+
+  test("(16) a case-variant ancestor throws /not canonical/ on case-insensitive filesystems", () => {
+    mkdirSync(join(root, "codex"));
+    const path = join(root, "CODEX");
+    // On a case-sensitive filesystem lstat("<root>/CODEX") is undefined and
+    // the scenario cannot arise, so the test is deterministically skipped.
+    if (lstatSync(path, { throwIfNoEntry: false }) === undefined) return;
+    expect(() => {
+      validateCodexPluginProfilePath(path);
+    }).toThrow(/not canonical/);
+  });
 });
 
 describe("prepareCodexPluginProfilePath", () => {
