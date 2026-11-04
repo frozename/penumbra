@@ -315,3 +315,153 @@ test("case 12: type_novel reports whether a lock failure type is novel without g
   expect(assertHoldoutReservation(lockLost, [publicFixture])).toEqual({ type_novel: false });
   expect(assertHoldoutReservation(lockMissed, [publicFixture])).toEqual({ type_novel: true });
 });
+
+test("case 67: unsealHoldout runs verifyHoldoutLock, refusing a lock with edited entries under a kept digest", () => {
+  const unsealHoldout = fn(holdout, "unsealHoldout");
+  const computeLockDigest = fn(holdout, "computeLockDigest");
+  const e390 = lockEntry();
+  const e777 = lockEntry({ family_id: "fam-777", root: { kind: "issue", number: 777 } });
+  const entries = [e390, e777];
+  const digest = computeLockDigest(entries) as string;
+  const cleanLock = makeLock(entries, digest);
+  const token = unsealHoldout(cleanLock, { sha256: HEX64_D, max_unseals: 2 }) as UnsealToken;
+  expect(token.lock_digest).toBe(digest);
+  const edited = entries.map((entry, i) =>
+    i === 0 ? { ...entry, content_digest: HEX64_B } : entry,
+  );
+  const tampered = makeLock(edited, digest);
+  expectThrows(
+    () => unsealHoldout(tampered, { sha256: HEX64_D, max_unseals: 2 }),
+    mods,
+    "HoldoutLockError",
+  );
+  const shrunk = makeLock(entries.slice(0, 1), digest);
+  expectThrows(
+    () => unsealHoldout(shrunk, { sha256: HEX64_D, max_unseals: 2 }),
+    mods,
+    "HoldoutLockError",
+  );
+  const grown = makeLock(
+    [...entries, lockEntry({ family_id: "fam-778", root: { kind: "issue", number: 778 } })],
+    digest,
+  );
+  expectThrows(
+    () => unsealHoldout(grown, { sha256: HEX64_D, max_unseals: 2 }),
+    mods,
+    "HoldoutLockError",
+  );
+});
+
+test("case 68: unsealHoldout rejects max_unseals below 1 and non-integer values", () => {
+  const unsealHoldout = fn(holdout, "unsealHoldout");
+  const computeLockDigest = fn(holdout, "computeLockDigest");
+  const e390 = lockEntry();
+  const lock = makeLock([e390], computeLockDigest([e390]));
+  for (const bad of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    expectThrows(
+      () => unsealHoldout(lock, { sha256: HEX64_D, max_unseals: bad }),
+      mods,
+      "HoldoutLockError",
+    );
+  }
+  expect(() => unsealHoldout(lock, { sha256: HEX64_D, max_unseals: 1 })).not.toThrow();
+});
+
+test("case 69: unsealHoldout rejects malformed analysis plan sha256 values", () => {
+  const unsealHoldout = fn(holdout, "unsealHoldout");
+  const computeLockDigest = fn(holdout, "computeLockDigest");
+  const e390 = lockEntry();
+  const lock = makeLock([e390], computeLockDigest([e390]));
+  const malformed = [
+    "",
+    "abc",
+    HEX64_D.toUpperCase(),
+    "g".repeat(64),
+    HEX64_D.slice(0, 63),
+    `${HEX64_D}0`,
+  ];
+  for (const sha of malformed) {
+    expectThrows(
+      () => unsealHoldout(lock, { sha256: sha, max_unseals: 1 }),
+      mods,
+      "HoldoutLockError",
+    );
+  }
+  expect(() => unsealHoldout(lock, { sha256: HEX64_D, max_unseals: 1 })).not.toThrow();
+});
+
+test("case 73: assertHoldoutReservation skips collision checks for synthetic lock entries", () => {
+  const assertHoldoutReservation = fn(holdout, "assertHoldoutReservation");
+  const computeLockDigest = fn(holdout, "computeLockDigest");
+  const synEntry = lockEntry({
+    family_id: "fam-syn-xyz",
+    root: { kind: "synthetic", id: "xyz" },
+    synthetic: true,
+    failure_type: "lost_evidence",
+  });
+  const otherEntry = lockEntry({ family_id: "fam-777", root: { kind: "issue", number: 777 } });
+  const lockSyn = makeLock([synEntry], computeLockDigest([synEntry]));
+  const sameRootFixture = pubFixture({
+    family_id: "fam-syn-xyz",
+    root: { kind: "synthetic", id: "xyz" },
+    synthetic: true,
+    failure_type: null,
+  });
+  expect(assertHoldoutReservation(lockSyn, [sameRootFixture])).toEqual({ type_novel: false });
+  const lockMixed = makeLock([synEntry, otherEntry], computeLockDigest([synEntry, otherEntry]));
+  const collidingReal = pubFixture({
+    family_id: "fam-777",
+    root: { kind: "issue", number: 777 },
+  });
+  expectThrows(
+    () => assertHoldoutReservation(lockMixed, [collidingReal]),
+    mods,
+    "HoldoutReservationError",
+  );
+});
+
+test("case 74: assertNoPublicFix requires no evidence for synthetic lock entries but still checks real ones", () => {
+  const assertNoPublicFix = fn(holdout, "assertNoPublicFix");
+  const computeLockDigest = fn(holdout, "computeLockDigest");
+  const synEntry = lockEntry({
+    family_id: "fam-syn-xyz",
+    root: { kind: "synthetic", id: "xyz" },
+    synthetic: true,
+    failure_type: "lost_evidence",
+  });
+  const lockSyn = makeLock([synEntry], computeLockDigest([synEntry]));
+  expect(() => assertNoPublicFix(lockSyn, {})).not.toThrow();
+  expect(() =>
+    assertNoPublicFix(lockSyn, { "fam-syn-xyz/a": evidence({ patch_id_hits: 1 }) }),
+  ).not.toThrow();
+  const realEntry = lockEntry();
+  const lockMixed = makeLock([synEntry, realEntry], computeLockDigest([synEntry, realEntry]));
+  expectThrows(() => assertNoPublicFix(lockMixed, {}), mods, "PublicFixError");
+  expectThrows(
+    () => assertNoPublicFix(lockMixed, { "fam-syn-xyz/a": evidence() }),
+    mods,
+    "PublicFixError",
+  );
+  const openClean = evidence({ issue_closure: { state: "OPEN", closing_commits: [] } });
+  expect(() => assertNoPublicFix(lockMixed, { "fam-390/a": openClean })).not.toThrow();
+});
+
+test("case 75: a novel failure_type on a synthetic lock entry never sets type_novel", () => {
+  const assertHoldoutReservation = fn(holdout, "assertHoldoutReservation");
+  const computeLockDigest = fn(holdout, "computeLockDigest");
+  const synEntry = lockEntry({
+    family_id: "fam-syn-xyz",
+    root: { kind: "synthetic", id: "xyz" },
+    synthetic: true,
+    failure_type: "missed_commit",
+  });
+  const lockSyn = makeLock([synEntry], computeLockDigest([synEntry]));
+  expect(assertHoldoutReservation(lockSyn, [pubFixture()])).toEqual({ type_novel: false });
+  const realEntry = lockEntry({
+    family_id: "fam-777",
+    root: { kind: "issue", number: 777 },
+    failure_type: "missed_commit",
+  });
+  const lockReal = makeLock([realEntry], computeLockDigest([realEntry]));
+  expect(assertHoldoutReservation(lockReal, [pubFixture()])).toEqual({ type_novel: true });
+});

@@ -54,8 +54,8 @@ function toHits(value: TaskIndexValue): FamilyIndexEntry[] {
   return Array.isArray(value) ? value : [value];
 }
 
-function preferPublic(existing: FamilyIndexEntry, incoming: FamilyIndexEntry): FamilyIndexEntry {
-  if (existing.kind === "lock" && incoming.kind === "public") return incoming;
+function preferLock(existing: FamilyIndexEntry, incoming: FamilyIndexEntry): FamilyIndexEntry {
+  if (existing.kind === "public" && incoming.kind === "lock") return incoming;
   return existing;
 }
 
@@ -69,7 +69,7 @@ function mergeHandoffEntry(
       `handoff digest claimed by families ${existing.family_id} and ${incoming.family_id}`,
     );
   }
-  return preferPublic(existing, incoming);
+  return preferLock(existing, incoming);
 }
 
 function mergeTaskHits(
@@ -82,7 +82,7 @@ function mergeTaskHits(
     return [...hits, incoming];
   }
   const kept = hits.map((hit) =>
-    hit.family_id === incoming.family_id ? preferPublic(hit, incoming) : hit,
+    hit.family_id === incoming.family_id ? preferLock(hit, incoming) : hit,
   );
   const only = kept.length === 1 ? kept[0] : undefined;
   return only ?? kept;

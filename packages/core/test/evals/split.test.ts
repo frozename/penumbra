@@ -447,3 +447,66 @@ test("case 17: a task_digest shared across public families conflicts on lookup; 
   });
   expectThrows(() => buildFamilyIndex([dup379, dup380], []), mods, "FamilyConflictError");
 });
+
+test("case 71: selectForTuning seals a dev or train item whose family_id is in the lock, regardless of split or task_refs", () => {
+  const selectForTuning = fn(split, "selectForTuning");
+  const computeLockDigest = fn(holdout, "computeLockDigest");
+  const e390 = lockEntry();
+  const lock = makeLock([e390], computeLockDigest([e390]));
+  const devItem = {
+    family_id: "fam-390",
+    split: "dev",
+    task_refs: { issues: [], bundle_ids: [] },
+  };
+  expectThrows(() => selectForTuning([devItem], { lock }), mods, "HoldoutAccessError");
+  const trainItem = {
+    family_id: "fam-390",
+    split: "train",
+    task_refs: { issues: [], bundle_ids: [] },
+  };
+  expectThrows(() => selectForTuning([trainItem], { lock }), mods, "HoldoutAccessError");
+  const outsider = {
+    family_id: "fam-100",
+    split: "train",
+    task_refs: { issues: [], bundle_ids: [] },
+  };
+  expect(selectForTuning([outsider], { lock })).toEqual([outsider]);
+});
+
+test("case 72: a shared digest claimed by a public fixture and a lock entry of the same family resolves to the lock entry", () => {
+  const buildFamilyIndex = fn(split, "buildFamilyIndex");
+  const familyIdForLineage = fn(split, "familyIdForLineage");
+  const sharedTask = HEX64_D;
+  const sharedHandoff = handoffRefDigest("shared-family");
+  const fixture = pubFixture({
+    task_digest: sharedTask,
+    source_root_handoff_digests: [sharedHandoff],
+  });
+  const entry = lockEntry({
+    family_id: "fam-379",
+    root: { kind: "issue", number: 379 },
+    task_digest: sharedTask,
+    source_root_handoff_digests: [sharedHandoff],
+  });
+  const index = buildFamilyIndex([fixture], [entry]) as FamilyIndex;
+  expect(index.byHandoffDigest.get(sharedHandoff)).toEqual({
+    family_id: "fam-379",
+    split: "holdout",
+    variant_id: "a",
+    kind: "lock",
+  });
+  expect(index.byTaskDigest.get(sharedTask)).toEqual({
+    family_id: "fam-379",
+    split: "holdout",
+    variant_id: "a",
+    kind: "lock",
+  });
+  expect(
+    familyIdForLineage({ handoff_ids: ["shared-family"], task_digest: HEX64_A }, index),
+  ).toEqual({ family_id: "fam-379", split: "holdout", fixture_ref: null });
+  expect(familyIdForLineage({ handoff_ids: [], task_digest: sharedTask }, index)).toEqual({
+    family_id: "fam-379",
+    split: "holdout",
+    fixture_ref: null,
+  });
+});
