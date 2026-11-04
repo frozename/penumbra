@@ -533,6 +533,7 @@ test("POST /chains/start clears auto-recall timeout when recall wins race", asyn
     new Map([["penumbra", { project_id: "penumbra", root_path: "/tmp/penumbra" }]]),
   );
   services.recallReader.recall = (): Promise<[]> => Promise.resolve([]);
+  const warnSpy = spyOn(services.log, "warn");
   const originalSetTimeout = globalThis.setTimeout;
   const originalClearTimeout = globalThis.clearTimeout;
   const armed: { handle: ReturnType<typeof setTimeout>; timeout: number | undefined }[] = [];
@@ -566,8 +567,13 @@ test("POST /chains/start clears auto-recall timeout when recall wins race", asyn
     );
 
     expect(res.status).toBe(200);
-    expect(armed.filter(({ timeout }) => timeout === 1500)).toHaveLength(1);
-    expect(armed.filter(({ handle }) => !cleared.includes(handle))).toEqual([]);
+    const recallTimers = armed.filter(({ timeout }) => timeout === 1500);
+    expect(recallTimers).toHaveLength(1);
+    expect(recallTimers.filter(({ handle }) => !cleared.includes(handle))).toEqual([]);
+    expect(warnSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event: "dispatch.auto_recall_timeout" }),
+      expect.anything(),
+    );
   } finally {
     globalThis.setTimeout = originalSetTimeout;
     globalThis.clearTimeout = originalClearTimeout;

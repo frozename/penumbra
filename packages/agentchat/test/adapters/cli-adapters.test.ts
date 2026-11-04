@@ -11,6 +11,9 @@ import { OpencodeCliAdapter } from "@src/adapters/opencode-cli.js";
 import { buildAdapter } from "@src/adapters/registry.js";
 
 import { expectRejection } from "../helpers/cli-spawn-fixtures.js";
+import { useStubbedKeychain } from "../helpers/keychain-stub.js";
+
+useStubbedKeychain();
 
 test("claude-cli adapter pipes prompt → command → text", async () => {
   const adapter = new ClaudeCliAdapter({ command: "cat", args: [] });
