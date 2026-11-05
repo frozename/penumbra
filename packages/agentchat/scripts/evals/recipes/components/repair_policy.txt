@@ -1,0 +1,4 @@
+Bounded repair policy for failing checks.
+Repair only the failures reported by the last check run; do not refactor beyond them.
+repair_rounds: 2
+When the repair budget is exhausted, stop and report the remaining failures instead of continuing.

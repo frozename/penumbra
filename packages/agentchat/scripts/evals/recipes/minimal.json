@@ -1,0 +1,18 @@
+{
+  "recipe_id": "minimal-v1",
+  "arm": "minimal",
+  "components": {
+    "system_prompt": {
+      "status": "materialized",
+      "sha256": "dcf793db5da3b3147a7bf6606decff2ce75f5e86f8bd038e2e22cb9a13070793"
+    }
+  },
+  "limits": {
+    "max_turns": 40,
+    "timeout_s": 1800
+  },
+  "seed": {
+    "value": null,
+    "supported": false
+  }
+}
