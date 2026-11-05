@@ -1,0 +1,205 @@
+{
+  "schema_version": 1,
+  "family_id": "fam-syn-contract-validator",
+  "variant_id": "v1",
+  "assertions": [
+    {
+      "kind": "probe",
+      "id": "c1",
+      "module": "src/validate.ts",
+      "export": "validateFixture",
+      "input": {
+        "schema_version": 1,
+        "family_id": "fam-syn-x",
+        "split": "dev",
+        "synthetic": true,
+        "root": {
+          "kind": "synthetic",
+          "id": "x"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "errors": []
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c2",
+      "module": "src/validate.ts",
+      "export": "validateFixture",
+      "input": {
+        "schema_version": 2,
+        "family_id": "fam-syn-x",
+        "split": "dev",
+        "synthetic": true,
+        "root": {
+          "kind": "synthetic",
+          "id": "x"
+        }
+      },
+      "expect": {
+        "ok": false,
+        "errors": ["bad_schema_version"]
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c3",
+      "module": "src/validate.ts",
+      "export": "validateFixture",
+      "input": {
+        "schema_version": 1,
+        "family_id": "fam-syn-x",
+        "split": "dev",
+        "synthetic": false,
+        "root": {
+          "kind": "synthetic",
+          "id": "x"
+        }
+      },
+      "expect": {
+        "ok": false,
+        "errors": ["synthetic_mismatch"]
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c4",
+      "module": "src/validate.ts",
+      "export": "validateFixture",
+      "input": {
+        "schema_version": 1,
+        "family_id": "fam-syn-x",
+        "split": "prod",
+        "synthetic": true,
+        "root": {
+          "kind": "synthetic",
+          "id": "x"
+        }
+      },
+      "expect": {
+        "ok": false,
+        "errors": ["bad_split"]
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c5",
+      "module": "src/validate.ts",
+      "export": "validateFixture",
+      "input": "nope",
+      "expect": {
+        "ok": false,
+        "errors": ["not_object"]
+      }
+    },
+    {
+      "kind": "invariant",
+      "id": "c6",
+      "property": "deterministic",
+      "module": "src/validate.ts",
+      "export": "summarize",
+      "inputs": [
+        [
+          {
+            "schema_version": 1,
+            "family_id": "fam-syn-x",
+            "split": "dev",
+            "synthetic": true,
+            "root": {
+              "kind": "synthetic",
+              "id": "x"
+            }
+          },
+          {
+            "schema_version": 1,
+            "family_id": "fam-syn-x",
+            "split": "prod",
+            "synthetic": true,
+            "root": {
+              "kind": "synthetic",
+              "id": "x"
+            }
+          }
+        ]
+      ],
+      "seed": 1
+    },
+    {
+      "kind": "invariant",
+      "id": "c7",
+      "property": "order_insensitive",
+      "module": "src/validate.ts",
+      "export": "summarize",
+      "inputs": [
+        [
+          {
+            "schema_version": 1,
+            "family_id": "fam-syn-x",
+            "split": "dev",
+            "synthetic": true,
+            "root": {
+              "kind": "synthetic",
+              "id": "x"
+            }
+          },
+          {
+            "schema_version": 1,
+            "family_id": "fam-syn-x",
+            "split": "prod",
+            "synthetic": true,
+            "root": {
+              "kind": "synthetic",
+              "id": "x"
+            }
+          },
+          {
+            "schema_version": 2,
+            "family_id": "fam-syn-x",
+            "split": "dev",
+            "synthetic": true,
+            "root": {
+              "kind": "synthetic",
+              "id": "x"
+            }
+          },
+          "nope"
+        ]
+      ],
+      "seed": 0
+    },
+    {
+      "kind": "invariant",
+      "id": "c8",
+      "property": "idempotent",
+      "module": "src/validate.ts",
+      "export": "dedupe",
+      "inputs": [
+        [
+          {
+            "a": 1
+          },
+          {
+            "b": 2
+          },
+          {
+            "a": 1
+          }
+        ]
+      ],
+      "seed": 0
+    }
+  ],
+  "patches": {
+    "good": "diff --git a/src/validate.ts b/src/validate.ts\nindex 596e6cd..a0fb28f 100644\n--- a/src/validate.ts\n+++ b/src/validate.ts\n@@ -1,7 +1,49 @@\n-export function validateFixture(_obj: unknown): { ok: boolean; errors: string[] } {\n-  throw new Error(\"not implemented\");\n+const SPLITS = new Set([\"train\", \"dev\", \"holdout\"]);\n+\n+function isPlain(value: unknown): value is Record<string, unknown> {\n+  return typeof value === \"object\" && value !== null && !Array.isArray(value);\n+}\n+\n+export function validateFixture(obj: unknown): { ok: boolean; errors: string[] } {\n+  if (!isPlain(obj)) {\n+    return { ok: false, errors: [\"not_object\"] };\n+  }\n+  const errors: string[] = [];\n+  if (obj.schema_version !== 1) {\n+    errors.push(\"bad_schema_version\");\n+  }\n+  if (typeof obj.family_id !== \"string\" || !obj.family_id.startsWith(\"fam-\")) {\n+    errors.push(\"bad_family_id\");\n+  }\n+  if (typeof obj.split !== \"string\" || !SPLITS.has(obj.split)) {\n+    errors.push(\"bad_split\");\n+  }\n+  const rootKind = isPlain(obj.root) ? obj.root.kind : undefined;\n+  if (obj.synthetic !== (rootKind === \"synthetic\")) {\n+    errors.push(\"synthetic_mismatch\");\n+  }\n+  return { ok: errors.length === 0, errors };\n+}\n+\n+export function summarize(list: unknown[]): { valid: number; invalid: number } {\n+  let valid = 0;\n+  for (const item of list) {\n+    if (validateFixture(item).ok) {\n+      valid += 1;\n+    }\n+  }\n+  return { valid, invalid: list.length - valid };\n }\n \n-export function summarize(_list: unknown[]): { valid: number; invalid: number } {\n-  throw new Error(\"not implemented\");\n+export function dedupe(list: unknown[]): unknown[] {\n+  const seen = new Set<string>();\n+  const out: unknown[] = [];\n+  for (const item of list) {\n+    const key = JSON.stringify(item) ?? \"undefined\";\n+    if (!seen.has(key)) {\n+      seen.add(key);\n+      out.push(item);\n+    }\n+  }\n+  return out;\n }\n",
+    "bad": [
+      "diff --git a/src/validate.ts b/src/validate.ts\nindex 596e6cd..668876c 100644\n--- a/src/validate.ts\n+++ b/src/validate.ts\n@@ -1,7 +1,45 @@\n-export function validateFixture(_obj: unknown): { ok: boolean; errors: string[] } {\n-  throw new Error(\"not implemented\");\n+const SPLITS = new Set([\"train\", \"dev\", \"holdout\"]);\n+\n+function isPlain(value: unknown): value is Record<string, unknown> {\n+  return typeof value === \"object\" && value !== null && !Array.isArray(value);\n+}\n+\n+export function validateFixture(obj: unknown): { ok: boolean; errors: string[] } {\n+  if (!isPlain(obj)) {\n+    return { ok: false, errors: [\"not_object\"] };\n+  }\n+  const errors: string[] = [];\n+  if (obj.schema_version !== 1) {\n+    errors.push(\"bad_schema_version\");\n+  }\n+  if (typeof obj.family_id !== \"string\" || !obj.family_id.startsWith(\"fam-\")) {\n+    errors.push(\"bad_family_id\");\n+  }\n+  if (typeof obj.split !== \"string\" || !SPLITS.has(obj.split)) {\n+    errors.push(\"bad_split\");\n+  }\n+  return { ok: errors.length === 0, errors };\n+}\n+\n+export function summarize(list: unknown[]): { valid: number; invalid: number } {\n+  let valid = 0;\n+  for (const item of list) {\n+    if (validateFixture(item).ok) {\n+      valid += 1;\n+    }\n+  }\n+  return { valid, invalid: list.length - valid };\n }\n \n-export function summarize(_list: unknown[]): { valid: number; invalid: number } {\n-  throw new Error(\"not implemented\");\n+export function dedupe(list: unknown[]): unknown[] {\n+  const seen = new Set<string>();\n+  const out: unknown[] = [];\n+  for (const item of list) {\n+    const key = JSON.stringify(item) ?? \"undefined\";\n+    if (!seen.has(key)) {\n+      seen.add(key);\n+      out.push(item);\n+    }\n+  }\n+  return out;\n }\n"
+    ]
+  },
+  "mutants": [
+    "diff --git a/src/validate.ts b/src/validate.ts\nindex 596e6cd..cf313b4 100644\n--- a/src/validate.ts\n+++ b/src/validate.ts\n@@ -1,7 +1,32 @@\n-export function validateFixture(_obj: unknown): { ok: boolean; errors: string[] } {\n-  throw new Error(\"not implemented\");\n+const SPLITS = new Set([\"train\", \"dev\", \"holdout\"]);\n+\n+function isPlain(value: unknown): value is Record<string, unknown> {\n+  return typeof value === \"object\" && value !== null && !Array.isArray(value);\n+}\n+\n+export function validateFixture(obj: unknown): { ok: boolean; errors: string[] } {\n+  if (!isPlain(obj)) {\n+    return { ok: false, errors: [\"not_object\"] };\n+  }\n+  const errors: string[] = [];\n+  if (obj.schema_version !== 1) {\n+    errors.push(\"bad_schema_version\");\n+  }\n+  if (typeof obj.family_id !== \"string\" || !obj.family_id.startsWith(\"fam-\")) {\n+    errors.push(\"bad_family_id\");\n+  }\n+  if (typeof obj.split !== \"string\" || !SPLITS.has(obj.split)) {\n+    errors.push(\"bad_split\");\n+  }\n+  const rootKind = isPlain(obj.root) ? obj.root.kind : undefined;\n+  if (obj.synthetic !== (rootKind === \"synthetic\")) {\n+    errors.push(\"synthetic_mismatch\");\n+  }\n+  return { ok: errors.length === 0, errors };\n }\n \n+let c: { valid: number; invalid: number } | undefined;\n+\n export function summarize(_list: unknown[]): { valid: number; invalid: number } {\n-  throw new Error(\"not implemented\");\n+  return (c ??= { valid: Math.random(), invalid: 0 });\n }\n",
+    "diff --git a/src/validate.ts b/src/validate.ts\nindex 596e6cd..0bd7967 100644\n--- a/src/validate.ts\n+++ b/src/validate.ts\n@@ -1,7 +1,36 @@\n-export function validateFixture(_obj: unknown): { ok: boolean; errors: string[] } {\n-  throw new Error(\"not implemented\");\n+const SPLITS = new Set([\"train\", \"dev\", \"holdout\"]);\n+\n+function isPlain(value: unknown): value is Record<string, unknown> {\n+  return typeof value === \"object\" && value !== null && !Array.isArray(value);\n+}\n+\n+export function validateFixture(obj: unknown): { ok: boolean; errors: string[] } {\n+  if (!isPlain(obj)) {\n+    return { ok: false, errors: [\"not_object\"] };\n+  }\n+  const errors: string[] = [];\n+  if (obj.schema_version !== 1) {\n+    errors.push(\"bad_schema_version\");\n+  }\n+  if (typeof obj.family_id !== \"string\" || !obj.family_id.startsWith(\"fam-\")) {\n+    errors.push(\"bad_family_id\");\n+  }\n+  if (typeof obj.split !== \"string\" || !SPLITS.has(obj.split)) {\n+    errors.push(\"bad_split\");\n+  }\n+  const rootKind = isPlain(obj.root) ? obj.root.kind : undefined;\n+  if (obj.synthetic !== (rootKind === \"synthetic\")) {\n+    errors.push(\"synthetic_mismatch\");\n+  }\n+  return { ok: errors.length === 0, errors };\n }\n \n-export function summarize(_list: unknown[]): { valid: number; invalid: number } {\n-  throw new Error(\"not implemented\");\n+export function summarize(list: unknown[]): { valid: number; invalid: number } {\n+  let valid = 0;\n+  for (const item of list) {\n+    if (validateFixture(item).ok) {\n+      valid += 1;\n+    }\n+  }\n+  return { valid, invalid: list.length - valid, first: validateFixture(list[0]).ok };\n }\n",
+    "diff --git a/src/validate.ts b/src/validate.ts\nindex 596e6cd..b2193ad 100644\n--- a/src/validate.ts\n+++ b/src/validate.ts\n@@ -1,7 +1,45 @@\n-export function validateFixture(_obj: unknown): { ok: boolean; errors: string[] } {\n-  throw new Error(\"not implemented\");\n+const SPLITS = new Set([\"train\", \"dev\", \"holdout\"]);\n+\n+function isPlain(value: unknown): value is Record<string, unknown> {\n+  return typeof value === \"object\" && value !== null && !Array.isArray(value);\n+}\n+\n+export function validateFixture(obj: unknown): { ok: boolean; errors: string[] } {\n+  if (!isPlain(obj)) {\n+    return { ok: false, errors: [\"not_object\"] };\n+  }\n+  const errors: string[] = [];\n+  if (obj.schema_version !== 1) {\n+    errors.push(\"bad_schema_version\");\n+  }\n+  if (typeof obj.family_id !== \"string\" || !obj.family_id.startsWith(\"fam-\")) {\n+    errors.push(\"bad_family_id\");\n+  }\n+  if (typeof obj.split !== \"string\" || !SPLITS.has(obj.split)) {\n+    errors.push(\"bad_split\");\n+  }\n+  const rootKind = isPlain(obj.root) ? obj.root.kind : undefined;\n+  if (obj.synthetic !== (rootKind === \"synthetic\")) {\n+    errors.push(\"synthetic_mismatch\");\n+  }\n+  return { ok: errors.length === 0, errors };\n+}\n+\n+export function summarize(list: unknown[]): { valid: number; invalid: number } {\n+  let valid = 0;\n+  for (const item of list) {\n+    if (validateFixture(item).ok) {\n+      valid += 1;\n+    }\n+  }\n+  return { valid, invalid: list.length - valid };\n }\n \n-export function summarize(_list: unknown[]): { valid: number; invalid: number } {\n-  throw new Error(\"not implemented\");\n+export function dedupe(list: unknown[]): unknown[] {\n+  const out: unknown[] = [];\n+  for (const item of list) {\n+    out.push(item);\n+  }\n+  out.push({ deduped: true });\n+  return out;\n }\n"
+  ]
+}
