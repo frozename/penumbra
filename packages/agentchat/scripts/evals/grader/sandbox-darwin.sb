@@ -1,0 +1,12 @@
+(version 1)
+(deny default)
+(allow process-fork)
+(allow process-exec (literal (param "BUN")))
+(allow process-info* (target self))
+; /dev/dtracehelper is not in the plan's profile: bun aborts (SIGABRT) under sandbox-exec on Darwin 25 without a read allow for it.
+(allow file-read* (subpath (param "GRADER")) (subpath (param "TREE")) (subpath (param "DEPS")) (subpath (param "BUNPREFIX")) (subpath "/usr/lib") (subpath "/System") (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/dtracehelper"))
+(allow file-read* (literal "/") (subpath "/private/var/db/timezone") (subpath "/usr/share/icu"))
+(allow file-read-metadata)
+(allow file-write* (subpath (param "TMP")) (literal "/dev/null"))
+(allow sysctl-read)
+(deny network*)
