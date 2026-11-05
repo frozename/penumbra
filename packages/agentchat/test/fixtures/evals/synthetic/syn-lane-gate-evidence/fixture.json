@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "family_id": "fam-syn-lane-gate-evidence",
+  "variant_id": "v1",
+  "root": {
+    "kind": "synthetic",
+    "id": "lane-gate-evidence"
+  },
+  "reconstructs": null,
+  "failure_type": null,
+  "split": "dev",
+  "synthetic": true,
+  "base_sha": "7103b10ce0fc9681ebef7dbe22a3ce281164cbf7",
+  "task_digest": "fd0933e6eecf9973c77a6f2774f7c438db09dd1c2731ae003b262cf846acfa97",
+  "source_root_handoff_digests": [],
+  "expect_blocked": false,
+  "hidden_ref": {
+    "assertion_set_digest": "8d0a4051c6dcc1c604e6af8afaa7c83363ba3777779699004fcaf65af5c24966"
+  },
+  "content_digest": "5c4496110dece842a740783445be71f404bb4609018ebcba8986d31fb9d800f4"
+}

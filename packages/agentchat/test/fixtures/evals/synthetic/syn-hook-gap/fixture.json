@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "family_id": "fam-syn-hook-gap",
+  "variant_id": "v1",
+  "root": {
+    "kind": "synthetic",
+    "id": "hook-gap"
+  },
+  "reconstructs": {
+    "kind": "issue",
+    "number": 217
+  },
+  "failure_type": "hook_bootstrap_gap",
+  "split": "dev",
+  "synthetic": true,
+  "base_sha": "4aad58636dfbcf281cb7be101cb0508e98e73d1f",
+  "task_digest": "abf26434b0d654bcf3369687e3a790224f78ab7cbf1303b4f225144308321da5",
+  "source_root_handoff_digests": [],
+  "expect_blocked": false,
+  "hidden_ref": {
+    "assertion_set_digest": "fe4d3e9ed23329f9eb5b62a966ccce37ef04c5ab79f036b2bfb016da1f593367"
+  },
+  "content_digest": "b3138e1a644ffb22cf7e78b3302894adb7a26cb86d10f337c680f2110d99f1f4"
+}
