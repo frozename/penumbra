@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -196,13 +197,82 @@ function resolveExternalPkgDir(spec: string, fromDir: string): string | null {
   }
 }
 
+// GIT_* stripped so a GIT_DIR/GIT_WORK_TREE exported by a hook cannot point
+// these probes at a foreign repository.
+function scrubbedGitEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (!key.startsWith("GIT_")) {
+      env[key] = value;
+    }
+  }
+  return env;
+}
+
+// spawnSync leaves stdout null when git itself cannot be spawned; callers must
+// treat that as "no git available" rather than dereferencing it.
+function runGitSync(pkgDir: string, args: string[]): { code: number; stdout: Buffer | null } {
+  const res = spawnSync("git", ["-C", pkgDir, ...args], { env: scrubbedGitEnv() });
+  return { code: res.status ?? -1, stdout: res.stdout };
+}
+
+function isGitWorkTree(dir: string): boolean {
+  const res = runGitSync(dir, ["rev-parse", "--is-inside-work-tree"]);
+  return res.stdout !== null && res.stdout.toString("utf8").trim() === "true";
+}
+
+function gitVisibleFiles(pkgDir: string): string[] {
+  const res = runGitSync(pkgDir, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]);
+  if (res.code !== 0 || res.stdout === null) {
+    throw new Error(
+      `graderBuildId: git ls-files in ${pkgDir} failed with code ${String(res.code)}`,
+    );
+  }
+  const paths = res.stdout
+    .toString("utf8")
+    .split("\0")
+    .filter((path) => path !== "");
+  return [...new Set(paths)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+function hashGitVisiblePackage(pkgDir: string, hash: ReturnType<typeof createHash>): void {
+  for (const path of gitVisibleFiles(pkgDir)) {
+    const abs = join(pkgDir, path);
+    let isFile: boolean;
+    try {
+      isFile = lstatSync(abs).isFile();
+    } catch {
+      hash.update(`/${path}\0<deleted>\0`);
+      continue;
+    }
+    if (!isFile) {
+      continue;
+    }
+    hash.update(`/${path}\0`);
+    hash.update(readFileSync(abs));
+    hash.update("\0");
+  }
+}
+
 // A workspace-linked package keeps its version while its source moves, so a
 // version-only identity would leave the build id (and controls keyed by it)
-// stale across edits to the linked package. Hash the linked tree instead:
-// deterministic walk (sorted entries), skipping nested node_modules/.git and
-// symlinks, tagging each file with its relative path.
+// stale across edits to the linked package. Hash the linked sources instead.
+// Inside a git work tree, hash only the git-visible files (tracked plus
+// untracked non-ignored): gitignored build output (dist/, *.tsbuildinfo) must
+// not move the id, while a new unstaged source file still does. Outside a
+// work tree, fall back to a deterministic walk (sorted entries), skipping
+// nested node_modules/.git and symlinks, tagging each file by relative path.
 function hashLinkedPackage(pkgDir: string): string {
   const hash = createHash("sha256");
+  if (isGitWorkTree(pkgDir)) {
+    hashGitVisiblePackage(pkgDir, hash);
+  } else {
+    hashWalkedPackage(pkgDir, hash);
+  }
+  return hash.digest("hex").slice(0, 32);
+}
+
+function hashWalkedPackage(pkgDir: string, hash: ReturnType<typeof createHash>): void {
   const walk = (current: string, rel: string): void => {
     const entries = readdirSync(current, { withFileTypes: true }).sort((a, b) =>
       a.name === b.name ? 0 : a.name < b.name ? -1 : 1,
@@ -224,7 +294,6 @@ function hashLinkedPackage(pkgDir: string): string {
     }
   };
   walk(pkgDir, "");
-  return hash.digest("hex").slice(0, 32);
 }
 
 function externalIdentity(spec: string, fromDir: string): string {
