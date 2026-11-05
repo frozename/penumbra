@@ -398,6 +398,8 @@ test("each leg gets a fresh HOME dir under tmpRoot that is removed afterwards", 
   expect(homeB?.startsWith(dirs.tmpRoot)).toBe(true);
   expect(existsSync(homeA!)).toBe(false);
   expect(existsSync(homeB!)).toBe(false);
+  expect(readdirSync(dirs.tmpRoot).filter((name) => name.startsWith("probe-fd3-"))).toEqual([]);
+  expect(readdirSync(dirs.tmpRoot).filter((name) => name.startsWith("probe-leg-"))).toEqual([]);
 });
 
 test("darwin-sbx leg wraps bun in sandbox-exec with -D params", async () => {
@@ -1040,6 +1042,12 @@ test("a frame whose body is not JSON is tamper", async () => {
 test("a frame whose body is a JSON object instead of an array is tamper", async () => {
   const sbx = await loadSandbox();
   const res = await frameCase(sbx, (payload) => frameBody(payload, '{"id":"c1","output":1}'));
+  expectKind(res, "tamper");
+});
+
+test("a frame body ending with a space and no trailing newline is tamper", async () => {
+  const sbx = await loadSandbox();
+  const res = await frameCase(sbx, (payload) => `${nonceOf(payload)} ${okBody("c1", 1)} `);
   expectKind(res, "tamper");
 });
 
@@ -1692,6 +1700,61 @@ test("a candidate exit hook cannot append a second forged line to the committed 
   expectNeverForged(res);
 }, 30_000);
 
+// An exit hook that leaves two independent traces: an extra fd-3 line (which
+// classifyFd3 must never see, even under the sandbox where inherited-fd
+// writes go through) and a marker file in the tree (writable only on the
+// default path). Any harness mutant that runs exit listeners — replacing
+// hardStop's SIGKILL with exit(0), or dropping the killPid call so exit(1)
+// runs the hooks — turns both assertions red.
+function hardStopExitModule(markerPath: string): string {
+  return [
+    'import { writeFileSync, writeSync } from "node:fs";',
+    'process.on("exit", () => {',
+    `  try { writeFileSync(${JSON.stringify(markerPath)}, "exit-hook-ran\\n"); } catch {}`,
+    '  try { writeSync(3, "exit-hook-appended\\n"); } catch {}',
+    "});",
+    "export const f = (x) => ({ v: x });",
+    "",
+  ].join("\n");
+}
+
+test("the hard stop kills the child without running candidate exit hooks", async () => {
+  const sbx = await loadSandbox();
+  const dirs = mkProbeDirs();
+  const markerPath = join(dirs.treeDir, "exit-hook-marker");
+  const moduleRel = writeModule(dirs.treeDir, hardStopExitModule(markerPath));
+  const res = await sbx.runProbeLeg(
+    probeOpts(dirs, {
+      sandbox: "none",
+      leg: { module_rel: moduleRel, calls: [{ id: "c1", export: "f", input: 1 }] },
+      timeoutMs: 15_000,
+    }),
+  );
+  expect(res).toEqual({ kind: "ok", results: [{ id: "c1", output: { v: 1 } }] });
+  expect(existsSync(markerPath)).toBe(false);
+}, 30_000);
+
+test.skipIf(!HOST_SANDBOX)(
+  "[sbx] the hard stop kills the sandboxed child without running candidate exit hooks",
+  async () => {
+    const sbx = await loadSandbox();
+    const kind = await sbx.requireSandbox();
+    const dirs = mkProbeDirs();
+    const markerPath = join(dirs.treeDir, "exit-hook-marker");
+    const moduleRel = writeModule(dirs.treeDir, hardStopExitModule(markerPath));
+    const res = await sbx.runProbeLeg(
+      probeOpts(dirs, {
+        sandbox: kind,
+        leg: { module_rel: moduleRel, calls: [{ id: "c1", export: "f", input: 1 }] },
+        timeoutMs: 15_000,
+      }),
+    );
+    expect(res).toEqual({ kind: "ok", results: [{ id: "c1", output: { v: 1 } }] });
+    expect(existsSync(markerPath)).toBe(false);
+  },
+  30_000,
+);
+
 test("the harness terminates even when the candidate keeps the loop alive", async () => {
   const sbx = await loadSandbox();
   const dirs = mkProbeDirs();
@@ -1731,6 +1794,44 @@ test("writing more than the fd-3 cap from the candidate is tamper", async () => 
     }),
   );
   expectKind(res, "tamper");
+}, 30_000);
+
+// The candidate cannot forge the nonce, so an oversized frame that still
+// carries the honest nonce can only come from the harness itself: a huge
+// export return value. Removing readFd3File's `size > FD3_LIMIT_BYTES`
+// check would parse it as ok, so the assertion here pins the cap on the
+// default (frame-file) path.
+test("an honest frame above the 1 MiB cap is tamper on the default file path", async () => {
+  const sbx = await loadSandbox();
+  const dirs = mkProbeDirs();
+  const moduleRel = writeModule(
+    dirs.treeDir,
+    'export const f = () => "a".repeat(2 * 1024 * 1024);\n',
+  );
+  const res = await sbx.runProbeLeg(
+    probeOpts(dirs, { sandbox: "none", leg: singleLeg(moduleRel), timeoutMs: 15_000 }),
+  );
+  expectKind(res, "tamper");
+}, 30_000);
+
+test("an honest frame just under the 1 MiB cap is ok on the default file path", async () => {
+  const sbx = await loadSandbox();
+  const dirs = mkProbeDirs();
+  const moduleRel = writeModule(
+    dirs.treeDir,
+    `export const f = () => "a".repeat(${String(1024 * 1024 - 4096)});\n`,
+  );
+  const res = await sbx.runProbeLeg(
+    probeOpts(dirs, { sandbox: "none", leg: singleLeg(moduleRel), timeoutMs: 15_000 }),
+  );
+  expect(res.kind).toBe("ok");
+  if (res.kind === "ok") {
+    const entry = res.results[0]!;
+    expect("output" in entry).toBe(true);
+    if ("output" in entry) {
+      expect(entry.output).toBe("a".repeat(1024 * 1024 - 4096));
+    }
+  }
 }, 30_000);
 
 test("a single frame with a wrong nonce followed by self-SIGKILL is tamper", async () => {

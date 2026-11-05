@@ -415,6 +415,14 @@ function parseLegResults(json: string, leg: ProbeLeg): LegCallResult[] | null {
   return results;
 }
 
+// Threat model (plan-391-r4, "In-process nonce exposure"): this classifier
+// rejects stray or accidental candidate output on fd 3, partial writes and
+// nonce mismatches as tamper/no_output. It does NOT defend against a
+// candidate inside the harness process recovering the nonce through
+// in-process introspection (node:inspector, a heap snapshot,
+// /proc/self/mem): such a candidate can forge a frame for its own leg, which
+// is equivalent to the candidate controlling its own result. The guard
+// against forged invariants is one fresh process per leg, not this function.
 function classifyFd3(buf: Buffer, nonce: string, leg: ProbeLeg, state: Fd3State): LegResult {
   if (state.timedOut) {
     return { kind: "timeout" };
