@@ -298,6 +298,164 @@ describe("capsule schema", () => {
     ).toBe(false);
   });
 
+  const EXTRA_KEY = "privileges";
+
+  function injectExtraKey(capsule: Capsule, keyPath: string): Record<string, unknown> {
+    const root = structuredClone(capsule) as Record<string, unknown>;
+    let target: Record<string, unknown> = root;
+    for (const segment of keyPath.split(".")) {
+      if (/^\d+$/.test(segment)) {
+        target = (target as unknown as Record<string, Record<string, unknown>>)[Number(segment)];
+      } else {
+        target = target[segment] as Record<string, unknown>;
+      }
+    }
+    target[EXTRA_KEY] = ["take over"];
+    return root;
+  }
+
+  // Each entry is one nested schema position. A privilege-like extra key at
+  // that position must be rejected, not silently stripped, so a z.strictObject
+  // -> z.object mutation on any of these schemas fails a test here.
+  const NESTED_EXTRA_KEY_POSITIONS: { label: string; keyPath: string }[] = [
+    { label: "AdvisoryItem (advisory.memory)", keyPath: "advisory.memory.0" },
+    { label: "AdvisoryItem (advisory.repo_map)", keyPath: "advisory.repo_map" },
+    { label: "AdvisoryItem (advisory.log_excerpts)", keyPath: "advisory.log_excerpts.0" },
+    { label: "AdvisoryLane (advisory)", keyPath: "advisory" },
+    {
+      label: "Provenance (advisory.memory provenance)",
+      keyPath: "advisory.memory.0.provenance",
+    },
+    {
+      label: "Provenance (advisory.repo_map provenance)",
+      keyPath: "advisory.repo_map.provenance",
+    },
+    {
+      label: "Provenance (advisory.log_excerpts provenance)",
+      keyPath: "advisory.log_excerpts.0.provenance",
+    },
+    {
+      label: "EssentialConstraint",
+      keyPath: "authoritative.essential_constraints.0",
+    },
+    { label: "CheckRecipe", keyPath: "authoritative.check_recipes.0" },
+    { label: "Tool", keyPath: "authoritative.tools.0" },
+    { label: "ArtifactHandle", keyPath: "authoritative.artifact_handles.0" },
+    { label: "LastError", keyPath: "last_error" },
+    { label: "TokenReport", keyPath: "token_report" },
+  ];
+
+  test.each(NESTED_EXTRA_KEY_POSITIONS)(
+    "$label rejects an injected extra key through CapsuleSchema",
+    ({ keyPath }) => {
+      const capsule = validCapsule();
+      const base: Capsule = keyPath.startsWith("advisory.repo_map")
+        ? { ...capsule, advisory: { ...capsule.advisory, repo_map: advisoryItem("rm1") } }
+        : keyPath === "last_error"
+          ? { ...capsule, last_error: lastError() }
+          : capsule;
+      expect(CapsuleSchema.safeParse(base).success).toBe(true);
+      expect(CapsuleSchema.safeParse(injectExtraKey(base, keyPath)).success).toBe(false);
+    },
+  );
+
+  test("min(1) guards reject empty strings", () => {
+    const capsule = validCapsule();
+    expect(CapsuleSchema.safeParse(capsule).success).toBe(true);
+
+    const auth = (field: string): Record<string, unknown> => ({
+      ...capsule,
+      authoritative: { ...capsule.authoritative, [field]: "" },
+    });
+    expect(CapsuleSchema.safeParse(auth("objective")).success).toBe(false);
+    expect(CapsuleSchema.safeParse(auth("acceptance_state")).success).toBe(false);
+
+    const emptyProvenanceField = (field: "source" | "ref"): Record<string, unknown> => ({
+      ...capsule,
+      advisory: {
+        ...capsule.advisory,
+        memory: [
+          {
+            ...capsule.advisory.memory[0],
+            provenance: { ...capsule.advisory.memory[0]?.provenance, [field]: "" },
+          },
+          ...capsule.advisory.memory.slice(1),
+        ],
+      },
+    });
+    expect(CapsuleSchema.safeParse(emptyProvenanceField("source")).success).toBe(false);
+    expect(CapsuleSchema.safeParse(emptyProvenanceField("ref")).success).toBe(false);
+
+    const advisoryItemWith = (field: "id", value: string): Record<string, unknown> => ({
+      ...capsule,
+      advisory: {
+        ...capsule.advisory,
+        memory: [
+          { ...capsule.advisory.memory[0], [field]: value },
+          ...capsule.advisory.memory.slice(1),
+        ],
+      },
+    });
+    expect(CapsuleSchema.safeParse(advisoryItemWith("id", "")).success).toBe(false);
+
+    const constraintWith = (field: "id" | "text", value: string): Record<string, unknown> => ({
+      ...capsule,
+      authoritative: {
+        ...capsule.authoritative,
+        essential_constraints: [
+          { ...capsule.authoritative.essential_constraints[0], [field]: value },
+        ],
+      },
+    });
+    expect(CapsuleSchema.safeParse(constraintWith("id", "")).success).toBe(false);
+    expect(CapsuleSchema.safeParse(constraintWith("text", "")).success).toBe(false);
+
+    const recipeWith = (field: "id" | "command", value: string): Record<string, unknown> => ({
+      ...capsule,
+      authoritative: {
+        ...capsule.authoritative,
+        check_recipes: [{ ...capsule.authoritative.check_recipes[0], [field]: value }],
+      },
+    });
+    expect(CapsuleSchema.safeParse(recipeWith("id", "")).success).toBe(false);
+    expect(CapsuleSchema.safeParse(recipeWith("command", "")).success).toBe(false);
+
+    const toolWith = (
+      field: "id" | "kind" | "command",
+      value: string,
+    ): Record<string, unknown> => ({
+      ...capsule,
+      authoritative: {
+        ...capsule.authoritative,
+        tools: [{ ...capsule.authoritative.tools[0], [field]: value }],
+      },
+    });
+    expect(CapsuleSchema.safeParse(toolWith("id", "")).success).toBe(false);
+    expect(CapsuleSchema.safeParse(toolWith("kind", "")).success).toBe(false);
+    expect(CapsuleSchema.safeParse(toolWith("command", "")).success).toBe(false);
+
+    const artifactWith = (
+      field: "id" | "kind" | "uri",
+      value: string,
+    ): Record<string, unknown> => ({
+      ...capsule,
+      authoritative: {
+        ...capsule.authoritative,
+        artifact_handles: [{ ...capsule.authoritative.artifact_handles[0], [field]: value }],
+      },
+    });
+    expect(CapsuleSchema.safeParse(artifactWith("id", "")).success).toBe(false);
+    expect(CapsuleSchema.safeParse(artifactWith("kind", "")).success).toBe(false);
+    expect(CapsuleSchema.safeParse(artifactWith("uri", "")).success).toBe(false);
+
+    expect(
+      CapsuleSchema.safeParse({
+        ...capsule,
+        last_error: lastError({ excerpt: "" }),
+      }).success,
+    ).toBe(true);
+  });
+
   test("token_report", () => {
     const capsule = validCapsule();
     expect(CapsuleSchema.safeParse(capsule).success).toBe(true);
