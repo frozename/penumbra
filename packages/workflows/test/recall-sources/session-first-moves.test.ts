@@ -117,7 +117,7 @@ test("default launchctl reader spawns once and derives daemon plus worker pids f
         stderr: "pipe",
       });
     }
-    return originalSpawnSync(options);
+    return originalSpawnSync(options as never);
   });
   try {
     const out = await runSessionFirstMovesSource({

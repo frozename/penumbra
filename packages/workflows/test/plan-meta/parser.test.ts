@@ -153,8 +153,8 @@ test("reports malformed yaml as an error", () => {
   const result = parsePlanMeta(markdown);
   expect(result.tasks).toHaveLength(1);
   expect(result.errors).toHaveLength(1);
-  expect(result.errors[0].line).toBeGreaterThan(0);
-  expect(result.errors[0].reason.length).toBeGreaterThan(0);
+  expect(result.errors[0]!.line).toBeGreaterThan(0);
+  expect(result.errors[0]!.reason.length).toBeGreaterThan(0);
 });
 
 test("reports schema rejection as an error", () => {
@@ -175,8 +175,8 @@ test("reports schema rejection as an error", () => {
   const result = parsePlanMeta(markdown);
   expect(result.tasks).toHaveLength(0);
   expect(result.errors).toHaveLength(1);
-  expect(result.errors[0].line).toBe(1);
-  expect(result.errors[0].reason.length).toBeGreaterThan(0);
+  expect(result.errors[0]!.line).toBe(1);
+  expect(result.errors[0]!.reason.length).toBeGreaterThan(0);
 });
 
 test("returns an empty result when no yaml meta blocks exist", () => {

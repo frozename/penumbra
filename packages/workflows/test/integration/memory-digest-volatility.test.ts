@@ -96,7 +96,9 @@ async function loadWorkflow(
     join(workflowDir, "workflow.ts"),
     readFileSync(join(import.meta.dir, `../../../../plugin/workflows/${name}/workflow.ts`), "utf8"),
   );
-  const registry = await buildRegistry({ workflowsDir: join(root, "workflows") });
+  const registry = await buildRegistry({
+    workflowsDir: join(root, "workflows"),
+  } as Parameters<typeof buildRegistry>[0]);
   expect(registry.errors).toEqual([]);
   const entry = registry.getEntry(name);
   expect(entry).toBeTruthy();
@@ -166,7 +168,7 @@ test("memory-digest volatility budgets are stable and session sweep is read-only
         response_text: null;
       }> => Promise.resolve({ status: "timeout" as const, final_agent: null, response_text: null }),
       fileWrite: (): Promise<string> => Promise.resolve("/tmp/out"),
-    };
+    } as unknown as Parameters<typeof executeWorkflow>[0]["ctx"];
 
     await withDigestEnv(memoryDir, async () => {
       const first = await executeWorkflow({
@@ -203,7 +205,9 @@ test("memory-digest volatility budgets are stable and session sweep is read-only
       const sweepEntry = await loadWorkflow(root, "session-memory-sweep");
       const sweep = await executeWorkflow({
         spec: { ...sweepEntry.spec, output: [{ kind: "next-session-prompt" as const }] },
-        bundle: { byKey: {}, warnings: [] },
+        bundle: { byKey: {}, warnings: [] } as unknown as Parameters<
+          typeof executeWorkflow
+        >[0]["bundle"],
         fn: sweepEntry.fn,
         storageRoot: root,
         ctx: {
@@ -226,7 +230,7 @@ test("memory-digest volatility budgets are stable and session sweep is read-only
               response_text: null,
             }),
           fileWrite: (): Promise<string> => Promise.resolve("/tmp/out"),
-        },
+        } as unknown as Parameters<typeof executeWorkflow>[0]["ctx"],
       });
       expect(sweep.outcome).toBe("success");
       expect(readFileSync(memoryPath, "utf8")).toBe(firstMemory);

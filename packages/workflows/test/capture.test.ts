@@ -298,8 +298,8 @@ test("stamps workflow_run_id into run and outcome payloads and writes latency_ms
     .all() as T0CaptureRow[];
 
   expect(rows).toHaveLength(2);
-  expect(rows[0].event_type).toBe("workflow.run");
-  expect(rows[1].event_type).toBe("workflow.outcome");
+  expect(rows[0]!.event_type).toBe("workflow.run");
+  expect(rows[1]!.event_type).toBe("workflow.outcome");
 
   for (const row of rows) {
     expect(row.latency_ms).toBe(123);
@@ -313,6 +313,6 @@ test("stamps workflow_run_id into run and outcome payloads and writes latency_ms
     expect(payload.workflow_run_id).toBe(workflowRunId);
   }
 
-  const outcomePayload = JSON.parse(rows[1].payload_json) as Record<string, unknown>;
+  const outcomePayload = JSON.parse(rows[1]!.payload_json) as Record<string, unknown>;
   expect(outcomePayload.latency_ms).toBe(123);
 });
