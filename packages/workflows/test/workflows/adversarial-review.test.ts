@@ -271,7 +271,9 @@ type AdversarialReviewWorkflowResult = {
 function makeCtx(opts?: {
   args?: Record<string, unknown>;
   dispatchImpl?: DispatchImplReview;
-  awaitImpl?: AwaitImplReview;
+  awaitImpl?:
+    | AwaitImplReview
+    | ((conversationId: string, opts?: { timeoutMs?: number }) => AwaitResultReview);
   cancelImpl?: CancelImplReview;
   db?: () => Database;
 }): MakeReviewCtxResult {
@@ -300,13 +302,15 @@ function makeCtx(opts?: {
   const dispatch = mock((input: DispatchInputReview) =>
     dispatchImpl(input).then((r) => ({ ...r, permission_profile: input.permission_profile })),
   );
-  const awaitChain = mock(opts?.awaitImpl ?? defaultAwait);
+  const awaitChain = mock<AwaitImplReview>(
+    (opts?.awaitImpl ?? defaultAwait) as unknown as AwaitImplReview,
+  );
   const cancel = mock(opts?.cancelImpl ?? ((): Promise<void> => Promise.resolve()));
   const scratchPath = join(root, ".scratch-test");
 
   const parsedArgs = inputSchema.parse(opts?.args ?? {}) as Record<string, unknown>;
   const ctx: WorkflowCtx = {
-    dispatch,
+    dispatch: dispatch as unknown as WorkflowCtx["dispatch"],
     awaitChain,
     cancel,
     fileWrite: async (relativePath, body): Promise<string> => {
@@ -411,7 +415,7 @@ function writePerf(db: Database, agent: string, taskType: "review_adversarial"):
     cost_usd: null,
     tokens_used: 100,
     latency_ms: agent === "claude-acp-sonnet" ? 10_000 : 60_000,
-    source: "test",
+    source: "test" as unknown as "worker",
     notes: null,
     metadata_json: "{}",
   });
@@ -583,7 +587,12 @@ test("optional persona failures are excluded from pass threshold using config me
     ],
     80,
     { ui_regression: { optional: true } },
-  );
+  ) as {
+    outcome: string;
+    completedCount: number;
+    failedCount: number;
+    failedPersonas: string[];
+  };
   expect(outcome.outcome).toBe("success_partial");
   expect(outcome.completedCount).toBe(1);
   expect(outcome.failedCount).toBe(1);
@@ -598,7 +607,12 @@ test("optional exemption keys off the stable persona_key, not the display name",
     ],
     80,
     { ui_regression: { optional: true } },
-  );
+  ) as {
+    outcome: string;
+    completedCount: number;
+    failedCount: number;
+    failedPersonas: string[];
+  };
   expect(outcome.outcome).toBe("success_partial");
   expect(outcome.failedCount).toBe(1);
 });
@@ -608,7 +622,12 @@ test("all-optional persona runs still require the selected personas to meet the 
     [{ persona: "UI Regression Check", persona_key: "ui_regression", status: "failed" }],
     80,
     { ui_regression: { optional: true } },
-  );
+  ) as {
+    outcome: string;
+    completedCount: number;
+    failedCount: number;
+    failedPersonas: string[];
+  };
   expect(outcome.outcome).toBe("failed");
 });
 
@@ -716,6 +735,7 @@ test("all personas succeed: writes persona artifacts and synthesis with handoff_
     agent: string;
     message: string;
     task_type?: string;
+    task_class?: string;
     use_worktree?: boolean;
   }[] = [];
   const { ctx, root, dispatch, scratchPath } = makeCtx();
@@ -1174,7 +1194,7 @@ diff --git a/docs/review.md b/docs/review.md
 
   const withVision = makeCtx();
   try {
-    withVision.ctx.config = installEnforcingAgents(configured);
+    withVision.ctx.config = installEnforcingAgents(configured) as unknown as WorkflowCtx["config"];
     const result = (await fn(withVision.ctx, recallWithDiff(uiDiff))) as {
       ok: boolean;
       personas: { name: string }[];
@@ -1187,7 +1207,7 @@ diff --git a/docs/review.md b/docs/review.md
 
   const nonUi = makeCtx();
   try {
-    nonUi.ctx.config = installEnforcingAgents(configured);
+    nonUi.ctx.config = installEnforcingAgents(configured) as unknown as WorkflowCtx["config"];
     const result = (await fn(nonUi.ctx, recallWithDiff(nonUiDiff))) as {
       ok: boolean;
       personas: { name: string }[];
@@ -1232,7 +1252,7 @@ test("optional UI persona dispatch failure does not fail an otherwise successful
     },
   });
   try {
-    ctx.config = installEnforcingAgents(configured);
+    ctx.config = installEnforcingAgents(configured) as unknown as WorkflowCtx["config"];
     const result = (await fn(ctx, recallWithDiff(uiDiff))) as {
       ok: boolean;
       outcome: string;
@@ -1292,7 +1312,7 @@ workloads:
     },
   });
   try {
-    ctx.config = installEnforcingAgents(configured);
+    ctx.config = installEnforcingAgents(configured) as unknown as WorkflowCtx["config"];
     const result = (await fn(ctx, {
       ...baseRecall(),
       byKey: {

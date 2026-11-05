@@ -52,7 +52,7 @@ test("emitObservationOutput POSTs to /observations with the expected payload sha
   const root = makeStorageRoot();
   try {
     let captured: { url: string; init: FetchInit } | null = null;
-    const fakeFetch: typeof globalThis.fetch = (input: FetchInput, init?: FetchInit) => {
+    const fakeFetch = (input: FetchInput, init?: FetchInit): Promise<Response> => {
       captured = { url: fetchAsString(input), init };
       return Promise.resolve(
         new Response(JSON.stringify({ event_id: "evt-1" }), {
@@ -63,7 +63,7 @@ test("emitObservationOutput POSTs to /observations with the expected payload sha
     };
     const summaryBody = "A".repeat(500);
     const r = await withMockedFetch(
-      fakeFetch,
+      fakeFetch as unknown as typeof globalThis.fetch,
       async () =>
         await emitObservationOutput({
           body: summaryBody,
@@ -118,10 +118,10 @@ test("emitObservationOutput returns warning when daemon files are missing", asyn
 test("emitObservationOutput surfaces non-200 response as warning", async () => {
   const root = makeStorageRoot();
   try {
-    const fakeFetch: typeof globalThis.fetch = () =>
+    const fakeFetch = (): Promise<Response> =>
       Promise.resolve(new Response("error", { status: 500 }));
     const r = await withMockedFetch(
-      fakeFetch,
+      fakeFetch as unknown as typeof globalThis.fetch,
       async () =>
         await emitObservationOutput({
           body: "x",
@@ -140,12 +140,12 @@ test('emitObservationOutput sends null project_id when project is "unknown" or e
   const root = makeStorageRoot();
   try {
     let captured: ObservationBody | null = null;
-    const fakeFetch: typeof globalThis.fetch = (_input: FetchInput, init?: FetchInit) => {
+    const fakeFetch = (_input: FetchInput, init?: FetchInit): Promise<Response> => {
       captured = JSON.parse(bodyString(init)) as ObservationBody;
       return Promise.resolve(new Response(JSON.stringify({ event_id: "e" }), { status: 200 }));
     };
     await withMockedFetch(
-      fakeFetch,
+      fakeFetch as unknown as typeof globalThis.fetch,
       async () =>
         await emitObservationOutput({
           body: "b",

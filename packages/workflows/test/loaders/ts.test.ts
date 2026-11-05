@@ -60,7 +60,7 @@ test("loads valid TS module + binds fn", async () => {
     expect(typeof fn).toBe("function");
     expect("inputSchema" in loaded).toBe(true);
     expect(loaded.inputSchema).toBeUndefined();
-    const r = await fn!({}, {});
+    const r = await fn!({} as never, {} as never);
     expect(r).toEqual({ ok: true });
   } finally {
     rmSync(dir, { recursive: true, force: true });
