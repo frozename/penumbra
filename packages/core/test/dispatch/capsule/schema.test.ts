@@ -7,6 +7,7 @@ import {
   capsuleHashes,
   CapsuleRefusalSchema,
   CapsuleSchema,
+  type LastError,
   refusal,
   RefusalCodeSchema,
 } from "@src/dispatch/capsule/index.js";
@@ -305,7 +306,8 @@ describe("capsule schema", () => {
     let target: Record<string, unknown> = root;
     for (const segment of keyPath.split(".")) {
       if (/^\d+$/.test(segment)) {
-        target = (target as unknown as Record<string, Record<string, unknown>>)[Number(segment)];
+        const indexed = (target as unknown as unknown[])[Number(segment)];
+        target = indexed as Record<string, unknown>;
       } else {
         target = target[segment] as Record<string, unknown>;
       }
@@ -352,7 +354,7 @@ describe("capsule schema", () => {
       const base: Capsule = keyPath.startsWith("advisory.repo_map")
         ? { ...capsule, advisory: { ...capsule.advisory, repo_map: advisoryItem("rm1") } }
         : keyPath === "last_error"
-          ? { ...capsule, last_error: lastError() }
+          ? { ...capsule, last_error: lastError() as LastError }
           : capsule;
       expect(CapsuleSchema.safeParse(base).success).toBe(true);
       expect(CapsuleSchema.safeParse(injectExtraKey(base, keyPath)).success).toBe(false);
