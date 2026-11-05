@@ -325,9 +325,12 @@ function commitStagedInstall(
       // Another process committed a valid cache into the slot between our
       // marker check and the rename, and we just moved it aside. Restore it
       // and discard our staged install instead of deleting a sealed cache.
+      // The restore rename only succeeded because we chmodded the root
+      // writable, so reseal it with the same 0o555 the commit paths apply.
       removeStaleCacheDir(stagedDir);
       try {
         renameSync(staleAside, cacheDir);
+        chmodSync(cacheDir, 0o555);
       } catch {
         // The slot was refilled after our rename-aside; the newest committed
         // cache wins and the restored aside is garbage.
