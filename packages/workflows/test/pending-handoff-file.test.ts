@@ -90,8 +90,7 @@ test("replace keeps surroundings and updates the stamp", () => {
 });
 
 test("a name with regex metacharacters only matches itself", () => {
-  const sectionAxb =
-    `<!-- penumbra:section aXb -->\n<!-- penumbra:written ${D.toISOString()} -->\nX\n<!-- /penumbra:section aXb -->\n`;
+  const sectionAxb = `<!-- penumbra:section aXb -->\n<!-- penumbra:written ${D.toISOString()} -->\nX\n<!-- /penumbra:section aXb -->\n`;
   const text = "head\n" + sectionAxb + "tail\n";
   const result = upsertPendingHandoffSection(text, { name: "a.b", body: "Y", writtenAt: D });
   expect(result.replaced).toBe(false);
@@ -109,8 +108,7 @@ test("a name with regex metacharacters only matches itself", () => {
 // ── parsePendingHandoffSections ──────────────────────────────────────
 
 test("mismatched close tag parses to []", () => {
-  const text =
-    "<!-- penumbra:section a -->\nbody\n<!-- /penumbra:section b -->\n";
+  const text = "<!-- penumbra:section a -->\nbody\n<!-- /penumbra:section b -->\n";
   const sections = parsePendingHandoffSections(text);
   expect(sections).toEqual([]);
 });
