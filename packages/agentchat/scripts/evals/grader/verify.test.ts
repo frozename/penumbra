@@ -517,6 +517,44 @@ test("store errors surface as rejection reasons", async () => {
   expectRejected(await mod.verifyReceipt(claim, episode, ctx), "unseal_required");
 });
 
+test("a regrade matching the fail verdict and reason but not per_check is nondeterministic", async () => {
+  const claim = failClaim(A);
+  const divergentRegrade: ReceiptClaimBody = claimBody(A, {
+    claimed_verdict: "fail",
+    fail_reason: "hidden_failed",
+    per_check: A.assertions.map((assertion) => ({ id: assertion.id, ok: false })),
+  });
+  const episode = makeEpisode();
+  const { ctx, gradeInputs } = mkCtx({ gradeResult: divergentRegrade });
+  const mod = await loadVerify();
+  const res = await mod.verifyReceipt(claim, episode, ctx);
+  expect(res).toEqual({
+    status: "verified",
+    verdict: "fail",
+    fail_reason: "nondeterministic",
+    sha: FINAL,
+    control_verdict: "pass",
+  });
+  expect(gradeInputs).toHaveLength(1);
+});
+
+test("a non-store error from readEntry propagates instead of becoming bundle_missing", async () => {
+  const claim = passClaim(A);
+  const episode = makeEpisode();
+  const { ctx } = mkCtx({ readEntry: () => Promise.reject(new Error("disk on fire")) });
+  const mod = await loadVerify();
+  // bun:test's `.rejects.toThrow(...)` is typed as returning void, so the
+  // rejection assertion is hand-rolled (same pattern as scratch.test.ts).
+  let caught: unknown;
+  try {
+    await mod.verifyReceipt(claim, episode, ctx);
+  } catch (err) {
+    caught = err;
+  }
+  expect(caught).toBeInstanceOf(Error);
+  expect(caught instanceof Error ? caught.message : String(caught)).toContain("disk on fire");
+});
+
 test("a public dev fixture verifies without touching the holdout store", async () => {
   const fixture = publicFixture("dev");
   expect(FixturePublicSchema.safeParse(fixture).success).toBe(true);
