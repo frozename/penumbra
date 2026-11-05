@@ -13,6 +13,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { RunCommand, RunCommandResult } from "./materialize.js";
+
 // holdout-store.ts does not exist yet: the P10 surface is declared structurally
 // below and the module is loaded dynamically so every case fails on the
 // `expect(mod).not.toBeNull()` assertion at RED time instead of on a missing
@@ -28,6 +30,7 @@ interface OpenHoldoutStoreOpts {
   lock: HoldoutLock;
   grant?: UnsealGrant;
   planPath?: string;
+  runCommand?: RunCommand;
 }
 
 interface HoldoutStoreMismatch {
@@ -522,4 +525,112 @@ test("openHoldoutStore refuses store paths inside git work trees", async () => {
   const outside = mkTmp("penumbra-holdout-store-");
   const store = await api.openHoldoutStore({ storePath: outside, lock });
   expect(typeof store.readEntry).toBe("function");
+});
+
+test("openHoldoutStore fails closed when the git work-tree probe errors", async () => {
+  const api = await loadHoldoutStore();
+  const lock = mkLock([]);
+
+  const failingRunner = (code: number, stdout: string, stderr: string): RunCommand => {
+    const result: RunCommandResult = {
+      code,
+      stdout: Buffer.from(stdout, "utf8"),
+      stderr: Buffer.from(stderr, "utf8"),
+    };
+    return () => Promise.resolve(result);
+  };
+
+  const dubiousDir = join(mkTmp("penumbra-holdout-probe-"), "store");
+  await expectStoreCode(
+    api,
+    () =>
+      api.openHoldoutStore({
+        storePath: dubiousDir,
+        lock,
+        runCommand: failingRunner(
+          128,
+          "",
+          "fatal: detected dubious ownership in repository at '/srv/repo'\n",
+        ),
+      }),
+    "store_in_repo",
+  );
+  expect(existsSync(dubiousDir)).toBe(false);
+
+  const missingGitDir = join(mkTmp("penumbra-holdout-probe-"), "store");
+  await expectStoreCode(
+    api,
+    () =>
+      api.openHoldoutStore({
+        storePath: missingGitDir,
+        lock,
+        runCommand: failingRunner(-1, "", "Error: spawnSync git ENOENT\n"),
+      }),
+    "store_in_repo",
+  );
+  expect(existsSync(missingGitDir)).toBe(false);
+
+  const garbageDir = join(mkTmp("penumbra-holdout-probe-"), "store");
+  await expectStoreCode(
+    api,
+    () =>
+      api.openHoldoutStore({
+        storePath: garbageDir,
+        lock,
+        runCommand: failingRunner(0, "maybe\n", ""),
+      }),
+    "store_in_repo",
+  );
+  expect(existsSync(garbageDir)).toBe(false);
+
+  const notARepoDir = join(mkTmp("penumbra-holdout-probe-"), "store");
+  const store = await api.openHoldoutStore({
+    storePath: notARepoDir,
+    lock,
+    runCommand: failingRunner(
+      1,
+      "",
+      "fatal: not a git repository (or any of the parent directories): .git\n",
+    ),
+  });
+  expect(typeof store.readEntry).toBe("function");
+});
+
+test("unseal budget counts only granted records toward max_unseals", async () => {
+  const api = await loadHoldoutStore();
+  const storeDir = mkTmp("penumbra-holdout-store-");
+  const planRepo = mkPlanRepo();
+  const bundle = mkBundle("fam-9001", "v1", 1);
+  const entry = mkEntry({ kind: "issue", number: 9001 }, bundle, false);
+  const lock = mkLock([entry]);
+  writeStore(storeDir, [bundle]);
+  const accessPath = join(storeDir, "access.jsonl");
+
+  const tightGrant = unsealHoldout(lock, { sha256: planRepo.planSha, max_unseals: 1 });
+  const openOpts = (grant: UnsealGrant): OpenHoldoutStoreOpts => ({
+    storePath: storeDir,
+    lock,
+    grant,
+    planPath: planRepo.planPath,
+  });
+
+  await api.openHoldoutStore(openOpts(tightGrant));
+  let caught: unknown;
+  try {
+    await api.openHoldoutStore(openOpts(tightGrant));
+  } catch (err) {
+    caught = err;
+  }
+  expect(caught).toBeInstanceOf(api.UnsealExhausted);
+
+  let lines = readAccessLines(accessPath);
+  expect(lines).toHaveLength(2);
+  expect(lines[0]!["granted"]).toBe(true);
+  expect(lines[1]!["granted"]).toBe(false);
+
+  const widerGrant = unsealHoldout(lock, { sha256: planRepo.planSha, max_unseals: 2 });
+  await api.openHoldoutStore(openOpts(widerGrant));
+  lines = readAccessLines(accessPath);
+  expect(lines).toHaveLength(3);
+  expectGrantedLine(lines[2]!, widerGrant.analysis_plan_sha256, 2);
 });

@@ -209,19 +209,21 @@ function scrubbedGitEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-function runGitSync(pkgDir: string, args: string[]): { code: number; stdout: Buffer } {
+// spawnSync leaves stdout null when git itself cannot be spawned; callers must
+// treat that as "no git available" rather than dereferencing it.
+function runGitSync(pkgDir: string, args: string[]): { code: number; stdout: Buffer | null } {
   const res = spawnSync("git", ["-C", pkgDir, ...args], { env: scrubbedGitEnv() });
   return { code: res.status ?? -1, stdout: res.stdout };
 }
 
 function isGitWorkTree(dir: string): boolean {
   const res = runGitSync(dir, ["rev-parse", "--is-inside-work-tree"]);
-  return res.stdout.toString("utf8").trim() === "true";
+  return res.stdout !== null && res.stdout.toString("utf8").trim() === "true";
 }
 
 function gitVisibleFiles(pkgDir: string): string[] {
   const res = runGitSync(pkgDir, ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]);
-  if (res.code !== 0) {
+  if (res.code !== 0 || res.stdout === null) {
     throw new Error(
       `graderBuildId: git ls-files in ${pkgDir} failed with code ${String(res.code)}`,
     );

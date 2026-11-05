@@ -102,6 +102,12 @@ function nearestExistingAncestor(path: string): string {
   return current;
 }
 
+// Fail closed: only an explicit exit-0 "false", or git's own "not a git
+// repository" refusal (exit != 0), proves the probe dir is outside a work
+// tree. Missing git, dubious ownership and any other error keep the store
+// locked out rather than treating the probe as inconclusive-but-allowed.
+const NOT_A_GIT_REPO_RE = /not a git repository/i;
+
 async function assertOutsideWorkTree(
   run: RunCommand,
   probeDir: string,
@@ -111,12 +117,17 @@ async function assertOutsideWorkTree(
     cwd: probeDir,
     env: scrubbedGitEnv(),
   });
-  if (res.stdout.toString("utf8").trim() === "true") {
-    throw new HoldoutStoreError(
-      "store_in_repo",
-      `holdout store path ${target} is inside a git work tree`,
-    );
+  const verdict = res.stdout.toString("utf8").trim();
+  if (res.code === 0 && verdict === "false") {
+    return;
   }
+  if (res.code !== 0 && NOT_A_GIT_REPO_RE.test(res.stderr.toString("utf8"))) {
+    return;
+  }
+  throw new HoldoutStoreError(
+    "store_in_repo",
+    `holdout store path ${target} cannot be proven outside a git work tree (git exited ${String(res.code)} with verdict ${verdict === "" ? "<empty>" : verdict})`,
+  );
 }
 
 async function assertPlanTracked(

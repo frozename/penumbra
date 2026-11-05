@@ -98,6 +98,11 @@ test("graderBuildId hashes only the git-visible files of a linked package", asyn
 
 test("graderBuildId ignores inherited GIT_DIR and GIT_WORK_TREE for linked packages", async () => {
   const fixture = mkLinkedPkgFixture();
+  // Gitignored output makes the assertions non-vacuous: without the env scrub
+  // the probes hit the foreign repo (or the no-git fallback walk, which sees
+  // dist/), so only the git-visible hashing reproduces idA.
+  mkdirSync(join(fixture.wsSrc, "dist"), { recursive: true });
+  writeFileSync(join(fixture.wsSrc, "dist", "index.js"), "export const x = 42;\n", "utf8");
   const idA = await graderBuildId(fixture.opts);
 
   const foreign = mkTmp("penumbra-buildid-foreign-repo-");
@@ -122,6 +127,29 @@ test("graderBuildId ignores inherited GIT_DIR and GIT_WORK_TREE for linked packa
       delete process.env.GIT_WORK_TREE;
     } else {
       process.env.GIT_WORK_TREE = savedTree;
+    }
+  }
+}, 30_000);
+
+test("graderBuildId falls back to the full walk when git cannot be spawned", async () => {
+  const fixture = mkLinkedPkgFixture();
+  mkdirSync(join(fixture.wsSrc, "dist"), { recursive: true });
+  writeFileSync(join(fixture.wsSrc, "dist", "index.js"), "export const x = 1;\n", "utf8");
+  const idA = await graderBuildId(fixture.opts);
+
+  const emptyBin = mkTmp("penumbra-buildid-empty-bin-");
+  const savedPath = process.env.PATH;
+  try {
+    process.env.PATH = emptyBin;
+    writeFileSync(join(fixture.wsSrc, "dist", "index.js"), "export const x = 2;\n", "utf8");
+    const idWalk = await graderBuildId(fixture.opts);
+    expect(idWalk).toMatch(/^[0-9a-f]{64}$/);
+    expect(idWalk).not.toBe(idA);
+  } finally {
+    if (savedPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = savedPath;
     }
   }
 }, 30_000);
