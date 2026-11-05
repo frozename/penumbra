@@ -12,12 +12,27 @@ import type { Comparator, EvalOutcome, PerCheck } from "./evaluate.js";
 import type { SandboxKind, SpawnFn } from "./sandbox.js";
 import type { GraderScratch } from "./scratch.js";
 
-import { ControlCache, controlKey, qualifyControl, selfQualify } from "./control.js";
+import {
+  comparatorIdentity,
+  ControlCache,
+  controlKey,
+  DEFAULT_COMPARATOR_ID,
+  qualifyControl,
+  selfQualify,
+} from "./control.js";
 import { evaluateCommit, seededShuffle } from "./evaluate.js";
 
 // Runtime re-exports: graderBuildId hashes the transitive closure of this
 // module, so the whole grader pipeline is covered by the build id.
-export { ControlCache, controlKey, qualifyControl, seededShuffle, selfQualify };
+export {
+  comparatorIdentity,
+  ControlCache,
+  controlKey,
+  DEFAULT_COMPARATOR_ID,
+  qualifyControl,
+  seededShuffle,
+  selfQualify,
+};
 export type {
   Comparator,
   ControlOutcome,

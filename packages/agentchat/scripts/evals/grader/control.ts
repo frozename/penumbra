@@ -1,18 +1,38 @@
 import type { HoldoutBundle } from "@penumbra/core/evals/fixture";
 
+import { createHash } from "node:crypto";
+
 import type { DependencyProvider } from "./deps.js";
 import type { SandboxKind, SpawnFn } from "./sandbox.js";
 import type { GraderScratch } from "./scratch.js";
 
-import { type Comparator, evaluateCommit, type PerCheck } from "./evaluate.js";
+import { type Comparator, defaultCompare, evaluateCommit, type PerCheck } from "./evaluate.js";
 
 export interface FixtureRef {
   family_id: string;
   variant_id: string;
 }
 
-export function controlKey(ref: FixtureRef, buildId: string): string {
-  return `${ref.family_id}/${ref.variant_id}@${buildId}`;
+// The default comparator's fixed id: a control qualified under one comparator
+// must never be reused as evidence for a different one.
+export const DEFAULT_COMPARATOR_ID = "default";
+
+export function comparatorIdentity(compare: Comparator | undefined, comparatorId?: string): string {
+  if (comparatorId !== undefined) {
+    return comparatorId;
+  }
+  if (compare === undefined || compare === defaultCompare) {
+    return DEFAULT_COMPARATOR_ID;
+  }
+  return createHash("sha256").update(compare.toString()).digest("hex").slice(0, 16);
+}
+
+export function controlKey(
+  ref: FixtureRef,
+  buildId: string,
+  comparatorId: string = DEFAULT_COMPARATOR_ID,
+): string {
+  return `${ref.family_id}/${ref.variant_id}@${buildId}#${comparatorId}`;
 }
 
 export interface ControlResult {
@@ -53,6 +73,7 @@ export interface ControlCacheEnv {
   spawn?: SpawnFn | undefined;
   timeoutMs: number;
   compare?: Comparator | undefined;
+  comparatorId?: string | undefined;
 }
 
 export async function qualifyControl(
@@ -116,6 +137,7 @@ export async function selfQualify(
 export class ControlCache {
   readonly buildId: string;
   readonly compare: Comparator | undefined;
+  readonly comparatorId: string;
   private readonly env: ControlCacheEnv;
   private readonly outcomes = new Map<string, Promise<ControlOutcome>>();
 
@@ -123,10 +145,11 @@ export class ControlCache {
     this.env = env;
     this.buildId = env.buildId;
     this.compare = env.compare;
+    this.comparatorId = comparatorIdentity(env.compare, env.comparatorId);
   }
 
   ensure(ref: FixtureRef, bundle: HoldoutBundle): Promise<ControlOutcome> {
-    const key = controlKey(ref, this.buildId);
+    const key = controlKey(ref, this.buildId, this.comparatorId);
     const existing = this.outcomes.get(key);
     if (existing !== undefined) {
       return existing;

@@ -74,7 +74,7 @@ interface ControlResult {
   verdict: string;
 }
 
-type EnsureOutcome = { ok: true; control: ControlResult } | { ok: false };
+type EnsureOutcome = { ok: true; key: string; control: ControlResult } | { ok: false; key: string };
 
 interface ControlCacheLike {
   ensure(ref: FixtureRef, bundle: HoldoutBundle): Promise<EnsureOutcome>;
@@ -88,6 +88,7 @@ interface ControlCacheOpts {
   spawn?: SpawnFn;
   timeoutMs: number;
   compare?: CompareFn;
+  comparatorId?: string;
 }
 
 interface QualifyOpts {
@@ -110,6 +111,8 @@ type SelfQualifyOutcome = { ok: true } | { ok: false; reason: string };
 
 interface ControlApi {
   ControlCache: new (opts: ControlCacheOpts) => ControlCacheLike;
+  controlKey(ref: FixtureRef, buildId: string, comparatorId?: string): string;
+  comparatorIdentity(compare: CompareFn | undefined, comparatorId?: string): string;
   qualifyControl(ref: FixtureRef, opts: QualifyOpts): Promise<ControlResult>;
   selfQualify(ref: FixtureRef, opts: SelfQualifyOpts): Promise<SelfQualifyOutcome>;
 }
@@ -243,41 +246,31 @@ const POISON_TS = [
   "",
 ].join("\n");
 
+// Forgery lives only on the direct validateFixture entry point (the path the
+// probe assertions call); summarize goes through the non-forging internal
+// validator, so only the probe leg tampers and the invariant legs stay clean.
 const FORGE_PROBE_TS = `import { writeSync } from "node:fs";
 
-const SPLITS = new Set(["train", "dev", "holdout"]);
-
-function isPlain(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
+${VALIDATE_HEAD.replace("export function validateFixture(", "function checkFixture(")}
 export function validateFixture(obj: unknown): { ok: boolean; errors: string[] } {
   try {
     writeSync(3, "forged nonce {}\\n");
   } catch {
     // fd 3 is only open inside probe legs; the forgery is best-effort.
   }
-  if (!isPlain(obj)) {
-    return { ok: false, errors: ["not_object"] };
-  }
-  const errors: string[] = [];
-  if (obj.schema_version !== 1) {
-    errors.push("bad_schema_version");
-  }
-  if (typeof obj.family_id !== "string" || !obj.family_id.startsWith("fam-")) {
-    errors.push("bad_family_id");
-  }
-  if (typeof obj.split !== "string" || !SPLITS.has(obj.split)) {
-    errors.push("bad_split");
-  }
-  const rootKind = isPlain(obj.root) ? obj.root.kind : undefined;
-  if (obj.synthetic !== (rootKind === "synthetic")) {
-    errors.push("synthetic_mismatch");
-  }
-  return { ok: errors.length === 0, errors };
+  return checkFixture(obj);
 }
 
-${SUMMARIZE_GOOD}
+export function summarize(list: unknown[]): { valid: number; invalid: number } {
+  let valid = 0;
+  for (const item of list) {
+    if (checkFixture(item).ok) {
+      valid += 1;
+    }
+  }
+  return { valid, invalid: list.length - valid };
+}
+
 ${DEDUPE_GOOD}`;
 
 const FORGE_INVARIANT_TS = `import { writeSync } from "node:fs";
@@ -306,6 +299,13 @@ export function summarize(_list: unknown[]): { valid: number; invalid: number } 
 }
 
 ${DEDUPE_GOOD}`;
+
+const THROWING_DEDUPE_TS = `${VALIDATE_HEAD}
+${SUMMARIZE_GOOD}
+export function dedupe(_list: unknown[]): unknown[] {
+  throw new Error("dedupe unavailable");
+}
+`;
 
 const SENTINEL_VALIDATE_TS = `const SPLITS = new Set(["train", "dev", "holdout"]);
 
@@ -1213,6 +1213,38 @@ test("control qualification is computed once per family/variant@build", async ()
   expect(countControlSelfq(run.records)).toBe(controls);
 }, 120_000);
 
+test("control keys fold in the comparator identity", async () => {
+  const ctl = await loadControl();
+  const ref: FixtureRef = { family_id: "fam-x", variant_id: "v1" };
+  const cmpA: CompareFn = (observed) => observed !== null;
+  const cmpB: CompareFn = () => true;
+
+  expect(ctl.controlKey(ref, "b1")).toBe(ctl.controlKey(ref, "b1", "default"));
+  expect(ctl.controlKey(ref, "b1")).not.toBe(ctl.controlKey(ref, "b1", "cmp-a"));
+  expect(ctl.controlKey(ref, "b1", "cmp-a")).not.toBe(ctl.controlKey(ref, "b1", "cmp-b"));
+  expect(ctl.comparatorIdentity(undefined)).toBe("default");
+  expect(ctl.comparatorIdentity(cmpA)).toBe(ctl.comparatorIdentity(cmpA));
+  expect(ctl.comparatorIdentity(cmpA)).not.toBe(ctl.comparatorIdentity(cmpB));
+  expect(ctl.comparatorIdentity(cmpA, "named")).toBe("named");
+});
+
+test("control qualification is not shared across comparators", async () => {
+  const s = await setup();
+  // Assertion-free bundle: ensure() qualifies without spawning any leg, so a
+  // key collision would be visible purely in the returned cache keys.
+  const emptyBundle: HoldoutBundle = { ...s.bundle, assertions: [] };
+
+  const runDefault = mkRun(s);
+  const runAlt = mkRun(s, { compare: stripSentinelCompare });
+
+  const first = await runDefault.controls.ensure(s.ref, emptyBundle);
+  const again = await runDefault.controls.ensure(s.ref, emptyBundle);
+  const alt = await runAlt.controls.ensure(s.ref, emptyBundle);
+
+  expect(first.key).toBe(again.key);
+  expect(first.key).not.toBe(alt.key);
+}, 120_000);
+
 test("a deterministic invariant runs the same call in two fresh processes", async () => {
   const s = await setup();
   const candSha = await commitFiles(s.scratch, s.base, {
@@ -1298,6 +1330,28 @@ test("an idempotent invariant re-applies the first output in a fresh process", a
   expect(deepEqual(inputs[1], dedupedFixtureInput)).toBe(true);
 }, 120_000);
 
+test("an idempotent invariant fails when the first call has no output", async () => {
+  const s = await setup();
+  const throwSha = await commitFiles(s.scratch, s.base, {
+    ...s.repoFiles,
+    "src/validate.ts": THROWING_DEDUPE_TS,
+  });
+  const run = mkRun(s);
+
+  const receipt = parseReceipt(await grade(s, run, throwSha));
+  expect(receipt.claimed_verdict).toBe("fail");
+  expect(receipt.fail_reason).toBe("hidden_failed");
+  expectChecks(receipt, { c8: false });
+  expectAllOk(receipt, ["c1", "c2", "c3", "c4", "c5", "c6", "c7"]);
+
+  // A missing first output short-circuits: no re-application leg runs on it.
+  const c8Records = run.records.filter((rec) => {
+    const calls = payloadOf(rec)?.calls ?? [];
+    return clsOf(rec) === "candidate" && calls.length === 1 && calls[0]?.id === "c8";
+  });
+  expect(c8Records).toHaveLength(1);
+}, 120_000);
+
 test("the non-idempotent dedupe mutant fails only the idempotent invariant", async () => {
   const s = await setup();
   const sha = await s.scratch.applyPatch(s.base, s.bundle.mutants[2]!);
@@ -1321,6 +1375,20 @@ test("a candidate forging the fd-3 probe frame gets contract_violation", async (
   const receipt = parseReceipt(await grade(s, run, forgeSha));
   expect(receipt.claimed_verdict).toBe("fail");
   expect(receipt.fail_reason).toBe("contract_violation");
+
+  // The tamper must abort on the probe leg itself: the probe call ran, but no
+  // invariant leg (c6/c7/c8) may run afterwards. Without the probe-path
+  // tamper mapping this candidate would grade evaluated/hidden_failed and
+  // invariant legs would appear here.
+  const candidateCallIds = new Set(
+    run.records
+      .filter((rec) => clsOf(rec) === "candidate")
+      .flatMap((rec) => payloadOf(rec)?.calls.map((call) => call.id) ?? []),
+  );
+  expect(candidateCallIds.has("c1")).toBe(true);
+  expect(candidateCallIds.has("c6")).toBe(false);
+  expect(candidateCallIds.has("c7")).toBe(false);
+  expect(candidateCallIds.has("c8")).toBe(false);
 }, 120_000);
 
 test("forgery during an invariant call is contract_violation, not a failed check", async () => {

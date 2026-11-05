@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,9 +19,8 @@ const DEFAULT_ENTRY_NAMES = ["grade.ts", "verify.ts", "probe-harness.ts"];
 // hashed @penumbra/core evals closure (zod, @penumbra/api-contract, …) are
 // marked external: under `bun test` the bundler cannot resolve workspace deps
 // that are only linked inside a package's own node_modules (e.g.
-// @penumbra/api-contract from packages/core/src/schemas), and traversing into
-// node_modules is unnecessary anyway because those packages are not part of
-// the grader sources the build id is meant to cover.
+// @penumbra/api-contract from packages/core/src/schemas). They are still
+// folded into the build id via externalIdentities below.
 const HASHED_ROOT_PACKAGE = "@penumbra/core";
 
 function isHashedSpecifier(path: string): boolean {
@@ -135,7 +134,9 @@ function defaultEntrypoints(root: string): string[] {
 // Externalized bare imports are excluded from the metafile inputs, so a bump
 // of zod or @penumbra/api-contract would otherwise leave the build id (and
 // every cached control keyed by it) unchanged while candidate semantics move.
-// Fold each imported package's resolved version into the hash instead.
+// Fold each imported package's resolved version into the hash; for a
+// workspace-linked (symlinked) package the version never moves when its
+// source does, so hash the linked sources themselves instead.
 const EXTERNAL_IMPORT_RE =
   /\b(?:from|import)\s*\(\s*["']([^"']+)["']|\b(?:from|import)\s+["']([^"']+)["']/g;
 
@@ -180,27 +181,76 @@ function readPackageVersion(pkgJson: string): string | null {
 
 // Bun.resolveSync cannot read package.json through the exports map, so walk
 // node_modules upward from the importing file like the runtime resolver does.
-function externalVersion(spec: string, fromDir: string): string {
+function resolveExternalPkgDir(spec: string, fromDir: string): string | null {
   let dir = fromDir;
   for (;;) {
-    const found = readPackageVersion(join(dir, "node_modules", spec, "package.json"));
-    if (found !== null) {
-      return found;
+    const pkgDir = join(dir, "node_modules", spec);
+    if (existsSync(join(pkgDir, "package.json"))) {
+      return pkgDir;
     }
     const parent = dirname(dir);
     if (parent === dir) {
-      return "unresolved";
+      return null;
     }
     dir = parent;
   }
 }
 
-function externalVersions(inputPaths: string[]): string[] {
+// A workspace-linked package keeps its version while its source moves, so a
+// version-only identity would leave the build id (and controls keyed by it)
+// stale across edits to the linked package. Hash the linked tree instead:
+// deterministic walk (sorted entries), skipping nested node_modules/.git and
+// symlinks, tagging each file with its relative path.
+function hashLinkedPackage(pkgDir: string): string {
+  const hash = createHash("sha256");
+  const walk = (current: string, rel: string): void => {
+    const entries = readdirSync(current, { withFileTypes: true }).sort((a, b) =>
+      a.name === b.name ? 0 : a.name < b.name ? -1 : 1,
+    );
+    for (const ent of entries) {
+      if (ent.isSymbolicLink()) {
+        continue;
+      }
+      if (ent.isDirectory()) {
+        if (ent.name === "node_modules" || ent.name === ".git") {
+          continue;
+        }
+        walk(join(current, ent.name), `${rel}/${ent.name}`);
+      } else {
+        hash.update(`${rel}/${ent.name}\0`);
+        hash.update(readFileSync(join(current, ent.name)));
+        hash.update("\0");
+      }
+    }
+  };
+  walk(pkgDir, "");
+  return hash.digest("hex").slice(0, 32);
+}
+
+function externalIdentity(spec: string, fromDir: string): string {
+  const pkgDir = resolveExternalPkgDir(spec, fromDir);
+  if (pkgDir === null) {
+    return `${spec}@unresolved`;
+  }
+  const version = readPackageVersion(join(pkgDir, "package.json")) ?? "unresolved";
+  let linked = false;
+  try {
+    linked = lstatSync(pkgDir).isSymbolicLink();
+  } catch {
+    linked = false;
+  }
+  if (!linked) {
+    return `${spec}@${version}`;
+  }
+  return `${spec}@${version}+linked:${hashLinkedPackage(realpathSync(pkgDir))}`;
+}
+
+function externalIdentities(inputPaths: string[]): string[] {
   const entries = new Set<string>();
   for (const key of inputPaths) {
     const abs = resolve(process.cwd(), key);
     for (const spec of externalSpecifiers(readFileSync(abs, "utf8"))) {
-      entries.add(`${spec}@${externalVersion(spec, dirname(abs))}`);
+      entries.add(externalIdentity(spec, dirname(abs)));
     }
   }
   return [...entries].sort();
@@ -249,7 +299,7 @@ export async function graderBuildId(opts: GraderBuildIdOptions = {}): Promise<st
     Buffer.from(
       canonicalJson({
         sources,
-        externals: externalVersions(bundle.inputs),
+        externals: externalIdentities(bundle.inputs),
         bunfig: hashIfExists(join(root, "bunfig.toml")),
         profile: hashIfExists(join(root, "sandbox-darwin.sb")),
         bun: opts.bunVersion ?? Bun.version,

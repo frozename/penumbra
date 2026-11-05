@@ -9,6 +9,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -414,6 +415,43 @@ test("graderBuildId tracks external package versions", async () => {
 
   writeVersions("1.0.0", "2.0.0");
   expect(await graderBuildId(opts)).toBe(idV1);
+}, 30_000);
+
+test("graderBuildId tracks workspace-linked external sources", async () => {
+  const P = mkTmp("penumbra-buildid-linked-");
+  const entry = join(P, "entry.ts");
+  writeFileSync(entry, 'export { x } from "@ws/ext";\nexport { y } from "reg-ext";\n', "utf8");
+  const opts = { entrypoints: [entry], root: P, bunVersion: "b1", gitVersion: "g1" };
+
+  const wsSrc = join(P, "packages", "ext");
+  const regDir = join(P, "node_modules", "reg-ext");
+  mkdirSync(join(wsSrc, "src"), { recursive: true });
+  mkdirSync(regDir, { recursive: true });
+  writeFileSync(join(wsSrc, "package.json"), `{"name":"@ws/ext","version":"0.1.0"}`, "utf8");
+  writeFileSync(join(wsSrc, "src", "index.ts"), "export const x = 1;\n", "utf8");
+  writeFileSync(join(regDir, "package.json"), `{"name":"reg-ext","version":"1.0.0"}`, "utf8");
+  writeFileSync(join(regDir, "index.js"), "export const y = 1;\n", "utf8");
+  mkdirSync(join(P, "node_modules", "@ws"), { recursive: true });
+  symlinkSync(wsSrc, join(P, "node_modules", "@ws", "ext"), "dir");
+
+  const idA = await graderBuildId(opts);
+
+  // Editing a workspace-linked package moves the id even without a version bump.
+  writeFileSync(join(wsSrc, "src", "index.ts"), "export const x = 2;\n", "utf8");
+  const idB = await graderBuildId(opts);
+  expect(idB).not.toBe(idA);
+
+  // Reverting the linked edit restores the id.
+  writeFileSync(join(wsSrc, "src", "index.ts"), "export const x = 1;\n", "utf8");
+  expect(await graderBuildId(opts)).toBe(idA);
+
+  // A registry package (real directory) stays version-keyed: content edits
+  // without a version bump do not move the id.
+  writeFileSync(join(regDir, "index.js"), "export const y = 2;\n", "utf8");
+  const idRegEdited = await graderBuildId(opts);
+  expect(idRegEdited).toBe(idA);
+  writeFileSync(join(regDir, "package.json"), `{"name":"reg-ext","version":"1.0.1"}`, "utf8");
+  expect(await graderBuildId(opts)).not.toBe(idRegEdited);
 }, 30_000);
 
 test("graderBuildId does not depend on the process cwd", async () => {
