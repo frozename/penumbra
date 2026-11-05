@@ -10,6 +10,12 @@
   "failure_type": null,
   "split": "dev",
   "synthetic": true,
+  "base_sha": "b80105c6b85847c442b38b917fd5e3e866ffe836",
+  "task_digest": "25ead928effa3bf59b4623bf3b45d991cb075b65fea991631db10c526870faf5",
   "source_root_handoff_digests": [],
-  "expect_blocked": false
+  "expect_blocked": false,
+  "hidden_ref": {
+    "assertion_set_digest": "bbb484f0d55d83822697ef8dcadec1959bccd7d06522ea06f0dfff4aad4b5cb4"
+  },
+  "content_digest": "1a05a3615025075b4122f1d0adb0fbc5d26d40ed32076e200c91f0a8bdd9b835"
 }

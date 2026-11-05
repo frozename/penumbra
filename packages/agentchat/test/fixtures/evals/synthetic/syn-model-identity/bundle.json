@@ -1,0 +1,158 @@
+{
+  "schema_version": 1,
+  "family_id": "fam-syn-model-identity",
+  "variant_id": "v1",
+  "assertions": [
+    {
+      "kind": "probe",
+      "id": "c1",
+      "module": "src/identity.ts",
+      "export": "resolveModelId",
+      "input": {
+        "requested": "asked-z",
+        "reported_by_provider": "provider-model-x"
+      },
+      "expect": "provider-model-x"
+    },
+    {
+      "kind": "probe",
+      "id": "c2",
+      "module": "src/identity.ts",
+      "export": "resolveModelId",
+      "input": {
+        "requested": "asked-z",
+        "served_alias": "served-y"
+      },
+      "expect": "served-y"
+    },
+    {
+      "kind": "probe",
+      "id": "c3",
+      "module": "src/identity.ts",
+      "export": "resolveModelId",
+      "input": {
+        "reported_by_provider": "provider-model-x",
+        "served_alias": "served-y"
+      },
+      "expect": "provider-model-x"
+    },
+    {
+      "kind": "probe",
+      "id": "c4",
+      "module": "src/identity.ts",
+      "export": "resolveModelId",
+      "input": {
+        "served_alias": "served-y"
+      },
+      "expect": "served-y"
+    },
+    {
+      "kind": "probe",
+      "id": "c5",
+      "module": "src/identity.ts",
+      "export": "resolveModelId",
+      "input": {
+        "requested": "asked-z"
+      },
+      "expect": "asked-z"
+    },
+    {
+      "kind": "probe",
+      "id": "c6",
+      "module": "src/identity.ts",
+      "export": "resolveModelId",
+      "input": {},
+      "expect": "unknown"
+    },
+    {
+      "kind": "probe",
+      "id": "c7",
+      "module": "src/identity.ts",
+      "export": "resolveModelId",
+      "input": "nope",
+      "expect": "unknown"
+    },
+    {
+      "kind": "probe",
+      "id": "c8",
+      "module": "src/identity.ts",
+      "export": "normalizeModelName",
+      "input": "Qwen_3.6 27B Q8",
+      "expect": "qwen-3.6-27b-q8"
+    },
+    {
+      "kind": "probe",
+      "id": "c9",
+      "module": "src/identity.ts",
+      "export": "rankCandidates",
+      "input": [
+        {
+          "requested": "b-model"
+        },
+        {
+          "requested": "a-model"
+        },
+        {
+          "requested": "b-model"
+        },
+        {}
+      ],
+      "expect": ["a-model", "b-model"]
+    },
+    {
+      "kind": "invariant",
+      "id": "c10",
+      "property": "idempotent",
+      "module": "src/identity.ts",
+      "export": "normalizeModelName",
+      "inputs": ["DeepSeek-V4 Pro Q4", "  Mixed--Case  Name "],
+      "seed": 0
+    },
+    {
+      "kind": "invariant",
+      "id": "c11",
+      "property": "order_insensitive",
+      "module": "src/identity.ts",
+      "export": "rankCandidates",
+      "inputs": [
+        [
+          {
+            "requested": "b-model"
+          },
+          {
+            "requested": "a-model"
+          },
+          {
+            "requested": "c-model"
+          }
+        ]
+      ],
+      "seed": 0
+    },
+    {
+      "kind": "invariant",
+      "id": "c12",
+      "property": "deterministic",
+      "module": "src/identity.ts",
+      "export": "resolveModelId",
+      "inputs": [
+        {
+          "requested": "asked-z",
+          "reported_by_provider": "provider-model-x"
+        }
+      ],
+      "seed": 0
+    }
+  ],
+  "patches": {
+    "good": "diff --git a/src/identity.ts b/src/identity.ts\nindex 7974292..6cc1f60 100644\n--- a/src/identity.ts\n+++ b/src/identity.ts\n@@ -1,14 +1,47 @@\n+function clean(value: unknown): string {\n+  return typeof value === \"string\" ? value.trim() : \"\";\n+}\n export function resolveModelId(input: unknown): string {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  if (typeof input !== \"object\" || input === null || Array.isArray(input)) {\n+    return \"unknown\";\n+  }\n+  const rec = input as Record<string, unknown>;\n+  const reported = clean(rec.reported_by_provider);\n+  if (reported !== \"\") {\n+    return reported;\n+  }\n+  const served = clean(rec.served_alias);\n+  if (served !== \"\") {\n+    return served;\n+  }\n+  const requested = clean(rec.requested);\n+  if (requested !== \"\") {\n+    return requested;\n+  }\n+  return \"unknown\";\n }\n \n export function normalizeModelName(input: unknown): string {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  if (typeof input !== \"string\") {\n+    return \"\";\n+  }\n+  return input\n+    .toLowerCase()\n+    .replace(/[\\s_]+/g, \"-\")\n+    .replace(/-+/g, \"-\")\n+    .replace(/^-+|-+$/g, \"\");\n }\n \n export function rankCandidates(input: unknown): string[] {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  if (!Array.isArray(input)) {\n+    return [];\n+  }\n+  const out: string[] = [];\n+  for (const item of input) {\n+    const id = resolveModelId(item);\n+    if (id !== \"unknown\" && !out.includes(id)) {\n+      out.push(id);\n+    }\n+  }\n+  return out.sort();\n }\n",
+    "bad": [
+      "diff --git a/src/identity.ts b/src/identity.ts\nindex 7974292..e9b9f7b 100644\n--- a/src/identity.ts\n+++ b/src/identity.ts\n@@ -1,14 +1,47 @@\n+function clean(value: unknown): string {\n+  return typeof value === \"string\" ? value.trim() : \"\";\n+}\n export function resolveModelId(input: unknown): string {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  if (typeof input !== \"object\" || input === null || Array.isArray(input)) {\n+    return \"unknown\";\n+  }\n+  const rec = input as Record<string, unknown>;\n+  const requested = clean(rec.requested);\n+  if (requested !== \"\") {\n+    return requested;\n+  }\n+  const reported = clean(rec.reported_by_provider);\n+  if (reported !== \"\") {\n+    return reported;\n+  }\n+  const served = clean(rec.served_alias);\n+  if (served !== \"\") {\n+    return served;\n+  }\n+  return \"unknown\";\n }\n \n export function normalizeModelName(input: unknown): string {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  if (typeof input !== \"string\") {\n+    return \"\";\n+  }\n+  return input\n+    .toLowerCase()\n+    .replace(/[\\s_]+/g, \"-\")\n+    .replace(/-+/g, \"-\")\n+    .replace(/^-+|-+$/g, \"\");\n }\n \n export function rankCandidates(input: unknown): string[] {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  if (!Array.isArray(input)) {\n+    return [];\n+  }\n+  const out: string[] = [];\n+  for (const item of input) {\n+    const id = resolveModelId(item);\n+    if (id !== \"unknown\" && !out.includes(id)) {\n+      out.push(id);\n+    }\n+  }\n+  return out.sort();\n }\n"
+    ]
+  },
+  "mutants": [
+    "diff --git a/src/identity.ts b/src/identity.ts\nindex 7974292..3b8036b 100644\n--- a/src/identity.ts\n+++ b/src/identity.ts\n@@ -1,14 +1,47 @@\n+function clean(value: unknown): string {\n+  return typeof value === \"string\" ? value.trim() : \"\";\n+}\n export function resolveModelId(input: unknown): string {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  if (typeof input !== \"object\" || input === null || Array.isArray(input)) {\n+    return \"unknown\";\n+  }\n+  const rec = input as Record<string, unknown>;\n+  const served = clean(rec.served_alias);\n+  if (served !== \"\") {\n+    return served;\n+  }\n+  const reported = clean(rec.reported_by_provider);\n+  if (reported !== \"\") {\n+    return reported;\n+  }\n+  const requested = clean(rec.requested);\n+  if (requested !== \"\") {\n+    return requested;\n+  }\n+  return \"unknown\";\n }\n \n export function normalizeModelName(input: unknown): string {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  if (typeof input !== \"string\") {\n+    return \"\";\n+  }\n+  return input\n+    .toLowerCase()\n+    .replace(/[\\s_]+/g, \"-\")\n+    .replace(/-+/g, \"-\")\n+    .replace(/^-+|-+$/g, \"\");\n }\n \n export function rankCandidates(input: unknown): string[] {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  if (!Array.isArray(input)) {\n+    return [];\n+  }\n+  const out: string[] = [];\n+  for (const item of input) {\n+    const id = resolveModelId(item);\n+    if (id !== \"unknown\" && !out.includes(id)) {\n+      out.push(id);\n+    }\n+  }\n+  return out.sort();\n }\n",
+    "diff --git a/src/identity.ts b/src/identity.ts\nindex 7974292..9adffe1 100644\n--- a/src/identity.ts\n+++ b/src/identity.ts\n@@ -1,14 +1,41 @@\n+function clean(value: unknown): string {\n+  return typeof value === \"string\" ? value.trim() : \"\";\n+}\n export function resolveModelId(input: unknown): string {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  if (typeof input !== \"object\" || input === null || Array.isArray(input)) {\n+    return \"unknown\";\n+  }\n+  const rec = input as Record<string, unknown>;\n+  const reported = clean(rec.reported_by_provider);\n+  if (reported !== \"\") {\n+    return reported;\n+  }\n+  const served = clean(rec.served_alias);\n+  if (served !== \"\") {\n+    return served;\n+  }\n+  const requested = clean(rec.requested);\n+  if (requested !== \"\") {\n+    return requested;\n+  }\n+  return \"unknown\";\n }\n \n export function normalizeModelName(input: unknown): string {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  const base = typeof input === \"string\" ? input.toLowerCase().trim() : \"\";\n+  return base === \"\" ? \"\" : base + \"-resolved\";\n }\n \n export function rankCandidates(input: unknown): string[] {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  if (!Array.isArray(input)) {\n+    return [];\n+  }\n+  const out: string[] = [];\n+  for (const item of input) {\n+    const id = resolveModelId(item);\n+    if (id !== \"unknown\" && !out.includes(id)) {\n+      out.push(id);\n+    }\n+  }\n+  return out.sort();\n }\n",
+    "diff --git a/src/identity.ts b/src/identity.ts\nindex 7974292..0dc9a0e 100644\n--- a/src/identity.ts\n+++ b/src/identity.ts\n@@ -1,14 +1,47 @@\n+function clean(value: unknown): string {\n+  return typeof value === \"string\" ? value.trim() : \"\";\n+}\n export function resolveModelId(input: unknown): string {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  if (typeof input !== \"object\" || input === null || Array.isArray(input)) {\n+    return \"unknown\";\n+  }\n+  const rec = input as Record<string, unknown>;\n+  const reported = clean(rec.reported_by_provider);\n+  if (reported !== \"\") {\n+    return reported;\n+  }\n+  const served = clean(rec.served_alias);\n+  if (served !== \"\") {\n+    return served;\n+  }\n+  const requested = clean(rec.requested);\n+  if (requested !== \"\") {\n+    return requested;\n+  }\n+  return \"unknown\";\n }\n \n export function normalizeModelName(input: unknown): string {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  if (typeof input !== \"string\") {\n+    return \"\";\n+  }\n+  return input\n+    .toLowerCase()\n+    .replace(/[\\s_]+/g, \"-\")\n+    .replace(/-+/g, \"-\")\n+    .replace(/^-+|-+$/g, \"\");\n }\n \n export function rankCandidates(input: unknown): string[] {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  if (!Array.isArray(input)) {\n+    return [];\n+  }\n+  const out: string[] = [];\n+  for (const item of input) {\n+    const id = resolveModelId(item);\n+    if (id !== \"unknown\" && !out.includes(id)) {\n+      out.push(id);\n+    }\n+  }\n+  return out;\n }\n"
+  ]
+}
