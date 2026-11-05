@@ -562,6 +562,22 @@ test("a regrade matching verdict and per_check but not fail_reason is nondetermi
   expect(gradeInputs).toHaveLength(1);
 });
 
+test("a fail claim with an identical regrade verifies as fail with its own reason", async () => {
+  const claim = failClaim(A);
+  const episode = makeEpisode();
+  const { ctx, gradeInputs } = mkCtx({ gradeResult: claim });
+  const mod = await loadVerify();
+  const res = await mod.verifyReceipt(claim, episode, ctx);
+  expect(res).toEqual({
+    status: "verified",
+    verdict: "fail",
+    fail_reason: "hidden_failed",
+    sha: FINAL,
+    control_verdict: "pass",
+  });
+  expect(gradeInputs).toHaveLength(1);
+});
+
 test("a pass claim regraded as fail with identical fail_reason and per_check is nondeterministic", async () => {
   const claim = passClaim(A);
   // Built unsigned with a null fail_reason so the fail_reason and per_check
