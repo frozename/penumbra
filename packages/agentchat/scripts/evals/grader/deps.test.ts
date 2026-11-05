@@ -635,6 +635,7 @@ test("a cache committed by another process mid-rename-aside is restored, not del
       mkdirSync(cacheDir, { recursive: true });
       writeFileSync(join(cacheDir, "committed-by-other"), "other\n", "utf8");
       writeFileSync(join(cacheDir, ".penumbra-deps-cache-ok"), `${lockSha256}\n`, "utf8");
+      chmodSync(cacheDir, 0o555);
     },
   });
 
@@ -646,6 +647,55 @@ test("a cache committed by another process mid-rename-aside is restored, not del
   expect(existsSync(join(cacheDir, "old.txt"))).toBe(false);
   // This call's staged install was discarded, not committed over the sealed cache.
   expect(existsSync(join(cacheDir, "node_modules", ".bin", "tool"))).toBe(false);
+  expect(statSync(cacheDir).mode & 0o777).toBe(0o555);
+  expect(readdirSync(cacheRoot)).toEqual([lockSha256]);
+});
+
+// Pins the early-accept branch: a marked winner already sitting in the slot
+// when commitStagedInstall runs is accepted as-is — the rename-aside hooks
+// never fire, the staged install is discarded, and the winner's dir keeps
+// its inode and sealed 0o555 mode. Deleting the marker check before the
+// rename-aside (so the marked winner is moved aside and restored) trips the
+// hook counters and the mode assertion.
+test("a marked winner that committed during our install is accepted without a rename-aside", async () => {
+  const cacheRoot = mkCacheRoot();
+  const lockfileBytes = Buffer.from("lock\n", "utf8");
+  const lockSha256 = sha256Hex(lockfileBytes);
+  const cacheDir = join(cacheRoot, lockSha256);
+  const install = fakeInstall();
+  let committedIno = 0;
+  const run: RunCommand = (cmd, args, opts) => {
+    const pending = install(cmd, args, opts);
+    mkdirSync(cacheDir);
+    writeFileSync(join(cacheDir, "committed-by-other"), "other\n", "utf8");
+    writeFileSync(join(cacheDir, ".penumbra-deps-cache-ok"), `${lockSha256}\n`, "utf8");
+    chmodSync(cacheDir, 0o555);
+    committedIno = statSync(cacheDir).ino;
+    return pending;
+  };
+  let beforeRenames = 0;
+  let afterRenames = 0;
+  const provider = createDefaultDependencyProvider({
+    cacheRoot,
+    allowInstall: true,
+    runCommand: run,
+    onBeforeRenameStaleAside: () => {
+      beforeRenames += 1;
+    },
+    onAfterRenameStaleAside: () => {
+      afterRenames += 1;
+    },
+  });
+
+  const res = await provider.ensure({ lockSha256, lockfileBytes, manifests: [] });
+
+  expect(res).toEqual({ ok: true, cacheDir });
+  expect(beforeRenames).toBe(0);
+  expect(afterRenames).toBe(0);
+  expect(statSync(cacheDir).ino).toBe(committedIno);
+  expect(readFileSync(join(cacheDir, "committed-by-other"), "utf8")).toBe("other\n");
+  expect(existsSync(join(cacheDir, "node_modules", ".bin", "tool"))).toBe(false);
+  expect(statSync(cacheDir).mode & 0o777).toBe(0o555);
   expect(readdirSync(cacheRoot)).toEqual([lockSha256]);
 });
 

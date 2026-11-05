@@ -921,6 +921,37 @@ test("a candidate that kills itself at import yields no_output", async () => {
   expect(res).toEqual({ kind: "no_output" });
 }, 30_000);
 
+// Closing fd 3 makes the harness's final writeSync throw out of main() into
+// the top-level catch. The catch must hardStop (SIGKILL): process.exit would
+// run the candidate's 'exit' listeners, which here write a marker the parent
+// can observe. f opens no file of its own so nothing can reuse fd 3.
+test("a harness failure after the candidate ran hard-stops without running exit hooks", async () => {
+  const sbx = await loadSandbox();
+  const dirs = mkProbeDirs();
+  const markerDir = mkRealTmp("penumbra-probe-marker-");
+  const markerPath = join(markerDir, "exit-hook-ran");
+  const moduleRel = writeModule(
+    dirs.treeDir,
+    [
+      'import { closeSync, writeFileSync } from "node:fs";',
+      `process.on("exit", () => { writeFileSync(${JSON.stringify(markerPath)}, "ran\\n"); });`,
+      "export const f = () => { closeSync(3); return 1; };",
+      "",
+    ].join("\n"),
+  );
+
+  const res = await sbx.runProbeLeg(
+    probeOpts(dirs, {
+      sandbox: "none",
+      leg: { module_rel: moduleRel, calls: [{ id: "c1", export: "f", input: null }] },
+      timeoutMs: 15_000,
+    }),
+  );
+
+  expect(res).toEqual({ kind: "no_output" });
+  expect(existsSync(markerPath)).toBe(false);
+}, 30_000);
+
 function singleLeg(moduleRel: string): SandboxModule.ProbeLeg {
   return { module_rel: moduleRel, calls: [{ id: "c1", export: "f", input: null }] };
 }
