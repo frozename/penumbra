@@ -262,6 +262,17 @@ test("loader rejects divergent limits", () => {
   expectIntegrity(() => api().loadRecipes(tmp));
 });
 
+test("loader rejects divergent seed", () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const tmp = copyData();
+  const capsule = readJson(tmp, "capsule");
+  writeJson(tmp, "capsule", { ...capsule, seed: { value: 7, supported: true } });
+  expectIntegrity(() => api().loadRecipes(tmp));
+});
+
 test("loader rejects bad component keys", () => {
   expect(mod).not.toBeNull();
   if (!mod) {
