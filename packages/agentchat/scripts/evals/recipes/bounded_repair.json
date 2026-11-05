@@ -1,0 +1,26 @@
+{
+  "recipe_id": "bounded_repair-v1",
+  "arm": "bounded_repair",
+  "components": {
+    "system_prompt": {
+      "status": "materialized",
+      "sha256": "dcf793db5da3b3147a7bf6606decff2ce75f5e86f8bd038e2e22cb9a13070793"
+    },
+    "repair_policy": {
+      "status": "materialized",
+      "sha256": "72f46899828629fa31f23eab60f0a7d50f15ec09c6825a54a1fbdbca0eefab2f"
+    },
+    "repair_loop": {
+      "status": "pending_upstream",
+      "blocked_on": "#393"
+    }
+  },
+  "limits": {
+    "max_turns": 40,
+    "timeout_s": 1800
+  },
+  "seed": {
+    "value": null,
+    "supported": false
+  }
+}
