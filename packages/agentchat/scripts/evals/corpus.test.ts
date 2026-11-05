@@ -334,6 +334,22 @@ function refreshDigests(dir: string, bundle: HoldoutBundle, extra: Record<string
   });
 }
 
+function rewriteBundleIdentity(
+  dir: string,
+  field: "family_id" | "variant_id",
+  value: string,
+): HoldoutBundle {
+  const repoFiles = readJson(join(dir, "repo.files.json")) as Record<string, string>;
+  const bundleJson = readJson(join(dir, "bundle.json"));
+  bundleJson[field] = value;
+  writeJsonFile(join(dir, "bundle.json"), bundleJson);
+  return HoldoutBundleSchema.parse({ ...bundleJson, repo_files: repoFiles });
+}
+
+function flipHex(digest: string): string {
+  return (digest.startsWith("a") ? "b" : "a") + digest.slice(1);
+}
+
 for (const entry of PINNED) {
   test(`corpus fixture ${entry.dir} exists, parses, and matches the pinned table`, async () => {
     const loaded = loadPinned(corpus().DEFAULT_CORPUS_ROOT, entry.dir);
@@ -445,13 +461,86 @@ test("lintCorpus rejects a fixture whose base_sha no longer matches its repo fil
 test("lintCorpus rejects a rows.json file by name", async () => {
   const scratch = await mkScratch();
   const tmp = copyCorpus();
-  writeJsonFile(join(tmp, "synthetic", "syn-contract-validator", "rows.json"), {
-    note: "/Users/alice/x",
+  writeJsonFile(join(tmp, "synthetic", "syn-contract-validator", "rows.json"), {});
+  const err = await catchErr(() => corpus().lintCorpus(tmp, { scratch }));
+  expect(err).toBeInstanceOf(corpus().CorpusLintError);
+  expect(errMsg(err)).toContain("unexpected_file");
+  expect(errMsg(err)).toContain("rows.json");
+  expect(errMsg(err)).not.toContain("not_sanitized");
+});
+
+test("lintCorpus rejects an unsanitized fixture-dir file that carries an expected name", async () => {
+  const scratch = await mkScratch();
+  const tmp = copyCorpus();
+  const dir = join(tmp, "synthetic", "syn-missed-commit");
+  const repoPath = join(dir, "repo.files.json");
+  const repoFiles = readJson(repoPath) as Record<string, string>;
+  const target = Object.keys(repoFiles).toSorted()[0];
+  expect(target).not.toBeUndefined();
+  repoFiles[target!] = `${repoFiles[target!] ?? ""}\nhome /Users/alice/x\n`;
+  writeJsonFile(repoPath, repoFiles);
+  const err = await catchErr(() => corpus().lintCorpus(tmp, { scratch }));
+  expect(err).toBeInstanceOf(corpus().CorpusLintError);
+  expect(errMsg(err)).toContain("not_sanitized");
+  expect(errMsg(err)).toContain("repo.files.json");
+});
+
+test("lintCorpus collects malformed JSON as a lint problem instead of throwing", async () => {
+  const scratch = await mkScratch();
+  const tmp = copyCorpus();
+  writeFileSync(join(tmp, "synthetic", "syn-contract-validator", "fixture.json"), "{not json");
+  const err = await catchErr(() => corpus().lintCorpus(tmp, { scratch }));
+  expect(err).toBeInstanceOf(corpus().CorpusLintError);
+  expect(errMsg(err)).toContain("invalid_json");
+  expect(errMsg(err)).toContain("fixture.json");
+});
+
+test("lintCorpus rejects a fixture whose assertion_set_digest drifted from its bundle", async () => {
+  const scratch = await mkScratch();
+  const tmp = copyCorpus();
+  const dir = join(tmp, "synthetic", "syn-missed-commit");
+  rewriteFixtureJson(dir, (fixture) => {
+    const hiddenRef = fixture.hidden_ref as Record<string, unknown>;
+    hiddenRef.assertion_set_digest = flipHex(String(hiddenRef.assertion_set_digest));
   });
   const err = await catchErr(() => corpus().lintCorpus(tmp, { scratch }));
   expect(err).toBeInstanceOf(corpus().CorpusLintError);
-  expect(errMsg(err)).toContain("rows.json");
+  expect(errMsg(err)).toContain("assertion_set_digest mismatch");
+  expect(errMsg(err)).toContain("syn-missed-commit");
+  expect(errMsg(err)).not.toContain("content_digest");
 });
+
+test("lintCorpus rejects a fixture whose content_digest drifted from its bundle", async () => {
+  const scratch = await mkScratch();
+  const tmp = copyCorpus();
+  const dir = join(tmp, "synthetic", "syn-missed-commit");
+  rewriteFixtureJson(dir, (fixture) => {
+    fixture.content_digest = flipHex(String(fixture.content_digest));
+  });
+  const err = await catchErr(() => corpus().lintCorpus(tmp, { scratch }));
+  expect(err).toBeInstanceOf(corpus().CorpusLintError);
+  expect(errMsg(err)).toContain("content_digest mismatch");
+  expect(errMsg(err)).not.toContain("assertion_set_digest");
+});
+
+for (const field of ["family_id", "variant_id"] as const) {
+  test(`lintCorpus rejects a bundle whose ${field} diverges from its fixture`, async () => {
+    const scratch = await mkScratch();
+    const tmp = copyCorpus();
+    const dir = join(tmp, "synthetic", "syn-hook-gap");
+    const bundle = rewriteBundleIdentity(
+      dir,
+      field,
+      field === "family_id" ? "fam-syn-rewired" : "v2",
+    );
+    refreshDigests(dir, bundle, {});
+    const err = await catchErr(() => corpus().lintCorpus(tmp, { scratch }));
+    expect(err).toBeInstanceOf(corpus().CorpusLintError);
+    expect(errMsg(err)).toContain("bundle_identity_mismatch");
+    expect(errMsg(err)).toContain("syn-hook-gap");
+    expect(errMsg(err)).not.toContain("digest mismatch");
+  });
+}
 
 test("lintCorpus rejects non-synthetic fixtures that carry a public bundle", async () => {
   const scratch = await mkScratch();

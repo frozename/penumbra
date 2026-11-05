@@ -117,7 +117,14 @@ function groupFixtureDirs(
       problems.push(`unexpected_file ${rel}`);
       continue;
     }
-    dir.set(name, JSON.parse(readFileSync(join(root, rel), "utf8")) as unknown);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(join(root, rel), "utf8")) as unknown;
+    } catch {
+      problems.push(`invalid_json ${rel}`);
+      continue;
+    }
+    dir.set(name, parsed);
   }
   return dirs;
 }

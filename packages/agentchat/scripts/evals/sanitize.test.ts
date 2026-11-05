@@ -111,3 +111,10 @@ test("isSanitized reports whether a value still carries private data", () => {
   expect(m.isSanitized({ a: "/Users/alice" })).toBe(false);
   expect(m.isSanitized({ a: "plain text", b: ["h-001"] })).toBe(true);
 });
+
+test("isSanitized fails closed on values that cannot be canonically encoded", () => {
+  const m = api();
+  expect(m.isSanitized({ big: 10n })).toBe(false);
+  expect(m.isSanitized(Infinity)).toBe(false);
+  expect(m.isSanitized(() => 1)).toBe(false);
+});
