@@ -15,6 +15,87 @@ export interface GraderBuildIdOptions {
 
 const DEFAULT_ENTRY_NAMES = ["grade.ts", "verify.ts", "probe-harness.ts"];
 
+// The build exists to hash sources, never to run them. Bare imports outside the
+// hashed @penumbra/core evals closure (zod, @penumbra/api-contract, …) are
+// marked external: under `bun test` the bundler cannot resolve workspace deps
+// that are only linked inside a package's own node_modules (e.g.
+// @penumbra/api-contract from packages/core/src/schemas), and traversing into
+// node_modules is unnecessary anyway because those packages are not part of
+// the grader sources the build id is meant to cover.
+const HASHED_ROOT_PACKAGE = "@penumbra/core";
+
+function isHashedSpecifier(path: string): boolean {
+  const pkg = path.startsWith("@")
+    ? path.split("/").slice(0, 2).join("/")
+    : (path.split("/")[0] ?? path);
+  return pkg === HASHED_ROOT_PACKAGE;
+}
+
+const externalizePackages: Bun.BunPlugin = {
+  name: "grader-external-packages",
+  setup(build) {
+    build.onResolve({ filter: /^[^./]/ }, (args) =>
+      isHashedSpecifier(args.path) ? undefined : { path: args.path, external: true },
+    );
+  },
+};
+
+export function graderBundleOptions(entrypoints: string[]): Bun.BuildConfig {
+  return {
+    entrypoints,
+    target: "bun",
+    minify: false,
+    metafile: true,
+    plugins: [externalizePackages],
+  };
+}
+
+export interface GraderBundleOutcome {
+  ok: boolean;
+  text: string;
+  inputs: string[];
+  logs: string;
+}
+
+const BUNDLE_CHILD_TIMEOUT_MS = 120_000;
+
+// An in-process Bun.build intermittently misreads sources (EISDIR, Unseekable,
+// wrong file contents) once the grader harness has churned scratch trees in
+// the same process — the file-reader cache serves stale entries for recycled
+// inodes. A fresh short-lived bun process starts with an empty cache, which
+// also keeps long-lived daemon/worker processes immune.
+function bundleChildSource(moduleUrl: string): string {
+  return [
+    "const request = await Bun.stdin.json();",
+    `const { graderBundleOptions } = await import(${JSON.stringify(moduleUrl)});`,
+    "const result = await Bun.build(graderBundleOptions(request.entrypoints));",
+    'let text = "";',
+    "for (const output of result.outputs) { text += await output.text(); }",
+    "const inputs = result.metafile === undefined ? [] : Object.keys(result.metafile.inputs);",
+    "process.stdout.write(JSON.stringify({ ok: result.success, text, inputs, logs: JSON.stringify(result.logs) }));",
+  ].join("\n");
+}
+
+export async function runGraderBundle(entrypoints: string[]): Promise<GraderBundleOutcome> {
+  const proc = Bun.spawn([process.execPath, "-e", bundleChildSource(import.meta.url)], {
+    // A FileSink pipe left the child reading an empty stdin; a Blob-backed
+    // stdin delivers the request reliably.
+    stdin: new Blob([JSON.stringify({ entrypoints })], { type: "application/json" }),
+    stdout: "pipe",
+    stderr: "pipe",
+    signal: AbortSignal.timeout(BUNDLE_CHILD_TIMEOUT_MS),
+  });
+  const [stdoutText, stderrText] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+  ]);
+  const code = await proc.exited;
+  if (code !== 0) {
+    throw new Error(`runGraderBundle: bundle child exited ${String(code)}: ${stderrText}`);
+  }
+  return JSON.parse(stdoutText) as GraderBundleOutcome;
+}
+
 function sha256Hex(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
@@ -81,15 +162,15 @@ export async function graderBuildId(opts: GraderBuildIdOptions = {}): Promise<st
   const entrypoints = opts.entrypoints ?? defaultEntrypoints(root);
   const run = opts.runCommand ?? defaultRunCommand;
 
-  const result = await Bun.build({ entrypoints, target: "bun", minify: false, metafile: true });
-  if (!result.success) {
-    throw new Error(`graderBuildId: Bun.build failed: ${JSON.stringify(result.logs)}`);
+  const bundle = await runGraderBundle(entrypoints);
+  if (!bundle.ok) {
+    throw new Error(`graderBuildId: Bun.build failed: ${bundle.logs}`);
   }
-  if (result.metafile === undefined) {
+  if (bundle.inputs.length === 0) {
     throw new Error("graderBuildId: Bun.build produced no metafile");
   }
 
-  const sources = hashMetafileInputs(Object.keys(result.metafile.inputs), root);
+  const sources = hashMetafileInputs(bundle.inputs, root);
   const id = sha256Hex(
     Buffer.from(
       canonicalJson({

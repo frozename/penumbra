@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "family_id": "fam-syn-contract-validator",
+  "variant_id": "v1",
+  "root": {
+    "kind": "synthetic",
+    "id": "contract-validator"
+  },
+  "reconstructs": null,
+  "failure_type": null,
+  "split": "dev",
+  "synthetic": true,
+  "source_root_handoff_digests": [],
+  "expect_blocked": false
+}

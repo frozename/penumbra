@@ -1,0 +1,5 @@
+{
+  "package.json": "{\"name\":\"contract-validator\",\"private\":true,\"type\":\"module\"}\n",
+  "src/validate.ts": "export function validateFixture(_obj: unknown): { ok: boolean; errors: string[] } {\n  throw new Error(\"not implemented\");\n}\n\nexport function summarize(_list: unknown[]): { valid: number; invalid: number } {\n  throw new Error(\"not implemented\");\n}\n",
+  "test/validate.test.ts": "import { expect, test } from \"bun:test\";\n\nimport { validateFixture } from \"../src/validate.ts\";\n\nconst VALID = {\n  schema_version: 1,\n  family_id: \"fam-syn-x\",\n  split: \"dev\",\n  synthetic: true,\n  root: { kind: \"synthetic\", id: \"x\" },\n};\n\ntest(\"a conforming fixture validates with no errors\", () => {\n  expect(validateFixture(VALID)).toEqual({ ok: true, errors: [] });\n});\n\ntest(\"a non-1 schema_version is rejected\", () => {\n  expect(validateFixture({ ...VALID, schema_version: 2 })).toEqual({\n    ok: false,\n    errors: [\"bad_schema_version\"],\n  });\n});\n\ntest(\"a non-object input is rejected\", () => {\n  expect(validateFixture(\"nope\")).toEqual({ ok: false, errors: [\"not_object\"] });\n});\n"
+}
