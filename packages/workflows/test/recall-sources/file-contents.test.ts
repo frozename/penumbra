@@ -5,6 +5,14 @@ import { join } from "node:path";
 
 import { runFileContents } from "@src/recall-sources/file-contents.js";
 
+type ResultView = {
+  path: string;
+  body: string | null;
+  truncated?: boolean;
+  byte_size?: number;
+  error?: string;
+};
+
 test("file.contents returns text body when file exists and fits", async () => {
   const dir = mkdtempSync(join(tmpdir(), "file-contents-"));
   const relPath = "notes.txt";
@@ -14,8 +22,8 @@ test("file.contents returns text body when file exists and fits", async () => {
     const out = await runFileContents({ cwd: dir, args: { path: relPath } });
     expect(out.result.path).toBe(absPath);
     expect(out.result.body).toBe("hello workflow recall\n");
-    expect(out.result.truncated).toBe(false);
-    expect(out.result.byte_size).toBe(Buffer.byteLength("hello workflow recall\n"));
+    expect((out.result as ResultView).truncated).toBe(false);
+    expect((out.result as ResultView).byte_size).toBe(Buffer.byteLength("hello workflow recall\n"));
     expect(out.warnings).toEqual([]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -31,8 +39,8 @@ test("file.contents truncates body at max_bytes", async () => {
     const out = await runFileContents({ cwd: dir, args: { path: relPath, max_bytes: 4 } });
     expect(out.result.path).toBe(absPath);
     expect(out.result.body).toBe("abcd");
-    expect(out.result.truncated).toBe(true);
-    expect(out.result.byte_size).toBe(10);
+    expect((out.result as ResultView).truncated).toBe(true);
+    expect((out.result as ResultView).byte_size).toBe(10);
     expect(out.warnings.length).toBe(1);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -45,7 +53,7 @@ test("file.contents returns not_found error for missing file", async () => {
     const out = await runFileContents({ cwd: dir, args: { path: "missing.txt" } });
     expect(out.result.path).toBe(join(dir, "missing.txt"));
     expect(out.result.body).toBeNull();
-    expect(out.result.error).toBe("not_found");
+    expect((out.result as ResultView).error).toBe("not_found");
     expect(out.warnings).toEqual([]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -55,7 +63,7 @@ test("file.contents returns not_found error for missing file", async () => {
 test("file.contents returns not_found when path is empty (workflow opt-out)", async () => {
   const out = await runFileContents({ cwd: "/tmp", args: { path: "" } });
   expect(out.result.body).toBeNull();
-  expect(out.result.error).toBe("not_found");
+  expect((out.result as ResultView).error).toBe("not_found");
   expect(out.warnings).toEqual([]);
 });
 
@@ -64,7 +72,7 @@ test("file.contents returns not_found when path resolves to a directory", async 
   try {
     const out = await runFileContents({ cwd: dir, args: { path: "." } });
     expect(out.result.body).toBeNull();
-    expect(out.result.error).toBe("not_found");
+    expect((out.result as ResultView).error).toBe("not_found");
     expect(out.warnings).toEqual([]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -80,8 +88,8 @@ test("file.contents marks binary files with placeholder body", async () => {
     const out = await runFileContents({ cwd: dir, args: { path: relPath } });
     expect(out.result.path).toBe(absPath);
     expect(out.result.body).toBe("<binary file omitted>");
-    expect(out.result.truncated).toBe(false);
-    expect(out.result.byte_size).toBe(5);
+    expect((out.result as ResultView).truncated).toBe(false);
+    expect((out.result as ResultView).byte_size).toBe(5);
     expect(out.warnings).toEqual([`file.contents: ${absPath} binary content omitted`]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -125,7 +133,7 @@ test("file.contents escapes NUL bytes in UTF-8 text instead of omitting the file
     const out = await runFileContents({ cwd: dir, args: { path: relPath } });
     expect(out.result.path).toBe(absPath);
     expect(out.result.body).toBe("alpha\nbeta \\0gamma\ndelta \\0end\n");
-    expect(out.result.truncated).toBe(false);
+    expect((out.result as ResultView).truncated).toBe(false);
     expect(out.warnings).toEqual([`file.contents: ${absPath} 2 NUL bytes escaped`]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -160,8 +168,8 @@ test("file.contents allows paths inside storageRoot", async () => {
     const out = await runFileContents({ cwd: dir, storageRoot, args: { path: absPath } });
     expect(out.result.path).toBe(absPath);
     expect(out.result.body).toBe("allowed\n");
-    expect(out.result.truncated).toBe(false);
-    expect(out.result.byte_size).toBe(Buffer.byteLength("allowed\n"));
+    expect((out.result as ResultView).truncated).toBe(false);
+    expect((out.result as ResultView).byte_size).toBe(Buffer.byteLength("allowed\n"));
     expect(out.warnings).toEqual([]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -228,8 +236,8 @@ test("file.contents allows explicit allowed roots outside cwd and storageRoot", 
     });
     expect(out.result.path).toBe(absPath);
     expect(out.result.body).toBe("explicit\n");
-    expect(out.result.truncated).toBe(false);
-    expect(out.result.byte_size).toBe(Buffer.byteLength("explicit\n"));
+    expect((out.result as ResultView).truncated).toBe(false);
+    expect((out.result as ResultView).byte_size).toBe(Buffer.byteLength("explicit\n"));
     expect(out.warnings).toEqual([]);
   } finally {
     rmSync(dir, { recursive: true, force: true });

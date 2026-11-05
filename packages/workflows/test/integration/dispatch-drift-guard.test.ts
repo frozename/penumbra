@@ -97,7 +97,7 @@ const emptyBundle: Parameters<typeof fn>[1] = {
 };
 
 async function run(args: { session_id?: string }): Promise<string> {
-  const out = await fn(ctx(args), emptyBundle);
+  const out = await fn(ctx(args) as unknown as Parameters<typeof fn>[0], emptyBundle);
   return typeof out === "string" ? out : "";
 }
 
@@ -247,7 +247,7 @@ test("a throwing ctx.db returns empty, not a throw", async () => {
       throw new Error("db open failed");
     },
   };
-  const out = await fn(throwingCtx, emptyBundle);
+  const out = await fn(throwingCtx as unknown as Parameters<typeof fn>[0], emptyBundle);
   expect(typeof out === "string" ? out : "").toBe("");
 });
 
