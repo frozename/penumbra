@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "family_id": "fam-syn-model-identity",
+  "variant_id": "v1",
+  "root": {
+    "kind": "synthetic",
+    "id": "model-identity"
+  },
+  "reconstructs": {
+    "kind": "issue",
+    "number": 328
+  },
+  "failure_type": "wrong_model_identity",
+  "split": "dev",
+  "synthetic": true,
+  "base_sha": "342b7bbd02bb6d0ae95e96f14f6ac0de9e499b16",
+  "task_digest": "7a777841078c6b31631b552c45e8ec0e94e8c6aa89fe227209bda9f583689d25",
+  "source_root_handoff_digests": [],
+  "expect_blocked": false,
+  "hidden_ref": {
+    "assertion_set_digest": "5cd928865b0b4148fb1be7af721cbf9e87d3e05c50599826712f730db79bc9c6"
+  },
+  "content_digest": "847344151073b9de5536ec607cf7626e6fb7179379d9f70dc7c662b9e4b11467"
+}

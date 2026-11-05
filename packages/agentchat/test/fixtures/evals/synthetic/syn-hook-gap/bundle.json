@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "family_id": "fam-syn-hook-gap",
+  "variant_id": "v1",
+  "assertions": [
+    {
+      "kind": "probe",
+      "id": "c1",
+      "module": "src/bootstrap.ts",
+      "export": "checkBootstrap",
+      "input": {
+        "required": ["pre-commit", "pre-push"],
+        "installed": ["pre-push", "pre-commit"]
+      },
+      "expect": {
+        "ok": true,
+        "missing": []
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c2",
+      "module": "src/bootstrap.ts",
+      "export": "checkBootstrap",
+      "input": {
+        "required": ["pre-commit", "pre-push"],
+        "installed": ["pre-commit"]
+      },
+      "expect": {
+        "ok": false,
+        "missing": ["pre-push"]
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c3",
+      "module": "src/bootstrap.ts",
+      "export": "checkBootstrap",
+      "input": {
+        "required": ["pre-commit"],
+        "installed": []
+      },
+      "expect": {
+        "ok": false,
+        "missing": ["pre-commit"]
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c4",
+      "module": "src/bootstrap.ts",
+      "export": "checkBootstrap",
+      "input": {
+        "required": ["z-hook", "a-hook", "m-hook"],
+        "installed": ["a-hook"]
+      },
+      "expect": {
+        "ok": false,
+        "missing": ["m-hook", "z-hook"]
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c5",
+      "module": "src/bootstrap.ts",
+      "export": "checkBootstrap",
+      "input": "junk",
+      "expect": {
+        "ok": false,
+        "missing": []
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c6",
+      "module": "src/bootstrap.ts",
+      "export": "findMissing",
+      "input": [
+        {
+          "name": "h-b",
+          "installed": true
+        },
+        {
+          "name": "h-a",
+          "installed": false
+        }
+      ],
+      "expect": ["h-a"]
+    },
+    {
+      "kind": "probe",
+      "id": "c7",
+      "module": "src/bootstrap.ts",
+      "export": "normalizeHookNames",
+      "input": ["Pre-Push", "pre-commit", "PRE-PUSH"],
+      "expect": ["pre-commit", "pre-push"]
+    },
+    {
+      "kind": "invariant",
+      "id": "c8",
+      "property": "idempotent",
+      "module": "src/bootstrap.ts",
+      "export": "normalizeHookNames",
+      "inputs": [["Pre-Push", "pre-commit", "Pre-Commit"], ["Zed"]],
+      "seed": 0
+    },
+    {
+      "kind": "invariant",
+      "id": "c9",
+      "property": "order_insensitive",
+      "module": "src/bootstrap.ts",
+      "export": "findMissing",
+      "inputs": [
+        [
+          {
+            "name": "h-a",
+            "installed": false
+          },
+          {
+            "name": "h-b",
+            "installed": true
+          },
+          {
+            "name": "h-c",
+            "installed": false
+          }
+        ]
+      ],
+      "seed": 0
+    },
+    {
+      "kind": "invariant",
+      "id": "c10",
+      "property": "deterministic",
+      "module": "src/bootstrap.ts",
+      "export": "checkBootstrap",
+      "inputs": [
+        {
+          "required": ["pre-commit", "pre-push"],
+          "installed": []
+        }
+      ],
+      "seed": 0
+    }
+  ],
+  "patches": {
+    "good": "diff --git a/src/bootstrap.ts b/src/bootstrap.ts\nindex 1f9c352..bc821b5 100644\n--- a/src/bootstrap.ts\n+++ b/src/bootstrap.ts\n@@ -1,14 +1,41 @@\n-export function normalizeHookNames(input: unknown): string[] {\n-  void input;\n-  throw new Error(\"not implemented\");\n+function listOfStrings(value: unknown): string[] {\n+  if (!Array.isArray(value)) {\n+    return [];\n+  }\n+  return value.filter((item): item is string => typeof item === \"string\");\n }\n \n-export function findMissing(input: unknown): string[] {\n-  void input;\n-  throw new Error(\"not implemented\");\n+function sortedUnique(items: readonly string[]): string[] {\n+  return [...new Set(items)].sort();\n+}\n+export function checkBootstrap(input: unknown): { ok: boolean; missing: string[] } {\n+  if (typeof input !== \"object\" || input === null || Array.isArray(input)) {\n+    return { ok: false, missing: [] };\n+  }\n+  const rec = input as Record<string, unknown>;\n+  const required = listOfStrings(rec.required);\n+  const installed = new Set(listOfStrings(rec.installed));\n+  const missing = sortedUnique(required.filter((name) => !installed.has(name)));\n+  return { ok: missing.length === 0, missing };\n }\n \n-export function checkBootstrap(input: unknown): unknown {\n-  void input;\n-  throw new Error(\"not implemented\");\n+export function normalizeHookNames(input: unknown): string[] {\n+  return sortedUnique(listOfStrings(input).map((name) => name.toLowerCase().trim()));\n+}\n+\n+export function findMissing(input: unknown): string[] {\n+  if (!Array.isArray(input)) {\n+    return [];\n+  }\n+  const missing: string[] = [];\n+  for (const item of input) {\n+    if (typeof item !== \"object\" || item === null || Array.isArray(item)) {\n+      continue;\n+    }\n+    const rec = item as Record<string, unknown>;\n+    if (typeof rec.name === \"string\" && rec.installed !== true) {\n+      missing.push(rec.name);\n+    }\n+  }\n+  return sortedUnique(missing);\n }\n",
+    "bad": [
+      "diff --git a/src/bootstrap.ts b/src/bootstrap.ts\nindex 1f9c352..787851b 100644\n--- a/src/bootstrap.ts\n+++ b/src/bootstrap.ts\n@@ -1,14 +1,41 @@\n-export function normalizeHookNames(input: unknown): string[] {\n-  void input;\n-  throw new Error(\"not implemented\");\n+function listOfStrings(value: unknown): string[] {\n+  if (!Array.isArray(value)) {\n+    return [];\n+  }\n+  return value.filter((item): item is string => typeof item === \"string\");\n }\n \n-export function findMissing(input: unknown): string[] {\n-  void input;\n-  throw new Error(\"not implemented\");\n+function sortedUnique(items: readonly string[]): string[] {\n+  return [...new Set(items)].sort();\n+}\n+export function checkBootstrap(input: unknown): { ok: boolean; missing: string[] } {\n+  if (typeof input !== \"object\" || input === null || Array.isArray(input)) {\n+    return { ok: false, missing: [] };\n+  }\n+  const rec = input as Record<string, unknown>;\n+  const required = listOfStrings(rec.required);\n+  const installed = new Set(listOfStrings(rec.installed));\n+  const missing = sortedUnique(required.filter((name) => !installed.has(name)));\n+  return { ok: true, missing };\n }\n \n-export function checkBootstrap(input: unknown): unknown {\n-  void input;\n-  throw new Error(\"not implemented\");\n+export function normalizeHookNames(input: unknown): string[] {\n+  return sortedUnique(listOfStrings(input).map((name) => name.toLowerCase().trim()));\n+}\n+\n+export function findMissing(input: unknown): string[] {\n+  if (!Array.isArray(input)) {\n+    return [];\n+  }\n+  const missing: string[] = [];\n+  for (const item of input) {\n+    if (typeof item !== \"object\" || item === null || Array.isArray(item)) {\n+      continue;\n+    }\n+    const rec = item as Record<string, unknown>;\n+    if (typeof rec.name === \"string\" && rec.installed !== true) {\n+      missing.push(rec.name);\n+    }\n+  }\n+  return sortedUnique(missing);\n }\n"
+    ]
+  },
+  "mutants": [
+    "diff --git a/src/bootstrap.ts b/src/bootstrap.ts\nindex 1f9c352..ad279ff 100644\n--- a/src/bootstrap.ts\n+++ b/src/bootstrap.ts\n@@ -1,14 +1,35 @@\n-export function normalizeHookNames(input: unknown): string[] {\n-  void input;\n-  throw new Error(\"not implemented\");\n+function listOfStrings(value: unknown): string[] {\n+  if (!Array.isArray(value)) {\n+    return [];\n+  }\n+  return value.filter((item): item is string => typeof item === \"string\");\n }\n \n-export function findMissing(input: unknown): string[] {\n+function sortedUnique(items: readonly string[]): string[] {\n+  return [...new Set(items)].sort();\n+}\n+export function checkBootstrap(input: unknown): { ok: boolean; missing: string[] } {\n   void input;\n-  throw new Error(\"not implemented\");\n+  return { ok: true, missing: [] };\n }\n \n-export function checkBootstrap(input: unknown): unknown {\n-  void input;\n-  throw new Error(\"not implemented\");\n+export function normalizeHookNames(input: unknown): string[] {\n+  return sortedUnique(listOfStrings(input).map((name) => name.toLowerCase().trim()));\n+}\n+\n+export function findMissing(input: unknown): string[] {\n+  if (!Array.isArray(input)) {\n+    return [];\n+  }\n+  const missing: string[] = [];\n+  for (const item of input) {\n+    if (typeof item !== \"object\" || item === null || Array.isArray(item)) {\n+      continue;\n+    }\n+    const rec = item as Record<string, unknown>;\n+    if (typeof rec.name === \"string\" && rec.installed !== true) {\n+      missing.push(rec.name);\n+    }\n+  }\n+  return sortedUnique(missing);\n }\n",
+    "diff --git a/src/bootstrap.ts b/src/bootstrap.ts\nindex 1f9c352..e6d9907 100644\n--- a/src/bootstrap.ts\n+++ b/src/bootstrap.ts\n@@ -1,14 +1,35 @@\n-export function normalizeHookNames(input: unknown): string[] {\n-  void input;\n-  throw new Error(\"not implemented\");\n+function listOfStrings(value: unknown): string[] {\n+  if (!Array.isArray(value)) {\n+    return [];\n+  }\n+  return value.filter((item): item is string => typeof item === \"string\");\n }\n \n-export function findMissing(input: unknown): string[] {\n+function sortedUnique(items: readonly string[]): string[] {\n+  return [...new Set(items)].sort();\n+}\n+export function checkBootstrap(input: unknown): { ok: boolean; missing: string[] } {\n   void input;\n-  throw new Error(\"not implemented\");\n+  return { ok: false, missing: [\"rnd-\" + String(Math.random())] };\n }\n \n-export function checkBootstrap(input: unknown): unknown {\n-  void input;\n-  throw new Error(\"not implemented\");\n+export function normalizeHookNames(input: unknown): string[] {\n+  return sortedUnique(listOfStrings(input).map((name) => name.toLowerCase().trim()));\n+}\n+\n+export function findMissing(input: unknown): string[] {\n+  if (!Array.isArray(input)) {\n+    return [];\n+  }\n+  const missing: string[] = [];\n+  for (const item of input) {\n+    if (typeof item !== \"object\" || item === null || Array.isArray(item)) {\n+      continue;\n+    }\n+    const rec = item as Record<string, unknown>;\n+    if (typeof rec.name === \"string\" && rec.installed !== true) {\n+      missing.push(rec.name);\n+    }\n+  }\n+  return sortedUnique(missing);\n }\n",
+    "diff --git a/src/bootstrap.ts b/src/bootstrap.ts\nindex 1f9c352..124deaa 100644\n--- a/src/bootstrap.ts\n+++ b/src/bootstrap.ts\n@@ -1,14 +1,41 @@\n-export function normalizeHookNames(input: unknown): string[] {\n-  void input;\n-  throw new Error(\"not implemented\");\n+function listOfStrings(value: unknown): string[] {\n+  if (!Array.isArray(value)) {\n+    return [];\n+  }\n+  return value.filter((item): item is string => typeof item === \"string\");\n }\n \n-export function findMissing(input: unknown): string[] {\n-  void input;\n-  throw new Error(\"not implemented\");\n+function sortedUnique(items: readonly string[]): string[] {\n+  return [...new Set(items)].sort();\n+}\n+export function checkBootstrap(input: unknown): { ok: boolean; missing: string[] } {\n+  if (typeof input !== \"object\" || input === null || Array.isArray(input)) {\n+    return { ok: false, missing: [] };\n+  }\n+  const rec = input as Record<string, unknown>;\n+  const required = listOfStrings(rec.required);\n+  const installed = new Set(listOfStrings(rec.installed));\n+  const missing = required.filter((name) => !installed.has(name));\n+  return { ok: missing.length === 0, missing };\n }\n \n-export function checkBootstrap(input: unknown): unknown {\n-  void input;\n-  throw new Error(\"not implemented\");\n+export function normalizeHookNames(input: unknown): string[] {\n+  return sortedUnique(listOfStrings(input).map((name) => name.toLowerCase().trim()));\n+}\n+\n+export function findMissing(input: unknown): string[] {\n+  if (!Array.isArray(input)) {\n+    return [];\n+  }\n+  const missing: string[] = [];\n+  for (const item of input) {\n+    if (typeof item !== \"object\" || item === null || Array.isArray(item)) {\n+      continue;\n+    }\n+    const rec = item as Record<string, unknown>;\n+    if (typeof rec.name === \"string\" && rec.installed !== true) {\n+      missing.push(rec.name);\n+    }\n+  }\n+  return sortedUnique(missing);\n }\n"
+  ]
+}

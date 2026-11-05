@@ -1,0 +1,173 @@
+{
+  "schema_version": 1,
+  "family_id": "fam-syn-missed-commit",
+  "variant_id": "v1",
+  "assertions": [
+    {
+      "kind": "probe",
+      "id": "c1",
+      "module": "src/attribution.ts",
+      "export": "classifyCommit",
+      "input": {
+        "authored_by": "agent-7",
+        "hook_created": false,
+        "diff_empty": false
+      },
+      "expect": "model"
+    },
+    {
+      "kind": "probe",
+      "id": "c2",
+      "module": "src/attribution.ts",
+      "export": "classifyCommit",
+      "input": {
+        "authored_by": "bot-ci",
+        "hook_created": false,
+        "diff_empty": false
+      },
+      "expect": "autocommit"
+    },
+    {
+      "kind": "probe",
+      "id": "c3",
+      "module": "src/attribution.ts",
+      "export": "classifyCommit",
+      "input": {
+        "authored_by": "agent-9",
+        "hook_created": true,
+        "diff_empty": false
+      },
+      "expect": "autocommit"
+    },
+    {
+      "kind": "probe",
+      "id": "c4",
+      "module": "src/attribution.ts",
+      "export": "classifyCommit",
+      "input": {
+        "authored_by": "agent-7",
+        "hook_created": false,
+        "diff_empty": true
+      },
+      "expect": "missed"
+    },
+    {
+      "kind": "probe",
+      "id": "c5",
+      "module": "src/attribution.ts",
+      "export": "classifyCommit",
+      "input": {
+        "authored_by": "",
+        "hook_created": false,
+        "diff_empty": false
+      },
+      "expect": "unknown"
+    },
+    {
+      "kind": "probe",
+      "id": "c6",
+      "module": "src/attribution.ts",
+      "export": "classifyCommit",
+      "input": {
+        "authored_by": "bot-ci",
+        "hook_created": false,
+        "diff_empty": true
+      },
+      "expect": "missed"
+    },
+    {
+      "kind": "probe",
+      "id": "c7",
+      "module": "src/attribution.ts",
+      "export": "summarizeCommits",
+      "input": [
+        {
+          "authored_by": "agent-7",
+          "hook_created": false,
+          "diff_empty": false
+        },
+        {
+          "authored_by": "bot-ci",
+          "hook_created": false,
+          "diff_empty": false
+        },
+        {
+          "authored_by": "agent-7",
+          "hook_created": false,
+          "diff_empty": true
+        },
+        {
+          "authored_by": "agent-1",
+          "hook_created": true,
+          "diff_empty": true
+        },
+        "junk"
+      ],
+      "expect": {
+        "model": 1,
+        "autocommit": 1,
+        "missed": 2,
+        "unknown": 1
+      }
+    },
+    {
+      "kind": "invariant",
+      "id": "c8",
+      "property": "deterministic",
+      "module": "src/attribution.ts",
+      "export": "classifyCommit",
+      "inputs": [
+        {
+          "authored_by": "agent-7",
+          "hook_created": false,
+          "diff_empty": true
+        }
+      ],
+      "seed": 0
+    },
+    {
+      "kind": "invariant",
+      "id": "c9",
+      "property": "order_insensitive",
+      "module": "src/attribution.ts",
+      "export": "summarizeCommits",
+      "inputs": [
+        [
+          {
+            "authored_by": "agent-7",
+            "hook_created": false,
+            "diff_empty": false
+          },
+          {
+            "authored_by": "bot-ci",
+            "hook_created": false,
+            "diff_empty": false
+          },
+          {
+            "authored_by": "agent-7",
+            "hook_created": false,
+            "diff_empty": true
+          },
+          {
+            "authored_by": "agent-1",
+            "hook_created": true,
+            "diff_empty": true
+          },
+          "junk"
+        ]
+      ],
+      "seed": 0
+    }
+  ],
+  "patches": {
+    "good": "diff --git a/src/attribution.ts b/src/attribution.ts\nindex 7eab20e..6e97b43 100644\n--- a/src/attribution.ts\n+++ b/src/attribution.ts\n@@ -1,9 +1,36 @@\n+function authorOf(rec: Record<string, unknown>): string {\n+  return typeof rec.authored_by === \"string\" ? rec.authored_by : \"\";\n+}\n export function classifyCommit(input: unknown): string {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  if (typeof input !== \"object\" || input === null || Array.isArray(input)) {\n+    return \"unknown\";\n+  }\n+  const rec = input as Record<string, unknown>;\n+  if (rec.diff_empty === true) {\n+    return \"missed\";\n+  }\n+  const author = authorOf(rec);\n+  if (rec.hook_created === true || author.startsWith(\"bot-\")) {\n+    return \"autocommit\";\n+  }\n+  if (author === \"\") {\n+    return \"unknown\";\n+  }\n+  return \"model\";\n }\n \n-export function summarizeCommits(input: unknown): unknown {\n-  void input;\n-  throw new Error(\"not implemented\");\n+export function summarizeCommits(input: unknown): {\n+  model: number;\n+  autocommit: number;\n+  missed: number;\n+  unknown: number;\n+} {\n+  const counts = { model: 0, autocommit: 0, missed: 0, unknown: 0 };\n+  if (Array.isArray(input)) {\n+    for (const item of input) {\n+      const kind = classifyCommit(item) as keyof typeof counts;\n+      counts[kind] += 1;\n+    }\n+  }\n+  return counts;\n }\n",
+    "bad": [
+      "diff --git a/src/attribution.ts b/src/attribution.ts\nindex 7eab20e..fb53495 100644\n--- a/src/attribution.ts\n+++ b/src/attribution.ts\n@@ -1,9 +1,36 @@\n+function authorOf(rec: Record<string, unknown>): string {\n+  return typeof rec.authored_by === \"string\" ? rec.authored_by : \"\";\n+}\n export function classifyCommit(input: unknown): string {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  if (typeof input !== \"object\" || input === null || Array.isArray(input)) {\n+    return \"unknown\";\n+  }\n+  const rec = input as Record<string, unknown>;\n+  const author = authorOf(rec);\n+  if (rec.hook_created === true || author.startsWith(\"bot-\")) {\n+    return \"autocommit\";\n+  }\n+  if (rec.diff_empty === true) {\n+    return \"missed\";\n+  }\n+  if (author === \"\") {\n+    return \"unknown\";\n+  }\n+  return \"model\";\n }\n \n-export function summarizeCommits(input: unknown): unknown {\n-  void input;\n-  throw new Error(\"not implemented\");\n+export function summarizeCommits(input: unknown): {\n+  model: number;\n+  autocommit: number;\n+  missed: number;\n+  unknown: number;\n+} {\n+  const counts = { model: 0, autocommit: 0, missed: 0, unknown: 0 };\n+  if (Array.isArray(input)) {\n+    for (const item of input) {\n+      const kind = classifyCommit(item) as keyof typeof counts;\n+      counts[kind] += 1;\n+    }\n+  }\n+  return counts;\n }\n"
+    ]
+  },
+  "mutants": [
+    "diff --git a/src/attribution.ts b/src/attribution.ts\nindex 7eab20e..7b92471 100644\n--- a/src/attribution.ts\n+++ b/src/attribution.ts\n@@ -1,9 +1,36 @@\n+function authorOf(rec: Record<string, unknown>): string {\n+  return typeof rec.authored_by === \"string\" ? rec.authored_by : \"\";\n+}\n export function classifyCommit(input: unknown): string {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  if (typeof input !== \"object\" || input === null || Array.isArray(input)) {\n+    return \"unknown\";\n+  }\n+  const rec = input as Record<string, unknown>;\n+  if (rec.diff_empty === true) {\n+    return \"model\";\n+  }\n+  const author = authorOf(rec);\n+  if (rec.hook_created === true || author.startsWith(\"bot-\")) {\n+    return \"autocommit\";\n+  }\n+  if (author === \"\") {\n+    return \"unknown\";\n+  }\n+  return \"model\";\n }\n \n-export function summarizeCommits(input: unknown): unknown {\n-  void input;\n-  throw new Error(\"not implemented\");\n+export function summarizeCommits(input: unknown): {\n+  model: number;\n+  autocommit: number;\n+  missed: number;\n+  unknown: number;\n+} {\n+  const counts = { model: 0, autocommit: 0, missed: 0, unknown: 0 };\n+  if (Array.isArray(input)) {\n+    for (const item of input) {\n+      const kind = classifyCommit(item) as keyof typeof counts;\n+      counts[kind] += 1;\n+    }\n+  }\n+  return counts;\n }\n",
+    "diff --git a/src/attribution.ts b/src/attribution.ts\nindex 7eab20e..a239205 100644\n--- a/src/attribution.ts\n+++ b/src/attribution.ts\n@@ -1,9 +1,20 @@\n export function classifyCommit(input: unknown): string {\n   void input;\n-  throw new Error(\"not implemented\");\n+  return \"rnd-\" + String(Math.random());\n }\n \n-export function summarizeCommits(input: unknown): unknown {\n-  void input;\n-  throw new Error(\"not implemented\");\n+export function summarizeCommits(input: unknown): {\n+  model: number;\n+  autocommit: number;\n+  missed: number;\n+  unknown: number;\n+} {\n+  const counts = { model: 0, autocommit: 0, missed: 0, unknown: 0 };\n+  if (Array.isArray(input)) {\n+    for (const item of input) {\n+      const kind = classifyCommit(item) as keyof typeof counts;\n+      counts[kind] += 1;\n+    }\n+  }\n+  return counts;\n }\n",
+    "diff --git a/src/attribution.ts b/src/attribution.ts\nindex 7eab20e..f8ef9dd 100644\n--- a/src/attribution.ts\n+++ b/src/attribution.ts\n@@ -1,9 +1,36 @@\n+function authorOf(rec: Record<string, unknown>): string {\n+  return typeof rec.authored_by === \"string\" ? rec.authored_by : \"\";\n+}\n export function classifyCommit(input: unknown): string {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  if (typeof input !== \"object\" || input === null || Array.isArray(input)) {\n+    return \"unknown\";\n+  }\n+  const rec = input as Record<string, unknown>;\n+  if (rec.diff_empty === true) {\n+    return \"missed\";\n+  }\n+  const author = authorOf(rec);\n+  if (rec.hook_created === true || author.startsWith(\"bot-\")) {\n+    return \"autocommit\";\n+  }\n+  if (author === \"\") {\n+    return \"model\";\n+  }\n+  return \"model\";\n }\n \n-export function summarizeCommits(input: unknown): unknown {\n-  void input;\n-  throw new Error(\"not implemented\");\n+export function summarizeCommits(input: unknown): {\n+  model: number;\n+  autocommit: number;\n+  missed: number;\n+  unknown: number;\n+} {\n+  const counts = { model: 0, autocommit: 0, missed: 0, unknown: 0 };\n+  if (Array.isArray(input)) {\n+    for (const item of input) {\n+      const kind = classifyCommit(item) as keyof typeof counts;\n+      counts[kind] += 1;\n+    }\n+  }\n+  return counts;\n }\n"
+  ]
+}

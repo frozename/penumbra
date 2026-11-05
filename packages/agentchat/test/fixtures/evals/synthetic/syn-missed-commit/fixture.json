@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "family_id": "fam-syn-missed-commit",
+  "variant_id": "v1",
+  "root": {
+    "kind": "synthetic",
+    "id": "missed-commit"
+  },
+  "reconstructs": {
+    "kind": "issue",
+    "number": 379
+  },
+  "failure_type": "missed_commit",
+  "split": "dev",
+  "synthetic": true,
+  "base_sha": "4750bc203d696d8e4a8347e0f56ed4d086bc386f",
+  "task_digest": "89e9772e20e58f6fb48556c6d2bbe16477aa1d2e253378d9a279bf46b242d159",
+  "source_root_handoff_digests": [],
+  "expect_blocked": false,
+  "hidden_ref": {
+    "assertion_set_digest": "6ae09f62b63f89d8ddc0481e433a927cfe43d57989353779125299c08cd8f5d4"
+  },
+  "content_digest": "07ee227ae1fd41c6b88c9bc653bc8c6a7315190ea04ee78c1dc86bcdf1db982d"
+}

@@ -1,0 +1,217 @@
+{
+  "schema_version": 1,
+  "family_id": "fam-syn-lane-gate-evidence",
+  "variant_id": "v1",
+  "assertions": [
+    {
+      "kind": "probe",
+      "id": "c1",
+      "module": "src/gate.ts",
+      "export": "evaluateGate",
+      "input": {
+        "checks": [
+          {
+            "name": "lint",
+            "passed": true,
+            "evidenced": true
+          },
+          {
+            "name": "test",
+            "passed": true,
+            "evidenced": true
+          }
+        ]
+      },
+      "expect": {
+        "verdict": "pass",
+        "failed": [],
+        "unevidenced": []
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c2",
+      "module": "src/gate.ts",
+      "export": "evaluateGate",
+      "input": {
+        "checks": [
+          {
+            "name": "lint",
+            "passed": true,
+            "evidenced": true
+          },
+          {
+            "name": "test",
+            "passed": false,
+            "evidenced": true
+          }
+        ]
+      },
+      "expect": {
+        "verdict": "fail",
+        "failed": ["test"],
+        "unevidenced": []
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c3",
+      "module": "src/gate.ts",
+      "export": "evaluateGate",
+      "input": {
+        "checks": [
+          {
+            "name": "lint",
+            "passed": true,
+            "evidenced": false
+          }
+        ]
+      },
+      "expect": {
+        "verdict": "fail",
+        "failed": [],
+        "unevidenced": ["lint"]
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c4",
+      "module": "src/gate.ts",
+      "export": "evaluateGate",
+      "input": {
+        "checks": [
+          {
+            "name": "z-check",
+            "passed": false,
+            "evidenced": false
+          },
+          {
+            "name": "a-check",
+            "passed": true,
+            "evidenced": false
+          }
+        ]
+      },
+      "expect": {
+        "verdict": "fail",
+        "failed": ["z-check"],
+        "unevidenced": ["a-check"]
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c5",
+      "module": "src/gate.ts",
+      "export": "evaluateGate",
+      "input": {
+        "checks": []
+      },
+      "expect": {
+        "verdict": "pass",
+        "failed": [],
+        "unevidenced": []
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c6",
+      "module": "src/gate.ts",
+      "export": "gateTally",
+      "input": [
+        {
+          "verdict": "pass"
+        },
+        {
+          "verdict": "fail"
+        },
+        {
+          "verdict": "pass"
+        },
+        {
+          "verdict": "skipped"
+        }
+      ],
+      "expect": {
+        "pass": 2,
+        "fail": 1
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c7",
+      "module": "src/gate.ts",
+      "export": "evaluateGate",
+      "input": "junk",
+      "expect": {
+        "verdict": "fail",
+        "failed": [],
+        "unevidenced": []
+      }
+    },
+    {
+      "kind": "invariant",
+      "id": "c8",
+      "property": "order_insensitive",
+      "module": "src/gate.ts",
+      "export": "gateTally",
+      "inputs": [
+        [
+          {
+            "verdict": "pass"
+          },
+          {
+            "verdict": "fail"
+          },
+          {
+            "verdict": "pass"
+          }
+        ]
+      ],
+      "seed": 0
+    },
+    {
+      "kind": "invariant",
+      "id": "c9",
+      "property": "deterministic",
+      "module": "src/gate.ts",
+      "export": "evaluateGate",
+      "inputs": [
+        {
+          "checks": [
+            {
+              "name": "z-check",
+              "passed": false,
+              "evidenced": false
+            },
+            {
+              "name": "a-check",
+              "passed": true,
+              "evidenced": false
+            }
+          ]
+        }
+      ],
+      "seed": 0
+    },
+    {
+      "kind": "invariant",
+      "id": "c10",
+      "property": "idempotent",
+      "module": "src/gate.ts",
+      "export": "normalizeGateNames",
+      "inputs": [["z-gate", "a-gate", "a-gate"], []],
+      "seed": 0
+    }
+  ],
+  "patches": {
+    "good": "diff --git a/src/gate.ts b/src/gate.ts\nindex 6b1e965..cbffaea 100644\n--- a/src/gate.ts\n+++ b/src/gate.ts\n@@ -1,14 +1,58 @@\n-export function normalizeGateNames(input: unknown): string[] {\n-  void input;\n-  throw new Error(\"not implemented\");\n+function sortedUnique(items: readonly string[]): string[] {\n+  return [...new Set(items)].sort();\n+}\n+\n+function checkRecords(value: unknown): Record<string, unknown>[] {\n+  if (!Array.isArray(value)) {\n+    return [];\n+  }\n+  return value.filter(\n+    (item): item is Record<string, unknown> =>\n+      typeof item === \"object\" && item !== null && !Array.isArray(item),\n+  );\n }\n \n-export function evaluateGate(input: unknown): unknown {\n-  void input;\n-  throw new Error(\"not implemented\");\n+function nameOf(rec: Record<string, unknown>): string {\n+  return typeof rec.name === \"string\" ? rec.name : \"\";\n+}\n+export function evaluateGate(input: unknown): {\n+  verdict: \"pass\" | \"fail\";\n+  failed: string[];\n+  unevidenced: string[];\n+} {\n+  if (typeof input !== \"object\" || input === null || Array.isArray(input)) {\n+    return { verdict: \"fail\", failed: [], unevidenced: [] };\n+  }\n+  const rec = input as Record<string, unknown>;\n+  const failed: string[] = [];\n+  const unevidenced: string[] = [];\n+  for (const check of checkRecords(rec.checks)) {\n+    const name = nameOf(check);\n+    if (check.passed !== true) {\n+      failed.push(name);\n+    } else if (check.evidenced !== true) {\n+      unevidenced.push(name);\n+    }\n+  }\n+  const verdict = failed.length === 0 && unevidenced.length === 0 ? \"pass\" : \"fail\";\n+  return { verdict, failed: sortedUnique(failed), unevidenced: sortedUnique(unevidenced) };\n+}\n+\n+export function normalizeGateNames(input: unknown): string[] {\n+  if (!Array.isArray(input)) {\n+    return [];\n+  }\n+  return sortedUnique(input.filter((item): item is string => typeof item === \"string\"));\n }\n \n-export function gateTally(input: unknown): unknown {\n-  void input;\n-  throw new Error(\"not implemented\");\n+export function gateTally(input: unknown): { pass: number; fail: number } {\n+  const tally = { pass: 0, fail: 0 };\n+  for (const rec of checkRecords(input)) {\n+    if (rec.verdict === \"pass\") {\n+      tally.pass += 1;\n+    } else if (rec.verdict === \"fail\") {\n+      tally.fail += 1;\n+    }\n+  }\n+  return tally;\n }\n",
+    "bad": [
+      "diff --git a/src/gate.ts b/src/gate.ts\nindex 6b1e965..3071af1 100644\n--- a/src/gate.ts\n+++ b/src/gate.ts\n@@ -1,14 +1,58 @@\n-export function normalizeGateNames(input: unknown): string[] {\n-  void input;\n-  throw new Error(\"not implemented\");\n+function sortedUnique(items: readonly string[]): string[] {\n+  return [...new Set(items)].sort();\n+}\n+\n+function checkRecords(value: unknown): Record<string, unknown>[] {\n+  if (!Array.isArray(value)) {\n+    return [];\n+  }\n+  return value.filter(\n+    (item): item is Record<string, unknown> =>\n+      typeof item === \"object\" && item !== null && !Array.isArray(item),\n+  );\n }\n \n-export function evaluateGate(input: unknown): unknown {\n-  void input;\n-  throw new Error(\"not implemented\");\n+function nameOf(rec: Record<string, unknown>): string {\n+  return typeof rec.name === \"string\" ? rec.name : \"\";\n+}\n+export function evaluateGate(input: unknown): {\n+  verdict: \"pass\" | \"fail\";\n+  failed: string[];\n+  unevidenced: string[];\n+} {\n+  if (typeof input !== \"object\" || input === null || Array.isArray(input)) {\n+    return { verdict: \"fail\", failed: [], unevidenced: [] };\n+  }\n+  const rec = input as Record<string, unknown>;\n+  const failed: string[] = [];\n+  const unevidenced: string[] = [];\n+  for (const check of checkRecords(rec.checks)) {\n+    const name = nameOf(check);\n+    if (check.passed !== true) {\n+      failed.push(name);\n+    } else if (check.evidenced !== true) {\n+      unevidenced.push(name);\n+    }\n+  }\n+  const verdict = failed.length === 0 ? \"pass\" : \"fail\";\n+  return { verdict, failed: sortedUnique(failed), unevidenced: sortedUnique(unevidenced) };\n+}\n+\n+export function normalizeGateNames(input: unknown): string[] {\n+  if (!Array.isArray(input)) {\n+    return [];\n+  }\n+  return sortedUnique(input.filter((item): item is string => typeof item === \"string\"));\n }\n \n-export function gateTally(input: unknown): unknown {\n-  void input;\n-  throw new Error(\"not implemented\");\n+export function gateTally(input: unknown): { pass: number; fail: number } {\n+  const tally = { pass: 0, fail: 0 };\n+  for (const rec of checkRecords(input)) {\n+    if (rec.verdict === \"pass\") {\n+      tally.pass += 1;\n+    } else if (rec.verdict === \"fail\") {\n+      tally.fail += 1;\n+    }\n+  }\n+  return tally;\n }\n"
+    ]
+  },
+  "mutants": [
+    "diff --git a/src/gate.ts b/src/gate.ts\nindex 6b1e965..df38e54 100644\n--- a/src/gate.ts\n+++ b/src/gate.ts\n@@ -1,14 +1,59 @@\n-export function normalizeGateNames(input: unknown): string[] {\n-  void input;\n-  throw new Error(\"not implemented\");\n+function sortedUnique(items: readonly string[]): string[] {\n+  return [...new Set(items)].sort();\n+}\n+\n+function checkRecords(value: unknown): Record<string, unknown>[] {\n+  if (!Array.isArray(value)) {\n+    return [];\n+  }\n+  return value.filter(\n+    (item): item is Record<string, unknown> =>\n+      typeof item === \"object\" && item !== null && !Array.isArray(item),\n+  );\n }\n \n-export function evaluateGate(input: unknown): unknown {\n-  void input;\n-  throw new Error(\"not implemented\");\n+function nameOf(rec: Record<string, unknown>): string {\n+  return typeof rec.name === \"string\" ? rec.name : \"\";\n+}\n+export function evaluateGate(input: unknown): {\n+  verdict: \"pass\" | \"fail\";\n+  failed: string[];\n+  unevidenced: string[];\n+} {\n+  if (typeof input !== \"object\" || input === null || Array.isArray(input)) {\n+    return { verdict: \"fail\", failed: [], unevidenced: [] };\n+  }\n+  const rec = input as Record<string, unknown>;\n+  const checks = checkRecords(rec.checks);\n+  const failed: string[] = [];\n+  const unevidenced: string[] = [];\n+  for (const check of checks) {\n+    const name = nameOf(check);\n+    if (check.passed !== true) {\n+      failed.push(name);\n+    } else if (check.evidenced !== true) {\n+      unevidenced.push(name);\n+    }\n+  }\n+  const verdict = checks.some((check) => check.passed === true) ? \"pass\" : \"fail\";\n+  return { verdict, failed: sortedUnique(failed), unevidenced: sortedUnique(unevidenced) };\n+}\n+\n+export function normalizeGateNames(input: unknown): string[] {\n+  if (!Array.isArray(input)) {\n+    return [];\n+  }\n+  return sortedUnique(input.filter((item): item is string => typeof item === \"string\"));\n }\n \n-export function gateTally(input: unknown): unknown {\n-  void input;\n-  throw new Error(\"not implemented\");\n+export function gateTally(input: unknown): { pass: number; fail: number } {\n+  const tally = { pass: 0, fail: 0 };\n+  for (const rec of checkRecords(input)) {\n+    if (rec.verdict === \"pass\") {\n+      tally.pass += 1;\n+    } else if (rec.verdict === \"fail\") {\n+      tally.fail += 1;\n+    }\n+  }\n+  return tally;\n }\n",
+    "diff --git a/src/gate.ts b/src/gate.ts\nindex 6b1e965..1989c4f 100644\n--- a/src/gate.ts\n+++ b/src/gate.ts\n@@ -1,14 +1,55 @@\n-export function normalizeGateNames(input: unknown): string[] {\n-  void input;\n-  throw new Error(\"not implemented\");\n+function sortedUnique(items: readonly string[]): string[] {\n+  return [...new Set(items)].sort();\n+}\n+\n+function checkRecords(value: unknown): Record<string, unknown>[] {\n+  if (!Array.isArray(value)) {\n+    return [];\n+  }\n+  return value.filter(\n+    (item): item is Record<string, unknown> =>\n+      typeof item === \"object\" && item !== null && !Array.isArray(item),\n+  );\n }\n \n-export function evaluateGate(input: unknown): unknown {\n-  void input;\n-  throw new Error(\"not implemented\");\n+function nameOf(rec: Record<string, unknown>): string {\n+  return typeof rec.name === \"string\" ? rec.name : \"\";\n+}\n+export function evaluateGate(input: unknown): {\n+  verdict: \"pass\" | \"fail\";\n+  failed: string[];\n+  unevidenced: string[];\n+} {\n+  if (typeof input !== \"object\" || input === null || Array.isArray(input)) {\n+    return { verdict: \"fail\", failed: [], unevidenced: [] };\n+  }\n+  const rec = input as Record<string, unknown>;\n+  const failed: string[] = [];\n+  const unevidenced: string[] = [];\n+  for (const check of checkRecords(rec.checks)) {\n+    const name = nameOf(check);\n+    if (check.passed !== true) {\n+      failed.push(name);\n+    } else if (check.evidenced !== true) {\n+      unevidenced.push(name);\n+    }\n+  }\n+  const verdict = failed.length === 0 && unevidenced.length === 0 ? \"pass\" : \"fail\";\n+  return { verdict, failed: sortedUnique(failed), unevidenced: sortedUnique(unevidenced) };\n+}\n+\n+export function normalizeGateNames(input: unknown): string[] {\n+  if (!Array.isArray(input)) {\n+    return [];\n+  }\n+  return sortedUnique(input.filter((item): item is string => typeof item === \"string\"));\n }\n \n-export function gateTally(input: unknown): unknown {\n-  void input;\n-  throw new Error(\"not implemented\");\n+export function gateTally(input: unknown): { pass: number; fail: number } {\n+  const tally = { pass: 0, fail: 0 };\n+  for (const rec of checkRecords(input)) {\n+    tally.pass = Math.floor(Math.random() * 1000);\n+    void rec;\n+  }\n+  return tally;\n }\n",
+    "diff --git a/src/gate.ts b/src/gate.ts\nindex 6b1e965..266d989 100644\n--- a/src/gate.ts\n+++ b/src/gate.ts\n@@ -1,14 +1,58 @@\n-export function normalizeGateNames(input: unknown): string[] {\n-  void input;\n-  throw new Error(\"not implemented\");\n+function sortedUnique(items: readonly string[]): string[] {\n+  return [...new Set(items)].sort();\n+}\n+\n+function checkRecords(value: unknown): Record<string, unknown>[] {\n+  if (!Array.isArray(value)) {\n+    return [];\n+  }\n+  return value.filter(\n+    (item): item is Record<string, unknown> =>\n+      typeof item === \"object\" && item !== null && !Array.isArray(item),\n+  );\n }\n \n-export function evaluateGate(input: unknown): unknown {\n-  void input;\n-  throw new Error(\"not implemented\");\n+function nameOf(rec: Record<string, unknown>): string {\n+  return typeof rec.name === \"string\" ? rec.name : \"\";\n+}\n+export function evaluateGate(input: unknown): {\n+  verdict: \"pass\" | \"fail\";\n+  failed: string[];\n+  unevidenced: string[];\n+} {\n+  if (typeof input !== \"object\" || input === null || Array.isArray(input)) {\n+    return { verdict: \"fail\", failed: [], unevidenced: [] };\n+  }\n+  const rec = input as Record<string, unknown>;\n+  const failed: string[] = [];\n+  const unevidenced: string[] = [];\n+  for (const check of checkRecords(rec.checks)) {\n+    const name = nameOf(check);\n+    if (check.passed !== true) {\n+      failed.push(name);\n+    } else if (check.evidenced !== true) {\n+      failed.push(name);\n+    }\n+  }\n+  const verdict = failed.length === 0 ? \"pass\" : \"fail\";\n+  return { verdict, failed: sortedUnique(failed), unevidenced };\n+}\n+\n+export function normalizeGateNames(input: unknown): string[] {\n+  if (!Array.isArray(input)) {\n+    return [];\n+  }\n+  return sortedUnique(input.filter((item): item is string => typeof item === \"string\"));\n }\n \n-export function gateTally(input: unknown): unknown {\n-  void input;\n-  throw new Error(\"not implemented\");\n+export function gateTally(input: unknown): { pass: number; fail: number } {\n+  const tally = { pass: 0, fail: 0 };\n+  for (const rec of checkRecords(input)) {\n+    if (rec.verdict === \"pass\") {\n+      tally.pass += 1;\n+    } else if (rec.verdict === \"fail\") {\n+      tally.fail += 1;\n+    }\n+  }\n+  return tally;\n }\n"
+  ]
+}
