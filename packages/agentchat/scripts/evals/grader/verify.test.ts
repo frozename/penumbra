@@ -538,6 +538,66 @@ test("a regrade matching the fail verdict and reason but not per_check is nondet
   expect(gradeInputs).toHaveLength(1);
 });
 
+test("a regrade matching verdict and per_check but not fail_reason is nondeterministic", async () => {
+  const claim = failClaim(A);
+  const regrade: ReceiptClaimBody = claimBody(A, {
+    claimed_verdict: "fail",
+    fail_reason: "candidate_timeout",
+    per_check: A.assertions.map((assertion, index) => ({
+      id: assertion.id,
+      ok: index === 0,
+    })),
+  });
+  const episode = makeEpisode();
+  const { ctx, gradeInputs } = mkCtx({ gradeResult: regrade });
+  const mod = await loadVerify();
+  const res = await mod.verifyReceipt(claim, episode, ctx);
+  expect(res).toEqual({
+    status: "verified",
+    verdict: "fail",
+    fail_reason: "nondeterministic",
+    sha: FINAL,
+    control_verdict: "pass",
+  });
+  expect(gradeInputs).toHaveLength(1);
+});
+
+test("a pass claim regraded as fail with identical fail_reason and per_check is nondeterministic", async () => {
+  const claim = passClaim(A);
+  // Built unsigned with a null fail_reason so the fail_reason and per_check
+  // equalities hold and only the claimed_verdict guard can diverge: this
+  // isolates the verdict comparison from the other two.
+  const regrade: ReceiptClaimBody = claimBody(A, { claimed_verdict: "fail" });
+  const episode = makeEpisode();
+  const { ctx, gradeInputs } = mkCtx({ gradeResult: regrade });
+  const mod = await loadVerify();
+  const res = await mod.verifyReceipt(claim, episode, ctx);
+  expect(res).toEqual({
+    status: "verified",
+    verdict: "fail",
+    fail_reason: "nondeterministic",
+    sha: FINAL,
+    control_verdict: "pass",
+  });
+  expect(gradeInputs).toHaveLength(1);
+});
+
+test("an unknown-verdict claim with an identical regrade never verifies", async () => {
+  const claim = passClaim(A, { claimed_verdict: "unknown" });
+  const episode = makeEpisode();
+  const { ctx, gradeInputs } = mkCtx({ gradeResult: claim });
+  const mod = await loadVerify();
+  const res = await mod.verifyReceipt(claim, episode, ctx);
+  expect(res).toEqual({
+    status: "verified",
+    verdict: "fail",
+    fail_reason: "nondeterministic",
+    sha: FINAL,
+    control_verdict: "pass",
+  });
+  expect(gradeInputs).toHaveLength(1);
+});
+
 test("a non-store error from readEntry propagates instead of becoming bundle_missing", async () => {
   const claim = passClaim(A);
   const episode = makeEpisode();
