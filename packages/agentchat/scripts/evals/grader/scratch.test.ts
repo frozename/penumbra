@@ -385,6 +385,37 @@ test("graderBuildId tracks dependency contents and tool versions", async () => {
   }
 }, 30_000);
 
+test("graderBuildId tracks external package versions", async () => {
+  const P = mkTmp("penumbra-buildid-ext-");
+  const entry = join(P, "entry.ts");
+  writeFileSync(entry, 'export { x } from "fake-ext";\nexport { y } from "@scope/pkg";\n', "utf8");
+  const opts = { entrypoints: [entry], root: P, bunVersion: "b1", gitVersion: "g1" };
+
+  const idMissing = await graderBuildId(opts);
+
+  const fakeDir = join(P, "node_modules", "fake-ext");
+  const scopeDir = join(P, "node_modules", "@scope", "pkg");
+  mkdirSync(fakeDir, { recursive: true });
+  mkdirSync(scopeDir, { recursive: true });
+  const writeVersions = (fake: string, scope: string): void => {
+    writeFileSync(join(fakeDir, "package.json"), `{"name":"fake-ext","version":"${fake}"}`, "utf8");
+    writeFileSync(
+      join(scopeDir, "package.json"),
+      `{"name":"@scope/pkg","version":"${scope}"}`,
+      "utf8",
+    );
+  };
+  writeVersions("1.0.0", "2.0.0");
+  const idV1 = await graderBuildId(opts);
+  expect(idV1).not.toBe(idMissing);
+
+  writeVersions("1.0.0", "2.0.1");
+  expect(await graderBuildId(opts)).not.toBe(idV1);
+
+  writeVersions("1.0.0", "2.0.0");
+  expect(await graderBuildId(opts)).toBe(idV1);
+}, 30_000);
+
 test("graderBuildId does not depend on the process cwd", async () => {
   const P = mkTmp("penumbra-buildid-proj-");
   writeFileSync(

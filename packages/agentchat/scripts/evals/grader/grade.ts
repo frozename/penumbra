@@ -119,6 +119,7 @@ export async function grade(input: GradeInput, opts: GradeOptions): Promise<Grad
     spawn: opts.spawn,
     timeoutMs: opts.timeoutMs,
     treeId: `cand-${randomBytes(6).toString("hex")}`,
+    compare: opts.controls.compare,
   });
   switch (outcome.kind) {
     case "contract_violation":

@@ -132,6 +132,80 @@ function defaultEntrypoints(root: string): string[] {
     .map((name) => join(root, name));
 }
 
+// Externalized bare imports are excluded from the metafile inputs, so a bump
+// of zod or @penumbra/api-contract would otherwise leave the build id (and
+// every cached control keyed by it) unchanged while candidate semantics move.
+// Fold each imported package's resolved version into the hash instead.
+const EXTERNAL_IMPORT_RE =
+  /\b(?:from|import)\s*\(\s*["']([^"']+)["']|\b(?:from|import)\s+["']([^"']+)["']/g;
+
+function packageOfSpecifier(spec: string): string {
+  return spec.startsWith("@")
+    ? spec.split("/").slice(0, 2).join("/")
+    : (spec.split("/")[0] ?? spec);
+}
+
+function externalSpecifiers(content: string): string[] {
+  const specs = new Set<string>();
+  for (const match of content.matchAll(EXTERNAL_IMPORT_RE)) {
+    const spec = match[1] ?? match[2] ?? "";
+    if (
+      spec === "" ||
+      spec.startsWith(".") ||
+      spec.startsWith("node:") ||
+      spec.startsWith("bun:") ||
+      isHashedSpecifier(spec)
+    ) {
+      continue;
+    }
+    specs.add(packageOfSpecifier(spec));
+  }
+  return [...specs];
+}
+
+function readPackageVersion(pkgJson: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(pkgJson, "utf8"));
+    if (typeof parsed === "object" && parsed !== null && "version" in parsed) {
+      const version: unknown = Reflect.get(parsed, "version");
+      if (typeof version === "string") {
+        return version;
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+// Bun.resolveSync cannot read package.json through the exports map, so walk
+// node_modules upward from the importing file like the runtime resolver does.
+function externalVersion(spec: string, fromDir: string): string {
+  let dir = fromDir;
+  for (;;) {
+    const found = readPackageVersion(join(dir, "node_modules", spec, "package.json"));
+    if (found !== null) {
+      return found;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) {
+      return "unresolved";
+    }
+    dir = parent;
+  }
+}
+
+function externalVersions(inputPaths: string[]): string[] {
+  const entries = new Set<string>();
+  for (const key of inputPaths) {
+    const abs = resolve(process.cwd(), key);
+    for (const spec of externalSpecifiers(readFileSync(abs, "utf8"))) {
+      entries.add(`${spec}@${externalVersion(spec, dirname(abs))}`);
+    }
+  }
+  return [...entries].sort();
+}
+
 // Bun's unminified output embeds `// <path>` comments relative to
 // process.cwd(), so the emitted text is not a stable hash input. The metafile
 // input map is: hash each resolved source file instead.
@@ -175,6 +249,7 @@ export async function graderBuildId(opts: GraderBuildIdOptions = {}): Promise<st
     Buffer.from(
       canonicalJson({
         sources,
+        externals: externalVersions(bundle.inputs),
         bunfig: hashIfExists(join(root, "bunfig.toml")),
         profile: hashIfExists(join(root, "sandbox-darwin.sb")),
         bun: opts.bunVersion ?? Bun.version,

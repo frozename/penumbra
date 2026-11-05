@@ -115,12 +115,14 @@ export async function selfQualify(
 
 export class ControlCache {
   readonly buildId: string;
+  readonly compare: Comparator | undefined;
   private readonly env: ControlCacheEnv;
   private readonly outcomes = new Map<string, Promise<ControlOutcome>>();
 
   constructor(env: ControlCacheEnv) {
     this.env = env;
     this.buildId = env.buildId;
+    this.compare = env.compare;
   }
 
   ensure(ref: FixtureRef, bundle: HoldoutBundle): Promise<ControlOutcome> {

@@ -179,8 +179,22 @@ const SUMMARIZE_GOOD = `export function summarize(list: unknown[]): { valid: num
 }
 `;
 
-const GOOD_VALIDATE_TS = `${VALIDATE_HEAD}\n${SUMMARIZE_GOOD}`;
-const BAD_VALIDATE_TS = `${VALIDATE_HEAD_NO_SYNTH}\n${SUMMARIZE_GOOD}`;
+const DEDUPE_GOOD = `export function dedupe(list: unknown[]): unknown[] {
+  const seen = new Set<string>();
+  const out: unknown[] = [];
+  for (const item of list) {
+    const key = JSON.stringify(item) ?? "undefined";
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(item);
+    }
+  }
+  return out;
+}
+`;
+
+const GOOD_VALIDATE_TS = `${VALIDATE_HEAD}\n${SUMMARIZE_GOOD}\n${DEDUPE_GOOD}`;
+const BAD_VALIDATE_TS = `${VALIDATE_HEAD_NO_SYNTH}\n${SUMMARIZE_GOOD}\n${DEDUPE_GOOD}`;
 
 const BAD_LOG_TS = `console.log("RESULT: PASS");
 console.error("RESULT: PASS");
@@ -228,6 +242,100 @@ const POISON_TS = [
   "}",
   "",
 ].join("\n");
+
+const FORGE_PROBE_TS = `import { writeSync } from "node:fs";
+
+const SPLITS = new Set(["train", "dev", "holdout"]);
+
+function isPlain(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function validateFixture(obj: unknown): { ok: boolean; errors: string[] } {
+  try {
+    writeSync(3, "forged nonce {}\\n");
+  } catch {
+    // fd 3 is only open inside probe legs; the forgery is best-effort.
+  }
+  if (!isPlain(obj)) {
+    return { ok: false, errors: ["not_object"] };
+  }
+  const errors: string[] = [];
+  if (obj.schema_version !== 1) {
+    errors.push("bad_schema_version");
+  }
+  if (typeof obj.family_id !== "string" || !obj.family_id.startsWith("fam-")) {
+    errors.push("bad_family_id");
+  }
+  if (typeof obj.split !== "string" || !SPLITS.has(obj.split)) {
+    errors.push("bad_split");
+  }
+  const rootKind = isPlain(obj.root) ? obj.root.kind : undefined;
+  if (obj.synthetic !== (rootKind === "synthetic")) {
+    errors.push("synthetic_mismatch");
+  }
+  return { ok: errors.length === 0, errors };
+}
+
+${SUMMARIZE_GOOD}
+${DEDUPE_GOOD}`;
+
+const FORGE_INVARIANT_TS = `import { writeSync } from "node:fs";
+
+${VALIDATE_HEAD}
+export function summarize(list: unknown[]): { valid: number; invalid: number } {
+  try {
+    writeSync(3, "forged nonce {}\\n");
+  } catch {
+    // fd 3 is only open inside probe legs; the forgery is best-effort.
+  }
+  let valid = 0;
+  for (const item of list) {
+    if (validateFixture(item).ok) {
+      valid += 1;
+    }
+  }
+  return { valid, invalid: list.length - valid };
+}
+
+${DEDUPE_GOOD}`;
+
+const SPIN_SUMMARIZE_TS = `${VALIDATE_HEAD}
+export function summarize(_list: unknown[]): { valid: number; invalid: number } {
+  while (true) {}
+}
+
+${DEDUPE_GOOD}`;
+
+const SENTINEL_VALIDATE_TS = `const SPLITS = new Set(["train", "dev", "holdout"]);
+
+function isPlain(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function validateFixture(obj: unknown): { ok: boolean; errors: string[] } {
+  if (!isPlain(obj)) {
+    return { ok: false, errors: ["not_object"], sentinel: true };
+  }
+  const errors: string[] = [];
+  if (obj.schema_version !== 1) {
+    errors.push("bad_schema_version");
+  }
+  if (typeof obj.family_id !== "string" || !obj.family_id.startsWith("fam-")) {
+    errors.push("bad_family_id");
+  }
+  if (typeof obj.split !== "string" || !SPLITS.has(obj.split)) {
+    errors.push("bad_split");
+  }
+  const rootKind = isPlain(obj.root) ? obj.root.kind : undefined;
+  if (obj.synthetic !== (rootKind === "synthetic")) {
+    errors.push("synthetic_mismatch");
+  }
+  return { ok: errors.length === 0, errors, sentinel: true };
+}
+`;
+
+const SENTINEL_TS = `${SENTINEL_VALIDATE_TS}\n${SUMMARIZE_GOOD}\n${DEDUPE_GOOD}`;
 
 const ZOD_HEAD = `import { z } from "zod";
 
@@ -287,8 +395,8 @@ export function validateFixture(obj: unknown): { ok: boolean; errors: string[] }
 }
 `;
 
-const ZOD_GOOD_TS = `${ZOD_HEAD}\n${SUMMARIZE_GOOD}`;
-const ZOD_BAD_TS = `${ZOD_HEAD_NO_SYNTH}\n${SUMMARIZE_GOOD}`;
+const ZOD_GOOD_TS = `${ZOD_HEAD}\n${SUMMARIZE_GOOD}\n${DEDUPE_GOOD}`;
+const ZOD_BAD_TS = `${ZOD_HEAD_NO_SYNTH}\n${SUMMARIZE_GOOD}\n${DEDUPE_GOOD}`;
 
 const BUNFIG_TOML = 'preload = ["./evil.ts"]\n';
 const EVIL_LOG_TS = 'console.log("RESULT: PASS");\n';
@@ -316,7 +424,7 @@ const GRADE_URL = new URL("./grade.ts", import.meta.url).href;
 const CONTROL_URL = new URL("./control.ts", import.meta.url).href;
 const SHA40 = /^[0-9a-f]{40}$/;
 const BUILD_ID = /^[0-9a-f]{64}$/;
-const ALL_IDS = ["c1", "c2", "c3", "c4", "c5", "c6", "c7"];
+const ALL_IDS = ["c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8"];
 
 const HOST_SANDBOX_KIND = await detectSandbox();
 
@@ -574,6 +682,25 @@ function deepEqual(a: unknown, b: unknown): boolean {
     deepEqual((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key]),
   );
 }
+
+function stripSentinel(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => stripSentinel(item));
+  }
+  if (typeof value === "object" && value !== null) {
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      if (key !== "sentinel") {
+        out[key] = stripSentinel(entry);
+      }
+    }
+    return out;
+  }
+  return value;
+}
+
+const stripSentinelCompare: CompareFn = (observed, expected) =>
+  deepEqual(stripSentinel(observed), stripSentinel(expected));
 
 function parseReceipt(res: unknown): ReceiptClaimBody {
   const parsed = ReceiptClaimSchema.safeParse(res);
@@ -997,8 +1124,8 @@ test("file assertions inspect commit blobs, not the materialized tree", async ()
     variant_id: "files",
     assertions: [
       ...s.bundle.assertions,
-      { kind: "file_absent", id: "c8", path: ".env" },
-      { kind: "file_matches", id: "c9", path: "package.json", pattern: '"bun"\\s*:' },
+      { kind: "file_absent", id: "c10", path: ".env" },
+      { kind: "file_matches", id: "c11", path: "package.json", pattern: '"bun"\\s*:' },
     ],
     patches: {
       good: await patchBetween(s.scratch, s.base, variantSha),
@@ -1023,7 +1150,7 @@ test("file assertions inspect commit blobs, not the materialized tree", async ()
   expect(receipt.claimed_verdict).toBe("fail");
   expect(receipt.fail_reason).toBe("hidden_failed");
   expect(receipt.assertion_set_digest).toBe(assertionSetDigest(filesBundle));
-  expectChecks(receipt, { c8: false, c9: true });
+  expectChecks(receipt, { c10: false, c11: true });
   expectAllOk(receipt, ALL_IDS);
 
   const linkSha = await commitFiles(
@@ -1133,6 +1260,112 @@ test("an order-insensitive invariant compares x with the parent-side shuffle", a
   expect(c7Inputs).toHaveLength(2);
   expect(c7Inputs.filter((input) => deepEqual(input, x))).toHaveLength(1);
   expect(c7Inputs.filter((input) => deepEqual(input, shuffled))).toHaveLength(1);
+}, 120_000);
+
+test("an idempotent invariant re-applies the first output in a fresh process", async () => {
+  const s = await setup();
+  const c8 = s.bundle.assertions.find((a) => a.id === "c8");
+  if (c8?.kind !== "invariant" || c8.property !== "idempotent") {
+    throw new Error("unreachable: c8 must be an idempotent invariant");
+  }
+  expect(c8.export).toBe("dedupe");
+  const firstInput: unknown = c8.inputs[0];
+  if (!Array.isArray(firstInput)) {
+    throw new Error("unreachable: c8 input must be an array");
+  }
+  const seenKeys = new Set<string>();
+  const dedupedFixtureInput = firstInput.filter((item) => {
+    const key = JSON.stringify(item);
+    if (seenKeys.has(key)) {
+      return false;
+    }
+    seenKeys.add(key);
+    return true;
+  });
+
+  const run = mkRun(s);
+  const receipt = parseReceipt(await grade(s, run, await goodSha(s)));
+  expect(receipt.claimed_verdict).toBe("pass");
+  expectChecks(receipt, { c8: true });
+
+  const c8Records = run.records.filter((rec) => {
+    const calls = payloadOf(rec)?.calls ?? [];
+    return clsOf(rec) === "candidate" && calls.length === 1 && calls[0]?.id === "c8";
+  });
+  expect(c8Records).toHaveLength(2);
+  const inputs = c8Records.map((rec) => payloadOf(rec)?.calls[0]?.input);
+  expect(deepEqual(inputs[0], c8.inputs[0])).toBe(true);
+  expect(deepEqual(inputs[1], dedupedFixtureInput)).toBe(true);
+}, 120_000);
+
+test("the non-idempotent dedupe mutant fails only the idempotent invariant", async () => {
+  const s = await setup();
+  const sha = await s.scratch.applyPatch(s.base, s.bundle.mutants[2]!);
+  const run = mkRun(s);
+
+  const receipt = parseReceipt(await grade(s, run, sha));
+  expect(receipt.claimed_verdict).toBe("fail");
+  expect(receipt.fail_reason).toBe("hidden_failed");
+  expectChecks(receipt, { c8: false });
+  expectAllOk(receipt, ["c1", "c2", "c3", "c4", "c5", "c6", "c7"]);
+}, 120_000);
+
+test("a candidate forging the fd-3 probe frame gets contract_violation", async () => {
+  const s = await setup();
+  const forgeSha = await commitFiles(s.scratch, s.base, {
+    ...s.repoFiles,
+    "src/validate.ts": FORGE_PROBE_TS,
+  });
+  const run = mkRun(s);
+
+  const receipt = parseReceipt(await grade(s, run, forgeSha));
+  expect(receipt.claimed_verdict).toBe("fail");
+  expect(receipt.fail_reason).toBe("contract_violation");
+}, 120_000);
+
+test("forgery during an invariant call is contract_violation, not a failed check", async () => {
+  const s = await setup();
+  const forgeSha = await commitFiles(s.scratch, s.base, {
+    ...s.repoFiles,
+    "src/validate.ts": FORGE_INVARIANT_TS,
+  });
+  const run = mkRun(s);
+
+  const receipt = parseReceipt(await grade(s, run, forgeSha));
+  expect(receipt.claimed_verdict).toBe("fail");
+  expect(receipt.fail_reason).toBe("contract_violation");
+}, 120_000);
+
+test("a spin inside the invariant export times out as candidate_timeout", async () => {
+  const s = await setup();
+  const spinSha = await commitFiles(s.scratch, s.base, {
+    ...s.repoFiles,
+    "src/validate.ts": SPIN_SUMMARIZE_TS,
+  });
+  const run = mkRun(s, { timeoutMs: 3_000 });
+
+  const receipt = parseReceipt(await grade(s, run, spinSha));
+  expect(receipt.claimed_verdict).toBe("fail");
+  expect(receipt.fail_reason).toBe("candidate_timeout");
+}, 120_000);
+
+test("grade evaluates the candidate with the control cache's comparator", async () => {
+  const s = await setup();
+  const sentinelSha = await commitFiles(s.scratch, s.base, {
+    ...s.repoFiles,
+    "src/validate.ts": SENTINEL_TS,
+  });
+
+  const strict = mkRun(s);
+  const strictReceipt = parseReceipt(await grade(s, strict, sentinelSha));
+  expect(strictReceipt.claimed_verdict).toBe("fail");
+  expect(strictReceipt.fail_reason).toBe("hidden_failed");
+  expectChecks(strictReceipt, { c1: false });
+
+  const lenient = mkRun(s, { compare: stripSentinelCompare });
+  const lenientReceipt = parseReceipt(await grade(s, lenient, sentinelSha));
+  expect(lenientReceipt.claimed_verdict).toBe("pass");
+  expectChecks(lenientReceipt, { c1: true });
 }, 120_000);
 
 async function legIsolationCase(sandbox: SandboxKind): Promise<void> {
