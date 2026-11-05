@@ -361,3 +361,92 @@ test("bundle-less (holdout) fixtures replay only through an open store session",
     publicEpisodes.map((ep) => ep.final_sha).toSorted(),
   );
 });
+
+function mkLockEntry(entry: CorpusFixture, variantId: string): HoldoutLockEntry {
+  return {
+    family_id: entry.fixture.family_id,
+    variant_id: variantId,
+    root: entry.fixture.root,
+    failure_type: entry.fixture.failure_type,
+    synthetic: entry.fixture.synthetic,
+    expect_blocked: entry.fixture.expect_blocked,
+    base_sha: entry.fixture.base_sha,
+    task_digest: entry.fixture.task_digest,
+    source_root_handoff_digests: entry.fixture.source_root_handoff_digests,
+    content_digest: entry.fixture.content_digest,
+    assertion_set_digest: entry.fixture.hidden_ref.assertion_set_digest,
+  };
+}
+
+test("holdout lock lookup pins both family and variant, not family alone", async () => {
+  const scratch = await mkScratch();
+  const entry = await loadEntry(scratch);
+  const { bundle } = requireParts(entry);
+  const hidden: CorpusFixture = { ...entry, bundle: null, repoFiles: null };
+  const fixtureEntry = mkLockEntry(entry, entry.fixture.variant_id);
+  const otherVariant = mkLockEntry(entry, "v2");
+  // v2 first: a family-only lookup would resolve the wrong entry.
+  const lock: HoldoutLock = {
+    schema_version: 1,
+    entries: [otherVariant, fixtureEntry],
+    digest: computeLockDigest([otherVariant, fixtureEntry]),
+  };
+  const bundleV2: HoldoutBundle = {
+    ...bundle,
+    variant_id: "v2",
+    patches: { good: bundle.patches.good, bad: [] },
+  };
+  const reads: HoldoutLockEntry[] = [];
+  const mod = replay();
+  const episodes = toEpisodes(
+    await mod.buildReplayEpisodes([hidden], {
+      scratch,
+      lock,
+      store: {
+        sessionId: "s-1",
+        readEntry: (arg: HoldoutLockEntry): Promise<HoldoutBundle> => {
+          reads.push(arg);
+          return Promise.resolve(arg.variant_id === "v2" ? bundleV2 : bundle);
+        },
+      },
+    }),
+  );
+  expect(reads).toHaveLength(1);
+  expect(reads[0]).toEqual(fixtureEntry);
+  expect(episodes.map((ep) => ep.labels["replay_patch"])).toEqual(["good", "bad-0"]);
+  const publicEpisodes = toEpisodes(await mod.buildReplayEpisodes([entry], { scratch }));
+  expect(episodes.map((ep) => ep.final_sha).toSorted()).toEqual(
+    publicEpisodes.map((ep) => ep.final_sha).toSorted(),
+  );
+});
+
+test("a lock missing the fixture's entry throws before readEntry is called", async () => {
+  const scratch = await mkScratch();
+  const entry = await loadEntry(scratch);
+  const { bundle } = requireParts(entry);
+  const hidden: CorpusFixture = { ...entry, bundle: null, repoFiles: null };
+  const otherVariant = mkLockEntry(entry, "v2");
+  const lock: HoldoutLock = {
+    schema_version: 1,
+    entries: [otherVariant],
+    digest: computeLockDigest([otherVariant]),
+  };
+  const reads: HoldoutLockEntry[] = [];
+  const mod = replay();
+  const err = await catchErr(() =>
+    mod.buildReplayEpisodes([hidden], {
+      scratch,
+      lock,
+      store: {
+        sessionId: "s-1",
+        readEntry: (arg: HoldoutLockEntry): Promise<HoldoutBundle> => {
+          reads.push(arg);
+          return Promise.resolve(bundle);
+        },
+      },
+    }),
+  );
+  expect(err).toBeInstanceOf(Error);
+  expect(errMsg(err)).toMatch(/holdout store lock entry missing/);
+  expect(reads).toHaveLength(0);
+});
