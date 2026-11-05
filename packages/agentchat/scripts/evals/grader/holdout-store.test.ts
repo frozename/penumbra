@@ -594,6 +594,104 @@ test("openHoldoutStore fails closed when the git work-tree probe errors", async 
     ),
   });
   expect(typeof store.readEntry).toBe("function");
+
+  const falseWithNonZeroDir = join(mkTmp("penumbra-holdout-probe-"), "store");
+  await expectStoreCode(
+    api,
+    () =>
+      api.openHoldoutStore({
+        storePath: falseWithNonZeroDir,
+        lock,
+        runCommand: failingRunner(1, "false", ""),
+      }),
+    "store_in_repo",
+  );
+  expect(existsSync(falseWithNonZeroDir)).toBe(false);
+
+  const trueWithNotARepoDir = join(mkTmp("penumbra-holdout-probe-"), "store");
+  await expectStoreCode(
+    api,
+    () =>
+      api.openHoldoutStore({
+        storePath: trueWithNotARepoDir,
+        lock,
+        runCommand: failingRunner(0, "true", "fatal: not a git repository\n"),
+      }),
+    "store_in_repo",
+  );
+  expect(existsSync(trueWithNotARepoDir)).toBe(false);
+});
+
+function withGitEnv(vars: Record<string, string>, fn: () => Promise<void>): Promise<void> {
+  const saved: Record<string, string | undefined> = {};
+  for (const key of Object.keys(vars)) {
+    saved[key] = process.env[key];
+    process.env[key] = vars[key];
+  }
+  return fn().finally(() => {
+    for (const key of Object.keys(vars)) {
+      if (saved[key] === undefined) {
+        Reflect.deleteProperty(process.env, key);
+      } else {
+        process.env[key] = saved[key];
+      }
+    }
+  });
+}
+
+test("the work-tree probe scrubs GIT_DIR so a leaked bare repo cannot admit an in-repo store", async () => {
+  const api = await loadHoldoutStore();
+  const planRepo = mkPlanRepo();
+  const bareDir = mkTmp("penumbra-holdout-bare-");
+  gitSync(bareDir, ["init", "-q", "--bare"]);
+  const lock = mkLock([]);
+  const storeDir = join(planRepo.repoRoot, "store");
+  mkdirSync(storeDir, { recursive: true });
+
+  await withGitEnv({ GIT_DIR: bareDir }, async () => {
+    await expectStoreCode(
+      api,
+      () => api.openHoldoutStore({ storePath: storeDir, lock }),
+      "store_in_repo",
+    );
+  });
+  expect(existsSync(join(storeDir, "access.jsonl"))).toBe(false);
+});
+
+test("plan tracking scrubs GIT_DIR/GIT_WORK_TREE so a foreign index cannot vouch for an untracked plan", async () => {
+  const api = await loadHoldoutStore();
+  const storeDir = mkTmp("penumbra-holdout-store-");
+  const bundle = mkBundle("fam-9001", "v1", 11);
+  const entry = mkEntry({ kind: "issue", number: 9001 }, bundle, false);
+  const lock = mkLock([entry]);
+  writeStore(storeDir, [bundle]);
+
+  const untrackedPlan = mkPlanRepo({ track: false });
+  const foreignRoot = mkTmp("penumbra-holdout-foreign-");
+  gitSync(foreignRoot, ["init", "-q"]);
+  writeFileSync(join(foreignRoot, "plan.md"), "# eval plan\n", "utf8");
+  gitSync(foreignRoot, ["add", "plan.md"]);
+  gitSync(foreignRoot, [...COMMIT_IDENTITY, "commit", "-q", "-m", "plan"]);
+
+  const grant = unsealHoldout(lock, { sha256: untrackedPlan.planSha, max_unseals: 2 });
+
+  await withGitEnv(
+    { GIT_DIR: join(foreignRoot, ".git"), GIT_WORK_TREE: untrackedPlan.repoRoot },
+    async () => {
+      await expectStoreCode(
+        api,
+        () =>
+          api.openHoldoutStore({
+            storePath: storeDir,
+            lock,
+            grant,
+            planPath: untrackedPlan.planPath,
+          }),
+        "plan_untracked",
+      );
+    },
+  );
+  expect(existsSync(join(storeDir, "access.jsonl"))).toBe(false);
 });
 
 test("unseal budget counts only granted records toward max_unseals", async () => {
