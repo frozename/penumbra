@@ -393,7 +393,13 @@ test("session-handoff skeleton omits the stamp line without a session id", async
       storageRoot: root,
       repoRoot: root,
       templateCtx,
-      captureCtx: { db, project: "penumbra", sessionId: null, userId: "u", machineId: "m" },
+      captureCtx: {
+        db,
+        project: "penumbra",
+        sessionId: null as unknown as string,
+        userId: "u",
+        machineId: "m",
+      },
     });
 
     const notesDir = join(root, "docs/notes");

@@ -166,14 +166,17 @@ test("emitFileOutput mode=append preserves interleaved concurrent writes", async
     const bothReadsStarted = new Promise<void>((resolvePromise) => {
       releaseReads = resolvePromise;
     });
-    const readSpy = spyOn(fsPromises, "readFile").mockImplementation((path, options) => {
+    const readSpy = spyOn(fsPromises, "readFile").mockImplementation(((
+      path: unknown,
+      options: unknown,
+    ) => {
       if (path === target) {
         targetReads += 1;
         if (targetReads === 2) releaseReads();
         return bothReadsStarted.then(() => "base\n");
       }
-      return originalReadFile(path, options);
-    });
+      return originalReadFile(path as never, options as never);
+    }) as unknown as typeof fsPromises.readFile);
 
     try {
       const [first, second] = await Promise.all([
@@ -282,12 +285,12 @@ test("emitFileOutput writes through a tmp path then rename", async () => {
     const writes: string[] = [];
     const renames: [string, string][] = [];
     const writeSpy = spyOn(fsPromises, "writeFile").mockImplementation((path, body) => {
-      writes.push(path);
+      writes.push(path as string);
       expect(body).toBe("atomic");
       return Promise.resolve();
     });
     const renameSpy = spyOn(fsPromises, "rename").mockImplementation((from, to) => {
-      renames.push([from, to]);
+      renames.push([from as string, to as string]);
       return Promise.resolve();
     });
 
@@ -316,12 +319,12 @@ test("emitFileOutput mode=unique-suffix writes through a tmp path then link", as
     const writes: string[] = [];
     const links: [string, string][] = [];
     const writeSpy = spyOn(fsPromises, "writeFile").mockImplementation((path, body) => {
-      writes.push(path);
+      writes.push(path as string);
       expect(body).toBe("atomic-unique");
       return Promise.resolve();
     });
     const linkSpy = spyOn(fsPromises, "link").mockImplementation((from, to) => {
-      links.push([from, to]);
+      links.push([from as string, to as string]);
       return Promise.resolve();
     });
 

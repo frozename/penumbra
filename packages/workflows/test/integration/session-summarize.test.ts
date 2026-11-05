@@ -131,10 +131,10 @@ test("session-summarize fires on stop, writes markdown file, and POSTs observati
       };
     };
     const observationCalls: ObservationCall[] = [];
-    const fakeFetch: typeof globalThis.fetch = (
+    const fakeFetch = (
       input: Parameters<typeof globalThis.fetch>[0],
       init?: Parameters<typeof globalThis.fetch>[1],
-    ) => {
+    ): Promise<Response> => {
       const urlStr =
         typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       const bodyStr = typeof init?.body === "string" ? init.body : "";
@@ -143,7 +143,7 @@ test("session-summarize fires on stop, writes markdown file, and POSTs observati
         new Response(JSON.stringify({ event_id: "evt-stop-1" }), { status: 200 }),
       );
     };
-    globalThis.fetch = fakeFetch;
+    globalThis.fetch = fakeFetch as unknown as typeof globalThis.fetch;
     let result;
     try {
       result = await executeWorkflow({

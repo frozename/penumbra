@@ -83,7 +83,7 @@ test("taskOutput resolves templates and posts the workflow task payload", async 
         acceptance_criteria: "confirm {{file_path}} is fixed",
         priority: "high",
         eligibility: { required_tags: ["{{project}}"] },
-        review_eligibility: { min_tier: "{{project}}" },
+        review_eligibility: { min_tier: "{{project}}" as unknown as "economy" },
       },
       {
         workflow: { name: "task-wf", origin: undefined },

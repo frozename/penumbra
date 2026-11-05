@@ -28,7 +28,7 @@ test("picks the newest-mtime candidate among bare and .skeleton.md files", async
     if (out.result === null) throw new Error("expected newest continuation note");
     expect(out.result.path).toBe(newer);
     expect(out.result.body).toBe("newer note\n");
-    expect(out.result.truncated).toBe(false);
+    expect((out.result as { truncated?: boolean }).truncated).toBe(false);
     expect(out.warnings).toEqual([]);
   } finally {
     rmSync(repo, { recursive: true, force: true });
@@ -128,7 +128,7 @@ test("ignores a newer unapproved .draft.md file and picks the bare note", async 
     if (out.result === null) throw new Error("expected approved continuation note");
     expect(out.result.path).toBe(approved);
     expect(out.result.body).toBe("approved note\n");
-    expect(out.result.truncated).toBe(false);
+    expect((out.result as { truncated?: boolean }).truncated).toBe(false);
     expect(out.warnings).toEqual([]);
   } finally {
     rmSync(repo, { recursive: true, force: true });
@@ -229,12 +229,12 @@ test("skips one stat failure without discarding other continuation candidates", 
     const out = await runLatestContinuationNoteSource({
       cwd: repo,
       args: {},
-      statFile: async (path: Parameters<typeof stat>[0]) => {
+      statFile: (async (path: Parameters<typeof stat>[0]) => {
         if (String(path).endsWith(bad)) {
           throw new Error("simulated unreadable stat");
         }
         return await stat(path);
-      },
+      }) as unknown as typeof stat,
     });
 
     if (out.result === null) throw new Error("expected fallback continuation note");

@@ -105,7 +105,7 @@ test("ts spec closes ctx.db handle after run", async () => {
       const db = workflowCtx.db?.();
       expect(db?.query("SELECT 1 AS ok").get()).toEqual({ ok: 1 });
       capturedDb = db ?? null;
-      return { ok: true };
+      return { ok: true } as unknown as Promise<{ ok: boolean }>;
     };
 
     const result = await executeWorkflow({
@@ -156,7 +156,7 @@ test("ts ctx.fileWrite result is captured as artifact", async () => {
     run: { kind: "ts-function" },
   };
 
-  const ctx: WorkflowCtx = {
+  const ctx = {
     dispatch: () => Promise.resolve({ conversation_id: "conv", handoff_id: "hid" }),
     awaitChain: () =>
       Promise.resolve({
@@ -170,7 +170,7 @@ test("ts ctx.fileWrite result is captured as artifact", async () => {
     storageRoot: "/tmp",
     project: "proj",
     args: {},
-  };
+  } as unknown as WorkflowCtx;
 
   const fn = async (workflowCtx: WorkflowCtx): Promise<{ ok: boolean }> => {
     await workflowCtx.fileWrite("ignored.txt", "body");

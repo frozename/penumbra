@@ -59,7 +59,7 @@ test("evaluateStateThresholds matches when metric crosses", async () => {
       "queue-idle-min": 45,
       "time-since-last-handoff-min": 0,
       "pending-handoffs": 0,
-    };
+    } as unknown as Parameters<typeof evaluateStateThresholds>[1];
     const matched = evaluateStateThresholds(reg, metrics);
     expect(matched.map((s) => s.name)).toEqual(["b"]);
     const noMatch = evaluateStateThresholds(reg, { ...metrics, "queue-idle-min": 10 });
