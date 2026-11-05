@@ -579,6 +579,10 @@ interface AcpSessionNewResponse {
   // #328: ACP session model state ({ currentModelId, availableModels: [{ modelId }] }) from
   // agents that support session/set_model. Untrusted wire data; read only via decideSessionModel.
   models?: unknown;
+  // #328: ACP session config options (array of { id, name, category, type, currentValue, options })
+  // from agents that support session/set_config_option. Untrusted wire data; read only via
+  // decideConfigOptionModel.
+  configOptions?: unknown;
 }
 
 interface AcpPromptResponse {
@@ -876,6 +880,51 @@ function decideSessionModel(model: string, models: unknown): SessionModelAction 
       (entry as { modelId?: unknown }).modelId === model,
   );
   return listed ? "select" : "unlisted";
+}
+
+// #328: how to apply options.model given the session/new `configOptions` field.
+// Only the first array entry that is an object with category "model", type
+// "select" and a string id is considered. "current" when its currentValue
+// matches, "select" (with the option's id) when the flattened options list the
+// model, "unlisted" when the option exists but does not list it, and
+// "unadvertised" when no such config option exists.
+type ConfigOptionModelAction =
+  | { action: "current" }
+  | { action: "select"; configId: string }
+  | { action: "unlisted" }
+  | { action: "unadvertised" };
+
+function flattenConfigOptionValues(options: unknown): string[] {
+  if (!Array.isArray(options)) return [];
+  const values: string[] = [];
+  for (const entry of options) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const opt = entry as { value?: unknown; options?: unknown };
+    if (typeof opt.value === "string") values.push(opt.value);
+    values.push(...flattenConfigOptionValues(opt.options));
+  }
+  return values;
+}
+
+function decideConfigOptionModel(model: string, configOptions: unknown): ConfigOptionModelAction {
+  if (!Array.isArray(configOptions)) return { action: "unadvertised" };
+  for (const entry of configOptions) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const co = entry as {
+      id?: unknown;
+      category?: unknown;
+      type?: unknown;
+      currentValue?: unknown;
+      options?: unknown;
+    };
+    if (co.category !== "model" || co.type !== "select" || typeof co.id !== "string") continue;
+    if (co.currentValue === model) return { action: "current" };
+    if (flattenConfigOptionValues(co.options).includes(model)) {
+      return { action: "select", configId: co.id };
+    }
+    return { action: "unlisted" };
+  }
+  return { action: "unadvertised" };
 }
 
 interface DispatchTurnContext {
@@ -1732,9 +1781,12 @@ export class StdioAcpAdapter implements Adapter {
     return session.sessionId;
   }
 
-  // #328: select options.model through ACP session/set_model when the agent advertises it.
-  // A rejected set_model is recorded and the dispatch continues on the agent's default model.
-  // A boot-deadline timeout has already killed the server, so it fails the dispatch.
+  // #328: select options.model through ACP session/set_model when the agent
+  // advertises it, or through session/set_config_option when the agent
+  // advertises a model config option instead of (or alongside) the session/new
+  // `models` list. A rejected selection request is recorded and the dispatch
+  // continues on the agent's default model. A boot-deadline timeout has already
+  // killed the server, so it fails the dispatch.
   private async applySessionModel(
     server: StdioAcpHandle,
     client: StdioAcpClient,
@@ -1746,25 +1798,74 @@ export class StdioAcpAdapter implements Adapter {
     if (model === undefined || model.length === 0) return;
     const meta = { adapter: this.kind, session_id: session.sessionId, model };
     const action = decideSessionModel(model, session.models);
-    if (action === "unadvertised" || action === "unlisted") {
-      emitLifecycle(input, "acp.model_unavailable", { ...meta, advertised: action === "unlisted" });
-      return;
-    }
     if (action === "current") {
-      emitLifecycle(input, "acp.model_selected", { ...meta, set_model_sent: false });
+      emitLifecycle(input, "acp.model_selected", {
+        ...meta,
+        set_model_sent: false,
+        via: "session/set_model",
+      });
       return;
     }
-    try {
-      await this.requestWithBootDeadline(server, client, bootDeadline, "session/set_model", {
-        sessionId: session.sessionId,
-        modelId: model,
+    if (action === "select") {
+      await this.sendModelSelection(
+        server,
+        client,
+        bootDeadline,
+        input,
+        meta,
+        "session/set_model",
+        {
+          sessionId: session.sessionId,
+          modelId: model,
+        },
+      );
+      return;
+    }
+    const configDecision = decideConfigOptionModel(model, session.configOptions);
+    if (configDecision.action === "unadvertised" || configDecision.action === "unlisted") {
+      emitLifecycle(input, "acp.model_unavailable", {
+        ...meta,
+        advertised: action === "unlisted" || configDecision.action === "unlisted",
       });
+      return;
+    }
+    if (configDecision.action === "current") {
+      emitLifecycle(input, "acp.model_selected", {
+        ...meta,
+        set_model_sent: false,
+        via: "session/set_config_option",
+      });
+      return;
+    }
+    await this.sendModelSelection(
+      server,
+      client,
+      bootDeadline,
+      input,
+      meta,
+      "session/set_config_option",
+      { sessionId: session.sessionId, configId: configDecision.configId, value: model },
+    );
+  }
+
+  // #328: send one model-selection request and record its outcome.
+  private async sendModelSelection(
+    server: StdioAcpHandle,
+    client: StdioAcpClient,
+    bootDeadline: StdioAcpBootDeadline,
+    input: DispatchInput,
+    meta: { adapter: string; session_id: string; model: string },
+    via: "session/set_model" | "session/set_config_option",
+    params: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      await this.requestWithBootDeadline(server, client, bootDeadline, via, params);
     } catch (err) {
-      emitLifecycle(input, "acp.model_select_failed", { ...meta, error: String(err) });
+      emitLifecycle(input, "acp.model_select_failed", { ...meta, via, error: String(err) });
       if (err instanceof Error && err.message.startsWith("stdio-acp: boot timed out")) throw err;
       return;
     }
-    emitLifecycle(input, "acp.model_selected", { ...meta, set_model_sent: true });
+    emitLifecycle(input, "acp.model_selected", { ...meta, set_model_sent: true, via });
   }
 
   private async runModelWarmup(
