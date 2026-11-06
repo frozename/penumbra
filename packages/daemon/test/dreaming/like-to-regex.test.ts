@@ -14,12 +14,14 @@ describe("likeToRegex", () => {
     const re = likeToRegex("%abc");
     expect(re.test("xxabc")).toBe(true);
     expect(re.test("abcx")).toBe(false);
+    expect(likeToRegex("%abc").test("x\nabc")).toBe(true);
   });
 
   test("a trailing % drops only the end anchor", () => {
     const re = likeToRegex("abc%");
     expect(re.test("abcxx")).toBe(true);
     expect(re.test("xabc")).toBe(false);
+    expect(likeToRegex("abc%").test("abc\nx")).toBe(true);
   });
 
   test("a middle % matches any run, including an empty one", () => {
