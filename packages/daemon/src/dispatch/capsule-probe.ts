@@ -113,6 +113,21 @@ function isValidCapsuleSha(sha: string): boolean {
   return CAPSULE_SHA_PATTERN.test(sha);
 }
 
+const CONSERVATIVE_REF_PATTERN = /^[A-Za-z0-9._/-]+$/;
+
+function isConservativeCapsuleRef(ref: string): boolean {
+  if (ref.startsWith("-")) {
+    return false;
+  }
+  if (ref.includes("..") || ref.includes("@{")) {
+    return false;
+  }
+  if (ref.endsWith(".lock") || ref.endsWith("/")) {
+    return false;
+  }
+  return CONSERVATIVE_REF_PATTERN.test(ref);
+}
+
 export interface CapsuleProbeFsStat {
   readonly size: number;
   isFile(): boolean;
@@ -156,6 +171,18 @@ export const defaultCapsuleProbeFs: CapsuleProbeFs = {
   },
 };
 
+export async function capsulePathExists(
+  p: string,
+  fs: CapsuleProbeFs = defaultCapsuleProbeFs,
+): Promise<boolean> {
+  try {
+    const st = await fs.stat(p);
+    return st.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 export function createCapsuleFsPort(fs: CapsuleProbeFs = defaultCapsuleProbeFs): FsPort {
   return {
     realpath: (absPath: string): Promise<string> => fs.realpath(absPath),
@@ -180,6 +207,7 @@ export function createCapsuleFsPort(fs: CapsuleProbeFs = defaultCapsuleProbeFs):
 export interface CapsuleGitPort {
   head(): Promise<string | null>;
   resolveSha(sha: string): Promise<string | null>;
+  resolveRef?(ref: string): Promise<string | null>;
 }
 
 export function createCapsuleGitPort(opts: {
@@ -189,6 +217,13 @@ export function createCapsuleGitPort(opts: {
 }): CapsuleGitPort {
   const exec = opts.exec ?? defaultCapsuleExec;
   const gitEnv = (): Readonly<Record<string, string>> => ({ PATH: capsulePathEnv(opts.pathEnv) });
+  const resolveSha = async (sha: string): Promise<string | null> => {
+    if (!isValidCapsuleSha(sha)) {
+      return null;
+    }
+    const result = await runAllowedGit(exec, opts.worktreeRoot, ["cat-file", "-t", sha], gitEnv());
+    return result.ok && result.stdout.trim() === "commit" ? sha : null;
+  };
   return {
     head: async (): Promise<string | null> => {
       const result = await runAllowedGit(
@@ -199,17 +234,25 @@ export function createCapsuleGitPort(opts: {
       );
       return result.ok ? result.stdout.trim() : null;
     },
-    resolveSha: async (sha: string): Promise<string | null> => {
-      if (!isValidCapsuleSha(sha)) {
+    resolveSha,
+    resolveRef: async (ref: string): Promise<string | null> => {
+      if (isValidCapsuleSha(ref)) {
+        return await resolveSha(ref);
+      }
+      if (!isConservativeCapsuleRef(ref)) {
         return null;
       }
       const result = await runAllowedGit(
         exec,
         opts.worktreeRoot,
-        ["cat-file", "-t", sha],
+        ["rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`],
         gitEnv(),
       );
-      return result.ok && result.stdout.trim() === "commit" ? sha : null;
+      if (!result.ok) {
+        return null;
+      }
+      const sha = result.stdout.trim();
+      return isValidCapsuleSha(sha) ? sha : null;
     },
   };
 }

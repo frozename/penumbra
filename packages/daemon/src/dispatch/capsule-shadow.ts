@@ -14,8 +14,11 @@ import {
   type CompileInput,
   type CompileOptions,
   type CompileResult,
+  type HookProbeOutcome,
+  type PathProbeOutcome,
   type PreflightRequest,
   type PreflightResult,
+  type ProbeOutcome,
   type ProbePort,
   runPreflight,
 } from "@penumbra/core/dispatch/capsule";
@@ -25,6 +28,7 @@ import { homedir } from "node:os";
 
 import {
   type CapsuleGitPort,
+  capsulePathExists,
   createCapsuleGitPort,
   createCapsuleProbePort,
 } from "./capsule-probe.js";
@@ -57,6 +61,8 @@ export interface CapsuleShadowArgs {
   handoff_id: string;
   objective: string;
   project_root: string | undefined;
+  dispatch_worktree_root?: string | undefined;
+  branch_base?: string | undefined;
   advisory_memory: { source: "auto_recall" | "project_brief"; text: string }[];
   recalled_memory_ids: string[];
 }
@@ -67,6 +73,9 @@ export interface CapsuleShadowDeps {
   gitPort?: (root: string) => CapsuleGitPort | Promise<CapsuleGitPort>;
   probePort?: (opts: CapsuleProbePortRequest) => ProbePort | Promise<ProbePort>;
   effectiveHooksPath?: (root: string) => Promise<string | null>;
+  pathExists?: (path: string) => Promise<boolean>;
+  // Accepted for call-site compatibility but never read: the daemon's own
+  // storage root is never the dispatch's storage and must never reach the probe.
   storageRoot?: string;
   homeDir?: string;
   timeoutMs?: number;
@@ -183,19 +192,85 @@ function trimEventMeta(meta: Record<string, unknown>): void {
   meta["preflight_codes"] = [];
 }
 
+const WORKTREE_DEPENDENT_PROBES: ReadonlySet<string> = new Set([
+  "hasCode",
+  "hasTests",
+  "storagePath",
+  "operatorCheckout",
+  "artifactReadable",
+  "hookStatus",
+]);
+
+const WORKTREE_DEFERRED_CODE = "worktree_deferred";
+
+/*
+ * Shadow storage isolation: the storage under test is the dispatch's own test
+ * storage, <dispatch worktree>/.test-storage, where the worker's test storage
+ * lives. It is isolated iff it is neither inside the operator checkout nor
+ * inside home_dir (preflight.collectStorage's rule). The daemon's own storage
+ * root (services.storageRoot) is never the dispatch's storage and is never
+ * probed. Before the worktree exists, the check is deferred
+ * (worktree_deferred), not failed.
+ */
+function deferredProbePort(probe: ProbePort): ProbePort {
+  const outcome = { status: "unknown", detail: "worktree deferred" } as const;
+  return {
+    ...probe,
+    hasCode: (): Promise<ProbeOutcome> => Promise.resolve(outcome),
+    hasTests: (): Promise<ProbeOutcome> => Promise.resolve(outcome),
+    storagePath: (): Promise<PathProbeOutcome> => Promise.resolve(outcome),
+    operatorCheckout: (): Promise<PathProbeOutcome> => Promise.resolve(outcome),
+    artifactReadable: (): Promise<ProbeOutcome> => Promise.resolve(outcome),
+    hookStatus: (): Promise<HookProbeOutcome> => Promise.resolve(outcome),
+  };
+}
+
+// #536: reconcile the capsule-probe repo-local hooks view with the
+// daemon-side effective hooks path. A disagreement is a signal only.
+// Against the worktree once it exists; while deferred, only when the
+// daemon's effective hooks path itself exists — reconciling against a
+// dangling path would consume worktree-dependent probe calls that the
+// deferral promises not to run.
+async function hookViewDisagreement(
+  probe: ProbePort,
+  repo: string,
+  worktreeRoot: string | undefined,
+  worktreeReady: boolean,
+  deps: CapsuleShadowDeps,
+): Promise<boolean> {
+  if (deps.effectiveHooksPath === undefined) {
+    return false;
+  }
+  const root = worktreeReady && worktreeRoot !== undefined ? worktreeRoot : repo;
+  const hooksPath = await deps.effectiveHooksPath(root);
+  if (!worktreeReady) {
+    const pathExists = deps.pathExists ?? capsulePathExists;
+    if (hooksPath === null || !(await pathExists(hooksPath))) {
+      return false;
+    }
+  }
+  const hook = await probe.hookStatus();
+  if (hook.status !== "ok") {
+    return false;
+  }
+  return classifyGitHooks(root, hooksPath).status !== hook.hooks;
+}
+
 async function collectPreflightCodes(
-  root: string,
-  base: string | null,
+  repo: string,
+  worktreeRoot: string | undefined,
+  worktreeReady: boolean,
+  requestedBase: string | null,
   deps: CapsuleShadowDeps,
 ): Promise<string[]> {
   if (deps.probePort === undefined || deps.preflight === undefined) {
     throw new Error("capsule shadow deps incomplete");
   }
   const probe = await deps.probePort({
-    worktreeRoot: root,
-    baseSha: base ?? "",
-    storageRoot: deps.storageRoot ?? "",
-    operatorCheckout: root,
+    worktreeRoot: worktreeReady && worktreeRoot !== undefined ? worktreeRoot : repo,
+    baseSha: requestedBase ?? "",
+    storageRoot: worktreeRoot === undefined ? "" : `${worktreeRoot}/.test-storage`,
+    operatorCheckout: repo,
   });
   const preflightReq: PreflightRequest = {
     runtimes: [],
@@ -204,16 +279,22 @@ async function collectPreflightCodes(
     artifact_handles: [],
     home_dir: deps.homeDir ?? homedir(),
   };
-  const preflightResult = await deps.preflight(probe, preflightReq);
-  const codes = new Set<string>(preflightResult.failures.map((failure) => failure.code));
-  // #536: reconcile the capsule-probe repo-local hooks view with the
-  // daemon-side effective hooks path. A disagreement is a signal only.
-  const hook = await probe.hookStatus();
-  if (hook.status === "ok" && deps.effectiveHooksPath !== undefined) {
-    const daemonStatus = classifyGitHooks(root, await deps.effectiveHooksPath(root)).status;
-    if (daemonStatus !== hook.hooks) {
-      codes.add("hook_view_disagreement");
+  const preflightResult = await deps.preflight(
+    worktreeReady ? probe : deferredProbePort(probe),
+    preflightReq,
+  );
+  const codes = new Set<string>();
+  for (const failure of preflightResult.failures) {
+    if (!worktreeReady && WORKTREE_DEPENDENT_PROBES.has(failure.probe)) {
+      continue;
     }
+    codes.add(failure.code);
+  }
+  if (!worktreeReady) {
+    codes.add(WORKTREE_DEFERRED_CODE);
+  }
+  if (await hookViewDisagreement(probe, repo, worktreeRoot, worktreeReady, deps)) {
+    codes.add("hook_view_disagreement");
   }
   return [...codes].toSorted().slice(0, PREFLIGHT_CODES_MAX);
 }
@@ -259,14 +340,28 @@ async function shadowWork(args: CapsuleShadowArgs, deps: CapsuleShadowDeps): Pro
     if (compile === undefined || gitPort === undefined) {
       throw new Error("capsule shadow deps incomplete");
     }
-    const root = args.project_root;
-    const git = root === undefined ? null : await gitPort(root);
-    const base = git === null ? null : await git.head();
+    const repo = args.project_root;
+    const worktreeRoot = args.dispatch_worktree_root;
+    const repoGit = repo === undefined ? null : await gitPort(repo);
+
+    // Absent branch_base means the WorktreeManager default baseRef "HEAD";
+    // resolving it goes through the object store, not the checkout's HEAD.
+    let requestedBase: string | null = null;
+    if (repoGit !== null) {
+      if (args.branch_base === undefined) {
+        requestedBase = await repoGit.head();
+      } else {
+        requestedBase = (await repoGit.resolveRef?.(args.branch_base)) ?? null;
+      }
+    }
+
+    const worktreeReady =
+      worktreeRoot !== undefined && (await (deps.pathExists ?? capsulePathExists)(worktreeRoot));
 
     const compileInput: CompileInput = {
       objective: args.objective,
       acceptance_state: "unverified",
-      base_sha: base ?? "",
+      base_sha: requestedBase ?? "",
       dependencies: [],
       write_fence: [],
       essential_constraints: [],
@@ -281,15 +376,24 @@ async function shadowWork(args: CapsuleShadowArgs, deps: CapsuleShadowDeps): Pro
     };
 
     const preflightCodes: string[] =
-      root === undefined
+      repo === undefined
         ? ["project_root_unresolved"]
-        : await collectPreflightCodes(root, base, deps);
+        : await collectPreflightCodes(repo, worktreeRoot, worktreeReady, requestedBase, deps);
 
     const compileOptions: CompileOptions = {
       git: {
-        headSha: (): Promise<string | null> => (git === null ? Promise.resolve(null) : git.head()),
+        // The worktree will be created at the requested base, so an
+        // unresolved base still refuses as stale_base via the non-canonical
+        // "" path.
+        headSha: async (): Promise<string | null> => {
+          if (worktreeRoot === undefined || !worktreeReady) {
+            return requestedBase;
+          }
+          const worktreeGit = await gitPort(worktreeRoot);
+          return await worktreeGit.head();
+        },
         resolveSha: (ref: string): Promise<string | null> =>
-          git === null ? Promise.resolve(null) : git.resolveSha(ref),
+          repoGit === null ? Promise.resolve(null) : repoGit.resolveSha(ref),
         isAncestor: (): Promise<boolean | null> => Promise.resolve(null),
       },
       budget: CAPSULE_SHADOW_BUDGET,
@@ -365,7 +469,7 @@ export function scheduleCapsuleShadow(
       gitPort: (root: string): CapsuleGitPort => createCapsuleGitPort({ worktreeRoot: root }),
       probePort: (opts: CapsuleProbePortRequest): ProbePort => createCapsuleProbePort(opts),
       effectiveHooksPath: defaultEffectiveHooksPath,
-      storageRoot: services.storageRoot,
+      pathExists: capsulePathExists,
       homeDir: homedir(),
       timeoutMs: CAPSULE_SHADOW_TIMEOUT_MS,
       log: services.log,
