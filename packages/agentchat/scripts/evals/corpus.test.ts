@@ -458,13 +458,13 @@ test("lintCorpus rejects a fixture whose base_sha no longer matches its repo fil
   expect(errMsg(err)).toContain("base_sha");
 });
 
-test("lintCorpus rejects a rows.json file by name", async () => {
+test("lintCorpus rejects a malformed rows.json", async () => {
   const scratch = await mkScratch();
   const tmp = copyCorpus();
   writeJsonFile(join(tmp, "synthetic", "syn-contract-validator", "rows.json"), {});
   const err = await catchErr(() => corpus().lintCorpus(tmp, { scratch }));
   expect(err).toBeInstanceOf(corpus().CorpusLintError);
-  expect(errMsg(err)).toContain("unexpected_file");
+  expect(errMsg(err)).toContain("invalid_rows");
   expect(errMsg(err)).toContain("rows.json");
   expect(errMsg(err)).not.toContain("not_sanitized");
 });

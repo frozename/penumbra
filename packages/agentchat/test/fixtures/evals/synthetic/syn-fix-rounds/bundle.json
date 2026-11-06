@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "family_id": "fam-syn-fix-rounds",
+  "variant_id": "v1",
+  "assertions": [
+    {
+      "kind": "probe",
+      "id": "c1",
+      "module": "src/rounds.ts",
+      "export": "parseRoundBranch",
+      "input": "agent/rounds-1",
+      "expect": 1
+    },
+    {
+      "kind": "probe",
+      "id": "c2",
+      "module": "src/rounds.ts",
+      "export": "parseRoundBranch",
+      "input": "agent/rounds-12",
+      "expect": 12
+    },
+    {
+      "kind": "probe",
+      "id": "c3",
+      "module": "src/rounds.ts",
+      "export": "parseRoundBranch",
+      "input": "agent/rounds-0",
+      "expect": null
+    },
+    {
+      "kind": "probe",
+      "id": "c4",
+      "module": "src/rounds.ts",
+      "export": "parseRoundBranch",
+      "input": "agent/rounds-x",
+      "expect": null
+    },
+    {
+      "kind": "probe",
+      "id": "c5",
+      "module": "src/rounds.ts",
+      "export": "parseRoundBranch",
+      "input": "review/verify-check_1a2b",
+      "expect": null
+    },
+    {
+      "kind": "probe",
+      "id": "c6",
+      "module": "src/rounds.ts",
+      "export": "parseRoundBranch",
+      "input": null,
+      "expect": null
+    },
+    {
+      "kind": "probe",
+      "id": "c7",
+      "module": "src/rounds.ts",
+      "export": "isRetryBranch",
+      "input": "agent/rounds-2-retry",
+      "expect": true
+    },
+    {
+      "kind": "probe",
+      "id": "c8",
+      "module": "src/rounds.ts",
+      "export": "isRetryBranch",
+      "input": "agent/rounds-2",
+      "expect": false
+    },
+    {
+      "kind": "probe",
+      "id": "c9",
+      "module": "src/rounds.ts",
+      "export": "isRetryBranch",
+      "input": "agent/rounds-2-retry-x",
+      "expect": false
+    },
+    {
+      "kind": "probe",
+      "id": "c10",
+      "module": "src/rounds.ts",
+      "export": "summarizeRounds",
+      "input": [
+        "agent/rounds-1",
+        "agent/rounds-2",
+        "agent/rounds-2-retry",
+        "review/verify-check_1a2b3c4d",
+        null
+      ],
+      "expect": {
+        "rounds": 2,
+        "retries": 1,
+        "max_round": 2
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c11",
+      "module": "src/rounds.ts",
+      "export": "summarizeRounds",
+      "input": "x",
+      "expect": {
+        "rounds": 0,
+        "retries": 0,
+        "max_round": null
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c12",
+      "module": "src/rounds.ts",
+      "export": "summarizeRounds",
+      "input": [],
+      "expect": {
+        "rounds": 0,
+        "retries": 0,
+        "max_round": null
+      }
+    },
+    {
+      "kind": "invariant",
+      "id": "c13",
+      "property": "deterministic",
+      "module": "src/rounds.ts",
+      "export": "summarizeRounds",
+      "inputs": [
+        [
+          "agent/rounds-1",
+          "agent/rounds-2",
+          "agent/rounds-2-retry",
+          "review/verify-check_1a2b3c4d",
+          null
+        ]
+      ],
+      "seed": 0
+    },
+    {
+      "kind": "invariant",
+      "id": "c14",
+      "property": "deterministic",
+      "module": "src/rounds.ts",
+      "export": "parseRoundBranch",
+      "inputs": ["agent/rounds-3"],
+      "seed": 0
+    }
+  ],
+  "patches": {
+    "good": "diff --git a/src/rounds.ts b/src/rounds.ts\nindex b9025fb..37f2c31 100644\n--- a/src/rounds.ts\n+++ b/src/rounds.ts\n@@ -1,11 +1,27 @@\n+function asRecord(value: unknown): Record<string, unknown> | null {\n+  if (typeof value !== \"object\" || value === null || Array.isArray(value)) {\n+    return null;\n+  }\n+  return value as Record<string, unknown>;\n+}\n+\n+const ROUND_BRANCH = /^agent\\/rounds-(\\d+)$/;\n+const RETRY_BRANCH = /^[a-z][a-z0-9-]{0,19}\\/[a-z0-9-]+-retry$/;\n+\n export function parseRoundBranch(branch: unknown): number | null {\n-  void branch;\n-  throw new Error(\"not implemented\");\n+  if (typeof branch !== \"string\") {\n+    return null;\n+  }\n+  const match = ROUND_BRANCH.exec(branch);\n+  if (match === null) {\n+    return null;\n+  }\n+  const round = Number(match[1]);\n+  return round >= 1 ? round : null;\n }\n \n export function isRetryBranch(branch: unknown): boolean {\n-  void branch;\n-  throw new Error(\"not implemented\");\n+  return typeof branch === \"string\" && RETRY_BRANCH.test(branch);\n }\n \n export function summarizeRounds(branches: unknown): {\n@@ -13,6 +29,19 @@ export function summarizeRounds(branches: unknown): {\n   retries: number;\n   max_round: number | null;\n } {\n-  void branches;\n-  throw new Error(\"not implemented\");\n+  const out = { rounds: 0, retries: 0, max_round: null as number | null };\n+  if (!Array.isArray(branches)) {\n+    return out;\n+  }\n+  for (const branch of branches) {\n+    const round = parseRoundBranch(branch);\n+    if (round !== null) {\n+      out.rounds += 1;\n+      out.max_round = out.max_round === null ? round : Math.max(out.max_round, round);\n+    }\n+    if (isRetryBranch(branch)) {\n+      out.retries += 1;\n+    }\n+  }\n+  return out;\n }\n",
+    "bad": [
+      "diff --git a/src/rounds.ts b/src/rounds.ts\nindex b9025fb..73afc6f 100644\n--- a/src/rounds.ts\n+++ b/src/rounds.ts\n@@ -1,11 +1,27 @@\n+function asRecord(value: unknown): Record<string, unknown> | null {\n+  if (typeof value !== \"object\" || value === null || Array.isArray(value)) {\n+    return null;\n+  }\n+  return value as Record<string, unknown>;\n+}\n+\n+const ROUND_BRANCH = /^agent\\/rounds-(\\d+)$/;\n+const RETRY_BRANCH = /^[a-z][a-z0-9-]{0,19}\\/[a-z0-9-]+-retry$/;\n+\n export function parseRoundBranch(branch: unknown): number | null {\n-  void branch;\n-  throw new Error(\"not implemented\");\n+  if (typeof branch !== \"string\") {\n+    return null;\n+  }\n+  const match = ROUND_BRANCH.exec(branch);\n+  if (match === null) {\n+    return null;\n+  }\n+  const round = Number(match[1]);\n+  return round;\n }\n \n export function isRetryBranch(branch: unknown): boolean {\n-  void branch;\n-  throw new Error(\"not implemented\");\n+  return typeof branch === \"string\" && RETRY_BRANCH.test(branch);\n }\n \n export function summarizeRounds(branches: unknown): {\n@@ -13,6 +29,19 @@ export function summarizeRounds(branches: unknown): {\n   retries: number;\n   max_round: number | null;\n } {\n-  void branches;\n-  throw new Error(\"not implemented\");\n+  const out = { rounds: 0, retries: 0, max_round: null as number | null };\n+  if (!Array.isArray(branches)) {\n+    return out;\n+  }\n+  for (const branch of branches) {\n+    const round = parseRoundBranch(branch);\n+    if (round !== null) {\n+      out.rounds += 1;\n+      out.max_round = out.max_round === null ? round : Math.max(out.max_round, round);\n+    }\n+    if (isRetryBranch(branch)) {\n+      out.retries += 1;\n+    }\n+  }\n+  return out;\n }\n"
+    ]
+  },
+  "mutants": [
+    "diff --git a/src/rounds.ts b/src/rounds.ts\nindex b9025fb..8b24ad5 100644\n--- a/src/rounds.ts\n+++ b/src/rounds.ts\n@@ -1,11 +1,27 @@\n+function asRecord(value: unknown): Record<string, unknown> | null {\n+  if (typeof value !== \"object\" || value === null || Array.isArray(value)) {\n+    return null;\n+  }\n+  return value as Record<string, unknown>;\n+}\n+\n+const ROUND_BRANCH = /^agent\\/rounds-(\\d+)$/;\n+const RETRY_BRANCH = /^[a-z][a-z0-9-]{0,19}\\/[a-z0-9-]+-retry$/;\n+\n export function parseRoundBranch(branch: unknown): number | null {\n-  void branch;\n-  throw new Error(\"not implemented\");\n+  if (typeof branch !== \"string\") {\n+    return null;\n+  }\n+  const match = ROUND_BRANCH.exec(branch);\n+  if (match === null) {\n+    return null;\n+  }\n+  const round = Number(match[1]);\n+  return round >= 1 ? round : null;\n }\n \n export function isRetryBranch(branch: unknown): boolean {\n-  void branch;\n-  throw new Error(\"not implemented\");\n+  return typeof branch === \"string\" && RETRY_BRANCH.test(branch);\n }\n \n export function summarizeRounds(branches: unknown): {\n@@ -13,6 +29,19 @@ export function summarizeRounds(branches: unknown): {\n   retries: number;\n   max_round: number | null;\n } {\n-  void branches;\n-  throw new Error(\"not implemented\");\n+  const out = { rounds: 0, retries: 0, max_round: null as number | null };\n+  if (!Array.isArray(branches)) {\n+    return out;\n+  }\n+  for (const branch of branches) {\n+    const round = parseRoundBranch(branch);\n+    if (round !== null || isRetryBranch(branch)) {\n+      out.rounds += 1;\n+      out.max_round = out.max_round === null ? round : Math.max(out.max_round, round);\n+    }\n+    if (isRetryBranch(branch)) {\n+      out.retries += 1;\n+    }\n+  }\n+  return out;\n }\n",
+    "diff --git a/src/rounds.ts b/src/rounds.ts\nindex b9025fb..ffa76a0 100644\n--- a/src/rounds.ts\n+++ b/src/rounds.ts\n@@ -1,11 +1,27 @@\n+function asRecord(value: unknown): Record<string, unknown> | null {\n+  if (typeof value !== \"object\" || value === null || Array.isArray(value)) {\n+    return null;\n+  }\n+  return value as Record<string, unknown>;\n+}\n+\n+const ROUND_BRANCH = /^agent\\/rounds-(\\d+)$/;\n+const RETRY_BRANCH = /^[a-z][a-z0-9-]{0,19}\\/[a-z0-9-]+-retry$/;\n+\n export function parseRoundBranch(branch: unknown): number | null {\n-  void branch;\n-  throw new Error(\"not implemented\");\n+  if (typeof branch !== \"string\") {\n+    return null;\n+  }\n+  const match = ROUND_BRANCH.exec(branch);\n+  if (match === null) {\n+    return null;\n+  }\n+  const round = Number(match[1]);\n+  return round >= 1 ? round : null;\n }\n \n export function isRetryBranch(branch: unknown): boolean {\n-  void branch;\n-  throw new Error(\"not implemented\");\n+  return typeof branch === \"string\" && branch.includes(\"-retry\");\n }\n \n export function summarizeRounds(branches: unknown): {\n@@ -13,6 +29,19 @@ export function summarizeRounds(branches: unknown): {\n   retries: number;\n   max_round: number | null;\n } {\n-  void branches;\n-  throw new Error(\"not implemented\");\n+  const out = { rounds: 0, retries: 0, max_round: null as number | null };\n+  if (!Array.isArray(branches)) {\n+    return out;\n+  }\n+  for (const branch of branches) {\n+    const round = parseRoundBranch(branch);\n+    if (round !== null) {\n+      out.rounds += 1;\n+      out.max_round = out.max_round === null ? round : Math.max(out.max_round, round);\n+    }\n+    if (isRetryBranch(branch)) {\n+      out.retries += 1;\n+    }\n+  }\n+  return out;\n }\n"
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "handoffs": [
+    {
+      "handoff_id": "h-105",
+      "ts": "2026-06-11T10:00:00Z",
+      "message": "Implement tool failure accounting described by test/tools.test.ts.",
+      "parent_handoff_id": null,
+      "triggered_by_event_id": null,
+      "branch_base": null,
+      "branch_name": null,
+      "workflow_run_id": null,
+      "dispatch_attempts": 2
+    }
+  ],
+  "events": [
+    {
+      "id": 1,
+      "handoff_id": "h-105",
+      "worker_id": null,
+      "source": "daemon",
+      "kind": "claim",
+      "ts": "2026-06-11T10:00:01Z",
+      "meta_json": null
+    },
+    {
+      "id": 2,
+      "handoff_id": "h-105",
+      "worker_id": "w-1",
+      "source": "worker",
+      "kind": "dispatch.end",
+      "ts": "2026-06-11T10:04:00Z",
+      "meta_json": "{\"commit_integrity\":{\"base_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"head_sha\":\"e08b5d862ada93beb860a992b9f3c17ec70d991c\",\"base_is_ancestor\":true,\"identity\":{\"name\":\"agent\",\"email\":\"agent@example.com\"},\"mismatched_commits\":[],\"mismatched_total\":0}}"
+    },
+    {
+      "id": 3,
+      "handoff_id": "h-105",
+      "worker_id": null,
+      "source": "daemon",
+      "kind": "claim",
+      "ts": "2026-06-11T10:05:00Z",
+      "meta_json": null
+    },
+    {
+      "id": 4,
+      "handoff_id": "h-105",
+      "worker_id": "w-1",
+      "source": "worker",
+      "kind": "agent.tool_call.failed",
+      "ts": "2026-06-11T10:06:00Z",
+      "meta_json": "{\"tool\":\"fs.write\",\"error\":\"permission denied\"}"
+    },
+    {
+      "id": 5,
+      "handoff_id": "h-105",
+      "worker_id": "w-1",
+      "source": "worker",
+      "kind": "dispatch.end",
+      "ts": "2026-06-11T10:09:00Z",
+      "meta_json": "{\"commit_integrity\":{\"base_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"head_sha\":\"f9ee3faefccebc4d5c0fdce9aea4e610af262869\",\"base_is_ancestor\":true,\"identity\":{\"name\":\"agent\",\"email\":\"agent@example.com\"},\"mismatched_commits\":[],\"mismatched_total\":0}}"
+    }
+  ],
+  "retry_events": [],
+  "lanes": []
+}

@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "handoffs": [
+    {
+      "handoff_id": "h-106",
+      "ts": "2026-06-11T11:00:00Z",
+      "message": "Implement the fixture contract checker described by test/contract.test.ts.",
+      "parent_handoff_id": null,
+      "triggered_by_event_id": null,
+      "branch_base": null,
+      "branch_name": null,
+      "workflow_run_id": null,
+      "dispatch_attempts": 1
+    }
+  ],
+  "events": [
+    {
+      "id": 1,
+      "handoff_id": "h-106",
+      "worker_id": null,
+      "source": "daemon",
+      "kind": "claim",
+      "ts": "2026-06-11T11:00:01Z",
+      "meta_json": null
+    },
+    {
+      "id": 2,
+      "handoff_id": "h-106",
+      "worker_id": "w-1",
+      "source": "worker",
+      "kind": "dispatch.end",
+      "ts": "2026-06-11T11:05:00Z",
+      "meta_json": "{\"commit_integrity\":{\"base_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"head_sha\":\"24c8dd427c8878098389d13bd11f580600e8d620\",\"base_is_ancestor\":true,\"identity\":{\"name\":\"agent\",\"email\":\"agent@example.com\"},\"mismatched_commits\":[],\"mismatched_total\":0}}"
+    }
+  ],
+  "retry_events": [],
+  "lanes": []
+}

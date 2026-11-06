@@ -224,8 +224,10 @@ export function sliceHandoffAttempts(
     return { history, attempts: [], orphan_events_dropped: orphans };
   }
 
-  // With pruned claims the surviving attempts are the last k of c.
-  const firstN = k > 0 && c > k ? c - k + 1 : startN;
+  // With pruned claims the surviving attempts are the last k of c, numbered
+  // relative to startN so a later pruned handoff cannot collide with earlier
+  // attempts in the same lineage.
+  const firstN = k > 0 && c > k ? startN + c - k : startN;
   const attempts = slices.map((slice, i) => sliceAttempt(handoff.handoff_id, firstN + i, slice));
   return { history, attempts, orphan_events_dropped: orphans };
 }

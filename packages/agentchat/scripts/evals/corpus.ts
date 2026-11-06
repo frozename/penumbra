@@ -7,6 +7,7 @@ import {
   HoldoutBundleSchema,
 } from "@penumbra/core/evals/fixture";
 import { assertHoldoutReservation } from "@penumbra/core/evals/holdout";
+import { IngestRowsSchema } from "@penumbra/core/evals/ingest";
 import { assertNoFamilyLeak } from "@penumbra/core/evals/split";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -20,7 +21,14 @@ export const DEFAULT_CORPUS_ROOT = fileURLToPath(
   new URL("../../test/fixtures/evals", import.meta.url),
 );
 
-const FIXTURE_FILE_NAMES = new Set(["fixture.json", "repo.files.json", "bundle.json"]);
+const FIXTURE_FILE_NAMES = new Set([
+  "fixture.json",
+  "repo.files.json",
+  "bundle.json",
+  "rows.json",
+  "rows-pruned.json",
+]);
+const ROWS_FILE_NAMES = new Set(["rows.json", "rows-pruned.json"]);
 const OS_JUNK_NAMES = new Set([".DS_Store"]);
 
 export interface CorpusFixture {
@@ -144,11 +152,22 @@ function composeBundle(
   return { bundle: parsed.data, repoFiles: repoJson as Record<string, string> };
 }
 
+function lintRowsFiles(dir: string, dirFiles: Map<string, unknown>, problems: string[]): void {
+  for (const name of ROWS_FILE_NAMES) {
+    const value = dirFiles.get(name);
+    if (value === undefined) continue;
+    if (!IngestRowsSchema.safeParse(value).success) {
+      problems.push(`invalid_rows ${dir}/${name}`);
+    }
+  }
+}
+
 function lintFixtureDir(
   dir: string,
   dirFiles: Map<string, unknown>,
   problems: string[],
 ): CorpusFixture | null {
+  lintRowsFiles(dir, dirFiles, problems);
   const parsed = FixturePublicSchema.safeParse(dirFiles.get("fixture.json"));
   if (!parsed.success) {
     problems.push(`invalid_fixture ${dir}/fixture.json`);
