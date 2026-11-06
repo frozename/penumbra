@@ -24,8 +24,25 @@ export interface RenderedCapsule {
 const byId = (a: { id: string }, b: { id: string }): number =>
   a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 
+const ADVISORY_ESCAPES: ReadonlyMap<string, string> = new Map([
+  ["\\", "\\\\"],
+  ["<", "\\<"],
+  [">", "\\>"],
+  ["\n", "\\n"],
+  ["\r", "\\r"],
+  ["\v", "\\v"],
+  ["\f", "\\f"],
+  ["\u0085", "\\N"],
+  ["\u2028", "\\L"],
+  ["\u2029", "\\P"],
+]);
+
 export function escapeAdvisory(text: string): string {
-  return text.replaceAll("\\", "\\\\").replaceAll("<", "\\<").replaceAll(">", "\\>");
+  let out = "";
+  for (const ch of text) {
+    out += ADVISORY_ESCAPES.get(ch) ?? ch;
+  }
+  return out;
 }
 
 export function renderAuthoritativeSection(lane: AuthoritativeLane): string {
@@ -60,7 +77,7 @@ export function renderLastErrorSection(error: LastError): string {
 
 export function renderAdvisoryItem(kind: AdvisoryKind, item: AdvisoryItem): string {
   const header =
-    `${ADVISORY_OPEN_PREFIX} kind=${kind}` +
+    `${ADVISORY_OPEN_PREFIX} kind=${escapeAdvisory(kind)}` +
     ` id=${escapeAdvisory(item.id)}` +
     ` source=${escapeAdvisory(item.provenance.source)}` +
     ` ref=${escapeAdvisory(item.provenance.ref)}>>>`;
