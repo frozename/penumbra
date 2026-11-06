@@ -64,18 +64,12 @@ describe("Sparkline", () => {
 
   test("height defaults to 28px and is overridable", () => {
     const { container, unmount } = render(<Sparkline seed={1} points={3} />);
-    const defaultStyle =
-      container.querySelector("svg")?.style.height ??
-      container.querySelector("svg")?.getAttribute("style") ??
-      "";
+    const defaultStyle = container.querySelector("svg")?.style.height ?? "";
     expect(defaultStyle).toContain("28px");
     unmount();
 
     const { container: other } = render(<Sparkline seed={1} points={3} height={40} />);
-    const sizedStyle =
-      other.querySelector("svg")?.style.height ??
-      other.querySelector("svg")?.getAttribute("style") ??
-      "";
+    const sizedStyle = other.querySelector("svg")?.style.height ?? "";
     expect(sizedStyle).toContain("40px");
   });
 
@@ -128,7 +122,7 @@ describe("StatCard", () => {
   test("delta element class carries deltaCls only when provided", () => {
     const { container, unmount } = render(<StatCard label="Lanes" value={1} delta="+2 today" />);
     const plain = container.querySelector(".d");
-    expect(plain?.className.trim()).toBe("d");
+    expect(plain?.className).toBe("d");
     expect(plain?.textContent).toBe("+2 today");
     unmount();
 
