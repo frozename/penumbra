@@ -539,6 +539,235 @@ test("reads only PATH from the environment and resolves tools per call", async (
   }
 });
 
+function makeEmptyRepoFixture(): { root: string; wt: string; gitEnv: NodeJS.ProcessEnv } {
+  const root = makeTmpDir("capsule-probe-empty-");
+  const wt = join(root, "repo");
+  mkdirSync(wt, { recursive: true });
+  const gitHome = join(root, "git-home");
+  const gitXdg = join(root, "git-xdg");
+  mkdirSync(gitHome);
+  mkdirSync(gitXdg);
+  const gitEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_SYSTEM: "/dev/null",
+    HOME: gitHome,
+    XDG_CONFIG_HOME: gitXdg,
+    LANG: "C",
+    LC_ALL: "C",
+  };
+  git(wt, ["init", "-q"], gitEnv);
+  return { root, wt, gitEnv };
+}
+
+test("resolveSha rejects refs, options, abbreviated and uppercase shas before invoking git", async () => {
+  const fx = makeFixture();
+  const execCalls: ExecCall[] = [];
+  const gitPort = createCapsuleGitPort({
+    worktreeRoot: fx.wt,
+    exec: recordingExec(execCalls),
+  });
+  const rejected = ["main", "HEAD", "--output=x", fx.shaA.slice(0, 8), fx.shaA.toUpperCase()];
+  for (const candidate of rejected) {
+    expect(await gitPort.resolveSha(candidate)).toBeNull();
+  }
+  expect(execCalls.length).toBe(0);
+  for (const candidate of rejected) {
+    for (const call of execCalls) {
+      expect(argvHasToken(call.argv, candidate)).toBe(false);
+    }
+  }
+
+  expect(await gitPort.resolveSha(fx.shaA)).toBe(fx.shaA);
+  expect(execCalls.length).toBe(1);
+  expect(execCalls[0]?.argv).toEqual(["cat-file", "-t", fx.shaA]);
+});
+
+test("storagePath and operatorCheckout return realpath-canonicalised paths", async () => {
+  const fx = makeFixture();
+  const realStorage = join(fx.root, "storage");
+  const realCheckout = join(fx.root, "checkout");
+  mkdirSync(realStorage, { recursive: true });
+  mkdirSync(realCheckout, { recursive: true });
+  const storageAlias = join(fx.root, "storage-alias");
+  const checkoutAlias = join(fx.root, "checkout-alias");
+  symlinkSync(realStorage, storageAlias, "dir");
+  symlinkSync(realCheckout, checkoutAlias, "dir");
+
+  const port = createCapsuleProbePort({
+    worktreeRoot: fx.wt,
+    baseSha: fx.headSha,
+    storageRoot: storageAlias,
+    operatorCheckout: checkoutAlias,
+  });
+  const storage = await port.storagePath();
+  expect(storage.status).toBe("ok");
+  if (storage.status === "ok") {
+    expect(storage.path).toBe(realpathSync(storageAlias));
+    expect(storage.path).not.toBe(storageAlias);
+  }
+  const checkout = await port.operatorCheckout();
+  expect(checkout.status).toBe("ok");
+  if (checkout.status === "ok") {
+    expect(checkout.path).toBe(realpathSync(checkoutAlias));
+    expect(checkout.path).not.toBe(checkoutAlias);
+  }
+});
+
+test("verifyCapsuleShas reports stale_base when HEAD cannot be resolved", async () => {
+  const empty = makeEmptyRepoFixture();
+  const emptyResult = await verifyCapsuleShas(createCapsuleGitPort({ worktreeRoot: empty.wt }), {
+    base_sha: "0".repeat(40),
+    dependency_shas: [],
+  });
+  expect(emptyResult.ok).toBe(false);
+  if (!emptyResult.ok) {
+    expect(emptyResult.code).toBe("stale_base");
+    expect(typeof emptyResult.detail).toBe("string");
+  }
+
+  const fx = makeFixture();
+  const failingExec: CapsuleExec = () => Promise.resolve({ code: 1, stdout: "", stderr: "" });
+  const failingPort = createCapsuleGitPort({ worktreeRoot: fx.wt, exec: failingExec });
+  expect(await failingPort.head()).toBeNull();
+  const failingResult = await verifyCapsuleShas(failingPort, {
+    base_sha: fx.shaA,
+    dependency_shas: [],
+  });
+  expect(failingResult.ok).toBe(false);
+  if (!failingResult.ok) {
+    expect(failingResult.code).toBe("stale_base");
+  }
+});
+
+test("resolveSha requires cat-file type commit; tree and blob shas give null and missing_dependency", async () => {
+  const fx = makeFixture();
+  const treeSha = git(fx.wt, ["rev-parse", "HEAD^{tree}"], fx.gitEnv).trim();
+  const blobSha = git(fx.wt, ["hash-object", "-w", "inside.txt"], fx.gitEnv).trim();
+  expect(treeSha).toMatch(/^[0-9a-f]{40}$/);
+  expect(blobSha).toMatch(/^[0-9a-f]{40}$/);
+
+  const gitPort = createCapsuleGitPort({ worktreeRoot: fx.wt });
+  expect(await gitPort.resolveSha(treeSha)).toBeNull();
+  expect(await gitPort.resolveSha(blobSha)).toBeNull();
+  expect(await gitPort.resolveSha(fx.shaA)).toBe(fx.shaA);
+
+  const { storageRoot, operatorCheckout } = probeDirs(fx);
+  const baseAsTree = createCapsuleProbePort({
+    worktreeRoot: fx.wt,
+    baseSha: treeSha,
+    storageRoot,
+    operatorCheckout,
+  });
+  expect((await baseAsTree.hasBase()).status).toBe("fail");
+
+  for (const dependency of [treeSha, blobSha]) {
+    const result = await verifyCapsuleShas(gitPort, {
+      base_sha: fx.headSha,
+      dependency_shas: [dependency],
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe("missing_dependency");
+      expect(result.detail).toContain(dependency);
+    }
+  }
+});
+
+test("hasTests fails without test paths and hasCode fails on an empty tracked listing", async () => {
+  const noTests = makeEmptyRepoFixture();
+  mkdirSync(join(noTests.wt, "src"), { recursive: true });
+  writeFileSync(join(noTests.wt, "src", "a.ts"), "export const a = 1;\n");
+  git(noTests.wt, ["add", "."], noTests.gitEnv);
+  git(noTests.wt, ["commit", "-qm", "sources only"], noTests.gitEnv);
+  const noTestsHead = git(noTests.wt, ["rev-parse", "HEAD"], noTests.gitEnv).trim();
+  const noTestsStorage = join(noTests.root, "storage");
+  const noTestsCheckout = join(noTests.root, "checkout");
+  mkdirSync(noTestsStorage);
+  mkdirSync(noTestsCheckout);
+  const portNoTests = createCapsuleProbePort({
+    worktreeRoot: noTests.wt,
+    baseSha: noTestsHead,
+    storageRoot: noTestsStorage,
+    operatorCheckout: noTestsCheckout,
+  });
+  expect((await portNoTests.hasCode()).status).toBe("ok");
+  expect((await portNoTests.hasTests()).status).toBe("fail");
+
+  const empty = makeEmptyRepoFixture();
+  const emptyStorage = join(empty.root, "storage");
+  mkdirSync(emptyStorage);
+  const portEmpty = createCapsuleProbePort({
+    worktreeRoot: empty.wt,
+    baseSha: "0".repeat(40),
+    storageRoot: emptyStorage,
+    operatorCheckout: emptyStorage,
+  });
+  expect((await portEmpty.hasCode()).status).toBe("fail");
+  expect((await portEmpty.hasTests()).status).toBe("fail");
+});
+
+test("artifactReadable fails on a directory handle", async () => {
+  const fx = makeFixture();
+  const { storageRoot, operatorCheckout } = probeDirs(fx);
+  const port = createCapsuleProbePort({
+    worktreeRoot: fx.wt,
+    baseSha: fx.headSha,
+    storageRoot,
+    operatorCheckout,
+  });
+  const dirResult = await port.artifactReadable({ id: "d", kind: "file", uri: "src" });
+  expect(dirResult.status).toBe("fail");
+  if (dirResult.status !== "ok") {
+    expect(typeof dirResult.detail).toBe("string");
+  }
+  expect(await port.artifactReadable({ id: "f", kind: "file", uri: "inside.txt" })).toEqual({
+    status: "ok",
+  });
+});
+
+test("pathTool rejects malformed tool names without stat or access calls", async () => {
+  const fx = makeFixture();
+  const { storageRoot, operatorCheckout } = probeDirs(fx);
+  const fsCalls: string[] = [];
+  const port = createCapsuleProbePort({
+    worktreeRoot: fx.wt,
+    baseSha: fx.headSha,
+    storageRoot,
+    operatorCheckout,
+    fs: recordingFs(fsCalls),
+  });
+  for (const name of ["../x", "a/b", "a b"]) {
+    expect((await port.pathTool(name)).status).toBe("fail");
+  }
+  expect(fsCalls.filter((call) => call === "stat" || call === "access")).toEqual([]);
+
+  expect((await port.pathTool("git")).status).toBe("ok");
+  expect(fsCalls).toContain("stat");
+});
+
+test("hookStatus treats a symlink alias of the default hooks dir as the default", async () => {
+  const fx = makeFixture();
+  const defaultHooks = join(fx.wt, ".git", "hooks");
+  expect(existsSync(defaultHooks)).toBe(true);
+  symlinkSync(defaultHooks, join(fx.wt, "hooks-alias"), "dir");
+  installHooksPath(fx, "hooks-alias");
+  const { storageRoot, operatorCheckout } = probeDirs(fx);
+  const port = createCapsuleProbePort({
+    worktreeRoot: fx.wt,
+    baseSha: fx.headSha,
+    storageRoot,
+    operatorCheckout,
+  });
+
+  expect(await port.hookStatus()).toEqual({ status: "ok", hooks: "not_configured" });
+  expect(await port.hookStatus()).toEqual({
+    status: "ok",
+    hooks: classifyGitHooks(fx.wt, null).status,
+  });
+});
+
 test("runPreflight over the capsule probe port is ready for an isolated worktree", async () => {
   const fx = makeFixture();
   installExecutableHook(fx, ".husky/_");
