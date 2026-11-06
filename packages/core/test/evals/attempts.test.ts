@@ -758,3 +758,20 @@ test("R11: complete attempts number from startN, and only 1 is schema-valid", ()
   expect(fromTwo.history.count).toBe(2);
   expect(EpisodeSchema.safeParse(episodeFrom(fromTwo)).success).toBe(false);
 });
+
+test("R12: a pruned handoff mid-lineage numbers survivors from startN, not from 1", () => {
+  expect(typeof mod?.["sliceHandoffAttempts"]).toBe("function");
+  const result = sliceFn()(
+    handoff(TS_1D, 3),
+    [ev(1, "claim"), ev(2, "dispatch.end", dispatchEndMeta(SHA_B))],
+    opts(2),
+  );
+  expect(result.history).toEqual({
+    status: "partial",
+    reason: "claims_pruned",
+    count: 3,
+    count_basis: "handoff_counter",
+  });
+  expect(result.attempts).toHaveLength(1);
+  expect(result.attempts[0]?.attempt.n).toBe(4);
+});

@@ -1,0 +1,310 @@
+{
+  "schema_version": 1,
+  "family_id": "fam-syn-reclaim-recovery",
+  "variant_id": "v1",
+  "assertions": [
+    {
+      "kind": "probe",
+      "id": "c1",
+      "module": "src/recovery.ts",
+      "export": "reclaimCause",
+      "input": {
+        "cause": "orphan_requeue"
+      },
+      "expect": "orphan_requeue"
+    },
+    {
+      "kind": "probe",
+      "id": "c2",
+      "module": "src/recovery.ts",
+      "export": "reclaimCause",
+      "input": {
+        "cause": ""
+      },
+      "expect": null
+    },
+    {
+      "kind": "probe",
+      "id": "c3",
+      "module": "src/recovery.ts",
+      "export": "reclaimCause",
+      "input": {
+        "cause": 7
+      },
+      "expect": null
+    },
+    {
+      "kind": "probe",
+      "id": "c4",
+      "module": "src/recovery.ts",
+      "export": "reclaimCause",
+      "input": "orphan_requeue",
+      "expect": null
+    },
+    {
+      "kind": "probe",
+      "id": "c5",
+      "module": "src/recovery.ts",
+      "export": "reclaimCause",
+      "input": null,
+      "expect": null
+    },
+    {
+      "kind": "probe",
+      "id": "c6",
+      "module": "src/recovery.ts",
+      "export": "recoveryBudget",
+      "input": {
+        "attempt": 1,
+        "max_attempts": 3
+      },
+      "expect": {
+        "attempt": 1,
+        "max_attempts": 3,
+        "remaining": 2,
+        "exhausted": false
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c7",
+      "module": "src/recovery.ts",
+      "export": "recoveryBudget",
+      "input": {
+        "attempt": 3,
+        "max_attempts": 3
+      },
+      "expect": {
+        "attempt": 3,
+        "max_attempts": 3,
+        "remaining": 0,
+        "exhausted": true
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c8",
+      "module": "src/recovery.ts",
+      "export": "recoveryBudget",
+      "input": {
+        "attempt": 5,
+        "max_attempts": 3
+      },
+      "expect": {
+        "attempt": 5,
+        "max_attempts": 3,
+        "remaining": 0,
+        "exhausted": true
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c9",
+      "module": "src/recovery.ts",
+      "export": "recoveryBudget",
+      "input": {},
+      "expect": {
+        "attempt": 0,
+        "max_attempts": 0,
+        "remaining": 0,
+        "exhausted": true
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c10",
+      "module": "src/recovery.ts",
+      "export": "recoveryBudget",
+      "input": {
+        "attempt": "2",
+        "max_attempts": 3
+      },
+      "expect": {
+        "attempt": 0,
+        "max_attempts": 3,
+        "remaining": 3,
+        "exhausted": false
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c11",
+      "module": "src/recovery.ts",
+      "export": "recoveryBudget",
+      "input": "junk",
+      "expect": {
+        "attempt": 0,
+        "max_attempts": 0,
+        "remaining": 0,
+        "exhausted": true
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c12",
+      "module": "src/recovery.ts",
+      "export": "summarizeReclaims",
+      "input": [
+        {
+          "kind": "claim",
+          "meta": {
+            "cause": "decoy"
+          }
+        },
+        {
+          "kind": "claim.reoffer",
+          "meta": {
+            "cause": "orphan_requeue"
+          }
+        },
+        {
+          "kind": "agent.thought",
+          "meta": {
+            "cause": "noise"
+          }
+        },
+        {
+          "kind": "claim.reoffer",
+          "meta": {
+            "cause": "provider_cap"
+          }
+        },
+        {
+          "kind": "claim.reoffer",
+          "meta": {}
+        }
+      ],
+      "expect": {
+        "requeues": 2,
+        "causes": ["orphan_requeue", "provider_cap"]
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c13",
+      "module": "src/recovery.ts",
+      "export": "summarizeReclaims",
+      "input": [],
+      "expect": {
+        "requeues": 0,
+        "causes": []
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c14",
+      "module": "src/recovery.ts",
+      "export": "summarizeReclaims",
+      "input": "nope",
+      "expect": {
+        "requeues": 0,
+        "causes": []
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c15",
+      "module": "src/recovery.ts",
+      "export": "summarizeReclaims",
+      "input": [
+        {
+          "kind": "claim.reoffer",
+          "meta": {}
+        }
+      ],
+      "expect": {
+        "requeues": 0,
+        "causes": []
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c16",
+      "module": "src/recovery.ts",
+      "export": "summarizeReclaims",
+      "input": [
+        "x",
+        null,
+        5,
+        {
+          "kind": "claim.reoffer",
+          "meta": {
+            "cause": "a"
+          }
+        }
+      ],
+      "expect": {
+        "requeues": 1,
+        "causes": ["a"]
+      }
+    },
+    {
+      "kind": "invariant",
+      "id": "c17",
+      "property": "idempotent",
+      "module": "src/recovery.ts",
+      "export": "recoveryBudget",
+      "inputs": [
+        {
+          "attempt": 1,
+          "max_attempts": 3
+        },
+        {
+          "attempt": 4,
+          "max_attempts": 2
+        }
+      ],
+      "seed": 0
+    },
+    {
+      "kind": "invariant",
+      "id": "c18",
+      "property": "deterministic",
+      "module": "src/recovery.ts",
+      "export": "summarizeReclaims",
+      "inputs": [
+        [
+          {
+            "kind": "claim",
+            "meta": {
+              "cause": "decoy"
+            }
+          },
+          {
+            "kind": "claim.reoffer",
+            "meta": {
+              "cause": "orphan_requeue"
+            }
+          },
+          {
+            "kind": "agent.thought",
+            "meta": {
+              "cause": "noise"
+            }
+          },
+          {
+            "kind": "claim.reoffer",
+            "meta": {
+              "cause": "provider_cap"
+            }
+          },
+          {
+            "kind": "claim.reoffer",
+            "meta": {}
+          }
+        ]
+      ],
+      "seed": 0
+    }
+  ],
+  "patches": {
+    "good": "diff --git a/src/recovery.ts b/src/recovery.ts\nindex c91b345..74105db 100644\n--- a/src/recovery.ts\n+++ b/src/recovery.ts\n@@ -1,6 +1,28 @@\n+function asRecord(value: unknown): Record<string, unknown> | null {\n+  if (typeof value !== \"object\" || value === null || Array.isArray(value)) {\n+    return null;\n+  }\n+  return value as Record<string, unknown>;\n+}\n+\n+function nonEmptyString(value: unknown): string | null {\n+  return typeof value === \"string\" && value.length > 0 ? value : null;\n+}\n+\n+function nonNegativeInt(value: unknown): number | null {\n+  return typeof value === \"number\" && Number.isInteger(value) && value >= 0 ? value : null;\n+}\n+\n+function positiveInt(value: unknown): number | null {\n+  return typeof value === \"number\" && Number.isInteger(value) && value > 0 ? value : null;\n+}\n+\n export function reclaimCause(meta: unknown): string | null {\n-  void meta;\n-  throw new Error(\"not implemented\");\n+  const rec = asRecord(meta);\n+  if (rec === null) {\n+    return null;\n+  }\n+  return nonEmptyString(rec.cause);\n }\n \n export function recoveryBudget(input: unknown): {\n@@ -9,11 +31,32 @@ export function recoveryBudget(input: unknown): {\n   remaining: number;\n   exhausted: boolean;\n } {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  const rec = asRecord(input);\n+  const attempt = rec === null ? 0 : (nonNegativeInt(rec.attempt) ?? 0);\n+  const maxAttempts = rec === null ? 0 : (positiveInt(rec.max_attempts) ?? 0);\n+  const remaining = Math.max(0, maxAttempts - attempt);\n+  return {\n+    attempt,\n+    max_attempts: maxAttempts,\n+    remaining,\n+    exhausted: attempt >= maxAttempts,\n+  };\n }\n \n export function summarizeReclaims(events: unknown): { requeues: number; causes: string[] } {\n-  void events;\n-  throw new Error(\"not implemented\");\n+  if (!Array.isArray(events)) {\n+    return { requeues: 0, causes: [] };\n+  }\n+  const causes: string[] = [];\n+  for (const event of events) {\n+    const rec = asRecord(event);\n+    if (rec === null || rec.kind !== \"claim.reoffer\") {\n+      continue;\n+    }\n+    const cause = reclaimCause(rec.meta);\n+    if (cause !== null) {\n+      causes.push(cause);\n+    }\n+  }\n+  return { requeues: causes.length, causes };\n }\n",
+    "bad": [
+      "diff --git a/src/recovery.ts b/src/recovery.ts\nindex c91b345..ad9ce5e 100644\n--- a/src/recovery.ts\n+++ b/src/recovery.ts\n@@ -1,6 +1,28 @@\n+function asRecord(value: unknown): Record<string, unknown> | null {\n+  if (typeof value !== \"object\" || value === null || Array.isArray(value)) {\n+    return null;\n+  }\n+  return value as Record<string, unknown>;\n+}\n+\n+function nonEmptyString(value: unknown): string | null {\n+  return typeof value === \"string\" && value.length > 0 ? value : null;\n+}\n+\n+function nonNegativeInt(value: unknown): number | null {\n+  return typeof value === \"number\" && Number.isInteger(value) && value >= 0 ? value : null;\n+}\n+\n+function positiveInt(value: unknown): number | null {\n+  return typeof value === \"number\" && Number.isInteger(value) && value > 0 ? value : null;\n+}\n+\n export function reclaimCause(meta: unknown): string | null {\n-  void meta;\n-  throw new Error(\"not implemented\");\n+  const rec = asRecord(meta);\n+  if (rec === null) {\n+    return null;\n+  }\n+  return nonEmptyString(rec.cause);\n }\n \n export function recoveryBudget(input: unknown): {\n@@ -9,11 +31,32 @@ export function recoveryBudget(input: unknown): {\n   remaining: number;\n   exhausted: boolean;\n } {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  const rec = asRecord(input);\n+  const attempt = rec === null ? 0 : (nonNegativeInt(rec.attempt) ?? 0);\n+  const maxAttempts = rec === null ? 0 : (positiveInt(rec.max_attempts) ?? 0);\n+  const remaining = maxAttempts - attempt;\n+  return {\n+    attempt,\n+    max_attempts: maxAttempts,\n+    remaining,\n+    exhausted: attempt >= maxAttempts,\n+  };\n }\n \n export function summarizeReclaims(events: unknown): { requeues: number; causes: string[] } {\n-  void events;\n-  throw new Error(\"not implemented\");\n+  if (!Array.isArray(events)) {\n+    return { requeues: 0, causes: [] };\n+  }\n+  const causes: string[] = [];\n+  for (const event of events) {\n+    const rec = asRecord(event);\n+    if (rec === null || rec.kind !== \"claim.reoffer\") {\n+      continue;\n+    }\n+    const cause = reclaimCause(rec.meta);\n+    if (cause !== null) {\n+      causes.push(cause);\n+    }\n+  }\n+  return { requeues: causes.length, causes };\n }\n"
+    ]
+  },
+  "mutants": [
+    "diff --git a/src/recovery.ts b/src/recovery.ts\nindex c91b345..b1e2668 100644\n--- a/src/recovery.ts\n+++ b/src/recovery.ts\n@@ -1,6 +1,28 @@\n+function asRecord(value: unknown): Record<string, unknown> | null {\n+  if (typeof value !== \"object\" || value === null || Array.isArray(value)) {\n+    return null;\n+  }\n+  return value as Record<string, unknown>;\n+}\n+\n+function nonEmptyString(value: unknown): string | null {\n+  return typeof value === \"string\" && value.length > 0 ? value : null;\n+}\n+\n+function nonNegativeInt(value: unknown): number | null {\n+  return typeof value === \"number\" && Number.isInteger(value) && value >= 0 ? value : null;\n+}\n+\n+function positiveInt(value: unknown): number | null {\n+  return typeof value === \"number\" && Number.isInteger(value) && value > 0 ? value : null;\n+}\n+\n export function reclaimCause(meta: unknown): string | null {\n-  void meta;\n-  throw new Error(\"not implemented\");\n+  const rec = asRecord(meta);\n+  if (rec === null) {\n+    return null;\n+  }\n+  return typeof rec.cause === \"string\" ? rec.cause : null;\n }\n \n export function recoveryBudget(input: unknown): {\n@@ -9,11 +31,32 @@ export function recoveryBudget(input: unknown): {\n   remaining: number;\n   exhausted: boolean;\n } {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  const rec = asRecord(input);\n+  const attempt = rec === null ? 0 : (nonNegativeInt(rec.attempt) ?? 0);\n+  const maxAttempts = rec === null ? 0 : (positiveInt(rec.max_attempts) ?? 0);\n+  const remaining = Math.max(0, maxAttempts - attempt);\n+  return {\n+    attempt,\n+    max_attempts: maxAttempts,\n+    remaining,\n+    exhausted: attempt >= maxAttempts,\n+  };\n }\n \n export function summarizeReclaims(events: unknown): { requeues: number; causes: string[] } {\n-  void events;\n-  throw new Error(\"not implemented\");\n+  if (!Array.isArray(events)) {\n+    return { requeues: 0, causes: [] };\n+  }\n+  const causes: string[] = [];\n+  for (const event of events) {\n+    const rec = asRecord(event);\n+    if (rec === null || rec.kind !== \"claim.reoffer\") {\n+      continue;\n+    }\n+    const cause = reclaimCause(rec.meta);\n+    if (cause !== null) {\n+      causes.push(cause);\n+    }\n+  }\n+  return { requeues: causes.length, causes };\n }\n",
+    "diff --git a/src/recovery.ts b/src/recovery.ts\nindex c91b345..a3ed3cd 100644\n--- a/src/recovery.ts\n+++ b/src/recovery.ts\n@@ -1,6 +1,28 @@\n+function asRecord(value: unknown): Record<string, unknown> | null {\n+  if (typeof value !== \"object\" || value === null || Array.isArray(value)) {\n+    return null;\n+  }\n+  return value as Record<string, unknown>;\n+}\n+\n+function nonEmptyString(value: unknown): string | null {\n+  return typeof value === \"string\" && value.length > 0 ? value : null;\n+}\n+\n+function nonNegativeInt(value: unknown): number | null {\n+  return typeof value === \"number\" && Number.isInteger(value) && value >= 0 ? value : null;\n+}\n+\n+function positiveInt(value: unknown): number | null {\n+  return typeof value === \"number\" && Number.isInteger(value) && value > 0 ? value : null;\n+}\n+\n export function reclaimCause(meta: unknown): string | null {\n-  void meta;\n-  throw new Error(\"not implemented\");\n+  const rec = asRecord(meta);\n+  if (rec === null) {\n+    return null;\n+  }\n+  return nonEmptyString(rec.cause);\n }\n \n export function recoveryBudget(input: unknown): {\n@@ -9,11 +31,32 @@ export function recoveryBudget(input: unknown): {\n   remaining: number;\n   exhausted: boolean;\n } {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  const rec = asRecord(input);\n+  const attempt = rec === null ? 0 : (nonNegativeInt(rec.attempt) ?? 0);\n+  const maxAttempts = rec === null ? 0 : (positiveInt(rec.max_attempts) ?? 0);\n+  const remaining = Math.max(0, maxAttempts - attempt);\n+  return {\n+    attempt,\n+    max_attempts: maxAttempts,\n+    remaining,\n+    exhausted: attempt >= maxAttempts,\n+  };\n }\n \n export function summarizeReclaims(events: unknown): { requeues: number; causes: string[] } {\n-  void events;\n-  throw new Error(\"not implemented\");\n+  if (!Array.isArray(events)) {\n+    return { requeues: 0, causes: [] };\n+  }\n+  const causes: string[] = [];\n+  for (const event of events) {\n+    const rec = asRecord(event);\n+    if (rec === null) {\n+      continue;\n+    }\n+    const cause = reclaimCause(rec.meta);\n+    if (cause !== null) {\n+      causes.push(cause);\n+    }\n+  }\n+  return { requeues: causes.length, causes };\n }\n"
+  ]
+}

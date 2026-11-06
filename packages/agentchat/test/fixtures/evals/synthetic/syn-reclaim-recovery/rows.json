@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "handoffs": [
+    {
+      "handoff_id": "h-104",
+      "ts": "2026-06-11T09:00:00Z",
+      "message": "Implement claim recovery described by test/recovery.test.ts.",
+      "parent_handoff_id": null,
+      "triggered_by_event_id": null,
+      "branch_base": null,
+      "branch_name": null,
+      "workflow_run_id": null,
+      "dispatch_attempts": 2
+    }
+  ],
+  "events": [
+    {
+      "id": 1,
+      "handoff_id": "h-104",
+      "worker_id": null,
+      "source": "daemon",
+      "kind": "claim",
+      "ts": "2026-06-11T09:00:01Z",
+      "meta_json": null
+    },
+    {
+      "id": 2,
+      "handoff_id": "h-104",
+      "worker_id": "w-1",
+      "source": "worker",
+      "kind": "dispatch.end",
+      "ts": "2026-06-11T09:04:00Z",
+      "meta_json": "{\"commit_integrity\":{\"base_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"head_sha\":\"34744c31fa2044109c520ba04470282a898a3e15\",\"base_is_ancestor\":false,\"identity\":{\"name\":\"agent\",\"email\":\"agent@example.com\"},\"mismatched_commits\":[],\"mismatched_total\":0}}"
+    },
+    {
+      "id": 3,
+      "handoff_id": "h-104",
+      "worker_id": null,
+      "source": "daemon",
+      "kind": "claim.reoffer",
+      "ts": "2026-06-11T09:04:30Z",
+      "meta_json": "{\"cause\":\"orphan_requeue\"}"
+    },
+    {
+      "id": 4,
+      "handoff_id": "h-104",
+      "worker_id": null,
+      "source": "daemon",
+      "kind": "claim",
+      "ts": "2026-06-11T09:05:00Z",
+      "meta_json": null
+    },
+    {
+      "id": 5,
+      "handoff_id": "h-104",
+      "worker_id": "w-1",
+      "source": "worker",
+      "kind": "dispatch.end",
+      "ts": "2026-06-11T09:09:00Z",
+      "meta_json": "{\"autocommitted\":true,\"autocommit_sha\":\"df31b750d144e1740fa4a72fe0516e1273cd8f90\",\"commit_integrity\":{\"base_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"head_sha\":\"df31b750d144e1740fa4a72fe0516e1273cd8f90\",\"base_is_ancestor\":true,\"identity\":{\"name\":\"agent\",\"email\":\"agent@example.com\"},\"mismatched_commits\":[],\"mismatched_total\":0}}"
+    }
+  ],
+  "retry_events": [],
+  "lanes": []
+}
