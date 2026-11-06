@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "handoffs": [
+    {
+      "handoff_id": "h-102",
+      "ts": "2026-06-12T11:00:00Z",
+      "message": "Implement lane gate evidence described by test/gate.test.ts.",
+      "parent_handoff_id": null,
+      "triggered_by_event_id": null,
+      "branch_base": null,
+      "branch_name": null,
+      "workflow_run_id": null,
+      "dispatch_attempts": 1
+    }
+  ],
+  "events": [
+    {
+      "id": 1,
+      "handoff_id": "h-102",
+      "worker_id": null,
+      "source": "daemon",
+      "kind": "claim",
+      "ts": "2026-06-12T11:00:01Z",
+      "meta_json": null
+    },
+    {
+      "id": 2,
+      "handoff_id": "h-102",
+      "worker_id": "w-1",
+      "source": "worker",
+      "kind": "dispatch.end",
+      "ts": "2026-06-12T11:05:00Z",
+      "meta_json": "{\"exit_code\":0}"
+    }
+  ],
+  "retry_events": [],
+  "lanes": [
+    {
+      "lane_id": "lane-001",
+      "implementer_handoff": "h-102",
+      "gate_status": "passed",
+      "ts_closed": "2026-06-12T11:30:00Z"
+    }
+  ]
+}
