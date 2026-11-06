@@ -11,6 +11,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./db/schema": "./src/db/schema.ts",
+    "./dispatch/capsule": "./src/dispatch/capsule/index.ts",
     "./tasks/ledger-bridge.js": "./src/tasks/ledger-bridge.ts",
     "./long-lived/types": "./src/long-lived/types.ts",
     "./long-lived/retired-agents": "./src/long-lived/retired-agents.ts",
