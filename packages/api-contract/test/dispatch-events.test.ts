@@ -68,4 +68,8 @@ describe("dispatch event contract", () => {
       expect(DispatchEventKindSchema.safeParse(kind).success).toBe(true);
     }
   });
+
+  it("DispatchEventKindSchema accepts dispatch.capsule_shadow (#392)", () => {
+    expect(DispatchEventKindSchema.safeParse("dispatch.capsule_shadow").success).toBe(true);
+  });
 });

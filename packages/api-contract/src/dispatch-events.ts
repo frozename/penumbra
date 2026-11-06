@@ -69,6 +69,8 @@ export const DispatchEventKindSchema = z.enum([
   "acp.model_selected",
   "acp.model_unavailable",
   "acp.model_select_failed",
+  // #392: capsule shadow compile recorded beside a chain_start dispatch.
+  "dispatch.capsule_shadow",
 ]);
 export type DispatchEventKind = z.infer<typeof DispatchEventKindSchema>;
 
