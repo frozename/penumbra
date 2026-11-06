@@ -873,6 +873,22 @@ test("runtime ignores inherited prototype keys", async () => {
   }
 });
 
+test("runtime rejects inherited prototype versions (pins own-property guard)", async () => {
+  const fx = makeFixture();
+  const { storageRoot, operatorCheckout } = probeDirs(fx);
+  const port = createCapsuleProbePort({
+    worktreeRoot: fx.wt,
+    baseSha: fx.headSha,
+    storageRoot,
+    operatorCheckout,
+    runtimeVersions: Object.create({ bun: "9.9.9" }) as Record<string, string>,
+  });
+  expect(await port.runtime("bun")).toEqual({
+    status: "fail",
+    detail: "runtime bun not available",
+  });
+});
+
 test("runtime requires a string version", async () => {
   const fx = makeFixture();
   const { storageRoot, operatorCheckout } = probeDirs(fx);
