@@ -24,25 +24,48 @@ export interface RenderedCapsule {
 const byId = (a: { id: string }, b: { id: string }): number =>
   a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 
-const ADVISORY_ESCAPES: ReadonlyMap<string, string> = new Map([
+// Every character that a line-splitting consumer (Python splitlines, CRLF
+// handling, bidi reordering) could resurrect as a line break or visual
+// reorder must be escaped: C0, DEL, C1, LS/PS, and the invisible bidi
+// controls. Backslash is escaped first so the mapping stays injective.
+function isControlOrBidi(cp: number): boolean {
+  return (
+    cp <= 0x1f ||
+    (cp >= 0x7f && cp <= 0x9f) ||
+    cp === 0x061c ||
+    cp === 0x200e ||
+    cp === 0x200f ||
+    cp === 0x2028 ||
+    cp === 0x2029 ||
+    (cp >= 0x202a && cp <= 0x202e) ||
+    (cp >= 0x2066 && cp <= 0x2069)
+  );
+}
+
+const READABLE_ESCAPES: ReadonlyMap<string, string> = new Map([
   ["\\", "\\\\"],
   ["<", "\\<"],
   [">", "\\>"],
   ["\n", "\\n"],
   ["\r", "\\r"],
-  ["\v", "\\v"],
-  ["\f", "\\f"],
-  ["\u0085", "\\N"],
-  ["\u2028", "\\L"],
-  ["\u2029", "\\P"],
+  ["\t", "\\t"],
 ]);
 
 export function escapeAdvisory(text: string): string {
   let out = "";
-  for (const ch of text) {
-    out += ADVISORY_ESCAPES.get(ch) ?? ch;
+  let start = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text.charAt(i);
+    const readable = READABLE_ESCAPES.get(ch);
+    if (readable !== undefined) {
+      out += text.slice(start, i) + readable;
+      start = i + 1;
+    } else if (isControlOrBidi(text.charCodeAt(i))) {
+      out += text.slice(start, i) + `\\u{${text.charCodeAt(i).toString(16).padStart(4, "0")}}`;
+      start = i + 1;
+    }
   }
-  return out;
+  return out + text.slice(start);
 }
 
 export function renderAuthoritativeSection(lane: AuthoritativeLane): string {
@@ -71,7 +94,7 @@ export function renderLastErrorSection(error: LastError): string {
   return [
     LAST_ERROR_HEADER,
     `kind: ${error.kind} truncated: ${String(error.truncated)} log_sha256: ${error.log_sha256}`,
-    error.excerpt,
+    escapeAdvisory(error.excerpt),
   ].join("\n");
 }
 
