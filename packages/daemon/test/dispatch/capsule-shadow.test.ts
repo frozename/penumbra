@@ -1218,7 +1218,11 @@ describe("capsule shadow dispatch boundary (#392)", () => {
     execFileSync("git", ["config", "user.name", "test"], { cwd: repo });
     writeFileSync(join(repo, "base.txt"), "base\n");
     execFileSync("git", ["add", "."], { cwd: repo });
-    execFileSync("git", ["commit", "-m", "base"], { cwd: repo });
+    execFileSync(
+      "git",
+      ["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-m", "base"],
+      { cwd: repo },
+    );
     const requestedBase = execFileSync("git", ["rev-parse", "HEAD"], {
       cwd: repo,
       encoding: "utf8",
@@ -1230,7 +1234,11 @@ describe("capsule shadow dispatch boundary (#392)", () => {
     execFileSync("git", ["config", "user.name", "test"], { cwd: worktreeRoot });
     writeFileSync(join(worktreeRoot, "work.txt"), "work\n");
     execFileSync("git", ["add", "."], { cwd: worktreeRoot });
-    execFileSync("git", ["commit", "-m", "work"], { cwd: worktreeRoot });
+    execFileSync(
+      "git",
+      ["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-m", "work"],
+      { cwd: worktreeRoot },
+    );
     const worktreeHead = execFileSync("git", ["rev-parse", "HEAD"], {
       cwd: worktreeRoot,
       encoding: "utf8",
