@@ -95,6 +95,34 @@ describe("PermissionDecideResponseSchema", () => {
     ).toBe(false);
   });
 
+  test("missing permission_id fails", () => {
+    expect(
+      PermissionDecideResponseSchema.safeParse({
+        status: "approved",
+        decided_at: "2026-01-01T00:00:00Z",
+      }).success,
+    ).toBe(false);
+  });
+
+  test("missing status fails", () => {
+    expect(
+      PermissionDecideResponseSchema.safeParse({
+        permission_id: "p1",
+        decided_at: "2026-01-01T00:00:00Z",
+      }).success,
+    ).toBe(false);
+  });
+
+  test("complete object succeeds", () => {
+    expect(
+      PermissionDecideResponseSchema.safeParse({
+        permission_id: "p1",
+        status: "approved",
+        decided_at: "2026-01-01T00:00:00Z",
+      }).success,
+    ).toBe(true);
+  });
+
   test("status 'bogus' fails", () => {
     expect(
       PermissionDecideResponseSchema.safeParse({
@@ -171,20 +199,9 @@ describe("PermissionGetResponseSchema", () => {
 
 describe("PermissionRequestRowSchema", () => {
   test("rejects a row that omits decision_reason", () => {
-    const rowWithoutDecisionReason = {
-      permission_id: "p1",
-      parent_handoff_id: "h1",
-      conversation_id: "c1",
-      agent_name: "a",
-      tool_name: "t",
-      raw_input_json: "{}",
-      status: "pending" as const,
-      remember_scope: null,
-      decided_by: null,
-      ttl_at: "2026-01-01T00:00:00Z",
-      created_at: "2026-01-01T00:00:00Z",
-      decided_at: null,
-    };
+    const rowWithoutDecisionReason: Partial<ReturnType<typeof makeValidRow>> = makeValidRow();
+    delete rowWithoutDecisionReason.decision_reason;
     expect(PermissionRequestRowSchema.safeParse(rowWithoutDecisionReason).success).toBe(false);
+    expect(PermissionRequestRowSchema.safeParse(makeValidRow()).success).toBe(true);
   });
 });
