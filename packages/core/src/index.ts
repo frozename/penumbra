@@ -622,6 +622,11 @@ export {
   type WorktreeGcCandidateReason,
 } from "./worktree/gc-candidates.js";
 export {
+  classifyGitHooks,
+  type WorktreeGitHooks,
+  type WorktreeGitHooksStatus,
+} from "./worktree/git-hooks.js";
+export {
   DISPATCH_BASE_CONFIG_KEY,
   ISOLATED_INSTALL_ARGS,
   ISOLATED_INSTALL_CACHE_KEY,
