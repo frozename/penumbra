@@ -207,7 +207,7 @@ test("emitFileOutput mode=unique-suffix is atomic during a write storm", async (
     const results = await Promise.all(promises);
 
     const paths = results.map((r) => r.path).sort();
-    const contents = paths.map((p) => readFileSync(p, "utf8")).sort();
+    const contents = paths.map((p) => readFileSync(p!, "utf8")).sort();
 
     expect(paths.length).toBe(10);
     expect(new Set(paths).size).toBe(10);

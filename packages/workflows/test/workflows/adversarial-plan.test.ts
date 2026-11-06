@@ -201,8 +201,8 @@ function makeCtx(opts?: {
 
   const parsedArgs = inputSchema.parse(opts?.args ?? {}) as Record<string, unknown>;
   const ctx: WorkflowCtx = {
-    dispatch,
-    awaitChain,
+    dispatch: dispatch as unknown as WorkflowCtx["dispatch"],
+    awaitChain: awaitChain as unknown as WorkflowCtx["awaitChain"],
     fileWrite: async (relativePath, body): Promise<string> => {
       const path = isAbsolute(relativePath) ? relativePath : join(root, relativePath);
       writes.push({ path, body });
@@ -218,6 +218,7 @@ function makeCtx(opts?: {
     // inputs just carry it through cwd_override.
     scratchWorktree: stubScratchWorktree(join(root, ".scratch-test")),
     args: parsedArgs,
+    cancel: (): Promise<void> => Promise.resolve(),
   };
 
   return { ctx, root, writes, dispatch, awaitChain };
@@ -260,7 +261,7 @@ function writePerf(db: Database, agent: string, taskType: "plan_refine"): void {
     cost_usd: null,
     tokens_used: 100,
     latency_ms: agent === "claude-acp-sonnet" ? 10_000 : 60_000,
-    source: "test",
+    source: "test" as unknown as "worker",
     notes: null,
     metadata_json: "{}",
   });
@@ -381,7 +382,12 @@ test("happy path: two personas complete, synthesizer runs, and synthesis is writ
       ok: boolean;
       out_dir: string;
       synthesis_path: string | null;
-      personas: { name: string; status: string; conversation_id: string | null }[];
+      personas: {
+        name: string;
+        status: string;
+        conversation_id: string | null;
+        cancel_requested?: boolean;
+      }[];
       synthesizer_status: string | null;
     };
     expect(result.ok).toBe(true);
@@ -472,7 +478,12 @@ test("one persona fails: synth still runs with surviving persona only", async ()
       failed_personas: string[];
       out_dir: string;
       synthesis_path: string | null;
-      personas: { name: string; status: string; conversation_id: string | null }[];
+      personas: {
+        name: string;
+        status: string;
+        conversation_id: string | null;
+        cancel_requested?: boolean;
+      }[];
       synthesizer_status: string | null;
     };
     expect(result.ok).toBe(true);

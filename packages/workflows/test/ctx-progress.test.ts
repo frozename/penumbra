@@ -79,7 +79,7 @@ test("progress writes a workflow.progress t0 event with identity and no usage", 
 
   const rows = progressRows(db);
   expect(rows.length).toBe(1);
-  const row = rows[0];
+  const row = rows[0]!;
   expect(row).not.toBeUndefined();
   expect(row.event_type).toBe("workflow.progress");
   expect(row.project_id).toBe("proj-1");
@@ -153,7 +153,7 @@ test("progress writes to services.db, not the readonly ctx.db handle", () => {
 
     expect(progressRows(db).length).toBe(1);
 
-    const ctxDb = ctx.db();
+    const ctxDb = ctx.db!();
     const ctxRows = ctxDb
       .query("SELECT * FROM t0_events WHERE event_type = 'workflow.progress'")
       .all() as ProgressRow[];
@@ -171,7 +171,7 @@ test("progress is a no-op when the workflow run id is missing", () => {
     ...baseDeps(db),
     workflowRunId: null,
     progressIdentity: {
-      ...baseDeps(db).progressIdentity,
+      ...baseDeps(db).progressIdentity!,
       workflowRunId: null,
     },
   });
@@ -225,7 +225,7 @@ test("progress does not throw when the db prepare fails", () => {
           throw new Error("disk full");
         };
       }
-      return (target as Record<string, unknown>)[prop as string];
+      return (target as unknown as Record<string, unknown>)[prop as string];
     },
   });
   const ctx = buildWorkflowCtx({

@@ -3,12 +3,13 @@
 // through in-process introspection (node:inspector, a heap snapshot,
 // /proc/self/mem) and can therefore control the result of its own leg — that
 // is equivalent to the candidate simply behaving differently, so the design
-// accepts it. What the frame guarantees: stray or accidental output on fd
-// 1/2/3 and partial writes are caught by the parent as tamper/no_output, and
-// forged invariants cannot be memoized across legs because each leg runs in
-// one fresh process. What it does not guarantee: stopping a deliberately
-// faking in-process candidate from emitting a well-formed frame for its own
-// leg.
+// accepts it. What the frame guarantees: stray or accidental output on fd 3,
+// partial writes and nonce mismatches are caught by the parent as
+// tamper/no_output — the parent drains and discards fd 1 and fd 2, so output
+// there is never classified — and forged invariants cannot be memoized across
+// legs because each leg runs in one fresh process. What it does not
+// guarantee: stopping a deliberately faking in-process candidate from
+// emitting a well-formed frame for its own leg.
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as url from "node:url";

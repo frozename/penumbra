@@ -49,7 +49,7 @@ test("session-memory-sweep writes next-session-prompt output", async () => {
       ),
     );
 
-    const registry = await buildRegistry({ workflowsDir });
+    const registry = await buildRegistry({ workflowsDir } as Parameters<typeof buildRegistry>[0]);
     expect(registry.errors).toEqual([]);
     const entry = registry.getEntry("session-memory-sweep");
     expect(entry).toBeTruthy();
@@ -141,7 +141,7 @@ test("session-memory-sweep writes next-session-prompt output", async () => {
               response_text: null,
             }),
           fileWrite: () => Promise.resolve("/tmp/out"),
-        },
+        } as unknown as Parameters<typeof executeWorkflow>[0]["ctx"],
         captureCtx: { db, project: "penumbra", sessionId, userId: "u", machineId: "m" },
       });
 
@@ -178,7 +178,7 @@ test("session-memory-sweep writes no-candidates next-session-prompt output", asy
       ),
     );
 
-    const registry = await buildRegistry({ workflowsDir });
+    const registry = await buildRegistry({ workflowsDir } as Parameters<typeof buildRegistry>[0]);
     expect(registry.errors).toEqual([]);
     const entry = registry.getEntry("session-memory-sweep");
     expect(entry).toBeTruthy();
@@ -258,7 +258,7 @@ test("session-memory-sweep writes no-candidates next-session-prompt output", asy
               response_text: null,
             }),
           fileWrite: () => Promise.resolve("/tmp/out"),
-        },
+        } as unknown as Parameters<typeof executeWorkflow>[0]["ctx"],
         captureCtx: { db, project: "penumbra", sessionId, userId: "u", machineId: "m" },
       });
 
@@ -292,7 +292,7 @@ test("session-memory-sweep preserves existing next-session-prompt output when di
       ),
     );
 
-    const registry = await buildRegistry({ workflowsDir });
+    const registry = await buildRegistry({ workflowsDir } as Parameters<typeof buildRegistry>[0]);
     expect(registry.errors).toEqual([]);
     const entry = registry.getEntry("session-memory-sweep");
     expect(entry).toBeTruthy();
@@ -349,7 +349,7 @@ test("session-memory-sweep preserves existing next-session-prompt output when di
               response_text: null,
             }),
           fileWrite: () => Promise.resolve("/tmp/out"),
-        },
+        } as unknown as Parameters<typeof executeWorkflow>[0]["ctx"],
         captureCtx: { db, project: "penumbra", sessionId, userId: "u", machineId: "m" },
       });
 

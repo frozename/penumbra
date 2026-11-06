@@ -12,7 +12,7 @@ test("resolves {{today}} in memory.search dateStart before SQL", async () => {
 
   const bundle = await composeRecall({
     db,
-    embedder: new TestEmbedder(384),
+    embedder: new TestEmbedder(384 as unknown as { dim: number }),
     cwd: process.cwd(),
     project: "test",
     sources: [{ source: "memory_search", args: { query: "x", dateStart: "{{today}}", limit: 1 } }],
@@ -33,7 +33,7 @@ test("leaves args untouched when templateCtx omitted", async () => {
 
   const bundle = await composeRecall({
     db,
-    embedder: new TestEmbedder(384),
+    embedder: new TestEmbedder(384 as unknown as { dim: number }),
     cwd: process.cwd(),
     project: "test",
     sources: [{ source: "fs_glob", args: { pattern: "docs/**/*.md" } }],

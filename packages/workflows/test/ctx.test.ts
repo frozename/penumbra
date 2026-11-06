@@ -1,6 +1,7 @@
 import {
   ChainReader,
   type ChainStartRequest,
+  type CreateHandoffParams,
   HandoffReader,
   HandoffWriter,
   loadSqliteVec,
@@ -157,7 +158,7 @@ function realAwaitCtx(
 }
 
 test("dispatch returns ids from chain.start payload", async () => {
-  let captured: ChainStartRequest | null = null;
+  let captured!: ChainStartRequest;
   const ctx = buildWorkflowCtx({
     services: fakeServices(),
     cwd: "/tmp/cwd",
@@ -177,13 +178,13 @@ test("dispatch returns ids from chain.start payload", async () => {
 
   const out = await ctx.dispatch({ agent: "codex", message: "run this", task_type: "implementer" });
   expect(out).toEqual({ conversation_id: "conv-1", handoff_id: "hand-1" });
-  expect(captured?.initial_agent).toBe("codex");
-  expect(captured?.project_id).toBe("proj-1");
-  expect(captured?.task_type).toBe("implementer");
+  expect(captured.initial_agent).toBe("codex");
+  expect(captured.project_id).toBe("proj-1");
+  expect(captured.task_type as string).toBe("implementer");
 });
 
 test("dispatch forwards task_class to chain.start requests", async () => {
-  let captured: ChainStartRequest | null = null;
+  let captured!: ChainStartRequest;
   const ctx = buildWorkflowCtx({
     services: fakeServices(),
     cwd: "/tmp/cwd",
@@ -208,11 +209,11 @@ test("dispatch forwards task_class to chain.start requests", async () => {
     task_class: "TRIVIAL",
   });
 
-  expect(captured?.task_class).toBe("TRIVIAL");
+  expect(captured.task_class).toBe("TRIVIAL");
 });
 
 test("dispatch threads deps.project into chainStart req.project_id", async () => {
-  let captured: ChainStartRequest | null = null;
+  let captured!: ChainStartRequest;
   const ctx = buildWorkflowCtx({
     services: fakeServices(),
     cwd: "/tmp/cwd",
@@ -237,11 +238,11 @@ test("dispatch threads deps.project into chainStart req.project_id", async () =>
     task_type: "implementer",
   });
   expect(out).toEqual({ conversation_id: "conv-2", handoff_id: "hand-2" });
-  expect(captured?.project_id).toBe("sirius");
+  expect(captured.project_id).toBe("sirius");
 });
 
 test("dispatch uses per-call project_id override over deps.project", async () => {
-  let captured: ChainStartRequest | null = null;
+  let captured!: ChainStartRequest;
   const ctx = buildWorkflowCtx({
     services: fakeServices(),
     cwd: "/tmp/cwd",
@@ -267,11 +268,11 @@ test("dispatch uses per-call project_id override over deps.project", async () =>
     project_id: "novaflow",
   });
   expect(out).toEqual({ conversation_id: "conv-3", handoff_id: "hand-3" });
-  expect(captured?.project_id).toBe("novaflow");
+  expect(captured.project_id).toBe("novaflow");
 });
 
 test("dispatch stamps workflow dispatch_kind on chainStart requests", async () => {
-  let captured: ChainStartRequest | null = null;
+  let captured!: ChainStartRequest;
   const ctx = buildWorkflowCtx({
     services: fakeServices(),
     cwd: "/tmp/cwd",
@@ -296,12 +297,12 @@ test("dispatch stamps workflow dispatch_kind on chainStart requests", async () =
     task_type: "implementer",
   });
   expect(out).toEqual({ conversation_id: "conv-4a", handoff_id: "hand-4a" });
-  expect(captured?.dispatch_kind).toBe("workflow");
-  expect(captured?.workflow_run_id).toBe("wfrun-test-uuid");
+  expect(captured.dispatch_kind).toBe("workflow");
+  expect(captured.workflow_run_id).toBe("wfrun-test-uuid");
 });
 
 test("dispatch stamps caller_cwd from deps.cwd so the sandbox denies the originating root", async () => {
-  let captured: ChainStartRequest | null = null;
+  let captured!: ChainStartRequest;
   const ctx = buildWorkflowCtx({
     services: fakeServices(),
     cwd: "/repo/originating-cwd",
@@ -335,11 +336,11 @@ test("dispatch stamps caller_cwd from deps.cwd so the sandbox denies the origina
     use_worktree: false,
   });
   expect(out.conversation_id).toBe("conv-4b");
-  expect(captured?.caller_cwd).toBe("/repo/originating-cwd");
+  expect(captured.caller_cwd).toBe("/repo/originating-cwd");
 });
 
 test("dispatch omits project_id when deps.project is falsy", async () => {
-  let captured: ChainStartRequest | null = null;
+  let captured!: ChainStartRequest;
   const ctx = buildWorkflowCtx({
     services: fakeServices(),
     cwd: "/tmp/cwd",
@@ -359,7 +360,7 @@ test("dispatch omits project_id when deps.project is falsy", async () => {
 
   const out = await ctx.dispatch({ agent: "codex", message: "noop", task_type: "implementer" });
   expect(out).toEqual({ conversation_id: "conv-4", handoff_id: "hand-4" });
-  expect(captured?.project_id).toBeUndefined();
+  expect(captured.project_id).toBeUndefined();
 });
 
 test("awaitChain returns timeout when terminal state never arrives", async () => {
@@ -830,7 +831,7 @@ test("awaitChain maps a rejected root to failed without borrowing conversation t
       branch_base: null,
       chain_max_hops: 3,
       branch_name: null,
-    });
+    } as unknown as CreateHandoffParams);
     fixture.handoffWriter.reject("root-rejected", {
       resolved_by: "test",
       resolved_at: "2026-09-12T14:01:00.000Z",
@@ -1360,7 +1361,7 @@ test("unbounded awaitChain backoff sequence is unchanged with no runTimeoutMs", 
 });
 
 test("dispatch forwards permission_profile and max_hops to chain.start requests", async () => {
-  let captured: ChainStartRequest | null = null;
+  let captured!: ChainStartRequest;
   const ctx = buildWorkflowCtx({
     services: fakeServices(),
     cwd: "/tmp/cwd",
@@ -1389,8 +1390,8 @@ test("dispatch forwards permission_profile and max_hops to chain.start requests"
     permission_profile: "review_readonly",
     max_hops: 1,
   });
-  expect(captured?.permission_profile).toBe("review_readonly");
-  expect(captured?.max_hops).toBe(1);
+  expect(captured.permission_profile).toBe("review_readonly");
+  expect(captured.max_hops).toBe(1);
   expect(out).toEqual({
     conversation_id: "conv-p",
     handoff_id: "hand-p",
@@ -1483,7 +1484,7 @@ test("dispatch result omits permission_profile key when no profile was requested
 });
 
 test("dispatch forwards cwd_override to chain.start requests", async () => {
-  let captured: ChainStartRequest | null = null;
+  let captured!: ChainStartRequest;
   const ctx = buildWorkflowCtx({
     services: fakeServices(),
     cwd: "/tmp/cwd",
@@ -1509,8 +1510,8 @@ test("dispatch forwards cwd_override to chain.start requests", async () => {
     cwd_override: "/tmp/scratch-run-9",
     max_hops: 1,
   });
-  expect(captured?.cwd_override).toBe("/tmp/scratch-run-9");
-  expect(captured?.use_worktree).toBe(false);
+  expect(captured.cwd_override).toBe("/tmp/scratch-run-9");
+  expect(captured.use_worktree).toBe(false);
 });
 
 test("scratchWorktree.acquire rejects without a workflow_run_id", async () => {
@@ -1572,9 +1573,9 @@ test("scratchWorktree.acquire is memoized and binds owner_run_id to the run", as
   expect(first).toBe(handle);
   expect(second).toBe(first);
   expect(acquireCalls).toHaveLength(1);
-  expect(acquireCalls[0].owner_run_id).toBe("run-7");
-  expect(acquireCalls[0].cwd).toBe("/tmp/caller-cwd");
-  expect(acquireCalls[0].project_id).toBe("proj-uuid");
+  expect(acquireCalls[0]!.owner_run_id).toBe("run-7");
+  expect(acquireCalls[0]!.cwd).toBe("/tmp/caller-cwd");
+  expect(acquireCalls[0]!.project_id).toBe("proj-uuid");
 });
 
 test("scratchWorktree.acquire forwards ref to services.scratchWorktrees.acquire", async () => {
@@ -1609,5 +1610,5 @@ test("scratchWorktree.acquire forwards ref to services.scratchWorktrees.acquire"
 
   await ctx.scratchWorktree!.acquire({ ref: "target-branch-9" });
   expect(acquireCalls).toHaveLength(1);
-  expect(acquireCalls[0].ref).toBe("target-branch-9");
+  expect(acquireCalls[0]!.ref).toBe("target-branch-9");
 });
