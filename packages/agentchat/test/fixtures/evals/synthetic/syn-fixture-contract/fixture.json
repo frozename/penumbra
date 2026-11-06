@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "family_id": "fam-syn-fixture-contract",
+  "variant_id": "v1",
+  "root": {
+    "kind": "synthetic",
+    "id": "fixture-contract"
+  },
+  "reconstructs": {
+    "kind": "operator_bundle",
+    "id": "kapitsa-fixture-contract"
+  },
+  "failure_type": "invalid_fixture_contract",
+  "split": "dev",
+  "synthetic": true,
+  "base_sha": "805192f8f896e9f54fe3f43bbcc996114eb28527",
+  "task_digest": "a2f9a6084892a9e78ed3f1d5b46c91664a193e8c238f15774d73fe3df30fd192",
+  "source_root_handoff_digests": [],
+  "expect_blocked": false,
+  "hidden_ref": {
+    "assertion_set_digest": "d4d807a32b76a42aff5d35c510a44b0fac824fa3436336f3c85c0aced923f275"
+  },
+  "content_digest": "c65e7e1724750a0633a39caa6d77d7060cd2dcd9efc750798aa712b4e1fa230e"
+}

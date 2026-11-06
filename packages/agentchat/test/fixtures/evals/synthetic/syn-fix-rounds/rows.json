@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "handoffs": [
+    {
+      "handoff_id": "h-201",
+      "ts": "2026-06-10T09:00:00Z",
+      "message": "Implement fix round tracking described by test/rounds.test.ts.",
+      "parent_handoff_id": null,
+      "triggered_by_event_id": null,
+      "branch_base": "cccccccccccccccccccccccccccccccccccccccc",
+      "branch_name": "agent/rounds-1",
+      "workflow_run_id": "wf-001",
+      "dispatch_attempts": 1
+    },
+    {
+      "handoff_id": "h-202",
+      "ts": "2026-06-13T10:00:00Z",
+      "message": "You are an independent CHECK verifier for handoff h-201.\n\nVerify each claimed check against the diff and report pass or fail per check.",
+      "parent_handoff_id": null,
+      "triggered_by_event_id": null,
+      "branch_base": "a3c8e666fb425111d8ec4a57dfa9403a7755da70",
+      "branch_name": "review/verify-check_1a2b3c4d",
+      "workflow_run_id": "wf-001",
+      "dispatch_attempts": 1
+    },
+    {
+      "handoff_id": "h-203",
+      "ts": "2026-06-13T11:00:00Z",
+      "message": "You are an independent rubric grader for handoff h-201.\n\nGrade the rubric dimensions and report a verdict.",
+      "parent_handoff_id": null,
+      "triggered_by_event_id": null,
+      "branch_base": null,
+      "branch_name": "task/rubric-grade_5e6f7a8b",
+      "workflow_run_id": null,
+      "dispatch_attempts": 1
+    },
+    {
+      "handoff_id": "h-204",
+      "ts": "2026-06-11T09:00:00Z",
+      "message": "Implement fix round tracking described by test/rounds.test.ts.",
+      "parent_handoff_id": null,
+      "triggered_by_event_id": null,
+      "branch_base": "agent/rounds-1",
+      "branch_name": "agent/rounds-2",
+      "workflow_run_id": "wf-001",
+      "dispatch_attempts": 1
+    },
+    {
+      "handoff_id": "h-205",
+      "ts": "2026-06-12T09:00:00Z",
+      "message": "[silent-failure-retry] retry_of=h-204 prior_agent=agent-x\n\nImplement fix round tracking described by test/rounds.test.ts.",
+      "parent_handoff_id": null,
+      "triggered_by_event_id": null,
+      "branch_base": null,
+      "branch_name": "agent/rounds-2-retry",
+      "workflow_run_id": null,
+      "dispatch_attempts": 1
+    }
+  ],
+  "events": [
+    {
+      "id": 1,
+      "handoff_id": "h-201",
+      "worker_id": null,
+      "source": "daemon",
+      "kind": "claim",
+      "ts": "2026-06-10T09:00:01Z",
+      "meta_json": null
+    },
+    {
+      "id": 2,
+      "handoff_id": "h-201",
+      "worker_id": "w-1",
+      "source": "worker",
+      "kind": "dispatch.end",
+      "ts": "2026-06-10T09:05:00Z",
+      "meta_json": "{\"commit_integrity\":{\"base_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"head_sha\":\"a3c8e666fb425111d8ec4a57dfa9403a7755da70\",\"base_is_ancestor\":true,\"identity\":{\"name\":\"agent\",\"email\":\"agent@example.com\"},\"mismatched_commits\":[],\"mismatched_total\":0}}"
+    },
+    {
+      "id": 3,
+      "handoff_id": "h-202",
+      "worker_id": null,
+      "source": "daemon",
+      "kind": "claim",
+      "ts": "2026-06-13T10:00:01Z",
+      "meta_json": null
+    },
+    {
+      "id": 4,
+      "handoff_id": "h-202",
+      "worker_id": "w-1",
+      "source": "worker",
+      "kind": "dispatch.end",
+      "ts": "2026-06-13T10:05:00Z",
+      "meta_json": "{\"commit_integrity\":{\"base_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"head_sha\":\"a9423fb986258ebe78ec3da982896cf87c8dd595\",\"base_is_ancestor\":true,\"identity\":{\"name\":\"agent\",\"email\":\"agent@example.com\"},\"mismatched_commits\":[],\"mismatched_total\":0}}"
+    },
+    {
+      "id": 5,
+      "handoff_id": "h-203",
+      "worker_id": null,
+      "source": "daemon",
+      "kind": "claim",
+      "ts": "2026-06-13T11:00:01Z",
+      "meta_json": null
+    },
+    {
+      "id": 6,
+      "handoff_id": "h-203",
+      "worker_id": "w-1",
+      "source": "worker",
+      "kind": "dispatch.end",
+      "ts": "2026-06-13T11:05:00Z",
+      "meta_json": "{\"commit_integrity\":{\"base_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"head_sha\":\"74cefdad16671a6f84656053f34c58d7064716ec\",\"base_is_ancestor\":true,\"identity\":{\"name\":\"agent\",\"email\":\"agent@example.com\"},\"mismatched_commits\":[],\"mismatched_total\":0}}"
+    },
+    {
+      "id": 7,
+      "handoff_id": "h-204",
+      "worker_id": null,
+      "source": "daemon",
+      "kind": "claim",
+      "ts": "2026-06-11T09:00:01Z",
+      "meta_json": null
+    },
+    {
+      "id": 8,
+      "handoff_id": "h-204",
+      "worker_id": "w-1",
+      "source": "worker",
+      "kind": "dispatch.end",
+      "ts": "2026-06-11T09:05:00Z",
+      "meta_json": "{\"commit_integrity\":{\"base_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"head_sha\":\"36bcd444b52face399b4dd3a3fb8f736f3af7c35\",\"base_is_ancestor\":true,\"identity\":{\"name\":\"agent\",\"email\":\"agent@example.com\"},\"mismatched_commits\":[],\"mismatched_total\":0}}"
+    },
+    {
+      "id": 9,
+      "handoff_id": "h-205",
+      "worker_id": null,
+      "source": "daemon",
+      "kind": "claim",
+      "ts": "2026-06-12T09:00:01Z",
+      "meta_json": null
+    },
+    {
+      "id": 10,
+      "handoff_id": "h-205",
+      "worker_id": "w-1",
+      "source": "worker",
+      "kind": "dispatch.end",
+      "ts": "2026-06-12T09:05:00Z",
+      "meta_json": "{\"commit_integrity\":{\"base_sha\":\"0123456789abcdef0123456789abcdef01234567\",\"head_sha\":\"7e34e2c26d7701da11691c1ad915a52e89374be5\",\"base_is_ancestor\":true,\"identity\":{\"name\":\"agent\",\"email\":\"agent@example.com\"},\"mismatched_commits\":[],\"mismatched_total\":0}}"
+    }
+  ],
+  "retry_events": [],
+  "lanes": []
+}

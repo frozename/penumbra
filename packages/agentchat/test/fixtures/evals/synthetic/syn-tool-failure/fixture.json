@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "family_id": "fam-syn-tool-failure",
+  "variant_id": "v1",
+  "root": {
+    "kind": "synthetic",
+    "id": "tool-failure"
+  },
+  "reconstructs": null,
+  "failure_type": null,
+  "split": "dev",
+  "synthetic": true,
+  "base_sha": "a16b4e4fb461ad8d0a11e0450c1f72704c7da8f2",
+  "task_digest": "07f7a438199660b05d09d853d89856e57fb4ec77970b346271907ecfed38284b",
+  "source_root_handoff_digests": [],
+  "expect_blocked": false,
+  "hidden_ref": {
+    "assertion_set_digest": "54fd4ad10f09dfe0cf4285eaf2ca64d918ebf9df87e8a4ab0eee6301f7e41f20"
+  },
+  "content_digest": "b4306c982ebc67301bf9a0a4e8d348fbea7f70d206c2f73588a1bac8d7cf7729"
+}

@@ -1,0 +1,214 @@
+{
+  "schema_version": 1,
+  "family_id": "fam-syn-tool-failure",
+  "variant_id": "v1",
+  "assertions": [
+    {
+      "kind": "probe",
+      "id": "c1",
+      "module": "src/tools.ts",
+      "export": "isToolFailureKind",
+      "input": "agent.tool_call.failed",
+      "expect": true
+    },
+    {
+      "kind": "probe",
+      "id": "c2",
+      "module": "src/tools.ts",
+      "export": "isToolFailureKind",
+      "input": "agent.tool_call",
+      "expect": false
+    },
+    {
+      "kind": "probe",
+      "id": "c3",
+      "module": "src/tools.ts",
+      "export": "isToolFailureKind",
+      "input": "agent.thought",
+      "expect": false
+    },
+    {
+      "kind": "probe",
+      "id": "c4",
+      "module": "src/tools.ts",
+      "export": "isToolFailureKind",
+      "input": null,
+      "expect": false
+    },
+    {
+      "kind": "probe",
+      "id": "c5",
+      "module": "src/tools.ts",
+      "export": "toolFailureSummary",
+      "input": [
+        {
+          "kind": "agent.tool_call",
+          "ts": "2026-06-11T09:00:10Z"
+        },
+        {
+          "kind": "agent.thought",
+          "ts": "2026-06-11T09:00:20Z"
+        },
+        {
+          "kind": "agent.tool_call.failed",
+          "ts": "2026-06-11T09:01:00Z"
+        },
+        {
+          "kind": "agent.tool_call",
+          "ts": "2026-06-11T09:02:00Z"
+        }
+      ],
+      "expect": {
+        "attempts": 2,
+        "failures": 1,
+        "failure_ts": ["2026-06-11T09:01:00Z"]
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c6",
+      "module": "src/tools.ts",
+      "export": "toolFailureSummary",
+      "input": [],
+      "expect": {
+        "attempts": 0,
+        "failures": 0,
+        "failure_ts": []
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c7",
+      "module": "src/tools.ts",
+      "export": "toolFailureSummary",
+      "input": "x",
+      "expect": {
+        "attempts": 0,
+        "failures": 0,
+        "failure_ts": []
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c8",
+      "module": "src/tools.ts",
+      "export": "toolFailureSummary",
+      "input": [
+        "x",
+        null,
+        3,
+        {
+          "kind": "agent.tool_call.failed",
+          "ts": "t1"
+        },
+        {
+          "ts": "no-kind"
+        }
+      ],
+      "expect": {
+        "attempts": 0,
+        "failures": 1,
+        "failure_ts": ["t1"]
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c9",
+      "module": "src/tools.ts",
+      "export": "toolFailureRate",
+      "input": [
+        {
+          "kind": "agent.tool_call",
+          "ts": "2026-06-11T09:00:10Z"
+        },
+        {
+          "kind": "agent.thought",
+          "ts": "2026-06-11T09:00:20Z"
+        },
+        {
+          "kind": "agent.tool_call.failed",
+          "ts": "2026-06-11T09:01:00Z"
+        },
+        {
+          "kind": "agent.tool_call",
+          "ts": "2026-06-11T09:02:00Z"
+        }
+      ],
+      "expect": 0.3333333333333333
+    },
+    {
+      "kind": "probe",
+      "id": "c10",
+      "module": "src/tools.ts",
+      "export": "toolFailureRate",
+      "input": [],
+      "expect": null
+    },
+    {
+      "kind": "invariant",
+      "id": "c11",
+      "property": "deterministic",
+      "module": "src/tools.ts",
+      "export": "toolFailureSummary",
+      "inputs": [
+        [
+          {
+            "kind": "agent.tool_call",
+            "ts": "2026-06-11T09:00:10Z"
+          },
+          {
+            "kind": "agent.thought",
+            "ts": "2026-06-11T09:00:20Z"
+          },
+          {
+            "kind": "agent.tool_call.failed",
+            "ts": "2026-06-11T09:01:00Z"
+          },
+          {
+            "kind": "agent.tool_call",
+            "ts": "2026-06-11T09:02:00Z"
+          }
+        ]
+      ],
+      "seed": 0
+    },
+    {
+      "kind": "invariant",
+      "id": "c12",
+      "property": "deterministic",
+      "module": "src/tools.ts",
+      "export": "toolFailureRate",
+      "inputs": [
+        [
+          {
+            "kind": "agent.tool_call",
+            "ts": "2026-06-11T09:00:10Z"
+          },
+          {
+            "kind": "agent.thought",
+            "ts": "2026-06-11T09:00:20Z"
+          },
+          {
+            "kind": "agent.tool_call.failed",
+            "ts": "2026-06-11T09:01:00Z"
+          },
+          {
+            "kind": "agent.tool_call",
+            "ts": "2026-06-11T09:02:00Z"
+          }
+        ]
+      ],
+      "seed": 0
+    }
+  ],
+  "patches": {
+    "good": "diff --git a/src/tools.ts b/src/tools.ts\nindex a759807..e804dad 100644\n--- a/src/tools.ts\n+++ b/src/tools.ts\n@@ -1,6 +1,12 @@\n+function asRecord(value: unknown): Record<string, unknown> | null {\n+  if (typeof value !== \"object\" || value === null || Array.isArray(value)) {\n+    return null;\n+  }\n+  return value as Record<string, unknown>;\n+}\n+\n export function isToolFailureKind(kind: unknown): boolean {\n-  void kind;\n-  throw new Error(\"not implemented\");\n+  return kind === \"agent.tool_call.failed\";\n }\n \n export function toolFailureSummary(events: unknown): {\n@@ -8,11 +14,33 @@ export function toolFailureSummary(events: unknown): {\n   failures: number;\n   failure_ts: string[];\n } {\n-  void events;\n-  throw new Error(\"not implemented\");\n+  const out = { attempts: 0, failures: 0, failure_ts: [] as string[] };\n+  if (!Array.isArray(events)) {\n+    return out;\n+  }\n+  for (const event of events) {\n+    const rec = asRecord(event);\n+    if (rec === null || typeof rec.kind !== \"string\") {\n+      continue;\n+    }\n+    if (rec.kind === \"agent.tool_call\") {\n+      out.attempts += 1;\n+    }\n+    if (rec.kind === \"agent.tool_call.failed\") {\n+      out.failures += 1;\n+      if (typeof rec.ts === \"string\") {\n+        out.failure_ts.push(rec.ts);\n+      }\n+    }\n+  }\n+  return out;\n }\n \n export function toolFailureRate(events: unknown): number | null {\n-  void events;\n-  throw new Error(\"not implemented\");\n+  const summary = toolFailureSummary(events);\n+  const total = summary.attempts + summary.failures;\n+  if (total === 0) {\n+    return null;\n+  }\n+  return summary.failures / total;\n }\n",
+    "bad": [
+      "diff --git a/src/tools.ts b/src/tools.ts\nindex a759807..b6e64de 100644\n--- a/src/tools.ts\n+++ b/src/tools.ts\n@@ -1,6 +1,12 @@\n+function asRecord(value: unknown): Record<string, unknown> | null {\n+  if (typeof value !== \"object\" || value === null || Array.isArray(value)) {\n+    return null;\n+  }\n+  return value as Record<string, unknown>;\n+}\n+\n export function isToolFailureKind(kind: unknown): boolean {\n-  void kind;\n-  throw new Error(\"not implemented\");\n+  return typeof kind === \"string\" && kind.startsWith(\"agent.tool_call\");\n }\n \n export function toolFailureSummary(events: unknown): {\n@@ -8,11 +14,33 @@ export function toolFailureSummary(events: unknown): {\n   failures: number;\n   failure_ts: string[];\n } {\n-  void events;\n-  throw new Error(\"not implemented\");\n+  const out = { attempts: 0, failures: 0, failure_ts: [] as string[] };\n+  if (!Array.isArray(events)) {\n+    return out;\n+  }\n+  for (const event of events) {\n+    const rec = asRecord(event);\n+    if (rec === null || typeof rec.kind !== \"string\") {\n+      continue;\n+    }\n+    if (rec.kind === \"agent.tool_call\") {\n+      out.attempts += 1;\n+    }\n+    if (rec.kind === \"agent.tool_call.failed\") {\n+      out.failures += 1;\n+      if (typeof rec.ts === \"string\") {\n+        out.failure_ts.push(rec.ts);\n+      }\n+    }\n+  }\n+  return out;\n }\n \n export function toolFailureRate(events: unknown): number | null {\n-  void events;\n-  throw new Error(\"not implemented\");\n+  const summary = toolFailureSummary(events);\n+  const total = summary.attempts + summary.failures;\n+  if (total === 0) {\n+    return null;\n+  }\n+  return summary.failures / total;\n }\n"
+    ]
+  },
+  "mutants": [
+    "diff --git a/src/tools.ts b/src/tools.ts\nindex a759807..9c9d0f6 100644\n--- a/src/tools.ts\n+++ b/src/tools.ts\n@@ -1,6 +1,12 @@\n+function asRecord(value: unknown): Record<string, unknown> | null {\n+  if (typeof value !== \"object\" || value === null || Array.isArray(value)) {\n+    return null;\n+  }\n+  return value as Record<string, unknown>;\n+}\n+\n export function isToolFailureKind(kind: unknown): boolean {\n-  void kind;\n-  throw new Error(\"not implemented\");\n+  return kind === \"agent.tool_call.failed\";\n }\n \n export function toolFailureSummary(events: unknown): {\n@@ -8,11 +14,33 @@ export function toolFailureSummary(events: unknown): {\n   failures: number;\n   failure_ts: string[];\n } {\n-  void events;\n-  throw new Error(\"not implemented\");\n+  const out = { attempts: 0, failures: 0, failure_ts: [] as string[] };\n+  if (!Array.isArray(events)) {\n+    return out;\n+  }\n+  for (const event of events) {\n+    const rec = asRecord(event);\n+    if (rec === null || typeof rec.kind !== \"string\") {\n+      continue;\n+    }\n+    if (rec.kind === \"agent.tool_call\" || rec.kind === \"agent.tool_call.failed\") {\n+      out.attempts += 1;\n+    }\n+    if (rec.kind === \"agent.tool_call.failed\") {\n+      out.failures += 1;\n+      if (typeof rec.ts === \"string\") {\n+        out.failure_ts.push(rec.ts);\n+      }\n+    }\n+  }\n+  return out;\n }\n \n export function toolFailureRate(events: unknown): number | null {\n-  void events;\n-  throw new Error(\"not implemented\");\n+  const summary = toolFailureSummary(events);\n+  const total = summary.attempts + summary.failures;\n+  if (total === 0) {\n+    return null;\n+  }\n+  return summary.failures / total;\n }\n",
+    "diff --git a/src/tools.ts b/src/tools.ts\nindex a759807..58ad4db 100644\n--- a/src/tools.ts\n+++ b/src/tools.ts\n@@ -1,6 +1,12 @@\n+function asRecord(value: unknown): Record<string, unknown> | null {\n+  if (typeof value !== \"object\" || value === null || Array.isArray(value)) {\n+    return null;\n+  }\n+  return value as Record<string, unknown>;\n+}\n+\n export function isToolFailureKind(kind: unknown): boolean {\n-  void kind;\n-  throw new Error(\"not implemented\");\n+  return kind === \"agent.tool_call.failed\";\n }\n \n export function toolFailureSummary(events: unknown): {\n@@ -8,11 +14,29 @@ export function toolFailureSummary(events: unknown): {\n   failures: number;\n   failure_ts: string[];\n } {\n-  void events;\n-  throw new Error(\"not implemented\");\n+  const out = { attempts: 0, failures: 0, failure_ts: [] as string[] };\n+  if (!Array.isArray(events)) {\n+    return out;\n+  }\n+  for (const event of events) {\n+    const rec = asRecord(event);\n+    if (rec === null || typeof rec.kind !== \"string\") {\n+      continue;\n+    }\n+    if (rec.kind === \"agent.tool_call\") {\n+      out.attempts += 1;\n+    }\n+    if (rec.kind === \"agent.tool_call.failed\") {\n+      out.failures += 1;\n+      if (typeof rec.ts === \"string\") {\n+        out.failure_ts.push(rec.ts);\n+      }\n+    }\n+  }\n+  return out;\n }\n \n export function toolFailureRate(events: unknown): number | null {\n-  void events;\n-  throw new Error(\"not implemented\");\n+  const summary = toolFailureSummary(events);\n+  return summary.failures / summary.attempts;\n }\n"
+  ]
+}
