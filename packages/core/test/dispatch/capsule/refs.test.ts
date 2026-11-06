@@ -210,6 +210,10 @@ function expectNoFsCalls(calls: FakeFsCalls): void {
   expect(calls.stat).toEqual([]);
 }
 
+function expectNoReads(calls: FakeFsCalls): void {
+  expect(calls.read).toEqual([]);
+}
+
 describe("resolveRef", () => {
   test("resolves an in-scope ref with content, hash and provenance", async () => {
     const { fs } = makeFakeFs({ files: { "/repo/src/a.ts": "hello" } });
@@ -355,6 +359,37 @@ describe("resolveRef", () => {
       expectNoFsCalls(calls);
     },
   );
+
+  test("refuses a directory symlink into .git even though the canonical path stays in the worktree", async () => {
+    const { calls, fs } = makeFakeFs({
+      files: { "/repo/.git/config": "token sk-secret" },
+      symlinks: { "/repo/g": "/repo/.git" },
+    });
+    const result = await resolveRef("g/config", SCOPE, makeDeps(fs));
+    expect(result).toMatchObject({ code: "ref_out_of_scope", ok: false });
+    expectNoReads(calls);
+  });
+
+  test("refuses a file symlink directly to .git/config", async () => {
+    const { calls, fs } = makeFakeFs({
+      files: { "/repo/.git/config": "token sk-secret" },
+      symlinks: { "/repo/cfg": "/repo/.git/config" },
+    });
+    const result = await resolveRef("cfg", SCOPE, makeDeps(fs));
+    expect(result).toMatchObject({ code: "ref_out_of_scope", ok: false });
+    expectNoReads(calls);
+  });
+
+  test("refuses a case-variant symlink into .GIT on a case-insensitive fs", async () => {
+    const { calls, fs } = makeFakeFs({
+      caseInsensitive: true,
+      files: { "/repo/.GIT/config": "token sk-secret" },
+      symlinks: { "/repo/G": "/repo/.GIT" },
+    });
+    const result = await resolveRef("G/config", SCOPE, makeDeps(fs));
+    expect(result).toMatchObject({ code: "ref_out_of_scope", ok: false });
+    expectNoReads(calls);
+  });
 });
 
 describe("authorizeHandle", () => {

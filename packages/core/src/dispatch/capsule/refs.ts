@@ -151,6 +151,13 @@ export async function resolveRef(
   if (!isContained(real, realRoot)) {
     return refusal("ref_out_of_scope", "refusal: path escapes worktree root");
   }
+  const realRelSegments = real
+    .slice(realRoot.length + 1)
+    .split("/")
+    .map((segment) => segment.toLowerCase());
+  if (realRelSegments.includes(".git")) {
+    return refusal("ref_out_of_scope", "refusal: .git segment in canonical path");
+  }
 
   const statGuard = await guarded(() => deps.fs.stat(real));
   if (!statGuard.ok) {
