@@ -1,8 +1,10 @@
 export {
   DEFAULT_ALIBABA_SYNTH_MAX_PLAUSIBLE_PCT,
+  type DispatchCapsuleMode,
   ENV_REGISTRY,
   type EnvConfig,
   EnvSchema,
+  getDispatchCapsuleMode,
   getJobResourceEnv,
   getMcpResponseBudgetTokens,
   getSessionExtractMaxCharsPerChunk,
