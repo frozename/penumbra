@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 
 import type { FanoutTaskResult } from "../_shared/fanout.js";
 
-import { makeRoundRecord } from "./result.js";
+import { makeRoundRecord, type RoundRecord } from "./result.js";
 
 function fakeFanoutResult(overrides: Partial<FanoutTaskResult> = {}): FanoutTaskResult {
   return {
@@ -64,7 +64,9 @@ test("makeRoundRecord matches the pinned autocommit golden", async () => {
     () => null,
   );
   expect(text).not.toBeNull();
-  const golden = JSON.parse(text!) as Record<string, unknown>;
+  const parsed: unknown = JSON.parse(text!);
+  expect(parsed).toBeObject();
+  const golden = parsed as RoundRecord;
+  expect(golden.autocommitted).toBe(true);
   expect(record).toEqual(golden);
-  expect(golden["autocommitted"]).toBe(true);
 });
