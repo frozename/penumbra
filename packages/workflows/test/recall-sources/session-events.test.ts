@@ -82,6 +82,7 @@ test("default limit is 100: 101 rows returns 100", () => {
       db.run(
         `INSERT INTO session_events (id, session_id, related_session_id, project_id, cwd, transcript_path, ref_path, kind, ts, meta_json)
          VALUES (?, 's1', NULL, 'p1', '/cwd', 'tp', 'rp', 'agent.thought', '2026-05-04T10:00:00Z', '{}')`,
+        [i],
       );
     }
   })();
@@ -101,6 +102,7 @@ test("limit 0 falls back to the default of 100 rather than clamping to 1", () =>
       db.run(
         `INSERT INTO session_events (id, session_id, related_session_id, project_id, cwd, transcript_path, ref_path, kind, ts, meta_json)
          VALUES (?, 's1', NULL, 'p1', '/cwd', 'tp', 'rp', 'agent.thought', '2026-05-04T10:00:00Z', '{}')`,
+        [i],
       );
     }
   })();
@@ -133,16 +135,24 @@ test("ordering is ts DESC, then id DESC on ties", () => {
   loadSqliteVec(db);
   migrate(db, { embeddingDim: 384 });
 
+  // idx_session_events_ts is (ts DESC, id DESC), so the planner satisfies a
+  // bare ORDER BY ts DESC from the index and masks a missing id DESC in the
+  // query. Drop it so the sorter forces the query's own tie-break to decide.
+  db.run("DROP INDEX idx_session_events_ts");
+
+  // Ties inserted in ascending id order: without `id DESC` the sorter emits
+  // them ascending, so only the query's tie-break yields [4, 3, 2, 1].
   db.run(`
     INSERT INTO session_events (id, session_id, related_session_id, project_id, cwd, transcript_path, ref_path, kind, ts, meta_json)
     VALUES
       (1, 's1', NULL, 'p1', '/cwd', 'tp', 'rp', 'agent.thought', '2026-05-04T10:00:00Z', '{}'),
       (2, 's1', NULL, 'p1', '/cwd', 'tp', 'rp', 'agent.thought', '2026-05-04T12:00:00Z', '{}'),
-      (3, 's1', NULL, 'p1', '/cwd', 'tp', 'rp', 'agent.thought', '2026-05-04T12:00:00Z', '{}');
+      (3, 's1', NULL, 'p1', '/cwd', 'tp', 'rp', 'agent.thought', '2026-05-04T12:00:00Z', '{}'),
+      (4, 's1', NULL, 'p1', '/cwd', 'tp', 'rp', 'agent.thought', '2026-05-04T12:00:00Z', '{}');
   `);
 
   const out = runSessionEventsSource({ db, args: {} });
-  expect(out.events.map((e) => e.id)).toEqual([3, 2, 1]);
+  expect(out.events.map((e) => e.id)).toEqual([4, 3, 2, 1]);
   expect(out.warnings).toEqual([]);
 });
 
