@@ -1211,3 +1211,49 @@ test("capsule git resolveRef resolves branch heads and rejects unsafe refs witho
   expect(await gitPort.resolveRef("main")).toBe(fx.headSha);
   expect(execCalls.length).toBeGreaterThan(0);
 });
+
+test("capsule git resolveRef returns null when rev-parse succeeds with non-sha stdout", async () => {
+  const bogusStdouts: readonly string[] = [
+    "not-a-sha\n",
+    "",
+    "abc1234\n",
+    `${"A".repeat(40)}\n`,
+    "a".repeat(39),
+    `${"a".repeat(40)}\n${"b".repeat(40)}\n`,
+  ];
+
+  for (const stdout of bogusStdouts) {
+    const calls: string[][] = [];
+    const stub: CapsuleExec = (_file, argv) => {
+      calls.push([...argv]);
+      return Promise.resolve({ code: 0, stdout, stderr: "" });
+    };
+    const gitPort = createCapsuleGitPort({ worktreeRoot: "unused-root", exec: stub });
+    if (gitPort.resolveRef === undefined) {
+      throw new Error("CapsuleGitPort.resolveRef is not implemented");
+    }
+
+    expect(await gitPort.resolveRef("main")).toBeNull();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.[0]).toBe("rev-parse");
+    expect(calls[0]).toContain("--verify");
+    expect(calls[0]).toContain("main^{commit}");
+  }
+
+  const positiveCalls: string[][] = [];
+  let positiveStdout = "";
+  const positiveStub: CapsuleExec = (_file, argv) => {
+    positiveCalls.push([...argv]);
+    return Promise.resolve({ code: 0, stdout: positiveStdout, stderr: "" });
+  };
+  const positivePort = createCapsuleGitPort({ worktreeRoot: "unused-root", exec: positiveStub });
+  if (positivePort.resolveRef === undefined) {
+    throw new Error("CapsuleGitPort.resolveRef is not implemented");
+  }
+
+  positiveStdout = `${"c".repeat(40)}\n`;
+  expect(await positivePort.resolveRef("main")).toBe("c".repeat(40));
+  positiveStdout = "d".repeat(64);
+  expect(await positivePort.resolveRef("main")).toBe("d".repeat(64));
+  expect(positiveCalls).toHaveLength(2);
+});
