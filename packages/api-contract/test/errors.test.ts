@@ -30,6 +30,9 @@ describe("ErrorEnvelopeSchema", () => {
       extra: true,
     });
     expect(result.success).toBe(true);
+    if (result.success) {
+      expect((result.data as { extra?: unknown }).extra).toBe(true);
+    }
   });
 
   test("rejects {error:{message:'m'}} because code is required", () => {

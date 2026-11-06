@@ -15,8 +15,40 @@ import {
 // Part of #342
 // Catches: PERMISSION_PROFILES value, PermissionProfileSchema reject, EnforcesPermissionProfilesSchema accept/reject,
 //          PermissionStatusSchema 'expired', PermissionRememberSchema reject, PermissionDecideResponseSchema required fields,
-//          PermissionsListResponseSchema accept/reject/loose, PermissionGetResponseSchema reject/accept,
+//          PermissionsListResponseSchema accept/reject/loose, PermissionGetResponseSchema reject/accept/loose,
 //          PermissionRequestRowSchema decision_reason nullable-but-not-optional
+
+function makeValidRow(): {
+  permission_id: string;
+  parent_handoff_id: string;
+  conversation_id: string;
+  agent_name: string;
+  tool_name: string;
+  raw_input_json: string;
+  status: "pending";
+  remember_scope: null;
+  decision_reason: null;
+  decided_by: null;
+  ttl_at: string;
+  created_at: string;
+  decided_at: null;
+} {
+  return {
+    permission_id: "p1",
+    parent_handoff_id: "h1",
+    conversation_id: "c1",
+    agent_name: "a",
+    tool_name: "t",
+    raw_input_json: "{}",
+    status: "pending",
+    remember_scope: null,
+    decision_reason: null,
+    decided_by: null,
+    ttl_at: "2026-01-01T00:00:00Z",
+    created_at: "2026-01-01T00:00:00Z",
+    decided_at: null,
+  };
+}
 
 describe("PERMISSION_PROFILES", () => {
   test("toEqual ['review_readonly']", () => {
@@ -81,71 +113,36 @@ describe("PermissionDecideResponseSchema", () => {
       extra: true,
     });
     expect(result.success).toBe(true);
+    if (result.success) {
+      expect((result.data as { extra?: unknown }).extra).toBe(true);
+    }
   });
 });
 
 describe("PermissionsListResponseSchema", () => {
   test("accepts {permissions:[validRow]}", () => {
-    const validRow = {
-      permission_id: "p1",
-      parent_handoff_id: "h1",
-      conversation_id: "c1",
-      agent_name: "a",
-      tool_name: "t",
-      raw_input_json: "{}",
-      status: "pending" as const,
-      remember_scope: null,
-      decision_reason: null,
-      decided_by: null,
-      ttl_at: "2026-01-01T00:00:00Z",
-      created_at: "2026-01-01T00:00:00Z",
-      decided_at: null,
-    };
-    expect(PermissionsListResponseSchema.safeParse({ permissions: [validRow] }).success).toBe(true);
+    expect(PermissionsListResponseSchema.safeParse({ permissions: [makeValidRow()] }).success).toBe(
+      true,
+    );
   });
 
   test("rejects {permissions:[{...validRow, status:'bogus'}]}", () => {
-    const validRow = {
-      permission_id: "p1",
-      parent_handoff_id: "h1",
-      conversation_id: "c1",
-      agent_name: "a",
-      tool_name: "t",
-      raw_input_json: "{}",
-      status: "pending" as const,
-      remember_scope: null,
-      decision_reason: null,
-      decided_by: null,
-      ttl_at: "2026-01-01T00:00:00Z",
-      created_at: "2026-01-01T00:00:00Z",
-      decided_at: null,
-    };
     expect(
       PermissionsListResponseSchema.safeParse({
-        permissions: [{ ...validRow, status: "bogus" as const }],
+        permissions: [{ ...makeValidRow(), status: "bogus" as const }],
       }).success,
     ).toBe(false);
   });
 
   test("keeps an extra top-level key", () => {
-    const validRow = {
-      permission_id: "p1",
-      parent_handoff_id: "h1",
-      conversation_id: "c1",
-      agent_name: "a",
-      tool_name: "t",
-      raw_input_json: "{}",
-      status: "pending" as const,
-      remember_scope: null,
-      decision_reason: null,
-      decided_by: null,
-      ttl_at: "2026-01-01T00:00:00Z",
-      created_at: "2026-01-01T00:00:00Z",
-      decided_at: null,
-    };
-    expect(
-      PermissionsListResponseSchema.safeParse({ permissions: [validRow], extra: true }).success,
-    ).toBe(true);
+    const result = PermissionsListResponseSchema.safeParse({
+      permissions: [makeValidRow()],
+      extra: true,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect((result.data as { extra?: unknown }).extra).toBe(true);
+    }
   });
 });
 
@@ -155,22 +152,20 @@ describe("PermissionGetResponseSchema", () => {
   });
 
   test("accepts {permission: validRow}", () => {
-    const validRow = {
-      permission_id: "p1",
-      parent_handoff_id: "h1",
-      conversation_id: "c1",
-      agent_name: "a",
-      tool_name: "t",
-      raw_input_json: "{}",
-      status: "pending" as const,
-      remember_scope: null,
-      decision_reason: null,
-      decided_by: null,
-      ttl_at: "2026-01-01T00:00:00Z",
-      created_at: "2026-01-01T00:00:00Z",
-      decided_at: null,
-    };
-    expect(PermissionGetResponseSchema.safeParse({ permission: validRow }).success).toBe(true);
+    expect(PermissionGetResponseSchema.safeParse({ permission: makeValidRow() }).success).toBe(
+      true,
+    );
+  });
+
+  test("keeps an extra top-level key", () => {
+    const result = PermissionGetResponseSchema.safeParse({
+      permission: makeValidRow(),
+      extra: true,
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect((result.data as { extra?: unknown }).extra).toBe(true);
+    }
   });
 });
 
