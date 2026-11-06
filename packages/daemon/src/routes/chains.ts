@@ -35,6 +35,7 @@ import {
   writeRoutingDecision,
 } from "@penumbra/core";
 import { isRetiredLongLivedAgent } from "@penumbra/core/long-lived/retired-agents";
+import { join } from "node:path";
 import { z } from "zod";
 
 import { autoRecallForDispatch } from "../dispatch/auto-recall.js";
@@ -1782,6 +1783,14 @@ function maybeScheduleCapsuleShadow(
       handoff_id: handoffId,
       objective: input.message,
       project_root: projectRootForBranchPrecheck(input, services, projectRegistryEntries),
+      branch_base: input.branch_base ?? undefined,
+      dispatch_worktree_root:
+        input.use_worktree === false
+          ? undefined
+          : join(
+              services.worktreeManager.worktreeBaseFor(input.project_id ?? undefined),
+              handoffId,
+            ),
       advisory_memory: autoRecall.advisory_memory,
       recalled_memory_ids: autoRecall.recalled_memory_ids,
     }));
