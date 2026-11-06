@@ -399,12 +399,16 @@ describe("compileCapsule git and scope checks", () => {
     expectRefusal(result, "missing_dependency");
   });
 
-  test("missing_dependency when resolveSha throws", async () => {
+  test("missing_dependency when resolveSha throws, with no fallback to main", async () => {
     const git = makeGit();
-    git.behaviors.resolveSha = (): Promise<string | null> =>
-      Promise.reject(new Error("git exploded"));
+    const innerResolve = git.behaviors.resolveSha;
+    git.behaviors.resolveSha = (ref: string): Promise<string | null> =>
+      ref === "dep/feature-a" ? Promise.reject(new Error("git exploded")) : innerResolve(ref);
     const result = await compile(FIXTURE.input, git.port);
     expectRefusal(result, "missing_dependency");
+    expect(resolveShaRefs(git.calls)).not.toContain("main");
+    expect(resolveShaRefs(git.calls)).not.toContain("origin/main");
+    expect(isAncestorPairs(git.calls).flat()).not.toContain(MAIN_SHA);
   });
 
   test.each([
