@@ -1,0 +1,195 @@
+import { describe, expect, test } from "bun:test";
+
+import {
+  EnforcesPermissionProfilesSchema,
+  PERMISSION_PROFILES,
+  PermissionDecideResponseSchema,
+  PermissionGetResponseSchema,
+  PermissionProfileSchema,
+  PermissionRememberSchema,
+  PermissionRequestRowSchema,
+  PermissionsListResponseSchema,
+  PermissionStatusSchema,
+} from "../src/index.js";
+
+// Part of #342
+// Catches: PERMISSION_PROFILES value, PermissionProfileSchema reject, EnforcesPermissionProfilesSchema accept/reject,
+//          PermissionStatusSchema 'expired', PermissionRememberSchema reject, PermissionDecideResponseSchema required fields,
+//          PermissionsListResponseSchema accept/reject/loose, PermissionGetResponseSchema reject/accept,
+//          PermissionRequestRowSchema decision_reason nullable-but-not-optional
+
+describe("PERMISSION_PROFILES", () => {
+  test("toEqual ['review_readonly']", () => {
+    expect(PERMISSION_PROFILES).toEqual(["review_readonly"]);
+  });
+});
+
+describe("PermissionProfileSchema", () => {
+  test("rejects 'write'", () => {
+    expect(PermissionProfileSchema.safeParse("write").success).toBe(false);
+  });
+});
+
+describe("EnforcesPermissionProfilesSchema", () => {
+  test("accepts undefined, ['review_readonly'], and rejects ['nope']", () => {
+    // The exported schema is .optional() which makes the exported type potentially
+    // undefined at the TypeScript level, so we use .parse() directly.
+    expect(() => EnforcesPermissionProfilesSchema.parse(undefined)).not.toThrow();
+    expect(() => EnforcesPermissionProfilesSchema.parse([])).not.toThrow();
+    expect(() => EnforcesPermissionProfilesSchema.parse(["review_readonly"])).not.toThrow();
+    expect(() => EnforcesPermissionProfilesSchema.parse(["nope"])).toThrow();
+  });
+});
+
+describe("PermissionStatusSchema", () => {
+  test("accepts 'expired'", () => {
+    expect(PermissionStatusSchema.safeParse("expired").success).toBe(true);
+  });
+});
+
+describe("PermissionRememberSchema", () => {
+  test("rejects 'forever'", () => {
+    expect(PermissionRememberSchema.safeParse("forever").success).toBe(false);
+  });
+});
+
+describe("PermissionDecideResponseSchema", () => {
+  test("needs permission_id, status and decided_at: missing decided_at fails", () => {
+    expect(
+      PermissionDecideResponseSchema.safeParse({
+        permission_id: "p1",
+        status: "approved",
+      }).success,
+    ).toBe(false);
+  });
+
+  test("status 'bogus' fails", () => {
+    expect(
+      PermissionDecideResponseSchema.safeParse({
+        permission_id: "p1",
+        status: "bogus",
+        decided_at: "2026-01-01T00:00:00Z",
+      }).success,
+    ).toBe(false);
+  });
+
+  test("extra key survives parse", () => {
+    const result = PermissionDecideResponseSchema.safeParse({
+      permission_id: "p1",
+      status: "approved",
+      decided_at: "2026-01-01T00:00:00Z",
+      extra: true,
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("PermissionsListResponseSchema", () => {
+  test("accepts {permissions:[validRow]}", () => {
+    const validRow = {
+      permission_id: "p1",
+      parent_handoff_id: "h1",
+      conversation_id: "c1",
+      agent_name: "a",
+      tool_name: "t",
+      raw_input_json: "{}",
+      status: "pending" as const,
+      remember_scope: null,
+      decision_reason: null,
+      decided_by: null,
+      ttl_at: "2026-01-01T00:00:00Z",
+      created_at: "2026-01-01T00:00:00Z",
+      decided_at: null,
+    };
+    expect(PermissionsListResponseSchema.safeParse({ permissions: [validRow] }).success).toBe(true);
+  });
+
+  test("rejects {permissions:[{...validRow, status:'bogus'}]}", () => {
+    const validRow = {
+      permission_id: "p1",
+      parent_handoff_id: "h1",
+      conversation_id: "c1",
+      agent_name: "a",
+      tool_name: "t",
+      raw_input_json: "{}",
+      status: "pending" as const,
+      remember_scope: null,
+      decision_reason: null,
+      decided_by: null,
+      ttl_at: "2026-01-01T00:00:00Z",
+      created_at: "2026-01-01T00:00:00Z",
+      decided_at: null,
+    };
+    expect(
+      PermissionsListResponseSchema.safeParse({
+        permissions: [{ ...validRow, status: "bogus" as const }],
+      }).success,
+    ).toBe(false);
+  });
+
+  test("keeps an extra top-level key", () => {
+    const validRow = {
+      permission_id: "p1",
+      parent_handoff_id: "h1",
+      conversation_id: "c1",
+      agent_name: "a",
+      tool_name: "t",
+      raw_input_json: "{}",
+      status: "pending" as const,
+      remember_scope: null,
+      decision_reason: null,
+      decided_by: null,
+      ttl_at: "2026-01-01T00:00:00Z",
+      created_at: "2026-01-01T00:00:00Z",
+      decided_at: null,
+    };
+    expect(
+      PermissionsListResponseSchema.safeParse({ permissions: [validRow], extra: true }).success,
+    ).toBe(true);
+  });
+});
+
+describe("PermissionGetResponseSchema", () => {
+  test("rejects {}", () => {
+    expect(PermissionGetResponseSchema.safeParse({}).success).toBe(false);
+  });
+
+  test("accepts {permission: validRow}", () => {
+    const validRow = {
+      permission_id: "p1",
+      parent_handoff_id: "h1",
+      conversation_id: "c1",
+      agent_name: "a",
+      tool_name: "t",
+      raw_input_json: "{}",
+      status: "pending" as const,
+      remember_scope: null,
+      decision_reason: null,
+      decided_by: null,
+      ttl_at: "2026-01-01T00:00:00Z",
+      created_at: "2026-01-01T00:00:00Z",
+      decided_at: null,
+    };
+    expect(PermissionGetResponseSchema.safeParse({ permission: validRow }).success).toBe(true);
+  });
+});
+
+describe("PermissionRequestRowSchema", () => {
+  test("rejects a row that omits decision_reason", () => {
+    const rowWithoutDecisionReason = {
+      permission_id: "p1",
+      parent_handoff_id: "h1",
+      conversation_id: "c1",
+      agent_name: "a",
+      tool_name: "t",
+      raw_input_json: "{}",
+      status: "pending" as const,
+      remember_scope: null,
+      decided_by: null,
+      ttl_at: "2026-01-01T00:00:00Z",
+      created_at: "2026-01-01T00:00:00Z",
+      decided_at: null,
+    };
+    expect(PermissionRequestRowSchema.safeParse(rowWithoutDecisionReason).success).toBe(false);
+  });
+});
