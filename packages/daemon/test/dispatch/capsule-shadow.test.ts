@@ -23,16 +23,18 @@ import { digestOf } from "@penumbra/core/evals/canonical";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { autoRecallForDispatch } from "@src/dispatch/auto-recall.js";
-import type { CapsuleGitPort } from "@src/dispatch/capsule-probe.js";
+import { type CapsuleGitPort, createCapsuleGitPort } from "@src/dispatch/capsule-probe.js";
 import {
   CAPSULE_SHADOW_EVENT_KIND,
   CAPSULE_SHADOW_MAX_IN_FLIGHT,
   CAPSULE_SHADOW_TIMEOUT_MS,
+  type CapsuleProbePortRequest,
   type CapsuleShadowArgs,
   type CapsuleShadowDeps,
   type CapsuleShadowMode,
@@ -208,7 +210,10 @@ interface ChainStartBody {
   lane_id?: string;
 }
 
-async function startChain(services: Services): Promise<{ res: Response; body: ChainStartBody }> {
+async function startChain(
+  services: Services,
+  extraBody: Record<string, unknown> = {},
+): Promise<{ res: Response; body: ChainStartBody }> {
   const res = await chainsStartRoute(
     new Request("http://x/chains/start", {
       method: "POST",
@@ -217,6 +222,7 @@ async function startChain(services: Services): Promise<{ res: Response; body: Ch
         message: MESSAGE,
         task_class: "STANDARD",
         project_id: PROJECT_ID,
+        ...extraBody,
       }),
     }),
     services,
@@ -316,6 +322,7 @@ function fakeGitPort(): CapsuleGitPort {
   return {
     head: () => Promise.resolve(FIXED_SHA),
     resolveSha: () => Promise.resolve(FIXED_SHA),
+    resolveRef: () => Promise.resolve(FIXED_SHA),
   };
 }
 
@@ -332,6 +339,73 @@ function okProbePort(overrides: Partial<ProbePort> = {}): ProbePort {
     hookStatus: () => Promise.resolve({ status: "ok", hooks: "not_configured" }),
   };
   return { ...port, ...overrides };
+}
+
+const REQUESTED_BASE = "fedcba9876543210fedcba9876543210fedcba98";
+const OPERATOR_HEAD = FIXED_SHA;
+const MISSING_BASE = "1111111111111111111111111111111111111111";
+
+function splitGitPort(): CapsuleGitPort {
+  return {
+    head: () => Promise.resolve(OPERATOR_HEAD),
+    resolveSha: (sha: string) =>
+      Promise.resolve(sha === REQUESTED_BASE || sha === OPERATOR_HEAD ? sha : null),
+    resolveRef: (ref: string) =>
+      Promise.resolve(ref === "feature/base" || ref === REQUESTED_BASE ? REQUESTED_BASE : null),
+  };
+}
+
+interface ProbeRecord {
+  opts: CapsuleProbePortRequest[];
+  worktreeCalls: number;
+}
+
+function recordingProbePort(
+  record: ProbeRecord,
+  mode: "ready" | "degraded" = "degraded",
+): (request: CapsuleProbePortRequest) => ProbePort {
+  return (request) => {
+    record.opts.push(request);
+    const worktreeCall = <T>(produce: () => Promise<T>): Promise<T> => {
+      record.worktreeCalls += 1;
+      return produce();
+    };
+    return okProbePort({
+      hasBase: () =>
+        Promise.resolve(
+          request.baseSha === REQUESTED_BASE || request.baseSha === OPERATOR_HEAD
+            ? { status: "ok" as const }
+            : { status: "fail" as const, detail: "base commit not present" },
+        ),
+      hasCode: () =>
+        worktreeCall(() =>
+          Promise.resolve(
+            mode === "ready"
+              ? { status: "ok" as const }
+              : { status: "fail" as const, detail: "no tracked files" },
+          ),
+        ),
+      hasTests: () =>
+        worktreeCall(() =>
+          Promise.resolve(
+            mode === "ready"
+              ? { status: "ok" as const }
+              : { status: "fail" as const, detail: "no tracked test files" },
+          ),
+        ),
+      hookStatus: () =>
+        worktreeCall(() =>
+          Promise.resolve(
+            mode === "ready"
+              ? { status: "ok" as const, hooks: "not_configured" as const }
+              : { status: "unknown" as const, detail: "hooks path unresolved" },
+          ),
+        ),
+      storagePath: () => Promise.resolve({ status: "ok" as const, path: request.storageRoot }),
+      operatorCheckout: () =>
+        Promise.resolve({ status: "ok" as const, path: request.operatorCheckout }),
+    });
+  };
 }
 
 function shadowArgs(overrides: Partial<CapsuleShadowArgs> = {}): CapsuleShadowArgs {
@@ -355,6 +429,7 @@ function directShadowDeps(
     gitPort: () => fakeGitPort(),
     probePort: () => okProbePort(),
     effectiveHooksPath: () => Promise.resolve(null),
+    pathExists: (path: string) => Promise.resolve(existsSync(path)),
     storageRoot: services.storageRoot,
     homeDir: join(tmpdir(), "capsule-shadow-home"),
     timeoutMs: CAPSULE_SHADOW_TIMEOUT_MS,
@@ -877,5 +952,323 @@ describe("capsule shadow dispatch boundary (#392)", () => {
     void scheduleCapsuleShadow(services, () => shadowArgs({ handoff_id: "h-cap-after" }));
     await drainCapsuleShadowForTest();
     expect(compileCalls.length).toBeGreaterThan(CAPSULE_SHADOW_MAX_IN_FLIGHT);
+  });
+
+  test("daemon storage root under the operator home does not produce storage_not_isolated", async () => {
+    const fakeHome = makeTmpDir("capsule-home-");
+    const services = tempServices(true);
+    const servicesHome: Services = { ...services, storageRoot: join(fakeHome, ".penumbra") };
+    const worktreeRoot = makeTmpDir("capsule-wt-");
+    const operatorRoot = makeTmpDir("capsule-op-");
+    const record: ProbeRecord = { opts: [], worktreeCalls: 0 };
+    setCapsuleShadowDepsForTest({
+      compile: compileCapsule,
+      preflight: runPreflight,
+      gitPort: () => fakeGitPort(),
+      probePort: recordingProbePort(record, "ready"),
+      effectiveHooksPath: () => Promise.resolve(null),
+      homeDir: fakeHome,
+      pathExists: () => Promise.resolve(true),
+      log: silentLog,
+    });
+
+    await scheduleCapsuleShadow(servicesHome, () =>
+      shadowArgs({
+        handoff_id: "h-home-storage",
+        project_root: operatorRoot,
+        dispatch_worktree_root: worktreeRoot,
+      }),
+    );
+    await drainCapsuleShadowForTest();
+
+    const events = shadowEvents(services, "h-home-storage");
+    expect(events).toHaveLength(1);
+    const meta = eventMeta(events[0]!);
+    const preflightCodes = meta["preflight_codes"];
+    expect(Array.isArray(preflightCodes)).toBe(true);
+    expect(preflightCodes).not.toContain("storage_not_isolated");
+    expect(record.opts[0]?.storageRoot).toBe(join(worktreeRoot, ".test-storage"));
+  });
+
+  test("dispatch worktree storage under the operator home still yields storage_not_isolated", async () => {
+    const fakeHome = makeTmpDir("capsule-home-");
+    const services = tempServices(true);
+    const servicesHome: Services = { ...services, storageRoot: join(fakeHome, ".penumbra") };
+    const worktreeRoot = join(fakeHome, "dispatch-wt");
+    const operatorRoot = makeTmpDir("capsule-op-");
+    const record: ProbeRecord = { opts: [], worktreeCalls: 0 };
+    setCapsuleShadowDepsForTest({
+      compile: compileCapsule,
+      preflight: runPreflight,
+      gitPort: () => fakeGitPort(),
+      probePort: recordingProbePort(record, "ready"),
+      effectiveHooksPath: () => Promise.resolve(null),
+      homeDir: fakeHome,
+      pathExists: () => Promise.resolve(true),
+      log: silentLog,
+    });
+
+    await scheduleCapsuleShadow(servicesHome, () =>
+      shadowArgs({
+        handoff_id: "h-home-wt-storage",
+        project_root: operatorRoot,
+        dispatch_worktree_root: worktreeRoot,
+      }),
+    );
+    await drainCapsuleShadowForTest();
+
+    const events = shadowEvents(services, "h-home-wt-storage");
+    expect(events).toHaveLength(1);
+    const meta = eventMeta(events[0]!);
+    const preflightCodes = meta["preflight_codes"];
+    expect(Array.isArray(preflightCodes)).toBe(true);
+    expect(preflightCodes).toContain("storage_not_isolated");
+  });
+
+  test("requested branch_base drives base_sha and probe baseSha, not operator HEAD", async () => {
+    const services = tempServices(true);
+    const compileCalls: CompileInput[] = [];
+    const record: ProbeRecord = { opts: [], worktreeCalls: 0 };
+    const worktreeRoot = join(makeTmpDir("capsule-wt-base-"), "not-yet-created");
+
+    await runCapsuleShadow(
+      shadowArgs({
+        handoff_id: "h-base-req",
+        branch_base: "feature/base",
+        dispatch_worktree_root: worktreeRoot,
+      }),
+      directShadowDeps(services, {
+        gitPort: () => splitGitPort(),
+        probePort: recordingProbePort(record),
+        compile: compileSpy(compileCalls),
+        pathExists: () => Promise.resolve(false),
+      }),
+    );
+
+    expect(compileCalls[0]?.base_sha).toBe(REQUESTED_BASE);
+    const events = shadowEvents(services, "h-base-req");
+    expect(events).toHaveLength(1);
+    const meta = eventMeta(events[0]!);
+    expect(meta["refusal_code"]).toBeUndefined();
+    expect(record.opts[0]?.baseSha).toBe(REQUESTED_BASE);
+  });
+
+  test("unresolvable branch_base records base_missing and stale_base", async () => {
+    const services = tempServices(true);
+    const record: ProbeRecord = { opts: [], worktreeCalls: 0 };
+    const worktreeRoot = join(makeTmpDir("capsule-wt-base-"), "not-yet-created");
+
+    await runCapsuleShadow(
+      shadowArgs({
+        handoff_id: "h-base-missing",
+        branch_base: MISSING_BASE,
+        dispatch_worktree_root: worktreeRoot,
+      }),
+      directShadowDeps(services, {
+        gitPort: () => splitGitPort(),
+        probePort: recordingProbePort(record),
+        pathExists: () => Promise.resolve(false),
+      }),
+    );
+
+    const events = shadowEvents(services, "h-base-missing");
+    expect(events).toHaveLength(1);
+    const meta = eventMeta(events[0]!);
+    const preflightCodes = meta["preflight_codes"];
+    expect(Array.isArray(preflightCodes)).toBe(true);
+    expect(preflightCodes).toContain("base_missing");
+    expect(meta["refusal_code"]).toBe("stale_base");
+  });
+
+  test("absent branch_base keeps the operator HEAD base", async () => {
+    const services = tempServices(true);
+    const compileCalls: CompileInput[] = [];
+    const worktreeRoot = join(makeTmpDir("capsule-wt-base-"), "not-yet-created");
+
+    await runCapsuleShadow(
+      shadowArgs({
+        handoff_id: "h-base-head",
+        dispatch_worktree_root: worktreeRoot,
+      }),
+      directShadowDeps(services, {
+        gitPort: () => splitGitPort(),
+        probePort: recordingProbePort({ opts: [], worktreeCalls: 0 }),
+        compile: compileSpy(compileCalls),
+        pathExists: () => Promise.resolve(false),
+      }),
+    );
+
+    expect(compileCalls[0]?.base_sha).toBe(OPERATOR_HEAD);
+  });
+
+  test("missing dispatch worktree records worktree_deferred without worktree probe failures", async () => {
+    const services = tempServices(true);
+    const record: ProbeRecord = { opts: [], worktreeCalls: 0 };
+    const worktreeRoot = join(makeTmpDir("capsule-wt-parent-"), "not-yet-created");
+
+    await runCapsuleShadow(
+      shadowArgs({
+        handoff_id: "h-wt-deferred",
+        dispatch_worktree_root: worktreeRoot,
+      }),
+      directShadowDeps(services, {
+        probePort: recordingProbePort(record),
+        effectiveHooksPath: () => Promise.resolve("/nonexistent-hooks"),
+      }),
+    );
+
+    const events = shadowEvents(services, "h-wt-deferred");
+    expect(events).toHaveLength(1);
+    const meta = eventMeta(events[0]!);
+    const preflightCodes = meta["preflight_codes"];
+    expect(Array.isArray(preflightCodes)).toBe(true);
+    expect(preflightCodes).toContain("worktree_deferred");
+    for (const code of [
+      "code_missing",
+      "tests_missing",
+      "hook_unknown",
+      "hook_missing",
+      "storage_not_isolated",
+      "artifact_unreadable",
+      "hook_view_disagreement",
+    ]) {
+      expect(preflightCodes).not.toContain(code);
+    }
+    expect(record.worktreeCalls).toBe(0);
+  });
+
+  test("route passes branch_base through to shadow base resolution", async () => {
+    process.env[CAPSULE_MODE_KEY] = "shadow";
+    const services = tempServices(true);
+    stubRecallHits(services);
+    const compileCalls: CompileInput[] = [];
+    setCapsuleShadowDepsForTest(
+      routeShadowDeps({
+        compile: compileSpy(compileCalls),
+        gitPort: () => splitGitPort(),
+        pathExists: () => Promise.resolve(false),
+      }),
+    );
+
+    const { res } = await startChain(services, { branch_base: "feature/base" });
+    await drainCapsuleShadowForTest();
+
+    expect(res.status).toBe(200);
+    expect(compileCalls).toHaveLength(1);
+    expect(compileCalls[0]?.base_sha).toBe(REQUESTED_BASE);
+  });
+
+  test("route sets dispatch_worktree_root to worktreeBaseFor/handoff_id for worktree dispatches", async () => {
+    process.env[CAPSULE_MODE_KEY] = "shadow";
+    for (const use_worktree of [undefined, true]) {
+      const services = tempServices(true);
+      stubRecallHits(services);
+      const roots: string[] = [];
+      setCapsuleShadowDepsForTest(
+        routeShadowDeps({
+          pathExists: (path: string): Promise<boolean> => {
+            roots.push(path);
+            return Promise.resolve(false);
+          },
+        }),
+      );
+
+      const { res, body } = await startChain(
+        services,
+        use_worktree === undefined ? {} : { use_worktree },
+      );
+      await drainCapsuleShadowForTest();
+
+      expect(res.status).toBe(200);
+      expect(roots).toEqual([
+        join(services.worktreeManager.worktreeBaseFor(PROJECT_ID), body.handoff_id),
+      ]);
+    }
+  });
+
+  test("route omits dispatch_worktree_root when use_worktree is false", async () => {
+    process.env[CAPSULE_MODE_KEY] = "shadow";
+    const services = tempServices(true);
+    stubRecallHits(services);
+    const roots: string[] = [];
+    const record: ProbeRecord = { opts: [], worktreeCalls: 0 };
+    setCapsuleShadowDepsForTest(
+      routeShadowDeps({
+        pathExists: (path: string): Promise<boolean> => {
+          roots.push(path);
+          return Promise.resolve(false);
+        },
+        probePort: recordingProbePort(record),
+      }),
+    );
+
+    const { res } = await startChain(services, { use_worktree: false });
+    await drainCapsuleShadowForTest();
+
+    expect(res.status).toBe(200);
+    expect(roots).toEqual([]);
+    expect(record.opts).toHaveLength(1);
+    expect(record.opts[0]?.storageRoot).toBe("");
+  });
+
+  test("ready worktree head comes from gitPort(worktreeRoot), not the requested base", async () => {
+    const repo = makeTmpDir("capsule-head-repo-");
+    execFileSync("git", ["init", "-b", "main"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "test"], { cwd: repo });
+    writeFileSync(join(repo, "base.txt"), "base\n");
+    execFileSync("git", ["add", "."], { cwd: repo });
+    execFileSync("git", ["commit", "-m", "base"], { cwd: repo });
+    const requestedBase = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: repo,
+      encoding: "utf8",
+    }).trim();
+
+    const worktreeRoot = makeTmpDir("capsule-head-wt-");
+    execFileSync("git", ["init", "-b", "work"], { cwd: worktreeRoot });
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: worktreeRoot });
+    execFileSync("git", ["config", "user.name", "test"], { cwd: worktreeRoot });
+    writeFileSync(join(worktreeRoot, "work.txt"), "work\n");
+    execFileSync("git", ["add", "."], { cwd: worktreeRoot });
+    execFileSync("git", ["commit", "-m", "work"], { cwd: worktreeRoot });
+    const worktreeHead = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: worktreeRoot,
+      encoding: "utf8",
+    }).trim();
+    expect(worktreeHead).not.toBe(requestedBase);
+
+    const services = tempServices(true);
+    const gitRoots: string[] = [];
+    const compileCalls: CompileInput[] = [];
+    const heads: (string | null)[] = [];
+
+    await runCapsuleShadow(
+      shadowArgs({
+        handoff_id: "h-wt-head",
+        project_root: repo,
+        branch_base: requestedBase,
+        dispatch_worktree_root: worktreeRoot,
+      }),
+      directShadowDeps(services, {
+        gitPort: (root: string): CapsuleGitPort => {
+          gitRoots.push(root);
+          return createCapsuleGitPort({ worktreeRoot: root });
+        },
+        compile: (input, options) => {
+          compileCalls.push(input);
+          return options.git.headSha().then((head) => {
+            heads.push(head);
+            return compileCapsule(input, options);
+          });
+        },
+      }),
+    );
+
+    expect(gitRoots).toContain(worktreeRoot);
+    expect(heads).toEqual([worktreeHead]);
+    expect(compileCalls[0]?.base_sha).toBe(requestedBase);
+    const events = shadowEvents(services, "h-wt-head");
+    expect(events).toHaveLength(1);
+    expect(eventMeta(events[0]!)["refusal_code"]).toBe("stale_base");
   });
 });

@@ -1192,3 +1192,22 @@ test("FsPort read bounds output by maxBytes and closes once per read", async () 
   await countingPort.read(file, { maxBytes: 4 });
   expect(closeCalls).toBe(2);
 });
+
+test("capsule git resolveRef resolves branch heads and rejects unsafe refs without spawning git", async () => {
+  const fx = makeFixture();
+  git(fx.wt, ["branch", "feature/base"], fx.gitEnv);
+  const execCalls: ExecCall[] = [];
+  const gitPort = createCapsuleGitPort({ worktreeRoot: fx.wt, exec: recordingExec(execCalls) });
+  if (gitPort.resolveRef === undefined) {
+    throw new Error("CapsuleGitPort.resolveRef is not implemented");
+  }
+
+  for (const ref of ["-c", "a..b", "HEAD@{1}"]) {
+    expect(await gitPort.resolveRef(ref)).toBeNull();
+  }
+  expect(execCalls).toHaveLength(0);
+
+  expect(await gitPort.resolveRef("feature/base")).toBe(fx.headSha);
+  expect(await gitPort.resolveRef("main")).toBe(fx.headSha);
+  expect(execCalls.length).toBeGreaterThan(0);
+});
