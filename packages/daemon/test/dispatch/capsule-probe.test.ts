@@ -9,6 +9,7 @@ import { afterEach, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
+  constants,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -22,11 +23,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join, relative } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import {
   CAPSULE_GIT_SUBCOMMANDS,
   type CapsuleExec,
   type CapsuleProbeFs,
+  type CapsuleProbeFsStat,
   createCapsuleFsPort,
   createCapsuleGitPort,
   createCapsuleProbePort,
@@ -219,6 +222,13 @@ function snapshotTree(root: string): string[] {
 function argvHasToken(argv: readonly string[], token: string): boolean {
   return argv.some((arg) => arg === token || arg.startsWith(`${token}=`));
 }
+
+const FAKE_FILE_STAT: CapsuleProbeFsStat = {
+  size: 0,
+  isFile: () => true,
+  isDirectory: () => false,
+  isSymbolicLink: () => false,
+};
 
 test("verifyCapsuleShas reports stale_base when the pinned base is not HEAD", async () => {
   const fx = makeFixture({ twoCommits: true });
@@ -805,4 +815,364 @@ test("runPreflight over the capsule probe port is ready for an isolated worktree
   expect(resultNested.failures.some((failure) => failure.code === "storage_not_isolated")).toBe(
     true,
   );
+});
+
+test("artifactReadable returns unknown for file URLs that fileURLToPath rejects", async () => {
+  const fx = makeFixture();
+  const { storageRoot, operatorCheckout } = probeDirs(fx);
+  const port = createCapsuleProbePort({
+    worktreeRoot: fx.wt,
+    baseSha: fx.headSha,
+    storageRoot,
+    operatorCheckout,
+  });
+  for (const uri of ["file://evil/x", "file:///a/%2Fb"]) {
+    // bun:test types .resolves matchers as void; the await is required at runtime.
+    // eslint-disable-next-line @typescript-eslint/await-thenable, @typescript-eslint/no-confusing-void-expression
+    await expect(port.artifactReadable({ id: "a", kind: "file", uri })).resolves.toEqual({
+      status: "unknown",
+      detail: "unsupported artifact uri",
+    });
+  }
+  expect(
+    await port.artifactReadable({
+      id: "a",
+      kind: "file",
+      uri: pathToFileURL(join(fx.wt, "inside.txt")).href,
+    }),
+  ).toEqual({ status: "ok" });
+});
+
+test("runtime ignores inherited prototype keys", async () => {
+  const fx = makeFixture();
+  const { storageRoot, operatorCheckout } = probeDirs(fx);
+  const port = createCapsuleProbePort({
+    worktreeRoot: fx.wt,
+    baseSha: fx.headSha,
+    storageRoot,
+    operatorCheckout,
+    runtimeVersions: { bun: "1.2.3" },
+  });
+  for (const name of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+    const outcome = await port.runtime(name);
+    expect(outcome.status).toBe("fail");
+    expect(outcome).toEqual({ status: "fail", detail: `runtime ${name} not available` });
+  }
+  expect(await port.runtime("bun")).toEqual({ status: "ok", version: "1.2.3" });
+
+  const defaultPort = createCapsuleProbePort({
+    worktreeRoot: fx.wt,
+    baseSha: fx.headSha,
+    storageRoot,
+    operatorCheckout,
+  });
+  for (const name of ["constructor", "__proto__"]) {
+    const outcome = await defaultPort.runtime(name);
+    expect(outcome.status).toBe("fail");
+    expect(outcome).toEqual({ status: "fail", detail: `runtime ${name} not available` });
+  }
+});
+
+test("runtime requires a string version", async () => {
+  const fx = makeFixture();
+  const { storageRoot, operatorCheckout } = probeDirs(fx);
+  const port = createCapsuleProbePort({
+    worktreeRoot: fx.wt,
+    baseSha: fx.headSha,
+    storageRoot,
+    operatorCheckout,
+    runtimeVersions: { bun: 1 as unknown as string },
+  });
+  expect(await port.runtime("bun")).toEqual({
+    status: "fail",
+    detail: "runtime bun not available",
+  });
+});
+
+test("artifactReadable denies sibling-directory escapes sharing the worktree prefix", async () => {
+  const fx = makeFixture();
+  const { storageRoot, operatorCheckout } = probeDirs(fx);
+  const evilDir = join(fx.root, "repo-evil");
+  mkdirSync(evilDir);
+  writeFileSync(join(evilDir, "x.txt"), "evil\n");
+  symlinkSync(join(evilDir, "x.txt"), join(fx.wt, "sib"));
+  const port = createCapsuleProbePort({
+    worktreeRoot: fx.wt,
+    baseSha: fx.headSha,
+    storageRoot,
+    operatorCheckout,
+  });
+  expect(await port.artifactReadable({ id: "s", kind: "file", uri: "sib" })).toEqual({
+    status: "denied",
+    detail: "artifact escapes worktree",
+  });
+});
+
+test("runAllowedGit rejects forbidden git options after an allowed subcommand", async () => {
+  const fx = makeFixture();
+  const env = { PATH: process.env.PATH ?? "" };
+  let calls = 0;
+  const countingExec: CapsuleExec = () => {
+    calls += 1;
+    return Promise.resolve({ code: 0, stdout: "", stderr: "" });
+  };
+  for (const argv of [
+    ["rev-parse", "-c", "x"],
+    ["rev-parse", "-C", "/tmp", "HEAD"],
+    ["ls-files", "--exec-path"],
+    ["cat-file", "--exec-path=/tmp"],
+  ]) {
+    expect(await runAllowedGit(countingExec, fx.wt, argv, env)).toEqual({
+      ok: false,
+      detail: "git subcommand not allowed",
+    });
+    expect(calls).toBe(0);
+  }
+});
+
+test("artifactReadable returns unknown for traversal, parent, absolute and remote uris", async () => {
+  const fx = makeFixture();
+  const { storageRoot, operatorCheckout } = probeDirs(fx);
+  const port = createCapsuleProbePort({
+    worktreeRoot: fx.wt,
+    baseSha: fx.headSha,
+    storageRoot,
+    operatorCheckout,
+  });
+  for (const uri of [
+    "src/../inside.txt",
+    "../repo/inside.txt",
+    join(fx.wt, "inside.txt"),
+    "https://x/y",
+  ]) {
+    expect(await port.artifactReadable({ id: "a", kind: "file", uri })).toEqual({
+      status: "unknown",
+      detail: "unsupported artifact uri",
+    });
+  }
+});
+
+test("artifactReadable and pathTool enforce readability, file-type and exec-bit checks", async () => {
+  const fx = makeFixture();
+  const { storageRoot, operatorCheckout } = probeDirs(fx);
+
+  const accessCalls: { path: string; mode: number | undefined }[] = [];
+  const denyingFs: CapsuleProbeFs = {
+    ...defaultCapsuleProbeFs,
+    access: (path, mode) => {
+      accessCalls.push({ path, mode });
+      return Promise.reject(new Error("denied"));
+    },
+  };
+  const portDeny = createCapsuleProbePort({
+    worktreeRoot: fx.wt,
+    baseSha: fx.headSha,
+    storageRoot,
+    operatorCheckout,
+    fs: denyingFs,
+  });
+  expect(await portDeny.artifactReadable({ id: "a", kind: "file", uri: "inside.txt" })).toEqual({
+    status: "fail",
+    detail: "artifact is not readable",
+  });
+  const realInside = realpathSync(join(fx.wt, "inside.txt"));
+  expect(accessCalls.some((call) => call.mode === constants.R_OK && call.path === realInside)).toBe(
+    true,
+  );
+
+  const dirToolBin = join(fx.root, "dir-bin");
+  mkdirSync(join(dirToolBin, "capsule-dir-tool"), { recursive: true });
+  chmodSync(join(dirToolBin, "capsule-dir-tool"), 0o755);
+  const portDirTool = createCapsuleProbePort({
+    worktreeRoot: fx.wt,
+    baseSha: fx.headSha,
+    storageRoot,
+    operatorCheckout,
+    pathEnv: dirToolBin,
+  });
+  expect((await portDirTool.pathTool("capsule-dir-tool")).status).toBe("fail");
+
+  const execModes: (number | undefined)[] = [];
+  const execBitFs: CapsuleProbeFs = {
+    ...defaultCapsuleProbeFs,
+    stat: () => Promise.resolve(FAKE_FILE_STAT),
+    access: (_path, mode) => {
+      execModes.push(mode);
+      return mode === constants.X_OK
+        ? Promise.resolve()
+        : Promise.reject(new Error("unexpected access mode"));
+    },
+  };
+  const fakeBin = join(fx.root, "fake-bin");
+  const portExecBit = createCapsuleProbePort({
+    worktreeRoot: fx.wt,
+    baseSha: fx.headSha,
+    storageRoot,
+    operatorCheckout,
+    fs: execBitFs,
+    pathEnv: fakeBin,
+  });
+  expect(await portExecBit.pathTool("anytool")).toEqual({ status: "ok" });
+  expect(execModes.length).toBeGreaterThan(0);
+  for (const mode of execModes) {
+    expect(mode).toBe(constants.X_OK);
+  }
+
+  const denyAccessFs: CapsuleProbeFs = {
+    ...defaultCapsuleProbeFs,
+    stat: () => Promise.resolve(FAKE_FILE_STAT),
+    access: () => Promise.reject(new Error("denied")),
+  };
+  const portDenyAccess = createCapsuleProbePort({
+    worktreeRoot: fx.wt,
+    baseSha: fx.headSha,
+    storageRoot,
+    operatorCheckout,
+    fs: denyAccessFs,
+    pathEnv: fakeBin,
+  });
+  expect((await portDenyAccess.pathTool("anytool")).status).toBe("fail");
+});
+
+test("pathTool skips relative PATH entries without touching the filesystem", async () => {
+  const fx = makeFixture();
+  const { storageRoot, operatorCheckout } = probeDirs(fx);
+  const statPaths: string[] = [];
+  const permissiveFs: CapsuleProbeFs = {
+    ...defaultCapsuleProbeFs,
+    stat: (path) => {
+      statPaths.push(path);
+      return Promise.resolve(FAKE_FILE_STAT);
+    },
+    access: () => Promise.resolve(),
+  };
+  const port = createCapsuleProbePort({
+    worktreeRoot: fx.wt,
+    baseSha: fx.headSha,
+    storageRoot,
+    operatorCheckout,
+    fs: permissiveFs,
+    pathEnv: ["relbin", "./x", "", ""].join(delimiter),
+  });
+  expect(await port.pathTool("git")).toEqual({
+    status: "fail",
+    detail: "tool git not available",
+  });
+  expect(statPaths).toEqual([]);
+});
+
+test("hookStatus reports unknown when either git path probe fails", async () => {
+  const fx = makeFixture();
+  const { storageRoot, operatorCheckout } = probeDirs(fx);
+  for (const token of ["--git-path", "--git-common-dir"]) {
+    const port = createCapsuleProbePort({
+      worktreeRoot: fx.wt,
+      baseSha: fx.headSha,
+      storageRoot,
+      operatorCheckout,
+      exec: async (file, argv, opts) =>
+        argv.includes(token)
+          ? { code: 1, stdout: "", stderr: "" }
+          : await defaultCapsuleExec(file, argv, opts),
+    });
+    expect(await port.hookStatus()).toEqual({
+      status: "unknown",
+      detail: "hooks path unresolved",
+    });
+  }
+});
+
+test("hasTests matches test path segments but not lookalike names", async () => {
+  const fx = makeFixture();
+  const { storageRoot, operatorCheckout } = probeDirs(fx);
+  const portFor = (files: string[]): ReturnType<typeof createCapsuleProbePort> =>
+    createCapsuleProbePort({
+      worktreeRoot: fx.wt,
+      baseSha: fx.headSha,
+      storageRoot,
+      operatorCheckout,
+      exec: () => Promise.resolve({ code: 0, stdout: files.join("\u0000"), stderr: "" }),
+    });
+  for (const file of ["tests/data.json", "__tests__/x.js", "pkg/test/fixture.txt", "test/x"]) {
+    expect((await portFor([file]).hasTests()).status).toBe("ok");
+  }
+  for (const file of ["latest/x.ts", "contest/a.js", "src/testing.ts"]) {
+    expect(await portFor([file]).hasTests()).toEqual({
+      status: "fail",
+      detail: "no tracked test files",
+    });
+  }
+});
+
+test("probe outcomes fail for missing runtimes, directories, worktree and artifacts", async () => {
+  const fx = makeFixture();
+  const { storageRoot, operatorCheckout } = probeDirs(fx);
+  const base = { worktreeRoot: fx.wt, baseSha: fx.headSha, storageRoot, operatorCheckout };
+
+  const portRuntime = createCapsuleProbePort({ ...base, runtimeVersions: { bun: "1" } });
+  expect(await portRuntime.runtime("python")).toEqual({
+    status: "fail",
+    detail: "runtime python not available",
+  });
+
+  const portMissingDirs = createCapsuleProbePort({
+    ...base,
+    storageRoot: join(fx.root, "missing-storage"),
+    operatorCheckout: join(fx.root, "missing-checkout"),
+  });
+  expect(await portMissingDirs.storagePath()).toEqual({
+    status: "fail",
+    detail: "configured directory unavailable",
+  });
+  expect(await portMissingDirs.operatorCheckout()).toEqual({
+    status: "fail",
+    detail: "configured directory unavailable",
+  });
+
+  const portMissingWt = createCapsuleProbePort({
+    ...base,
+    worktreeRoot: join(fx.root, "missing-worktree"),
+  });
+  expect(
+    await portMissingWt.artifactReadable({ id: "a", kind: "file", uri: "inside.txt" }),
+  ).toEqual({ status: "fail", detail: "worktree root unavailable" });
+
+  const port = createCapsuleProbePort(base);
+  expect(await port.artifactReadable({ id: "a", kind: "file", uri: "nope.txt" })).toEqual({
+    status: "fail",
+    detail: "artifact path unavailable",
+  });
+});
+
+test("FsPort read bounds output by maxBytes and closes once per read", async () => {
+  const fx = makeFixture();
+  const file = join(fx.root, "ten.txt");
+  writeFileSync(file, "0123456789");
+
+  const fsPort = createCapsuleFsPort();
+  const small = await fsPort.read(file, { maxBytes: 4 });
+  expect(small.length).toBe(4);
+  expect(new TextDecoder().decode(small)).toBe("0123");
+  const large = await fsPort.read(file, { maxBytes: 64 });
+  expect(large.length).toBe(10);
+  expect(new TextDecoder().decode(large)).toBe("0123456789");
+
+  let closeCalls = 0;
+  const countingFs: CapsuleProbeFs = {
+    ...defaultCapsuleProbeFs,
+    open: async (path, flags) => {
+      const handle = await defaultCapsuleProbeFs.open(path, flags);
+      return {
+        read: (buffer, offset, length, position) => handle.read(buffer, offset, length, position),
+        close: async (): Promise<void> => {
+          closeCalls += 1;
+          await handle.close();
+        },
+      };
+    },
+  };
+  const countingPort = createCapsuleFsPort(countingFs);
+  await countingPort.read(file, { maxBytes: 4 });
+  await countingPort.read(file, { maxBytes: 4 });
+  expect(closeCalls).toBe(2);
 });
