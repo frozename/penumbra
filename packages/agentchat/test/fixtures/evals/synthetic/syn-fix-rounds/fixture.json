@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "family_id": "fam-syn-fix-rounds",
+  "variant_id": "v1",
+  "root": {
+    "kind": "synthetic",
+    "id": "fix-rounds"
+  },
+  "reconstructs": null,
+  "failure_type": null,
+  "split": "dev",
+  "synthetic": true,
+  "base_sha": "c6996f940a6888154e1fa3ddbf820df78b1d9d18",
+  "task_digest": "83e9d14713cc42cdb58c97f0380b439c60c48d24dec97ce70c90d62f7506cf99",
+  "source_root_handoff_digests": [],
+  "expect_blocked": false,
+  "hidden_ref": {
+    "assertion_set_digest": "c6cd14ad9adb3bb5e62378bf9e8d737faff4b27f19c0e40d906453cad6584fd0"
+  },
+  "content_digest": "278e54b19db7cf4a9afad6c7b7976ceade76c70a8fe58098839d107a63f53b1e"
+}
