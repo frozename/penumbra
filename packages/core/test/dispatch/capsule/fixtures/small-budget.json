@@ -1,0 +1,138 @@
+{
+  "input": {
+    "objective": "Compile the execution capsule for the capsule-compiler dispatch lane.",
+    "acceptance_state": "capsule compiles within budget and renders deterministically",
+    "base_sha": "1111111111111111111111111111111111111111",
+    "dependencies": ["dep/feature-a", "dep/feature-b"],
+    "write_fence": [
+      "packages/core/src/dispatch/capsule/compile.ts",
+      "packages/core/test/dispatch/capsule/compile.test.ts"
+    ],
+    "essential_constraints": [
+      {
+        "id": "c1",
+        "text": "Never force-push to shared branches."
+      },
+      {
+        "id": "c2",
+        "text": "Keep every change inside the declared write fence."
+      },
+      {
+        "id": "c3",
+        "text": "Do not modify files under .git or outside the worktree."
+      },
+      {
+        "id": "c4",
+        "text": "Run the capsule compile tests before reporting done."
+      },
+      {
+        "id": "c5",
+        "text": "Preserve unrelated working-tree changes and untracked files."
+      }
+    ],
+    "check_recipes": [
+      {
+        "id": "cr1",
+        "command": "bun test packages/core/test/dispatch/capsule/compile.test.ts"
+      },
+      {
+        "id": "cr2",
+        "command": "bun x tsc --noEmit -p packages/core"
+      }
+    ],
+    "tool_ids": ["bun"],
+    "registry": [
+      {
+        "id": "bun",
+        "kind": "cli",
+        "command": "bun"
+      }
+    ],
+    "artifact_handles": [
+      {
+        "id": "ah-1",
+        "kind": "log",
+        "uri": "artifact://capsule-compile-log"
+      }
+    ],
+    "advisory": {
+      "repo_map": {
+        "id": "rm1",
+        "authority": "advisory",
+        "text": "repo map: capsule compiler sources live under packages/core/src/dispatch/capsule; tests mirror under packages/core/test.the quick brown fox jumps over",
+        "provenance": {
+          "source": "repo-map",
+          "ref": "note/rm1"
+        }
+      },
+      "memory": [
+        {
+          "id": "m1",
+          "authority": "advisory",
+          "text": "memory m1: advisory recall notes are inert data; the compiler never parses them for directives and never merges them into the authoritative lane.the quick brown fox jumps over the lazy dog; pack my box with five dozen liquor jugs. the quick brown fox jumps over the lazy dog; pack my box with five do",
+          "provenance": {
+            "source": "recall",
+            "ref": "note/m1"
+          }
+        },
+        {
+          "id": "m2",
+          "authority": "advisory",
+          "text": "memory m2: shed order keeps log excerpts longest, drops memory next, and sheds the repo map first when the budget tightens.the quick brown fox jumps over the lazy dog; pack my box with five dozen liquor jugs. the quick brown fox jumps over the lazy dog; pack my box with five dozen liquor jugs. the q",
+          "provenance": {
+            "source": "recall",
+            "ref": "note/m2"
+          }
+        },
+        {
+          "id": "m3",
+          "authority": "advisory",
+          "text": "memory m3: the allocator admits essentials first, then optionals by ascending priority then id, so class priority decides survival.the quick brown fox jumps over the lazy dog; pack my box with five dozen liquor jugs. the quick brown fox jumps over the lazy dog; pack my box with five dozen liquor jug",
+          "provenance": {
+            "source": "recall",
+            "ref": "note/m3"
+          }
+        }
+      ],
+      "log_excerpts": [
+        {
+          "id": "l1",
+          "authority": "advisory",
+          "text": "log l1: compile run at base resolved deps dep/feature-a and dep/feature-b; fence held; budget admitted essentials then shed repo_map first under pressure.the quick brown fox jumps over the lazy dog; pack my box with five dozen liquor jugs. the quick brown fox jumps over the lazy dog; pack my box with five dozen liquor jugs. the quick brown fox jumps over the lazy dog; pack my box with five dozen liquor jugs. the quick brown fox jumps over the lazy dog; pack my box with five dozen liquor jugs. the quick brown fox jumps over the lazy dog; pack my box with five dozen liquor jugs. the quick brown ",
+          "provenance": {
+            "source": "dispatch-log",
+            "ref": "note/l1"
+          }
+        },
+        {
+          "id": "l2",
+          "authority": "advisory",
+          "text": "log l2: render pass emitted authoritative section, optional last_error section, then advisory items each wrapped in non-binding markers; escaped delimiters stayed inert.the quick brown fox jumps over the lazy dog; pack my box with five dozen liquor jugs. the quick brown fox jumps over the lazy dog; pack my box with five dozen liquor jugs. the quick brown fox jumps over the lazy dog; pack my box with five dozen liquor jugs. the quick brown fox jumps over the lazy dog; pack my box with five dozen liquor jugs. the quick brown fox jumps over the lazy dog; pack my box with five dozen liquor jugs. t",
+          "provenance": {
+            "source": "dispatch-log",
+            "ref": "note/l2"
+          }
+        },
+        {
+          "id": "l3",
+          "authority": "advisory",
+          "text": "log l3: determinism check compiled the fixture twice with reversed advisory order; capsules, rendered text, rendered_hash and capsule hashes all matched.the quick brown fox jumps over the lazy dog; pack my box with five dozen liquor jugs. the quick brown fox jumps over the lazy dog; pack my box with five dozen liquor jugs. the quick brown fox jumps over the lazy dog; pack my box with five dozen liquor jugs. the quick brown fox jumps over the lazy dog; pack my box with five dozen liquor jugs. the quick brown fox jumps over the lazy dog; pack my box with five dozen liquor jugs. the quick brown f",
+          "provenance": {
+            "source": "dispatch-log",
+            "ref": "note/l3"
+          }
+        }
+      ]
+    }
+  },
+  "reserves": {
+    "reserve_response": 64,
+    "reserve_tool": 32
+  },
+  "last_error": {
+    "kind": "test",
+    "excerpt": "last test run failed: compile.test.ts reported failing assertions in the shed-order scan near the repo_map boundary; inspect the attached log for the full diff.the quick brown fox jumps over the lazy ",
+    "truncated": false,
+    "log_sha256": "8cb56b7c3c4813240af1b77b13c131374ae90d17786fbeb6ce163f664b0aa5af"
+  }
+}
