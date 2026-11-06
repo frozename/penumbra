@@ -15,6 +15,7 @@ import {
   type ExcerptRedactor,
   type GitPort,
   type LastError,
+  LastErrorSchema,
   type RefusalCode,
   renderCapsule,
   RESUME_EXCERPT_MAX_BYTES,
@@ -27,6 +28,7 @@ import {
   type ResumePrev,
   type ResumeResult,
   type ResumeSuccess,
+  type TokenCounter,
   utf8ByteLength,
 } from "@src/dispatch/capsule/index.js";
 import { sha256Hex } from "@src/dispatch/eval-primitives.js";
@@ -217,6 +219,46 @@ describe("buildResume last_error compaction", () => {
     expect(utf8ByteLength(le.excerpt)).toBeLessThanOrEqual(RESUME_EXCERPT_MAX_BYTES);
     expect(le.excerpt).not.toContain("�");
   });
+
+  test("tail cut landing mid-codepoint realigns to the codepoint boundary", async () => {
+    const unit = "é漢😀";
+    const log = unit.repeat(5689) + "a";
+    const unitBytes = utf8ByteLength(unit);
+    const rawTailStart = utf8ByteLength(log) - RESUME_LOG_TAIL_BYTES;
+    expect(rawTailStart % unitBytes).toBe(6);
+    const result = await buildResume(makePrev(""), makePorts(), { category: "tool", log });
+    expectOk(result);
+    const le = result.capsule.last_error;
+    expect(le).toBeDefined();
+    if (le === undefined) {
+      return;
+    }
+    expect(le.truncated).toBe(true);
+    expect(le.excerpt).toContain(RESUME_TRUNCATION_MARKER);
+    expect(utf8ByteLength(le.excerpt)).toBeLessThanOrEqual(RESUME_EXCERPT_MAX_BYTES);
+    expect(le.excerpt).not.toContain("\uFFFD");
+    expect(le.excerpt.endsWith("a")).toBe(true);
+    expect(LastErrorSchema.safeParse(le).success).toBe(true);
+  });
+});
+
+describe("buildResume token counter port", () => {
+  test("counter is forwarded to the compiler and labels the token report", async () => {
+    const seen: string[] = [];
+    const counter: TokenCounter = (text: string): number => {
+      seen.push(text);
+      return text.length;
+    };
+    const ports: ResumePorts = { ...makePorts(), counter };
+    const result = await buildResume(makePrev(""), ports, {
+      category: "tool",
+      log: "tool exited 1\n",
+    });
+    expectOk(result);
+    expect(seen.length).toBeGreaterThan(0);
+    expect(result.capsule.token_report.estimator).toBe("tokenizer");
+    expect(result.rendered.text).toContain("token_report: estimator=tokenizer");
+  });
 });
 
 describe("buildResume staleness", () => {
@@ -265,13 +307,15 @@ describe("buildResume last_error redaction", () => {
     const headPad = "x".repeat(RESUME_LOG_HEAD_BYTES - 11);
     const tokenA = ` ghp_${"A".repeat(36)}`;
     const tailSecret = ` ghp_${"B".repeat(36)} tail\n`;
-    const middlePad = "y".repeat(
+    const separator = "\n";
+    const middlePad = " ".repeat(
       LONG_LOG_TARGET_BYTES -
         utf8ByteLength(headPad) -
         utf8ByteLength(tokenA) -
+        utf8ByteLength(separator) -
         utf8ByteLength(tailSecret),
     );
-    const log = headPad + tokenA + middlePad + tailSecret;
+    const log = headPad + tokenA + separator + middlePad + tailSecret;
     const result = await buildResume(makePrev(""), makePorts(), { category: "compiler", log });
     expectOk(result);
     const le = result.capsule.last_error;
@@ -280,20 +324,26 @@ describe("buildResume last_error redaction", () => {
       return;
     }
     expect(le.truncated).toBe(true);
+    expect(le.excerpt).toContain(RESUME_TRUNCATION_MARKER);
+    expect(le.excerpt.startsWith("xxxx")).toBe(true);
     expect(le.excerpt).toContain("[REDACTED:token]");
     expect(le.excerpt).not.toContain("ghp_");
+    expect(le.excerpt).not.toMatch(/gh[oprsu]_[A-Za-z0-9]/);
+    expect(le.excerpt).not.toMatch(/[A-Za-z0-9]{20,} tail/);
   });
 
-  test("an injected redactor replaces the default redaction rules", async () => {
+  test("an injected redactor layers on top of the built-in redaction rules", async () => {
     const redactor: ExcerptRedactor = {
       redactString: (text: string) => ({
         redacted: text.replaceAll("CUSTOM-SECRET-9", "[X]"),
       }),
     };
     const ports: ResumePorts = { ...makePorts(), redactor };
+    const log = `failed with CUSTOM-SECRET-9 and ghp_${"A".repeat(36)} at /Users/alice/x\n`;
+    const expectedRedacted = "failed with [X] and [REDACTED:token] at ~/x\n";
     const result = await buildResume(makePrev(""), ports, {
       category: "permission_denied",
-      log: "failed with CUSTOM-SECRET-9 here\n",
+      log,
     });
     expectOk(result);
     const le = result.capsule.last_error;
@@ -303,7 +353,11 @@ describe("buildResume last_error redaction", () => {
     }
     expect(le.excerpt).toContain("[X]");
     expect(le.excerpt).not.toContain("CUSTOM-SECRET-9");
-    expect(le.log_sha256).toBe(sha256Hex("failed with [X] here\n"));
+    expect(le.excerpt).toContain("[REDACTED:token]");
+    expect(le.excerpt).not.toContain("ghp_");
+    expect(le.excerpt).not.toContain("/Users/alice");
+    expect(le.excerpt).toBe(expectedRedacted);
+    expect(le.log_sha256).toBe(sha256Hex(expectedRedacted));
   });
 });
 
