@@ -184,7 +184,8 @@ export function trimToTokenBudget(
   text: string,
   maxTokens: number,
 ): { text: string; truncated: boolean } {
-  const maxBytes = Math.max(0, Math.floor(maxTokens)) * 3;
+  const budget = Number.isFinite(maxTokens) && maxTokens > 0 ? Math.floor(maxTokens) : 0;
+  const maxBytes = budget * 3;
   let bytes = 0;
   let prefix = "";
   for (const codePoint of text) {

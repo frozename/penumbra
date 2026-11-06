@@ -414,7 +414,32 @@ describe("trimToTokenBudget", () => {
   });
 
   test("stops before a code point that would exceed the budget", () => {
-    expect(trimToTokenBudget("a😀", 1)).toEqual({ text: "a", truncated: true });
-    expect(LONE_SURROGATE.test("a")).toBe(false);
+    const result = trimToTokenBudget("a😀", 1);
+    expect(result).toEqual({ text: "a", truncated: true });
+    expect(LONE_SURROGATE.test(result.text)).toBe(false);
+  });
+
+  test("never skips a code point to keep later ones", () => {
+    expect(trimToTokenBudget("a😀b", 1)).toEqual({ text: "a", truncated: true });
+  });
+
+  test("always returns a prefix of the input", () => {
+    const budgets = [-2, -1, 0, 1, 2, 3, 4, 7, Number.NaN, Number.POSITIVE_INFINITY];
+    for (const sample of ["a😀b", "😀abc", "abc😀def", "漢字abc", "abcdef"]) {
+      for (const maxTokens of budgets) {
+        const { text } = trimToTokenBudget(sample, maxTokens);
+        expect(sample.startsWith(text)).toBe(true);
+      }
+    }
+  });
+
+  test("treats a non-finite or negative budget as zero", () => {
+    expect(trimToTokenBudget("abc", Number.NaN)).toEqual({ text: "", truncated: true });
+    expect(trimToTokenBudget("abc", Number.POSITIVE_INFINITY)).toEqual({
+      text: "",
+      truncated: true,
+    });
+    expect(trimToTokenBudget("abc", -1)).toEqual({ text: "", truncated: true });
+    expect(trimToTokenBudget("", Number.NaN)).toEqual({ text: "", truncated: false });
   });
 });
