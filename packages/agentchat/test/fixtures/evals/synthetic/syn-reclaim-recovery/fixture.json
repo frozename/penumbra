@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "family_id": "fam-syn-reclaim-recovery",
+  "variant_id": "v1",
+  "root": {
+    "kind": "synthetic",
+    "id": "reclaim-recovery"
+  },
+  "reconstructs": {
+    "kind": "issue",
+    "number": 322
+  },
+  "failure_type": "long_context_recovery",
+  "split": "dev",
+  "synthetic": true,
+  "base_sha": "bfe92a9df9ec876705f0a63ecd7c3db6c2c45273",
+  "task_digest": "afd45ca63bd1d8a68c7096b4f8b30e98473c50bf13dae2d4f0999392f6b02403",
+  "source_root_handoff_digests": [],
+  "expect_blocked": false,
+  "hidden_ref": {
+    "assertion_set_digest": "37edf48f81e500db3d42f4df5b87306b021e90ee4a12af3c14ac905aa9c46bcd"
+  },
+  "content_digest": "c2244c30780e8ca793405734af2669cd904c8506e4a48b23454021bcf1142074"
+}

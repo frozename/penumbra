@@ -1,0 +1,383 @@
+{
+  "schema_version": 1,
+  "family_id": "fam-syn-fixture-contract",
+  "variant_id": "v1",
+  "assertions": [
+    {
+      "kind": "probe",
+      "id": "c1",
+      "module": "src/contract.ts",
+      "export": "fixtureFamilyId",
+      "input": {
+        "kind": "issue",
+        "number": 379
+      },
+      "expect": "fam-379"
+    },
+    {
+      "kind": "probe",
+      "id": "c2",
+      "module": "src/contract.ts",
+      "export": "fixtureFamilyId",
+      "input": {
+        "kind": "operator_bundle",
+        "id": "kapitsa-fixture-contract"
+      },
+      "expect": "fam-op-kapitsa-fixture-contract"
+    },
+    {
+      "kind": "probe",
+      "id": "c3",
+      "module": "src/contract.ts",
+      "export": "fixtureFamilyId",
+      "input": {
+        "kind": "synthetic",
+        "id": "fixture-contract"
+      },
+      "expect": "fam-syn-fixture-contract"
+    },
+    {
+      "kind": "probe",
+      "id": "c4",
+      "module": "src/contract.ts",
+      "export": "fixtureFamilyId",
+      "input": {
+        "kind": "issue",
+        "number": 0
+      },
+      "expect": null
+    },
+    {
+      "kind": "probe",
+      "id": "c5",
+      "module": "src/contract.ts",
+      "export": "fixtureFamilyId",
+      "input": {
+        "kind": "issue"
+      },
+      "expect": null
+    },
+    {
+      "kind": "probe",
+      "id": "c6",
+      "module": "src/contract.ts",
+      "export": "fixtureFamilyId",
+      "input": "issue",
+      "expect": null
+    },
+    {
+      "kind": "probe",
+      "id": "c7",
+      "module": "src/contract.ts",
+      "export": "syntheticRootId",
+      "input": {
+        "kind": "synthetic",
+        "id": "fixture-contract"
+      },
+      "expect": "fixture-contract"
+    },
+    {
+      "kind": "probe",
+      "id": "c8",
+      "module": "src/contract.ts",
+      "export": "syntheticRootId",
+      "input": {
+        "kind": "issue",
+        "number": 1
+      },
+      "expect": null
+    },
+    {
+      "kind": "probe",
+      "id": "c9",
+      "module": "src/contract.ts",
+      "export": "syntheticRootId",
+      "input": {
+        "kind": "synthetic",
+        "id": "Bad_ID"
+      },
+      "expect": null
+    },
+    {
+      "kind": "probe",
+      "id": "c10",
+      "module": "src/contract.ts",
+      "export": "checkFixtureContract",
+      "input": {
+        "family_id": "fam-379",
+        "root": {
+          "kind": "issue",
+          "number": 379
+        },
+        "reconstructs": null,
+        "failure_type": "missed_commit",
+        "synthetic": false
+      },
+      "expect": {
+        "ok": true,
+        "problems": []
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c11",
+      "module": "src/contract.ts",
+      "export": "checkFixtureContract",
+      "input": {
+        "family_id": "fam-syn-fixture-contract",
+        "root": {
+          "kind": "synthetic",
+          "id": "fixture-contract"
+        },
+        "reconstructs": {
+          "kind": "issue",
+          "number": 322
+        },
+        "failure_type": "invalid_fixture_contract",
+        "synthetic": true
+      },
+      "expect": {
+        "ok": true,
+        "problems": []
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c12",
+      "module": "src/contract.ts",
+      "export": "checkFixtureContract",
+      "input": {
+        "family_id": "fam-999",
+        "root": {
+          "kind": "issue",
+          "number": 379
+        },
+        "reconstructs": null,
+        "failure_type": "missed_commit",
+        "synthetic": false
+      },
+      "expect": {
+        "ok": false,
+        "problems": ["family_id_mismatch"]
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c13",
+      "module": "src/contract.ts",
+      "export": "checkFixtureContract",
+      "input": {
+        "family_id": "fam-379",
+        "root": {
+          "kind": "issue",
+          "number": 0
+        },
+        "reconstructs": null,
+        "failure_type": "missed_commit",
+        "synthetic": false
+      },
+      "expect": {
+        "ok": false,
+        "problems": ["root_invalid"]
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c14",
+      "module": "src/contract.ts",
+      "export": "checkFixtureContract",
+      "input": {
+        "family_id": "fam-379",
+        "root": {
+          "kind": "issue",
+          "number": 379
+        },
+        "reconstructs": null,
+        "failure_type": "missed_commit",
+        "synthetic": true
+      },
+      "expect": {
+        "ok": false,
+        "problems": ["synthetic_flag_mismatch"]
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c15",
+      "module": "src/contract.ts",
+      "export": "checkFixtureContract",
+      "input": {
+        "family_id": "fam-379",
+        "root": {
+          "kind": "issue",
+          "number": 379
+        },
+        "reconstructs": null,
+        "failure_type": "missed_commit",
+        "synthetic": "yes"
+      },
+      "expect": {
+        "ok": false,
+        "problems": ["synthetic_not_boolean"]
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c16",
+      "module": "src/contract.ts",
+      "export": "checkFixtureContract",
+      "input": {
+        "family_id": "fam-379",
+        "root": {
+          "kind": "issue",
+          "number": 379
+        },
+        "reconstructs": {
+          "kind": "issue",
+          "number": 1
+        },
+        "failure_type": "missed_commit",
+        "synthetic": false
+      },
+      "expect": {
+        "ok": false,
+        "problems": ["reconstructs_requires_synthetic"]
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c17",
+      "module": "src/contract.ts",
+      "export": "checkFixtureContract",
+      "input": {
+        "family_id": "fam-syn-fixture-contract",
+        "root": {
+          "kind": "synthetic",
+          "id": "fixture-contract"
+        },
+        "reconstructs": {
+          "kind": "synthetic",
+          "id": "other-fixture"
+        },
+        "failure_type": "invalid_fixture_contract",
+        "synthetic": true
+      },
+      "expect": {
+        "ok": false,
+        "problems": ["reconstructs_synthetic_root"]
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c18",
+      "module": "src/contract.ts",
+      "export": "checkFixtureContract",
+      "input": {
+        "family_id": "fam-379",
+        "root": {
+          "kind": "issue",
+          "number": 379
+        },
+        "reconstructs": "yes",
+        "failure_type": "missed_commit",
+        "synthetic": false
+      },
+      "expect": {
+        "ok": false,
+        "problems": ["reconstructs_invalid"]
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c19",
+      "module": "src/contract.ts",
+      "export": "checkFixtureContract",
+      "input": {
+        "family_id": "fam-379",
+        "root": {
+          "kind": "issue",
+          "number": 379
+        },
+        "reconstructs": null,
+        "failure_type": null,
+        "synthetic": false
+      },
+      "expect": {
+        "ok": false,
+        "problems": ["failure_type_requires_synthetic"]
+      }
+    },
+    {
+      "kind": "probe",
+      "id": "c20",
+      "module": "src/contract.ts",
+      "export": "checkFixtureContract",
+      "input": "x",
+      "expect": {
+        "ok": false,
+        "problems": ["fixture_not_object"]
+      }
+    },
+    {
+      "kind": "invariant",
+      "id": "c21",
+      "property": "deterministic",
+      "module": "src/contract.ts",
+      "export": "checkFixtureContract",
+      "inputs": [
+        {
+          "family_id": "fam-379",
+          "root": {
+            "kind": "issue",
+            "number": 379
+          },
+          "reconstructs": null,
+          "failure_type": "missed_commit",
+          "synthetic": false
+        },
+        {
+          "family_id": "fam-syn-fixture-contract",
+          "root": {
+            "kind": "synthetic",
+            "id": "fixture-contract"
+          },
+          "reconstructs": {
+            "kind": "issue",
+            "number": 322
+          },
+          "failure_type": "invalid_fixture_contract",
+          "synthetic": true
+        }
+      ],
+      "seed": 0
+    },
+    {
+      "kind": "invariant",
+      "id": "c22",
+      "property": "deterministic",
+      "module": "src/contract.ts",
+      "export": "fixtureFamilyId",
+      "inputs": [
+        {
+          "kind": "issue",
+          "number": 379
+        },
+        {
+          "kind": "synthetic",
+          "id": "fixture-contract"
+        }
+      ],
+      "seed": 0
+    }
+  ],
+  "patches": {
+    "good": "diff --git a/src/contract.ts b/src/contract.ts\nindex eaea291..0c5d4f4 100644\n--- a/src/contract.ts\n+++ b/src/contract.ts\n@@ -1,14 +1,79 @@\n+function asRecord(value: unknown): Record<string, unknown> | null {\n+  if (typeof value !== \"object\" || value === null || Array.isArray(value)) {\n+    return null;\n+  }\n+  return value as Record<string, unknown>;\n+}\n+\n+const OPERATOR_BUNDLE_ID = /^[a-z0-9-]{3,48}$/;\n+const SYNTHETIC_ID = /^[a-z][a-z0-9-]{2,47}$/;\n+\n export function fixtureFamilyId(root: unknown): string | null {\n-  void root;\n-  throw new Error(\"not implemented\");\n+  const rec = asRecord(root);\n+  if (rec === null) {\n+    return null;\n+  }\n+  if (rec.kind === \"issue\") {\n+    const number = rec.number;\n+    if (typeof number === \"number\" && Number.isInteger(number) && number >= 1) {\n+      return \"fam-\" + String(number);\n+    }\n+    return null;\n+  }\n+  if (rec.kind === \"operator_bundle\") {\n+    return typeof rec.id === \"string\" && OPERATOR_BUNDLE_ID.test(rec.id)\n+      ? \"fam-op-\" + rec.id\n+      : null;\n+  }\n+  if (rec.kind === \"synthetic\") {\n+    return typeof rec.id === \"string\" && SYNTHETIC_ID.test(rec.id) ? \"fam-syn-\" + rec.id : null;\n+  }\n+  return null;\n }\n \n export function syntheticRootId(root: unknown): string | null {\n-  void root;\n-  throw new Error(\"not implemented\");\n+  const rec = asRecord(root);\n+  if (rec === null || rec.kind !== \"synthetic\") {\n+    return null;\n+  }\n+  return typeof rec.id === \"string\" && SYNTHETIC_ID.test(rec.id) ? rec.id : null;\n }\n \n export function checkFixtureContract(input: unknown): { ok: boolean; problems: string[] } {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  const rec = asRecord(input);\n+  if (rec === null) {\n+    return { ok: false, problems: [\"fixture_not_object\"] };\n+  }\n+  const problems: string[] = [];\n+  const familyId = fixtureFamilyId(rec.root);\n+  if (familyId === null) {\n+    problems.push(\"root_invalid\");\n+  } else if (rec.family_id !== familyId) {\n+    problems.push(\"family_id_mismatch\");\n+  }\n+  const rootRec = asRecord(rec.root);\n+  const kind = rootRec === null ? null : rootRec.kind;\n+  if (typeof rec.synthetic !== \"boolean\") {\n+    problems.push(\"synthetic_not_boolean\");\n+  } else if (rec.synthetic !== (kind === \"synthetic\")) {\n+    problems.push(\"synthetic_flag_mismatch\");\n+  }\n+  const reconstructs = rec.reconstructs;\n+  if (reconstructs !== null && reconstructs !== undefined) {\n+    const reconRec = asRecord(reconstructs);\n+    if (reconRec === null) {\n+      problems.push(\"reconstructs_invalid\");\n+    } else {\n+      if (rec.synthetic !== true) {\n+        problems.push(\"reconstructs_requires_synthetic\");\n+      }\n+      if (reconRec.kind === \"synthetic\") {\n+        problems.push(\"reconstructs_synthetic_root\");\n+      }\n+    }\n+  }\n+  if (rec.failure_type === null && rec.synthetic !== true) {\n+    problems.push(\"failure_type_requires_synthetic\");\n+  }\n+  return { ok: problems.length === 0, problems };\n }\n",
+    "bad": [
+      "diff --git a/src/contract.ts b/src/contract.ts\nindex eaea291..c8746ed 100644\n--- a/src/contract.ts\n+++ b/src/contract.ts\n@@ -1,14 +1,79 @@\n+function asRecord(value: unknown): Record<string, unknown> | null {\n+  if (typeof value !== \"object\" || value === null || Array.isArray(value)) {\n+    return null;\n+  }\n+  return value as Record<string, unknown>;\n+}\n+\n+const OPERATOR_BUNDLE_ID = /^[a-z0-9-]{3,48}$/;\n+const SYNTHETIC_ID = /^[a-z][a-z0-9-]{2,47}$/;\n+\n export function fixtureFamilyId(root: unknown): string | null {\n-  void root;\n-  throw new Error(\"not implemented\");\n+  const rec = asRecord(root);\n+  if (rec === null) {\n+    return null;\n+  }\n+  if (rec.kind === \"issue\") {\n+    const number = rec.number;\n+    if (typeof number === \"number\" && Number.isInteger(number) && number >= 1) {\n+      return \"fam-\" + String(number);\n+    }\n+    return null;\n+  }\n+  if (rec.kind === \"operator_bundle\") {\n+    return typeof rec.id === \"string\" && OPERATOR_BUNDLE_ID.test(rec.id)\n+      ? \"fam-\" + rec.id\n+      : null;\n+  }\n+  if (rec.kind === \"synthetic\") {\n+    return typeof rec.id === \"string\" && SYNTHETIC_ID.test(rec.id) ? \"fam-syn-\" + rec.id : null;\n+  }\n+  return null;\n }\n \n export function syntheticRootId(root: unknown): string | null {\n-  void root;\n-  throw new Error(\"not implemented\");\n+  const rec = asRecord(root);\n+  if (rec === null || rec.kind !== \"synthetic\") {\n+    return null;\n+  }\n+  return typeof rec.id === \"string\" && SYNTHETIC_ID.test(rec.id) ? rec.id : null;\n }\n \n export function checkFixtureContract(input: unknown): { ok: boolean; problems: string[] } {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  const rec = asRecord(input);\n+  if (rec === null) {\n+    return { ok: false, problems: [\"fixture_not_object\"] };\n+  }\n+  const problems: string[] = [];\n+  const familyId = fixtureFamilyId(rec.root);\n+  if (familyId === null) {\n+    problems.push(\"root_invalid\");\n+  } else if (rec.family_id !== familyId) {\n+    problems.push(\"family_id_mismatch\");\n+  }\n+  const rootRec = asRecord(rec.root);\n+  const kind = rootRec === null ? null : rootRec.kind;\n+  if (typeof rec.synthetic !== \"boolean\") {\n+    problems.push(\"synthetic_not_boolean\");\n+  } else if (rec.synthetic !== (kind === \"synthetic\")) {\n+    problems.push(\"synthetic_flag_mismatch\");\n+  }\n+  const reconstructs = rec.reconstructs;\n+  if (reconstructs !== null && reconstructs !== undefined) {\n+    const reconRec = asRecord(reconstructs);\n+    if (reconRec === null) {\n+      problems.push(\"reconstructs_invalid\");\n+    } else {\n+      if (rec.synthetic !== true) {\n+        problems.push(\"reconstructs_requires_synthetic\");\n+      }\n+      if (reconRec.kind === \"synthetic\") {\n+        problems.push(\"reconstructs_synthetic_root\");\n+      }\n+    }\n+  }\n+  if (rec.failure_type === null && rec.synthetic !== true) {\n+    problems.push(\"failure_type_requires_synthetic\");\n+  }\n+  return { ok: problems.length === 0, problems };\n }\n"
+    ]
+  },
+  "mutants": [
+    "diff --git a/src/contract.ts b/src/contract.ts\nindex eaea291..e3b843b 100644\n--- a/src/contract.ts\n+++ b/src/contract.ts\n@@ -1,14 +1,77 @@\n+function asRecord(value: unknown): Record<string, unknown> | null {\n+  if (typeof value !== \"object\" || value === null || Array.isArray(value)) {\n+    return null;\n+  }\n+  return value as Record<string, unknown>;\n+}\n+\n+const OPERATOR_BUNDLE_ID = /^[a-z0-9-]{3,48}$/;\n+const SYNTHETIC_ID = /^[a-z][a-z0-9-]{2,47}$/;\n+\n export function fixtureFamilyId(root: unknown): string | null {\n-  void root;\n-  throw new Error(\"not implemented\");\n+  const rec = asRecord(root);\n+  if (rec === null) {\n+    return null;\n+  }\n+  if (rec.kind === \"issue\") {\n+    const number = rec.number;\n+    if (typeof number === \"number\" && Number.isInteger(number) && number >= 1) {\n+      return \"fam-\" + String(number);\n+    }\n+    return null;\n+  }\n+  if (rec.kind === \"operator_bundle\") {\n+    return typeof rec.id === \"string\" && OPERATOR_BUNDLE_ID.test(rec.id)\n+      ? \"fam-op-\" + rec.id\n+      : null;\n+  }\n+  if (rec.kind === \"synthetic\") {\n+    return typeof rec.id === \"string\" && SYNTHETIC_ID.test(rec.id) ? \"fam-syn-\" + rec.id : null;\n+  }\n+  return null;\n }\n \n export function syntheticRootId(root: unknown): string | null {\n-  void root;\n-  throw new Error(\"not implemented\");\n+  const rec = asRecord(root);\n+  if (rec === null || rec.kind !== \"synthetic\") {\n+    return null;\n+  }\n+  return typeof rec.id === \"string\" && SYNTHETIC_ID.test(rec.id) ? rec.id : null;\n }\n \n export function checkFixtureContract(input: unknown): { ok: boolean; problems: string[] } {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  const rec = asRecord(input);\n+  if (rec === null) {\n+    return { ok: false, problems: [\"fixture_not_object\"] };\n+  }\n+  const problems: string[] = [];\n+  const familyId = fixtureFamilyId(rec.root);\n+  if (familyId === null) {\n+    problems.push(\"root_invalid\");\n+  } else if (rec.family_id !== familyId) {\n+    problems.push(\"family_id_mismatch\");\n+  }\n+  const rootRec = asRecord(rec.root);\n+  const kind = rootRec === null ? null : rootRec.kind;\n+  if (typeof rec.synthetic !== \"boolean\") {\n+    problems.push(\"synthetic_not_boolean\");\n+  }\n+  const reconstructs = rec.reconstructs;\n+  if (reconstructs !== null && reconstructs !== undefined) {\n+    const reconRec = asRecord(reconstructs);\n+    if (reconRec === null) {\n+      problems.push(\"reconstructs_invalid\");\n+    } else {\n+      if (rec.synthetic !== true) {\n+        problems.push(\"reconstructs_requires_synthetic\");\n+      }\n+      if (reconRec.kind === \"synthetic\") {\n+        problems.push(\"reconstructs_synthetic_root\");\n+      }\n+    }\n+  }\n+  if (rec.failure_type === null && rec.synthetic !== true) {\n+    problems.push(\"failure_type_requires_synthetic\");\n+  }\n+  return { ok: problems.length === 0, problems };\n }\n",
+    "diff --git a/src/contract.ts b/src/contract.ts\nindex eaea291..5fd51dd 100644\n--- a/src/contract.ts\n+++ b/src/contract.ts\n@@ -1,14 +1,79 @@\n+function asRecord(value: unknown): Record<string, unknown> | null {\n+  if (typeof value !== \"object\" || value === null || Array.isArray(value)) {\n+    return null;\n+  }\n+  return value as Record<string, unknown>;\n+}\n+\n+const OPERATOR_BUNDLE_ID = /^[a-z0-9-]{3,48}$/;\n+const SYNTHETIC_ID = /^[a-z][a-z0-9-]{2,47}$/;\n+\n export function fixtureFamilyId(root: unknown): string | null {\n-  void root;\n-  throw new Error(\"not implemented\");\n+  const rec = asRecord(root);\n+  if (rec === null) {\n+    return null;\n+  }\n+  if (rec.kind === \"issue\") {\n+    const number = rec.number;\n+    if (typeof number === \"number\" && Number.isInteger(number) && number >= 1) {\n+      return \"fam-\" + String(number);\n+    }\n+    return null;\n+  }\n+  if (rec.kind === \"operator_bundle\") {\n+    return typeof rec.id === \"string\" && OPERATOR_BUNDLE_ID.test(rec.id)\n+      ? \"fam-op-\" + rec.id\n+      : null;\n+  }\n+  if (rec.kind === \"synthetic\") {\n+    return typeof rec.id === \"string\" && SYNTHETIC_ID.test(rec.id) ? \"fam-syn-\" + rec.id : null;\n+  }\n+  return null;\n }\n \n export function syntheticRootId(root: unknown): string | null {\n-  void root;\n-  throw new Error(\"not implemented\");\n+  const rec = asRecord(root);\n+  if (rec === null || rec.kind !== \"synthetic\") {\n+    return null;\n+  }\n+  return typeof rec.id === \"string\" && SYNTHETIC_ID.test(rec.id) ? rec.id : null;\n }\n \n export function checkFixtureContract(input: unknown): { ok: boolean; problems: string[] } {\n-  void input;\n-  throw new Error(\"not implemented\");\n+  const rec = asRecord(input);\n+  if (rec === null) {\n+    return { ok: false, problems: [\"fixture_not_object\"] };\n+  }\n+  const problems: string[] = [];\n+  const familyId = fixtureFamilyId(rec.root);\n+  if (familyId === null) {\n+    problems.push(\"root_invalid\");\n+  } else if (rec.family_id !== familyId) {\n+    problems.push(\"family_id_mismatch\");\n+  }\n+  const rootRec = asRecord(rec.root);\n+  const kind = rootRec === null ? null : rootRec.kind;\n+  if (typeof rec.synthetic !== \"boolean\") {\n+    problems.push(\"synthetic_not_boolean\");\n+  } else if (rec.synthetic !== (kind === \"synthetic\")) {\n+    problems.push(\"synthetic_flag_mismatch\");\n+  }\n+  const reconstructs = rec.reconstructs;\n+  if (reconstructs !== null && reconstructs !== undefined) {\n+    const reconRec = asRecord(reconstructs);\n+    if (reconRec === null) {\n+      problems.push(\"reconstructs_invalid\");\n+    } else {\n+      if (rec.synthetic !== true) {\n+        problems.push(\"reconstructs_requires_synthetic\");\n+      }\n+      if (reconRec.kind !== \"synthetic\") {\n+        problems.push(\"reconstructs_synthetic_root\");\n+      }\n+    }\n+  }\n+  if (rec.failure_type === null && rec.synthetic !== true) {\n+    problems.push(\"failure_type_requires_synthetic\");\n+  }\n+  return { ok: problems.length === 0, problems };\n }\n"
+  ]
+}
