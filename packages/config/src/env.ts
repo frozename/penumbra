@@ -147,6 +147,12 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: true,
     description: "Enable automatic memory recall on chain_start dispatches.",
   },
+  PENUMBRA_DISPATCH_CAPSULE_MODE: {
+    schema: z.enum(["off", "shadow"]),
+    default: "off",
+    description:
+      "Dispatch execution-capsule mode: off | shadow. Opt-in: shadow compiles a capsule beside each chain_start dispatch and records only capsule hashes, token report, dropped ids and refusal/preflight codes as a dispatch.capsule_shadow event; the dispatched message is unchanged. Any other value (including on/true) fails the config parse at boot. Boot-time key: a full daemon restart is required (daemon_reload_config does not reload it).",
+  },
   PENUMBRA_WORKFLOW_RUN_WAIT_DEADLINE_MS: {
     schema: OptStr,
     description:
@@ -1606,4 +1612,23 @@ export function getUpdateEnv(env: NodeJS.ProcessEnv = process.env): UpdateEnv {
     daemonLabel: parsed.PENUMBRA_UPDATE_DAEMON_LABEL as string,
     workerLabel: parsed.PENUMBRA_UPDATE_WORKER_LABEL as string,
   };
+}
+
+export type DispatchCapsuleMode = "off" | "shadow";
+
+const DISPATCH_CAPSULE_MODE_KEYS = ["PENUMBRA_DISPATCH_CAPSULE_MODE"] as const;
+
+/** Capsule shadow-mode setting, parsed from only its own key (see getJobResourceEnv). */
+export function getDispatchCapsuleMode(env: NodeJS.ProcessEnv = process.env): DispatchCapsuleMode {
+  const subset: Record<string, string | undefined> = {};
+  for (const key of DISPATCH_CAPSULE_MODE_KEYS) {
+    if (key in env) subset[key] = env[key];
+  }
+  const parsed: Record<string, unknown> = EnvSchema.pick(
+    Object.fromEntries(DISPATCH_CAPSULE_MODE_KEYS.map((key) => [key, true])) as Record<
+      (typeof DISPATCH_CAPSULE_MODE_KEYS)[number],
+      true
+    >,
+  ).parse(subset);
+  return parsed.PENUMBRA_DISPATCH_CAPSULE_MODE as DispatchCapsuleMode;
 }

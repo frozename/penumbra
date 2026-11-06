@@ -143,6 +143,31 @@ describe("ENV_REGISTRY", () => {
     expect(() => parseEnv({ PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "true" })).toThrow();
   });
 
+  test("dispatch capsule mode defaults to off and accepts shadow", () => {
+    expect(parseEnv({}).PENUMBRA_DISPATCH_CAPSULE_MODE).toBe("off");
+    expect(
+      parseEnv({ PENUMBRA_DISPATCH_CAPSULE_MODE: "shadow" }).PENUMBRA_DISPATCH_CAPSULE_MODE,
+    ).toBe("shadow");
+  });
+
+  test("dispatch capsule mode rejects non-enum values including boolean spellings", () => {
+    for (const value of ["on", "true", "bogus"]) {
+      expect(() => parseEnv({ PENUMBRA_DISPATCH_CAPSULE_MODE: value })).toThrow();
+    }
+  });
+
+  test("dispatch capsule mode registry entry documents opt-in and restart", () => {
+    const description = ENV_REGISTRY.PENUMBRA_DISPATCH_CAPSULE_MODE?.description ?? "";
+    expect(description).toContain("Opt-in");
+    expect(description).toContain("restart");
+  });
+
+  test("dispatch capsule mode is the only CAPSULE registry key", () => {
+    expect(Object.keys(ENV_REGISTRY).filter((key) => key.includes("CAPSULE"))).toEqual([
+      "PENUMBRA_DISPATCH_CAPSULE_MODE",
+    ]);
+  });
+
   test("non-secret key does not have isSensitive", () => {
     expect(ENV_REGISTRY.PENUMBRA_DAEMON_HOST?.isSensitive).toBeFalsy();
   });

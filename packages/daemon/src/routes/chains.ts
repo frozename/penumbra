@@ -38,6 +38,7 @@ import { isRetiredLongLivedAgent } from "@penumbra/core/long-lived/retired-agent
 import { z } from "zod";
 
 import { autoRecallForDispatch } from "../dispatch/auto-recall.js";
+import { readCapsuleShadowMode, scheduleCapsuleShadow } from "../dispatch/capsule-shadow.js";
 import { stampPrompt } from "../long-lived/prompt-stamper.js";
 import { supportsMidSessionInject } from "../maestro/acp-injector.js";
 import { buildProviderCaps } from "../maestro/build-provider-caps.js";
@@ -1143,6 +1144,7 @@ interface AutoRecallOutcome {
   recalled_memory_ids: string[];
   recalled_memories: { id: string; title: string; obs_type: string; snippet_head?: string }[];
   recalled_query: string | null;
+  advisory_memory: { source: "auto_recall" | "project_brief"; text: string }[];
 }
 
 function maybeLoadProjectBriefInjection(services: Services, projectId: string): string | null {
@@ -1168,6 +1170,7 @@ async function maybeRunAutoRecall(
     recalled_memory_ids: [],
     recalled_memories: [],
     recalled_query: null,
+    advisory_memory: [],
   };
   if (taskClass === undefined) return empty;
   if (!input.project_id) {
@@ -1182,8 +1185,12 @@ async function maybeRunAutoRecall(
   const AUTO_RECALL_TIMEOUT_MS = 1500;
   const autoRecallController = new AbortController();
   const injectedSections: string[] = [];
+  const advisory_memory: { source: "auto_recall" | "project_brief"; text: string }[] = [];
   const projectBriefInjection = maybeLoadProjectBriefInjection(services, input.project_id);
-  if (projectBriefInjection) injectedSections.push(projectBriefInjection);
+  if (projectBriefInjection) {
+    injectedSections.push(projectBriefInjection);
+    advisory_memory.push({ source: "project_brief", text: projectBriefInjection });
+  }
   const autoPromise = autoRecallForDispatch(
     {
       prompt: input.message,
@@ -1243,13 +1250,22 @@ async function maybeRunAutoRecall(
     recalled_memory_ids = auto.recalled_memory_ids;
     recalled_memories = auto.recalled_memories;
     recalled_query = auto.recalled_query || null;
-    if (auto.injected_text) injectedSections.push(auto.injected_text);
+    if (auto.injected_text) {
+      injectedSections.push(auto.injected_text);
+      advisory_memory.push({ source: "auto_recall", text: auto.injected_text });
+    }
   }
   const handoffMessage =
     injectedSections.length > 0
       ? `${injectedSections.join("\n\n")}\n\n${stampedMessage}`
       : stampedMessage;
-  return { handoffMessage, recalled_memory_ids, recalled_memories, recalled_query };
+  return {
+    handoffMessage,
+    recalled_memory_ids,
+    recalled_memories,
+    recalled_query,
+    advisory_memory,
+  };
 }
 
 // Review and plan personas inspect the repository without a worktree and must
@@ -1752,6 +1768,26 @@ function resolveRoutingWithFallbacks(
   };
 }
 
+// #392 Phase 8: the only guarded shadow call site. Detached — the dispatch
+// path never awaits it; a shadow failure can only ever be a log line.
+function maybeScheduleCapsuleShadow(
+  services: Services,
+  input: ChainStartRequestWithLongLived,
+  projectRegistryEntries: { project_id: string; root_path: string }[] | undefined,
+  handoffId: string,
+  autoRecall: AutoRecallOutcome,
+): void {
+  if (readCapsuleShadowMode(services.log) === "shadow") {
+    void scheduleCapsuleShadow(services, () => ({
+      handoff_id: handoffId,
+      objective: input.message,
+      project_root: projectRootForBranchPrecheck(input, services, projectRegistryEntries),
+      advisory_memory: autoRecall.advisory_memory,
+      recalled_memory_ids: autoRecall.recalled_memory_ids,
+    }));
+  }
+}
+
 function projectRootForBranchPrecheck(
   input: ChainStartRequestWithLongLived,
   services: Services,
@@ -2065,6 +2101,8 @@ async function startActiveChain(
     recalled_query,
     branchName,
   });
+
+  maybeScheduleCapsuleShadow(services, input, projectRegistryEntries, handoff_id, autoRecall);
 
   if (routingDecision) {
     persistRoutingDecisionForChainStart(services, routingDecision, {
