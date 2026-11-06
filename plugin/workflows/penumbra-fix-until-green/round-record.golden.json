@@ -1,0 +1,33 @@
+{
+  "round": 2,
+  "agent": "executor",
+  "dispatch_ok": true,
+  "reason": "check_passed",
+  "candidate_branch": "agent/h-golden",
+  "candidate_handoff_id": "h-golden",
+  "verifier_handoff_id": null,
+  "verifier_branch": null,
+  "grader_handoff_id": null,
+  "grader_branch": null,
+  "check_passed": true,
+  "check_verify_status": "passed",
+  "check_exit": 0,
+  "rubric_status": null,
+  "rubric_grade": null,
+  "verified": true,
+  "ci_parity": false,
+  "passed": true,
+  "hops": {
+    "root_handoff_id": "handoff-1",
+    "latest_handoff_id": "handoff-1",
+    "hop_count": 1,
+    "extra_hops": 0,
+    "retry_prompt_count": 0,
+    "hops_incomplete": false,
+    "branch_base": "main",
+    "parent_handoff_id": null,
+    "hops": []
+  },
+  "autocommitted": true,
+  "autocommit_sha": "cccccccccccccccccccccccccccccccccccccccc"
+}
