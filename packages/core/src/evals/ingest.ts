@@ -25,7 +25,7 @@ import {
   ReceiptClaimSchema,
 } from "./manifest.js";
 
-export const HandoffRowSchema = z.strictObject({
+export const IngestHandoffRowSchema = z.strictObject({
   handoff_id: z.string(),
   ts: IsoTsSchema,
   message: z.string(),
@@ -36,7 +36,7 @@ export const HandoffRowSchema = z.strictObject({
   workflow_run_id: z.string().nullable(),
   dispatch_attempts: z.number().int().min(0),
 });
-export type HandoffRow = z.infer<typeof HandoffRowSchema>;
+export type IngestHandoffRow = z.infer<typeof IngestHandoffRowSchema>;
 
 export const EventRowSchema = z.strictObject({
   id: z.number().int(),
@@ -51,7 +51,7 @@ export type EventRow = z.infer<typeof EventRowSchema>;
 
 export const IngestRowsSchema = z.strictObject({
   schema_version: z.literal(1),
-  handoffs: z.array(HandoffRowSchema),
+  handoffs: z.array(IngestHandoffRowSchema),
   events: z.array(EventRowSchema),
   retry_events: z
     .array(z.strictObject({ event_id: z.string(), handoff_id: z.string() }))
@@ -104,7 +104,7 @@ export interface IngestRowsResult {
 
 function sliceLineage(
   lineage: BuiltLineage,
-  handoffsById: ReadonlyMap<string, HandoffRow>,
+  handoffsById: ReadonlyMap<string, IngestHandoffRow>,
   eventsByHandoff: ReadonlyMap<string, readonly EventRow[]>,
   opts: { now: number; retentionDays: number },
 ): { slices: SliceResult[]; orphanEventsDropped: number } {
@@ -187,7 +187,7 @@ function buildEpisode(
   lineage: BuiltLineage,
   history: AttemptHistory,
   kept: readonly AttemptSlice[],
-  handoffsById: ReadonlyMap<string, HandoffRow>,
+  handoffsById: ReadonlyMap<string, IngestHandoffRow>,
   rows: IngestRows,
 ): RowEpisode {
   const root = handoffsById.get(lineage.root_handoff_id);

@@ -307,6 +307,8 @@ test("ingestRows syn-reclaim-recovery scopes contract flags per attempt", () => 
     attribution_basis: "dispatch_end_autocommitted",
     autocommit_flag: true,
   });
+  expect(episode.final_sha).toBe(episode.attempts.at(-1)!.head_sha);
+  expect(episode.final_sha).toMatch(/^[0-9a-f]{40}$/);
   expect(episode.first_attempt).toBe("ineligible");
 });
 
@@ -397,7 +399,14 @@ test("ingestRows keeps the stamped retry join when dispatch events are absent", 
   expect(episode.first_attempt).toBe("unknown");
 });
 
-for (const dir of ["syn-reclaim-recovery", "syn-fixture-contract"]) {
+const SELF_QUALIFY_DIRS = [
+  "syn-reclaim-recovery",
+  "syn-tool-failure",
+  "syn-fixture-contract",
+  "syn-fix-rounds",
+] as const;
+
+for (const dir of SELF_QUALIFY_DIRS) {
   test(`control self-qualifies corpus fixture ${dir}`, async () => {
     const scratch = await mkScratch();
     const fixtureDir = corpusFixtureDir(dir);
@@ -561,4 +570,49 @@ test("ingestRows marks the first attempt ineligible when only retry assistance r
   expect(episode.attempts).toHaveLength(1);
   expect(episode.assistance).toEqual([{ kind: "retry_child", attempt_n: 1, ref: b.handoff_id }]);
   expect(episode.first_attempt).toBe("ineligible");
+  expect(episode.task_digest).toBe(taskDigest(stripRetryStamp(c.message)));
+  expect(episode.task_digest).not.toBe(taskDigest(c.message));
+});
+
+test("ingestRows marks a lineage unavailable when one member's events are absent", () => {
+  const rows = readRowsFile("syn-fix-rounds");
+  const { a, b, c } = identifyFixRounds(rows.handoffs);
+  const withoutCEvents = {
+    ...rows,
+    events: rows.events.filter((event) => event.handoff_id !== c.handoff_id),
+  };
+  const result = ingestRowsValue(withoutCEvents);
+  const episode = only(result.episodes);
+  expectWellFormed(episode);
+  expect([...episode.lineage.handoff_ids].sort()).toEqual(
+    [a.handoff_id, b.handoff_id, c.handoff_id].sort(),
+  );
+  expect(episode.attempt_history).toEqual({
+    status: "unavailable",
+    reason: "events_absent",
+    count: 1,
+    count_basis: "handoff_counter_lower_bound",
+  });
+  expect(episode.attempts).toEqual([]);
+  expect(episode.first_attempt).toBe("unknown");
+});
+
+test("ingestRows numbers pruned attempts from the lineage position, not the counter alone", () => {
+  const rows = readRowsFile("syn-fix-rounds");
+  const { a, b, c } = identifyFixRounds(rows.handoffs);
+  const pruned = {
+    ...rows,
+    handoffs: rows.handoffs.map((handoff) =>
+      handoff.handoff_id === b.handoff_id ? { ...handoff, dispatch_attempts: 3 } : handoff,
+    ),
+  };
+  const result = ingestRowsValue(pruned);
+  const episode = only(result.episodes);
+  expectWellFormed(episode);
+  expect(episode.attempts.map((attempt) => attempt.n)).toEqual([1, 4, 5]);
+  expect(episode.attempts.map((attempt) => attempt.handoff_id)).toEqual([
+    a.handoff_id,
+    b.handoff_id,
+    c.handoff_id,
+  ]);
 });
