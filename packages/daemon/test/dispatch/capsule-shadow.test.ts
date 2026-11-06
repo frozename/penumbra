@@ -35,7 +35,9 @@ import {
   CAPSULE_SHADOW_TIMEOUT_MS,
   type CapsuleShadowArgs,
   type CapsuleShadowDeps,
+  type CapsuleShadowMode,
   drainCapsuleShadowForTest,
+  readCapsuleShadowMode,
   resetCapsuleShadowStateForTest,
   runCapsuleShadow,
   scheduleCapsuleShadow,
@@ -603,6 +605,46 @@ describe("capsule shadow dispatch boundary (#392)", () => {
     expect(res.status).toBe(200);
     const expected = await expectedRecallInjection(routeServices);
     expect(getHandoff(routeServices, body.handoff_id).message).toBe(expected.message);
+  });
+
+  test("readCapsuleShadowMode fails open to off on an invalid runtime value", () => {
+    const { logger, calls } = fakeLogger();
+    let mode: CapsuleShadowMode | undefined;
+    expect(() => {
+      mode = readCapsuleShadowMode(logger, { [CAPSULE_MODE_KEY]: "bogus" });
+    }).not.toThrow();
+    expect(mode).toBe("off");
+
+    const shadowErrors = calls.filter(
+      (c) => c.level === "warn" && c.obj["event"] === "capsule_shadow_error",
+    );
+    expect(shadowErrors).toHaveLength(1);
+    expect(String(shadowErrors[0]!.obj["err"])).toContain(CAPSULE_MODE_KEY);
+  });
+
+  test("invalid runtime capsule mode fails open through chain_start without reaching the compiler", async () => {
+    process.env[CAPSULE_MODE_KEY] = "bogus";
+    const services = tempServices(true);
+    stubRecallHits(services);
+    const { logger, calls } = fakeLogger();
+    services.log = logger;
+    const compileCalls: CompileInput[] = [];
+    setCapsuleShadowDepsForTest(routeShadowDeps({ compile: compileSpy(compileCalls) }));
+
+    const { res, body } = await startChain(services);
+    await drainCapsuleShadowForTest();
+
+    expect(res.status).toBe(200);
+    const expected = await expectedRecallInjection(services);
+    expect(getHandoff(services, body.handoff_id).message).toBe(expected.message);
+    expect(compileCalls).toHaveLength(0);
+    expect(shadowEvents(services, body.handoff_id)).toHaveLength(0);
+
+    const shadowErrors = calls.filter(
+      (c) => c.level === "warn" && c.obj["event"] === "capsule_shadow_error",
+    );
+    expect(shadowErrors).toHaveLength(1);
+    expect(String(shadowErrors[0]!.obj["err"])).toContain(CAPSULE_MODE_KEY);
   });
 
   test("scheduleCapsuleShadow never throws and logs capsule_shadow_error on buildArgs failure", async () => {
