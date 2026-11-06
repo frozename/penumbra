@@ -32,6 +32,7 @@ import type { GraderAllowlist } from "./grader/verify.js";
 
 import { DEFAULT_CORPUS_ROOT, lintCorpus } from "./corpus.js";
 import { type GraderScratch, openGraderScratch } from "./grader/scratch.js";
+import { openIngestDatabase } from "./ingest-db.js";
 
 // run.ts does not exist yet: the P14 offline-eval CLI surface is declared
 // structurally below and the module is loaded dynamically so every case
@@ -758,3 +759,79 @@ test("one runCli opens the holdout store once and consumes a single unseal", asy
   expect(lines).toHaveLength(1);
   expect((JSON.parse(lines[0]!) as Record<string, unknown>)["granted"]).toBe(true);
 }, 300_000);
+
+// --- verify-stage / error-mapping pins (#391 P14 review) ------------------------
+
+function verifyOf(episode: Record<string, unknown>): Record<string, unknown> {
+  const verify: unknown = episode["verify"];
+  return typeof verify === "object" && verify !== null ? (verify as Record<string, unknown>) : {};
+}
+
+test("verify stage alone populates the report without aggregate", async () => {
+  const mod = run();
+  const res = await mod.runCli(
+    [
+      "replay",
+      "--corpus",
+      DEFAULT_CORPUS_ROOT,
+      "--only",
+      "synthetic/syn-missed-commit",
+      "grade",
+      "verify",
+      "report",
+    ],
+    gradingDeps(mkTmp("penumbra-eval-storage-")),
+  );
+  expect(res.code).toBe(0);
+  const episodes = jsonLines(res.stdout).filter((line) => line["type"] === "episode");
+  expect(episodes.length).toBeGreaterThanOrEqual(1);
+  expect(
+    episodes.some(
+      (episode) =>
+        verifyOf(episode)["status"] === "verified" && verifyOf(episode)["verdict"] === "pass",
+    ),
+  ).toBe(true);
+  expect(episodes.every((episode) => verifyOf(episode)["status"] !== "pending")).toBe(true);
+}, 300_000);
+
+test("ingest opens the sqlite handle read-only", () => {
+  const copyPath = seedCopyDir("penumbra-eval-dbcopy-", readSeedRows());
+  const db = openIngestDatabase(copyPath);
+  try {
+    expect(() => {
+      db.run(
+        "INSERT INTO handoffs(handoff_id, ts, message) VALUES ('x', '2026-06-20T00:00:00Z', 'x')",
+      );
+    }).toThrow();
+  } finally {
+    db.close();
+  }
+});
+
+test("replay with a nonexistent --lock returns exit 2 lock_invalid without throwing", async () => {
+  const mod = run();
+  const missingPath = join(mkTmp("penumbra-eval-lock-"), "missing-lock.json");
+  const res = await mod.runCli(
+    ["replay", "--lock", missingPath],
+    gradingDeps(mkTmp("penumbra-eval-storage-")),
+  );
+  expect(res.code).toBe(2);
+  expect(res.stderr.startsWith("lock_invalid")).toBe(true);
+  expect(res.stdout).toBe("");
+});
+
+test("an invalid --unseal plan returns exit 2 unseal_invalid without throwing", async () => {
+  const mod = run();
+  const lock: HoldoutLock = { schema_version: 1, entries: [], digest: computeLockDigest([]) };
+  const lockPath = join(mkTmp("penumbra-eval-lock-"), "lock.json");
+  writeFileSync(lockPath, JSON.stringify(lock), "utf8");
+  const planPath = join(mkTmp("penumbra-eval-plan-"), "plan.json");
+  writeFileSync(planPath, '{"max_unseals":0}\n', "utf8");
+  const res = await mod.runCli(
+    ["replay", "--lock", lockPath, "--unseal", planPath],
+    gradingDeps(mkTmp("penumbra-eval-storage-")),
+  );
+  expect(res.code).toBe(2);
+  expect(res.stderr.startsWith("unseal_invalid")).toBe(true);
+  expect(res.stdout).toBe("");
+});

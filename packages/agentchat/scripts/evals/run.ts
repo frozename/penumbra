@@ -12,8 +12,10 @@ import {
   makeSession,
   resolveSessionStore,
   type SessionState,
+  StageError,
   stageFlag,
   type StageInvocation,
+  type StageOutcome,
 } from "./session.js";
 import { parseStages, runStage } from "./stages.js";
 
@@ -126,7 +128,16 @@ export async function runCli(argv: readonly string[], deps?: Partial<RunDeps>): 
   const scratch: GraderScratch = await openGraderScratch({ sourceRepo: null });
   try {
     const session = makeSession(merged, scratch, parsed.stages);
-    const storeError = await resolveSessionStore(session, parsed.stages);
+    let storeError: StageOutcome | null;
+    try {
+      storeError = await resolveSessionStore(session, parsed.stages);
+    } catch (err) {
+      if (err instanceof StageError) {
+        const message = err.message.endsWith("\n") ? err.message : `${err.message}\n`;
+        return { code: err.code, stdout: "", stderr: message };
+      }
+      throw err;
+    }
     if (storeError !== null) {
       return { code: storeError.code, stdout: "", stderr: storeError.stderr };
     }

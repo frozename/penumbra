@@ -61,6 +61,10 @@ function fail(code: 1 | 2, stderr: string): IngestDbResult {
   return { code, stdout: "", stderr };
 }
 
+export function openIngestDatabase(dbPath: string): Database {
+  return new Database(dbPath, { readonly: true });
+}
+
 function realPathOrResolve(path: string): string {
   try {
     return realpathSync(path);
@@ -160,7 +164,7 @@ export function ingestDb(opts: IngestDbOptions): IngestDbResult {
     return fail(2, `db_is_live_storage ${opts.dbPath} is the live storage database\n`);
   }
 
-  const db = new Database(opts.dbPath, { readonly: true });
+  const db = openIngestDatabase(opts.dbPath);
   try {
     const { handoffs, events, lanes } = buildRows(db);
     const parsed = parseRows({
