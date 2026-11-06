@@ -88,22 +88,20 @@ function excerpt(err: unknown, redactor: ExcerptRedactor): string {
   return boundUtf8(redacted, REF_ERROR_EXCERPT_MAX_BYTES);
 }
 
+const TRUNCATION_MARKER = "…[truncated]";
+
 function boundUtf8(text: string, maxBytes: number): string {
   const bytes = new TextEncoder().encode(text);
   if (bytes.byteLength <= maxBytes) return text;
-  const cut = bytes.subarray(0, maxBytes);
-  const truncated = new TextDecoder("utf-8", { fatal: false }).decode(cut);
-  const lastByte = cut[cut.length - 1];
-  if (lastByte !== undefined && lastByte > 0x7f) {
-    const finalChars = new TextDecoder("utf-8", { fatal: false }).decode(
-      cut.subarray(0, cut.length - 1),
-    );
-    const decoded = new TextDecoder("utf-8", { fatal: false }).decode(
-      new TextEncoder().encode(finalChars),
-    );
-    return decoded + "\uFFFD" + "\u2026[truncated]";
+  const markerBytes = new TextEncoder().encode(TRUNCATION_MARKER).byteLength;
+  let end = Math.max(0, maxBytes - markerBytes);
+  while (end > 0) {
+    const next = bytes[end];
+    if (next === undefined || (next & 0xc0) !== 0x80) break;
+    end -= 1;
   }
-  return truncated + "\u2026[truncated]";
+  const truncated = new TextDecoder("utf-8", { fatal: false }).decode(bytes.subarray(0, end));
+  return truncated + TRUNCATION_MARKER;
 }
 
 function fenceEntryViolation(entry: string): string | null {
@@ -128,6 +126,9 @@ export async function resolveRef(
 ): Promise<ResolvedRef | CapsuleRefusal> {
   const relPath = lexicalRel(ref);
   if (relPath === null) return refusal("ref_out_of_scope", "refusal: out of lexical scope");
+  if (relPath.toLowerCase().split("/").includes(".git")) {
+    return refusal("ref_out_of_scope", "refusal: .git segment in ref");
+  }
 
   const realRootGuard = await guarded(() => deps.fs.realpath(scope.worktree_root));
   if (!realRootGuard.ok) {

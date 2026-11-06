@@ -6,6 +6,7 @@ import {
   type ExcerptRedactor,
   type FsPort,
   type FsStat,
+  REF_ERROR_EXCERPT_MAX_BYTES,
   REF_READ_DEFAULT_MAX_BYTES,
   type RefDeps,
   type RefScope,
@@ -318,6 +319,42 @@ describe("resolveRef", () => {
     const result = await resolveRef("src", SCOPE, makeDeps(fs));
     expect(result).toMatchObject({ code: "ref_unresolved", ok: false });
   });
+
+  test("refuses stat kind 'other' (e.g. a FIFO) even when the port reads it successfully", async () => {
+    const inner = makeFakeFs({ files: { "/repo/fifo": "p" } });
+    const fs: FsPort = {
+      ...inner.fs,
+      stat: () => Promise.resolve<FsStat>({ kind: "other", size: 1 }),
+    };
+    const result = await resolveRef("fifo", SCOPE, makeDeps(fs));
+    expect(result).toMatchObject({ code: "ref_unresolved", ok: false });
+  });
+
+  test("refuses stat kind 'directory' even when the port reads it successfully", async () => {
+    const inner = makeFakeFs({ files: { "/repo/src/a.ts": "x" } });
+    const fs: FsPort = {
+      ...inner.fs,
+      stat: () => Promise.resolve<FsStat>({ kind: "directory", size: 1 }),
+    };
+    const result = await resolveRef("src/a.ts", SCOPE, makeDeps(fs));
+    expect(result).toMatchObject({ code: "ref_unresolved", ok: false });
+  });
+
+  test.each([".git/config", "sub/.git/HEAD", ".GIT/config"])(
+    "refuses a ref with a .git segment %j without touching the fs",
+    async (ref) => {
+      const { calls, fs } = makeFakeFs({
+        files: {
+          "/repo/.git/config": "x",
+          "/repo/sub/.git/HEAD": "y",
+          "/repo/.GIT/config": "z",
+        },
+      });
+      const result = await resolveRef(ref, SCOPE, makeDeps(fs));
+      expect(result).toMatchObject({ code: "ref_out_of_scope", ok: false });
+      expectNoFsCalls(calls);
+    },
+  );
 });
 
 describe("authorizeHandle", () => {
@@ -437,6 +474,21 @@ describe("resolveRef byte cap", () => {
     }
   });
 
+  test("marks truncated when the port over-reads despite a small stat size", async () => {
+    const inner = makeFakeFs({ files: { "/repo/lie.txt": "small" } });
+    const fs: FsPort = {
+      ...inner.fs,
+      read: () => Promise.resolve(utf8.encode("z".repeat(50))),
+    };
+    const result = await resolveRef("lie.txt", SCOPE, makeDeps(fs), { maxBytes: 10 });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.size).toBe(5);
+      expect(result.content.byteLength).toBe(10);
+      expect(result.truncated).toBe(true);
+    }
+  });
+
   test("defaults the read cap to REF_READ_DEFAULT_MAX_BYTES", async () => {
     const { calls, fs } = makeFakeFs({ files: { "/repo/small.txt": "s" } });
     const result = await resolveRef("small.txt", SCOPE, makeDeps(fs));
@@ -464,6 +516,46 @@ describe("resolveRef port failures", () => {
       expect(result.detail).not.toContain("sk-abc123");
       expect(result.detail).toContain("[REDACTED]");
       expect(new TextEncoder().encode(result.detail).byteLength).toBeLessThanOrEqual(1024);
+    }
+  });
+
+  test("bounds a 10,000-byte multibyte error excerpt to the exact cap without replacement chars", async () => {
+    const boom = new Error("é".repeat(5000));
+    const fs: FsPort = {
+      read: () => Promise.reject(boom),
+      realpath: (absPath) =>
+        absPath === "/repo/boom" ? Promise.reject(boom) : Promise.resolve(absPath),
+      stat: () => Promise.reject(boom),
+    };
+    const result = await resolveRef("boom", SCOPE, makeDeps(fs));
+    expect(result).toMatchObject({ code: "ref_unresolved", ok: false });
+    if (!result.ok) {
+      const prefix = "refusal: unresolved: ";
+      expect(result.detail.startsWith(prefix)).toBe(true);
+      const excerpt = result.detail.slice(prefix.length);
+      expect(utf8.encode(excerpt).byteLength).toBe(REF_ERROR_EXCERPT_MAX_BYTES);
+      expect(excerpt).not.toContain("\uFFFD");
+      expect(excerpt.endsWith("…[truncated]")).toBe(true);
+    }
+  });
+
+  test("cuts a multibyte excerpt on a code-point boundary when the budget splits a character", async () => {
+    const boom = new Error("😀".repeat(2500));
+    const fs: FsPort = {
+      read: () => Promise.reject(boom),
+      realpath: (absPath) =>
+        absPath === "/repo/boom" ? Promise.reject(boom) : Promise.resolve(absPath),
+      stat: () => Promise.reject(boom),
+    };
+    const result = await resolveRef("boom", SCOPE, makeDeps(fs));
+    expect(result).toMatchObject({ code: "ref_unresolved", ok: false });
+    if (!result.ok) {
+      const prefix = "refusal: unresolved: ";
+      expect(result.detail.startsWith(prefix)).toBe(true);
+      const excerpt = result.detail.slice(prefix.length);
+      expect(utf8.encode(excerpt).byteLength).toBeLessThanOrEqual(REF_ERROR_EXCERPT_MAX_BYTES);
+      expect(excerpt).not.toContain("\uFFFD");
+      expect(excerpt.endsWith("…[truncated]")).toBe(true);
     }
   });
 
