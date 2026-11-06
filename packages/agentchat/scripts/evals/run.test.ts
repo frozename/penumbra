@@ -835,3 +835,46 @@ test("an invalid --unseal plan returns exit 2 unseal_invalid without throwing", 
   expect(res.stderr.startsWith("unseal_invalid")).toBe(true);
   expect(res.stdout).toBe("");
 });
+
+test("replay --unseal without --lock returns exit 2 unseal_invalid", async () => {
+  const mod = run();
+  const planPath = join(mkTmp("penumbra-eval-plan-"), "plan.json");
+  writeFileSync(planPath, '{"max_unseals":3}\n', "utf8");
+  const res = await mod.runCli(
+    ["replay", "--unseal", planPath],
+    gradingDeps(mkTmp("penumbra-eval-storage-")),
+  );
+  expect(res.code).toBe(2);
+  expect(res.stderr.startsWith("unseal_invalid")).toBe(true);
+  expect(res.stdout).toBe("");
+});
+
+test("conflicting store flags across stages return exit 2 store_flags_conflict", async () => {
+  const mod = run();
+  const dir = mkTmp("penumbra-eval-conflict-");
+  for (const flag of ["--lock", "--unseal", "--holdout-store"]) {
+    const res = await mod.runCli(
+      ["replay", flag, join(dir, "first"), "grade", flag, join(dir, "second")],
+      gradingDeps(mkTmp("penumbra-eval-storage-")),
+    );
+    expect(res.code).toBe(2);
+    expect(res.stderr.startsWith(`store_flags_conflict ${flag}`)).toBe(true);
+    expect(res.stdout).toBe("");
+  }
+});
+
+test("the ingest call site opens the handle read-only through the public path", async () => {
+  const mod = run();
+  const missingPath = join(mkTmp("penumbra-eval-rocall-"), "absent.sqlite");
+  const res = await mod.runCli(
+    ingestArgv(missingPath),
+    gradingDeps(mkTmp("penumbra-eval-storage-")),
+  );
+  // A read-write handle would create the missing file and fail downstream with
+  // "ingest_failed no such table"; a readonly handle rejects the open itself
+  // (chmod cannot pin this: sqlite downgrades rw opens on unwritable files).
+  expect(existsSync(missingPath)).toBe(false);
+  expect(res.code).toBe(1);
+  expect(res.stderr.startsWith("ingest_failed")).toBe(false);
+  expect(res.stderr).not.toBe("");
+});
