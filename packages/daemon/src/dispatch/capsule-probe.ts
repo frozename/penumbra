@@ -300,16 +300,25 @@ function probeRuntime(
   name: string,
   runtimeVersions: Readonly<Record<string, string>> | undefined,
 ): RuntimeProbeOutcome {
-  const version = (runtimeVersions ?? defaultRuntimeVersions())[name];
-  if (version === undefined) {
-    return { status: "fail", detail: `runtime ${name} not available` };
+  const fail: RuntimeProbeOutcome = { status: "fail", detail: `runtime ${name} not available` };
+  const versions = runtimeVersions ?? defaultRuntimeVersions();
+  if (!Object.hasOwn(versions, name)) {
+    return fail;
+  }
+  const version: unknown = versions[name];
+  if (typeof version !== "string") {
+    return fail;
   }
   return { status: "ok", version };
 }
 
 function artifactTarget(uri: string): string | null {
   if (uri.startsWith("file://")) {
-    return fileURLToPath(uri);
+    try {
+      return fileURLToPath(uri);
+    } catch {
+      return null;
+    }
   }
   if (path.isAbsolute(uri) || /^[a-z][a-z0-9+.-]*:\/\//i.test(uri)) {
     return null;

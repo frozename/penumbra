@@ -399,6 +399,17 @@ describe("compileCapsule git and scope checks", () => {
     expectRefusal(result, "missing_dependency");
   });
 
+  test("missing_dependency when isAncestor throws, with no fallback to main", async () => {
+    const git = makeGit();
+    git.behaviors.isAncestor = (): Promise<boolean | null> => Promise.reject(new Error("boom"));
+    const result = await compile(FIXTURE.input, git.port);
+    expectRefusal(result, "missing_dependency");
+    expect(isAncestorPairs(git.calls).length).toBeGreaterThan(0);
+    expect(resolveShaRefs(git.calls)).not.toContain("main");
+    expect(resolveShaRefs(git.calls)).not.toContain("origin/main");
+    expect(isAncestorPairs(git.calls).flat()).not.toContain(MAIN_SHA);
+  });
+
   test("missing_dependency when resolveSha throws, with no fallback to main", async () => {
     const git = makeGit();
     const innerResolve = git.behaviors.resolveSha;
