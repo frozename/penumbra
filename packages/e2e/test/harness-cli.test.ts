@@ -79,6 +79,18 @@ test("port file with non-numeric content exits 1", async () => {
   }
 });
 
+test("port file with surrounding whitespace reports the trimmed value", async () => {
+  const sb = makeSandbox();
+  try {
+    writeFileSync(join(sb.dir, "port"), "  abc  \n");
+    const { exitCode, stderr } = await runHarness("--mcp-config-only", "--sandbox", sb.dir);
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("is not a valid port: abc\n");
+  } finally {
+    sb.cleanup();
+  }
+});
+
 test("port file with non-integer value exits 1", async () => {
   const sb = makeSandbox();
   try {
@@ -91,7 +103,7 @@ test("port file with non-integer value exits 1", async () => {
   }
 });
 
-test("valid port file prints MCP config JSON with trimmed whitespace", async () => {
+test("valid port file with surrounding whitespace prints MCP config JSON", async () => {
   const sb = makeSandbox();
   try {
     writeFileSync(join(sb.dir, "port"), "  4242\n");
