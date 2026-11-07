@@ -245,6 +245,9 @@ test("prepareCodexSafetySetup rejects an ownership record with a foreign sentine
 
 test("prepareCodexSafetySetup rejects an enabled setup with a valid previous but no packaged source", () => {
   const previous = owned(GUARD_X);
+  // Modified on disk so the later `if (!source)` fallback is unreachable: without
+  // the early check this setup would throw "managed safety guard was modified".
+  writeGuard(GUARD_Y);
   expect(() => {
     prepareCodexSafetySetup(opts, undefined, previous, true);
   }).toThrow(/packaged safety guard is absent/);
