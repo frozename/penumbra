@@ -8,7 +8,7 @@ import {
 const REFUSAL = { classifier_declined: true, decline_reason: "provider_safety_refusal" } as const;
 
 describe("detectClassifierDecline", () => {
-  test("pattern 1: sorry-but-cant-assist refusal in errorText with empty finalText", () => {
+  test("the full sorry/can't-assist sentence is detected in errorText with empty finalText", () => {
     const result = detectClassifierDecline({
       finalText: "",
       errorText: "I'm sorry, but I can't assist with that request.",
@@ -117,6 +117,14 @@ describe("classifierDeclineMetaFromUnknown", () => {
 
   test("a string is not an object, so it returns null", () => {
     expect(classifierDeclineMetaFromUnknown("classifier_declined")).toBeNull();
+  });
+
+  test("a function with classifier_declined true is not an object, so it returns null", () => {
+    expect(
+      classifierDeclineMetaFromUnknown(
+        Object.assign(() => undefined, { classifier_declined: true }),
+      ),
+    ).toBeNull();
   });
 
   test('classifier_declined as the string "true" is not a boolean true, so it returns null', () => {
