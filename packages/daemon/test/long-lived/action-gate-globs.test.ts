@@ -88,7 +88,7 @@ describe("classifyTier glob escalation", () => {
       classifyTier({
         tool: "ha:light.toggle",
         target: "light.kitchen",
-        agentGlobs: ["ha:light.*"],
+        agentGlobs: ["ha:light.toggle"],
       }),
     ).toBe(3);
   });
@@ -168,6 +168,7 @@ describe("classifyTier baseline tiers", () => {
     expect(classifyTier({ tool: "ha:automation.set", target: "x", agentGlobs: [] })).toBe(2);
     expect(classifyTier({ tool: "ha:automation.delete", target: "x", agentGlobs: [] })).toBe(2);
     expect(classifyTier({ tool: "ha:automation.get", target: "x", agentGlobs: [] })).toBe(1);
+    expect(classifyTier({ tool: "ha:automation.set_x", target: "x", agentGlobs: [] })).toBe(1);
   });
 
   it("ha:snapshot.restore is matched exactly", () => {
