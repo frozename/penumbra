@@ -1,3 +1,5 @@
+// eslint-disable-next-line no-restricted-imports -- happy-dom setup lives at the test root, outside src
+import "../../setup";
 import type { PermissionRequestRow } from "@penumbra/api-contract";
 
 import { describe, expect, test } from "bun:test";
