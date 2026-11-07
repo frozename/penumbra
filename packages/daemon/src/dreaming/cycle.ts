@@ -302,7 +302,61 @@ export async function runDreamCycle(
   }
 }
 
-// eslint-disable-next-line max-lines-per-function -- Preserve cycle context construction while grandfathering its pre-existing size.
+export function p4MemoryByProjectSql(hasT2ProjectId: boolean): string {
+  return hasT2ProjectId
+    ? `WITH p4_research_recency AS (
+         SELECT
+           CAST(json_extract(da.payload_json, '$.source_memory_id') AS TEXT) AS source_memory_id,
+           MAX(COALESCE(da.decided_at, ?2)) AS last_researched_at
+         FROM dream_actions da
+         WHERE da.phase='P4'
+           AND da.action_type='research_query'
+           AND COALESCE(da.decided_at, ?2) > ?3
+         GROUP BY CAST(json_extract(da.payload_json, '$.source_memory_id') AS TEXT)
+       )
+       SELECT
+         t2_memories.memory_id,
+         t2_memories.title,
+         SUBSTR(t2_memories.body, 1, 200) AS body,
+         t2_memories.updated_at,
+         p4_research_recency.last_researched_at AS last_researched_at
+       FROM t2_memories
+       LEFT JOIN p4_research_recency
+         ON p4_research_recency.source_memory_id = t2_memories.memory_id
+       WHERE t2_memories.project_id = ?1
+         AND t2_memories.kind NOT IN ('brief')
+         AND t2_memories.retired_at IS NULL
+         AND t2_memories.title IS NOT NULL
+         AND t2_memories.title != ''
+       ORDER BY last_researched_at IS NOT NULL ASC, last_researched_at ASC, created_at DESC
+       LIMIT 2`
+    : `WITH p4_research_recency AS (
+         SELECT
+           CAST(json_extract(da.payload_json, '$.source_memory_id') AS TEXT) AS source_memory_id,
+           MAX(COALESCE(da.decided_at, ?1)) AS last_researched_at
+         FROM dream_actions da
+         WHERE da.phase='P4'
+           AND da.action_type='research_query'
+           AND COALESCE(da.decided_at, ?1) > ?2
+         GROUP BY CAST(json_extract(da.payload_json, '$.source_memory_id') AS TEXT)
+       )
+       SELECT
+         t2_memories.memory_id,
+         t2_memories.title,
+         SUBSTR(t2_memories.body, 1, 200) AS body,
+         t2_memories.updated_at,
+         p4_research_recency.last_researched_at AS last_researched_at
+       FROM t2_memories
+       LEFT JOIN p4_research_recency
+         ON p4_research_recency.source_memory_id = t2_memories.memory_id
+       WHERE t2_memories.kind NOT IN ('brief')
+         AND t2_memories.retired_at IS NULL
+         AND t2_memories.title IS NOT NULL
+         AND t2_memories.title != ''
+       ORDER BY last_researched_at IS NOT NULL ASC, last_researched_at ASC, created_at DESC
+       LIMIT 2`;
+}
+
 function buildCycleCtx(
   db: Database,
   cycleId: string,
@@ -361,52 +415,7 @@ function buildCycleCtx(
   const p1QueuedPromoteExistsStmt = db.prepare(
     `SELECT 1 FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' AND status='queued' AND target_ids=? LIMIT 1`,
   );
-  const p4MemoryByProjectStmt = hasT2ProjectId
-    ? db.prepare(
-        `SELECT
-           memory_id,
-           title,
-           SUBSTR(body, 1, 200) AS body,
-           updated_at,
-           (
-             SELECT MAX(COALESCE(da.decided_at, ?2))
-             FROM dream_actions da
-             WHERE da.phase='P4'
-               AND da.action_type='research_query'
-               AND json_extract(da.payload_json, '$.source_memory_id') = t2_memories.memory_id
-               AND COALESCE(da.decided_at, ?2) > ?3
-           ) AS last_researched_at
-         FROM t2_memories
-         WHERE project_id = ?1
-           AND kind NOT IN ('brief')
-           AND retired_at IS NULL
-           AND title IS NOT NULL
-           AND title != ''
-         ORDER BY last_researched_at IS NOT NULL ASC, last_researched_at ASC, created_at DESC
-         LIMIT 2`,
-      )
-    : db.prepare(
-        `SELECT
-           memory_id,
-           title,
-           SUBSTR(body, 1, 200) AS body,
-           updated_at,
-           (
-             SELECT MAX(COALESCE(da.decided_at, ?1))
-             FROM dream_actions da
-             WHERE da.phase='P4'
-               AND da.action_type='research_query'
-               AND json_extract(da.payload_json, '$.source_memory_id') = t2_memories.memory_id
-               AND COALESCE(da.decided_at, ?1) > ?2
-           ) AS last_researched_at
-         FROM t2_memories
-         WHERE kind NOT IN ('brief')
-           AND retired_at IS NULL
-           AND title IS NOT NULL
-           AND title != ''
-         ORDER BY last_researched_at IS NOT NULL ASC, last_researched_at ASC, created_at DESC
-         LIMIT 2`,
-      );
+  const p4MemoryByProjectStmt = db.prepare(p4MemoryByProjectSql(hasT2ProjectId));
 
   const dispatchEventLog = deps.dispatchEventLog;
   const emitDreamEvent = (
