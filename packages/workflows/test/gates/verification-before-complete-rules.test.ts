@@ -3,7 +3,9 @@ import { expect, test } from "bun:test";
 import { verifyVerificationBeforeComplete } from "@src/gates/verification-before-complete.js";
 
 test("does not treat completion words inside longer words as a claim", () => {
-  const r = verifyVerificationBeforeComplete({ text: "Checking completeness and the donor list." });
+  const r = verifyVerificationBeforeComplete({
+    text: "Checking completeness of the undone items.",
+  });
   expect(r.passed).toBe(true);
   expect(r.evidence).toBe("no completion claim made");
 });
