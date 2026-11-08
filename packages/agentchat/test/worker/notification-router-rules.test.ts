@@ -195,7 +195,7 @@ describe("resolveNotificationRoute identity rules", () => {
       agentKey: "codex",
     });
 
-    expect(resolved?.identity).toEqual({ username: "Penumbra / Codex" });
+    expect(resolved?.identity).toStrictEqual({ username: "Penumbra / Codex" });
   });
 
   it("omits username when only avatarUrl is configured", () => {
@@ -205,7 +205,7 @@ describe("resolveNotificationRoute identity rules", () => {
       agentKey: "gemini",
     });
 
-    expect(resolved?.identity).toEqual({ avatar_url: "https://example.com/gemini.png" });
+    expect(resolved?.identity).toStrictEqual({ avatar_url: "https://example.com/gemini.png" });
   });
 
   it("prefers the inline avatarUrl over the avatarUrlEnv value", () => {
@@ -217,7 +217,7 @@ describe("resolveNotificationRoute identity rules", () => {
       agentKey: "claude",
     });
 
-    expect(resolved?.identity).toEqual({ avatar_url: "https://example.com/claude.png" });
+    expect(resolved?.identity).toStrictEqual({ avatar_url: "https://example.com/claude.png" });
   });
 
   it("resolves the avatar from avatarUrlEnv when no inline avatarUrl is set", () => {
@@ -229,7 +229,7 @@ describe("resolveNotificationRoute identity rules", () => {
       agentKey: "opencode",
     });
 
-    expect(resolved?.identity).toEqual({ avatar_url: "https://example.com/opencode.png" });
+    expect(resolved?.identity).toStrictEqual({ avatar_url: "https://example.com/opencode.png" });
   });
 
   it("returns undefined identity for an unknown agent key", () => {
