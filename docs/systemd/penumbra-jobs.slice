@@ -1,0 +1,25 @@
+# Sample systemd --user slice aggregating every Penumbra dispatched job scope.
+#
+# Each job scope already has its own MemoryMax= (PENUMBRA_JOB_MEMORY_MAX);
+# this slice caps their SUM. Sized for the Z13: a resident LLM seat holds
+# ~92 GiB, so ~25 GiB of aggregate headroom is left for the jobs. Tune the
+# sizes per host before installing.
+#
+# Install:
+#   cp docs/systemd/penumbra-jobs.slice ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   # set PENUMBRA_JOB_SLICE=penumbra-jobs.slice in the worker and daemon
+#   # units (Environment=), then restart both.
+#
+# ManagedOOM* below only take effect when systemd-oomd is running
+# (systemctl status systemd-oomd). Without it the MemoryMax= cap still holds.
+
+[Unit]
+Description=Penumbra dispatched jobs (aggregate memory cap)
+
+[Slice]
+MemoryHigh=20G
+MemoryMax=24G
+MemorySwapMax=2G
+ManagedOOMMemoryPressure=kill
+ManagedOOMMemoryPressureLimit=80%

@@ -65,6 +65,12 @@ const JobOomScoreAdj = z.preprocess(emptyToNaN, z.coerce.number().int().min(0).m
 const SystemdServiceUnit = z
   .string()
   .regex(/^[\w:.@-]+\.service$/, "must be a systemd service unit name (e.g. foo.service)");
+const SystemdSliceUnit = z
+  .string()
+  .regex(
+    /^(?!\.slice$)[A-Za-z0-9_:]+(?:-[A-Za-z0-9_:]+)*\.slice$/,
+    "must be a systemd slice unit name (e.g. penumbra-jobs.slice)",
+  );
 const LaunchdLabel = z.string().regex(/^[\w.-]+$/, "must be a launchd label (e.g. dev.foo.daemon)");
 const OptStr = z.string().optional();
 const ReqStr = z.string().min(1);
@@ -1261,6 +1267,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     description:
       "flock(1)-compatible lock file serializing heavy reconciler stages host-wide. Default ~/.penumbra/locks/heavy-job.lock.",
   },
+  PENUMBRA_JOB_SLICE: {
+    schema: z.preprocess(emptyToUndefined, SystemdSliceUnit.optional()),
+    description:
+      "Optional systemd --user slice every job scope is placed in (systemd-run --slice=). Unset: scopes go to the default slice. Install docs/systemd/penumbra-jobs.slice to give all jobs an aggregate MemoryMax= and ManagedOOMMemoryPressure=kill.",
+  },
 
   // ── per-role process memory budgets (core/process/role-memory-budget.ts, #370) ──
   PENUMBRA_MEMORY_BUDGET_DAEMON_RSS_MIB: {
@@ -1567,6 +1578,7 @@ const JOB_RESOURCE_ENV_KEYS = [
   "PENUMBRA_JOB_ADMIT_MIN_GIB",
   "PENUMBRA_JOB_ADMIT_WAIT_S",
   "PENUMBRA_JOB_HEAVY_LOCK",
+  "PENUMBRA_JOB_SLICE",
 ] as const;
 
 export interface JobResourceEnv {
@@ -1579,6 +1591,8 @@ export interface JobResourceEnv {
   admitMinGiB: number | undefined;
   admitWaitS: number;
   heavyLockPath: string | undefined;
+  /** Optional systemd --user slice for job scopes (systemd-run --slice=); undefined = default slice. */
+  slice: string | undefined;
 }
 
 /**
@@ -1606,6 +1620,7 @@ export function getJobResourceEnv(env: NodeJS.ProcessEnv = process.env): JobReso
     admitMinGiB: parsed.PENUMBRA_JOB_ADMIT_MIN_GIB as number | undefined,
     admitWaitS: parsed.PENUMBRA_JOB_ADMIT_WAIT_S as number,
     heavyLockPath: heavyLock !== undefined && heavyLock.trim() !== "" ? heavyLock : undefined,
+    slice: parsed.PENUMBRA_JOB_SLICE as string | undefined,
   };
 }
 
