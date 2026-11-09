@@ -292,6 +292,19 @@ describe("evaluateSettledGrowth", () => {
     expect(verdict.outcomeClass).toBe("resource");
   });
 
+  test("treats the growth threshold as inclusive — at-threshold growth is bounded", () => {
+    expect(typeof evaluateSettledGrowth).toBe("function");
+    const verdict = evaluateSettledGrowth(
+      memSample({ heapUsedBytes: 100 * MiB }),
+      memSample({ heapUsedBytes: 164 * MiB }),
+      64,
+    );
+    expect(verdict.status).toBe("bounded");
+    expect(verdict.growthBytes).toBe(64 * MiB);
+    expect(verdict.limitBytes).toBe(64 * MiB);
+    expect(verdict.outcomeClass).toBeNull();
+  });
+
   test("keeps negative growth bounded", () => {
     expect(typeof evaluateSettledGrowth).toBe("function");
     const verdict = evaluateSettledGrowth(
