@@ -27,6 +27,8 @@ import { executeConfigSplitWrite } from "./config-split.js";
 
 const PROVENANCE_SOURCE = "llamactl-sync-local";
 const DEFAULT_PROXY_BASE_URL = "http://127.0.0.1:7944";
+const EXPERIMENTAL_TAG = "experimental";
+const PINNED_ONLY_TAG = "pinned-only";
 
 export interface ConfigSyncLocalResult {
   exitCode: number;
@@ -106,8 +108,22 @@ function generatedSeatForModel(model: LlamactlModelInventory): GeneratedSeat {
 
 function defaultsForModel(
   modelId: string,
+  experimental: boolean,
 ): Pick<AgentConfig, "roles" | "tags" | "description" | "quirks"> {
   const lower = modelId.toLowerCase();
+  if (experimental) {
+    const isEmbedding = lower.includes("embed") || lower.includes("bge");
+    return {
+      roles: [],
+      tags: isEmbedding
+        ? ["local", "embedding", EXPERIMENTAL_TAG, PINNED_ONLY_TAG]
+        : ["local", EXPERIMENTAL_TAG, PINNED_ONLY_TAG],
+      description: `Local served model ${modelId} (llamactl qualification: experimental)`,
+      quirks: [
+        "llamactl marks this model experimental; no roles are assigned so only an explicit pin dispatches to it.",
+      ],
+    };
+  }
   if (lower.includes("embed") || lower.includes("bge")) {
     return {
       roles: ["embedder"],
@@ -152,7 +168,7 @@ const STAMPED_MANAGED_FIELDS = [
 ] as const;
 
 function buildGeneratedSeat(generated: GeneratedSeat): AgentConfig {
-  const defaults = defaultsForModel(generated.model.id);
+  const defaults = defaultsForModel(generated.model.id, generated.model.experimental === true);
   return {
     name: generated.name,
     adapter: "openai-compat-http",
@@ -176,23 +192,67 @@ function buildGeneratedSeat(generated: GeneratedSeat): AgentConfig {
 }
 
 function upsertSeat(existing: AgentConfig | undefined, generated: GeneratedSeat): AgentConfig {
+  const experimental = generated.model.experimental === true;
   // A seat that lost its roles entirely (e.g. never set) falls back to
-  // model-inferred defaults instead of being upserted into a roleless seat.
+  // model-inferred defaults instead of being upserted into a roleless seat;
+  // an experimental model always owns roles so the qualification can strip
+  // hand-tuned roles down to pinned-only. A seat pinned to pinned-only
+  // without the sync-written experimental marker is a hand-pin: its empty
+  // roles are deliberate and stay untouched.
+  const existingTags = existing?.tags ?? [];
+  const handPinnedOnly =
+    existingTags.includes(PINNED_ONLY_TAG) && !existingTags.includes(EXPERIMENTAL_TAG);
   const managedFields =
-    existing?.roles.length === 0 ? [...MANAGED_FIELDS, "roles"] : MANAGED_FIELDS;
+    experimental || (!handPinnedOnly && existing?.roles.length === 0)
+      ? [...MANAGED_FIELDS, "roles"]
+      : MANAGED_FIELDS;
   const merged = upsertManagedFields(existing, buildGeneratedSeat(generated), managedFields);
-  const options = { ...merged.options };
+  const tagged = applyExperimentalTags(existing, merged, experimental);
+  const options = { ...tagged.options };
   delete options.apiKey;
   delete options.apiKeyEnv;
   delete options.apiKeyFile;
-  return { ...merged, options };
+  return { ...tagged, options };
+}
+
+function applyExperimentalTags(
+  existing: AgentConfig | undefined,
+  merged: AgentConfig,
+  experimental: boolean,
+): AgentConfig {
+  if (experimental) {
+    const tags = [...(merged.tags ?? [])];
+    for (const tag of [EXPERIMENTAL_TAG, PINNED_ONLY_TAG]) {
+      if (!tags.includes(tag)) tags.push(tag);
+    }
+    return { ...merged, tags };
+  }
+  // A model promoted out of experimental loses the qualification tags but
+  // keeps any hand-added ones, in order. Only strip when the seat carries
+  // the experimental marker sync-local writes — a hand-pinned seat that was
+  // never experimental keeps its pinned-only tag.
+  if (existing?.tags?.includes(EXPERIMENTAL_TAG) === true) {
+    return {
+      ...merged,
+      tags: (merged.tags ?? []).filter(
+        (tag) => tag !== EXPERIMENTAL_TAG && tag !== PINNED_ONLY_TAG,
+      ),
+    };
+  }
+  return merged;
 }
 
 function buildSyncedAgentsConfig(
   current: AgentsConfig,
   inventory: LlamactlInventory,
   routing: RoutingConfig,
-): { config: AgentsConfig; upserts: string[]; prunes: string[]; pruneSkipped: boolean } {
+): {
+  config: AgentsConfig;
+  upserts: string[];
+  prunes: string[];
+  pruneSkipped: boolean;
+  experimentalSeatNames: Set<string>;
+} {
   const handAuthoredModels = new Set(
     current.agents.flatMap((agent) => {
       const model = agent.options.model;
@@ -230,6 +290,9 @@ function buildSyncedAgentsConfig(
     upserts,
     prunes,
     pruneSkipped,
+    experimentalSeatNames: new Set(
+      generated.filter((seat) => seat.model.experimental === true).map((seat) => seat.name),
+    ),
   };
 }
 
@@ -317,9 +380,10 @@ export async function runConfigSyncLocal(
   let upserts: string[];
   let prunes: string[];
   let pruneSkipped: boolean;
+  let experimentalSeatNames: Set<string>;
   try {
     const routing = readRoutingConfig(configDir);
-    ({ config, upserts, prunes, pruneSkipped } = buildSyncedAgentsConfig(
+    ({ config, upserts, prunes, pruneSkipped, experimentalSeatNames } = buildSyncedAgentsConfig(
       current,
       inventory,
       routing,
@@ -329,7 +393,10 @@ export async function runConfigSyncLocal(
     stderr.push(`penumbra config sync-local: ${message}`);
     return { exitCode: 1, stdout, stderr };
   }
-  for (const name of upserts) stdout.push(`${dryRun ? "would upsert" : "upserted"} ${name}`);
+  for (const name of upserts) {
+    const marker = experimentalSeatNames.has(name) ? " (experimental: no roles, pinned-only)" : "";
+    stdout.push(`${dryRun ? "would upsert" : "upserted"} ${name}${marker}`);
+  }
   for (const name of prunes) stdout.push(`${dryRun ? "would prune" : "pruned"} ${name}`);
   if (pruneSkipped) {
     stdout.push(
