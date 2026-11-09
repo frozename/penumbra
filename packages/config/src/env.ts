@@ -1262,6 +1262,38 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
       "flock(1)-compatible lock file serializing heavy reconciler stages host-wide. Default ~/.penumbra/locks/heavy-job.lock.",
   },
 
+  // ── per-role process memory budgets (core/process/role-memory-budget.ts, #370) ──
+  PENUMBRA_MEMORY_BUDGET_DAEMON_RSS_MIB: {
+    schema: NonNegInt,
+    default: 1024,
+    description:
+      "Per-role RSS budget in MiB for the long-lived daemon process itself (default 1024); 0 disables the limit. It excludes agent/tool/test children, which are covered by PENUMBRA_JOB_MEMORY_*. 1024 is deliberately below the 1.27 GiB peak observed in #370, so that peak would flag as over.",
+  },
+  PENUMBRA_MEMORY_BUDGET_DAEMON_HEAP_MIB: {
+    schema: NonNegInt,
+    default: 512,
+    description:
+      "Per-role heapUsed budget in MiB for the long-lived daemon process itself (default 512, provisional: #370 published no JS heap measurements); 0 disables the limit. It excludes agent/tool/test children, which are covered by PENUMBRA_JOB_MEMORY_*.",
+  },
+  PENUMBRA_MEMORY_BUDGET_WORKER_RSS_MIB: {
+    schema: NonNegInt,
+    default: 384,
+    description:
+      "Per-role RSS budget in MiB for the long-lived worker process itself (default 384); 0 disables the limit. It excludes agent/tool/test children, which are covered by PENUMBRA_JOB_MEMORY_*.",
+  },
+  PENUMBRA_MEMORY_BUDGET_WORKER_HEAP_MIB: {
+    schema: NonNegInt,
+    default: 192,
+    description:
+      "Per-role heapUsed budget in MiB for the long-lived worker process itself (default 192, provisional: #370 published no JS heap measurements); 0 disables the limit. It excludes agent/tool/test children, which are covered by PENUMBRA_JOB_MEMORY_*.",
+  },
+  PENUMBRA_MEMORY_BUDGET_SETTLED_GROWTH_MIB: {
+    schema: NonNegInt,
+    default: 64,
+    description:
+      "Settled-growth threshold in MiB: the maximum JS heap-used growth from a fixed-fixture baseline sample to a settled sample for the long-lived process itself (default 64, provisional: #370 published no JS heap measurements); 0 disables the limit. It excludes agent/tool/test children, which are covered by PENUMBRA_JOB_MEMORY_*.",
+  },
+
   // ── penumbra update (cli/src/commands/update) ───────────────────────
   PENUMBRA_UPDATE_SERVICE_MANAGER: {
     schema: z.enum(["auto", "systemd", "launchd"]),
@@ -1615,6 +1647,48 @@ export function getUpdateEnv(env: NodeJS.ProcessEnv = process.env): UpdateEnv {
 }
 
 export type DispatchCapsuleMode = "off" | "shadow";
+
+const ROLE_MEMORY_BUDGET_KEYS = [
+  "PENUMBRA_MEMORY_BUDGET_DAEMON_RSS_MIB",
+  "PENUMBRA_MEMORY_BUDGET_DAEMON_HEAP_MIB",
+  "PENUMBRA_MEMORY_BUDGET_WORKER_RSS_MIB",
+  "PENUMBRA_MEMORY_BUDGET_WORKER_HEAP_MIB",
+  "PENUMBRA_MEMORY_BUDGET_SETTLED_GROWTH_MIB",
+] as const;
+
+export interface RoleMemoryBudgetEnv {
+  daemon: { rssMiB: number; heapUsedMiB: number };
+  worker: { rssMiB: number; heapUsedMiB: number };
+  settledGrowthMiB: number;
+}
+
+/**
+ * Per-role memory budget settings, parsed from only their own keys so an
+ * unrelated malformed PENUMBRA_* variable cannot break budget evaluation.
+ */
+export function getRoleMemoryBudgetEnv(env: NodeJS.ProcessEnv = process.env): RoleMemoryBudgetEnv {
+  const subset: Record<string, string | undefined> = {};
+  for (const key of ROLE_MEMORY_BUDGET_KEYS) {
+    if (key in env) subset[key] = env[key];
+  }
+  const parsed: Record<string, unknown> = EnvSchema.pick(
+    Object.fromEntries(ROLE_MEMORY_BUDGET_KEYS.map((key) => [key, true])) as Record<
+      (typeof ROLE_MEMORY_BUDGET_KEYS)[number],
+      true
+    >,
+  ).parse(subset);
+  return {
+    daemon: {
+      rssMiB: parsed.PENUMBRA_MEMORY_BUDGET_DAEMON_RSS_MIB as number,
+      heapUsedMiB: parsed.PENUMBRA_MEMORY_BUDGET_DAEMON_HEAP_MIB as number,
+    },
+    worker: {
+      rssMiB: parsed.PENUMBRA_MEMORY_BUDGET_WORKER_RSS_MIB as number,
+      heapUsedMiB: parsed.PENUMBRA_MEMORY_BUDGET_WORKER_HEAP_MIB as number,
+    },
+    settledGrowthMiB: parsed.PENUMBRA_MEMORY_BUDGET_SETTLED_GROWTH_MIB as number,
+  };
+}
 
 const DISPATCH_CAPSULE_MODE_KEYS = ["PENUMBRA_DISPATCH_CAPSULE_MODE"] as const;
 

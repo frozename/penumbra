@@ -39,3 +39,18 @@ export {
   wrapResourceScopeArgv,
   type WrapResourceScopeOptions,
 } from "./resource-scope.js";
+export {
+  evaluateRoleMemoryBudget,
+  evaluateSettledGrowth,
+  type HeapUsageSample,
+  type MemoryBudgetMetric,
+  type MemoryOutcomeClass,
+  type ProcessMemorySample,
+  type ProcessMemorySampleDeps,
+  type ProcessRole,
+  type RoleMemoryBudget,
+  type RoleMemoryBudgetBreach,
+  type RoleMemoryBudgetVerdict,
+  sampleProcessMemory,
+  type SettledGrowthVerdict,
+} from "./role-memory-budget.js";
