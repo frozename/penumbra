@@ -1422,3 +1422,340 @@ test("workflow stops when verifier candidate_commit does not match host SHA", as
   expect(result.rounds[0]?.passed).toBe(false);
   expect(result.rounds[1]?.check_verify_status).toBe("passed");
 });
+
+// ---------------------------------------------------------------------------
+// Evidence-bound repair checkpoints and progress-aware escalation (#393)
+// ---------------------------------------------------------------------------
+
+const TS2322 = "src/a.ts(3,7): error TS2322: Type 'string' is not assignable to type 'number'.";
+const FAIL = (ms: string, prose = "") =>
+  "CHECK_RESULT: FAIL\n" +
+  (prose ? prose + "\n" : "") +
+  "```\n" +
+  TS2322 +
+  "\n(fail) adds numbers [" +
+  ms +
+  "ms]\n```";
+const ENV = (body: string) => "CHECK_RESULT: FAIL\n```\n" + body + "\n```";
+
+test("a worker CHECK_RESULT: BLOCKED reply stops as contract_defect with no repair round", async () => {
+  const { result, ctx } = await runWorkflow(
+    {
+      fanoutResponses: [{ response: "CHECK_RESULT: BLOCKED the fixture contradicts the spec" }],
+    },
+    { max_rounds: 3, verify_check: false },
+  );
+  const sr = (result as { stop_reason?: unknown }).stop_reason;
+  const cdr = (result as { contract_defect_reason?: unknown }).contract_defect_reason;
+  expect(result.ok).toBe(false);
+  expect(result.green).toBe(false);
+  expect(result.rounds_used).toBe(1);
+  expect(result.rounds[0]?.reason).toBe("contract_defect");
+  expect(result.rounds[0]?.passed).toBe(false);
+  expect(sr).toBe("contract_defect");
+  expect(cdr).toBe("the fixture contradicts the spec");
+  expect(ctx.capturedChainStarts).toHaveLength(1);
+});
+
+test("BLOCKED with escalate_to still stops without escalating", async () => {
+  const { result, ctx } = await runWorkflow(
+    {
+      fanoutResponses: [{ response: "CHECK_RESULT: BLOCKED the fixture contradicts the spec" }],
+    },
+    { max_rounds: 3, verify_check: false, escalate_to: "opus" },
+  );
+  const sr = (result as { stop_reason?: unknown }).stop_reason;
+  expect(result.ok).toBe(false);
+  expect(result.green).toBe(false);
+  expect(result.rounds_used).toBe(1);
+  expect(result.rounds[0]?.reason).toBe("contract_defect");
+  expect(sr).toBe("contract_defect");
+  expect(ctx.capturedChainStarts).toHaveLength(1);
+  expect(
+    ctx.capturedChainStarts?.some((start: ChainStartRequest) => start.initial_agent === "opus"),
+  ).toBe(false);
+});
+
+test("repeated identical fenced failure evidence stops with no_progress", async () => {
+  const { result, ctx } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: FAIL("1.23") },
+        { response: FAIL("4.56") },
+        { response: "CHECK_RESULT: PASS" },
+      ],
+    },
+    { max_rounds: 3, verify_check: false },
+  );
+  const sr = (result as { stop_reason?: unknown }).stop_reason;
+  expect(result.ok).toBe(false);
+  expect(result.rounds_used).toBe(2);
+  expect(result.rounds[0]?.reason).toBe("check_failed");
+  expect(result.rounds[1]?.reason).toBe("no_progress");
+  expect(sr).toBe("no_progress");
+  expect(ctx.capturedChainStarts).toHaveLength(2);
+});
+
+test("different worker prose around the same fenced evidence is still no_progress", async () => {
+  const { result, ctx } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: FAIL("1.23", "I tried widening the type.") },
+        {
+          response: FAIL("4.56", "Still failing after adding a cast; next I will try a generic."),
+        },
+        { response: "CHECK_RESULT: PASS" },
+      ],
+    },
+    { max_rounds: 3, verify_check: false },
+  );
+  const sr = (result as { stop_reason?: unknown }).stop_reason;
+  expect(result.ok).toBe(false);
+  expect(result.rounds_used).toBe(2);
+  expect(result.rounds[0]?.reason).toBe("check_failed");
+  expect(result.rounds[1]?.reason).toBe("no_progress");
+  expect(sr).toBe("no_progress");
+  expect(ctx.capturedChainStarts).toHaveLength(2);
+});
+
+test("changed failing evidence keeps repairing until green", async () => {
+  const { result } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: FAIL("1.23") },
+        { response: ENV("src/a.ts(9,1): error TS2304: Cannot find name 'foo'.") },
+        { response: "CHECK_RESULT: PASS" },
+      ],
+    },
+    { max_rounds: 3, verify_check: false },
+  );
+  const sr = (result as { stop_reason?: unknown }).stop_reason;
+  expect(result.ok).toBe(true);
+  expect(result.rounds_used).toBe(3);
+  expect(sr ?? null).toBeNull();
+});
+
+test("missing tool stops as environment_unavailable", async () => {
+  const { result, ctx } = await runWorkflow(
+    {
+      fanoutResponses: [{ response: ENV("bash: line 1: bun: command not found") }],
+    },
+    { max_rounds: 3, verify_check: false },
+  );
+  const sr = (result as { stop_reason?: unknown }).stop_reason;
+  expect(result.ok).toBe(false);
+  expect(result.rounds_used).toBe(1);
+  expect(result.rounds[0]?.reason).toBe("environment_unavailable");
+  expect(sr).toBe("environment_unavailable");
+  expect(ctx.capturedChainStarts).toHaveLength(1);
+});
+
+test("heavy-job lock timeout stops as environment_unavailable", async () => {
+  const { result, ctx } = await runWorkflow(
+    {
+      fanoutResponses: [
+        {
+          response: ENV(
+            "heavy-job lock /Users/x/.penumbra/heavy-job.lock not acquired within 600s",
+          ),
+        },
+      ],
+    },
+    { max_rounds: 3, verify_check: false },
+  );
+  const sr = (result as { stop_reason?: unknown }).stop_reason;
+  expect(result.ok).toBe(false);
+  expect(result.rounds_used).toBe(1);
+  expect(result.rounds[0]?.reason).toBe("environment_unavailable");
+  expect(sr).toBe("environment_unavailable");
+  expect(ctx.capturedChainStarts).toHaveLength(1);
+});
+
+test("host memory admission timeout stops as environment_unavailable", async () => {
+  const { result, ctx } = await runWorkflow(
+    {
+      fanoutResponses: [
+        {
+          response: ENV("host memory admission timeout: MemAvailable 4.0 GiB < 20 GiB after 900s"),
+        },
+      ],
+    },
+    { max_rounds: 3, verify_check: false },
+  );
+  const sr = (result as { stop_reason?: unknown }).stop_reason;
+  expect(result.ok).toBe(false);
+  expect(result.rounds_used).toBe(1);
+  expect(result.rounds[0]?.reason).toBe("environment_unavailable");
+  expect(sr).toBe("environment_unavailable");
+  expect(ctx.capturedChainStarts).toHaveLength(1);
+});
+
+test("provider rate limit stops as capacity_unavailable", async () => {
+  const { result, ctx } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: ENV("Error: HTTP 429 Too Many Requests: rate limit exceeded") },
+      ],
+    },
+    { max_rounds: 3, verify_check: false },
+  );
+  const sr = (result as { stop_reason?: unknown }).stop_reason;
+  expect(result.ok).toBe(false);
+  expect(result.rounds_used).toBe(1);
+  expect(result.rounds[0]?.reason).toBe("capacity_unavailable");
+  expect(sr).toBe("capacity_unavailable");
+  expect(ctx.capturedChainStarts).toHaveLength(1);
+});
+
+test("a TS error at line 429 is still repaired", async () => {
+  const { result } = await runWorkflow(
+    {
+      fanoutResponses: [
+        {
+          response: ENV(
+            "src/a.ts(429,7): error TS2322: Type 'string' is not assignable to type 'number'.",
+          ),
+        },
+        { response: "CHECK_RESULT: PASS" },
+      ],
+    },
+    { max_rounds: 3, verify_check: false },
+  );
+  const sr = (result as { stop_reason?: unknown }).stop_reason;
+  expect(result.ok).toBe(true);
+  expect(result.rounds_used).toBe(2);
+  expect(result.rounds[0]?.reason).toBe("check_failed");
+  expect(sr ?? null).toBeNull();
+});
+
+test("a failing assertion mentioning 429 and rate limits is still repaired", async () => {
+  const { result } = await runWorkflow(
+    {
+      fanoutResponses: [
+        {
+          response: ENV(
+            "(fail) rate limiter > returns 429 when rate limit exceeded [3ms]\nExpected: 429\nReceived: 200",
+          ),
+        },
+        { response: "CHECK_RESULT: PASS" },
+      ],
+    },
+    { max_rounds: 3, verify_check: false },
+  );
+  const sr = (result as { stop_reason?: unknown }).stop_reason;
+  expect(result.ok).toBe(true);
+  expect(result.rounds_used).toBe(2);
+  expect(result.rounds[0]?.reason).toBe("check_failed");
+  expect(sr ?? null).toBeNull();
+});
+
+test("a memory-admission progress line before a real TS error is still repaired", async () => {
+  const { result } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: ENV("heavy job waiting for memory admission\n" + TS2322) },
+        { response: "CHECK_RESULT: PASS" },
+      ],
+    },
+    { max_rounds: 3, verify_check: false },
+  );
+  const sr = (result as { stop_reason?: unknown }).stop_reason;
+  expect(result.ok).toBe(true);
+  expect(result.rounds_used).toBe(2);
+  expect(result.rounds[0]?.reason).toBe("check_failed");
+  expect(sr ?? null).toBeNull();
+});
+
+test("identical verifier-measured failures stop with no_progress", async () => {
+  const { result } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: "CHECK_RESULT: PASS" },
+        { response: "CHECK_RESULT: PASS", branchName: "feature/branch-2" },
+        { response: "CHECK_RESULT: PASS", branchName: "feature/branch-3" },
+      ],
+      verifierResponses: [
+        {
+          ran: true,
+          check_exit: 1,
+          failing_segment: "typecheck",
+          output_tail: "src/a.ts(3,7): error TS2322 [12ms]",
+        },
+        {
+          ran: true,
+          check_exit: 1,
+          failing_segment: "typecheck",
+          output_tail: "src/a.ts(3,7): error TS2322 [34ms]",
+        },
+        { ran: true, check_exit: 0 },
+      ],
+    },
+    { max_rounds: 3 },
+  );
+  const sr = (result as { stop_reason?: unknown }).stop_reason;
+  expect(result.ok).toBe(false);
+  expect(result.rounds_used).toBe(2);
+  expect(result.rounds[0]?.reason).toBe("verifier_measured_fail");
+  expect(result.rounds[1]?.reason).toBe("no_progress");
+  expect(sr).toBe("no_progress");
+});
+
+test("exhausting max_rounds reports stop_reason max_rounds", async () => {
+  const { result } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: "CHECK_RESULT: FAIL\nerror 1" },
+        { response: "CHECK_RESULT: FAIL\nerror 2" },
+        { response: "CHECK_RESULT: FAIL\nerror 3" },
+      ],
+    },
+    { max_rounds: 3, verify_check: false },
+  );
+  const sr = (result as { stop_reason?: unknown }).stop_reason;
+  expect(result.rounds_used).toBe(3);
+  expect(sr).toBe("max_rounds");
+});
+
+test("no_progress escalates once to escalate_to, then stops if the escalated round is also stuck", async () => {
+  const { result, ctx } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: FAIL("1.23") },
+        { response: FAIL("4.56") },
+        { response: FAIL("7.89") },
+      ],
+    },
+    { max_rounds: 4, verify_check: false, escalate_to: "opus" },
+  );
+  const sr = (result as { stop_reason?: unknown }).stop_reason;
+  expect(result.ok).toBe(false);
+  expect(result.rounds_used).toBe(3);
+  expect(result.rounds[0]?.reason).toBe("check_failed");
+  expect(result.rounds[0]?.agent).toBe("executor");
+  expect(result.rounds[1]?.reason).toBe("no_progress_escalate");
+  expect(result.rounds[1]?.agent).toBe("executor");
+  expect(result.rounds[2]?.agent).toBe("opus");
+  expect(result.rounds[2]?.reason).toBe("no_progress");
+  expect(sr).toBe("no_progress");
+  expect(ctx.capturedChainStarts).toHaveLength(3);
+  expect(ctx.capturedChainStarts?.[2]?.initial_agent).toBe("opus");
+});
+
+test("an escalated round after no_progress can still go green", async () => {
+  const { result } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: FAIL("1.23") },
+        { response: FAIL("4.56") },
+        { response: "CHECK_RESULT: PASS" },
+      ],
+    },
+    { max_rounds: 4, verify_check: false, escalate_to: "opus" },
+  );
+  const sr = (result as { stop_reason?: unknown }).stop_reason;
+  expect(result.ok).toBe(true);
+  expect(result.rounds_used).toBe(3);
+  expect(result.rounds[1]?.reason).toBe("no_progress_escalate");
+  expect(result.rounds[2]?.agent).toBe("opus");
+  expect(sr ?? null).toBeNull();
+});
