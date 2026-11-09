@@ -163,4 +163,89 @@ describe("llamactl inventory", () => {
       "Qwen3-Coder-Next-mlx-2Bit",
     ]);
   });
+
+  test("carries the experimental flag from served models into inventory models", async () => {
+    const inventory = await collectLlamactlInventory({
+      env: { DEV_STORAGE: "/dev-storage" },
+      readFile: (path) => {
+        expect(path).toBe(join("/dev-storage", "config"));
+        return kubeconfig;
+      },
+      exists: (path) => path === join("/dev-storage", "config"),
+      fetch: (url, init) => {
+        expect(init?.signal).toBeDefined();
+        if (url === "http://127.0.0.1:7944/v1/models") {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                data: [
+                  {
+                    id: "glm-5.3-flash.gguf",
+                    owned_by: "mac-mini",
+                    created: 200,
+                    experimental: true,
+                  },
+                  { id: "other.gguf", owned_by: "mac-mini", created: 201 },
+                ],
+              }),
+            ),
+          );
+        }
+        if (url === "https://mac-mini.local:7945/v1/fleet/snapshot") {
+          return Promise.resolve(new Response(JSON.stringify({ ok: true })));
+        }
+        throw new Error(`unexpected url ${url}`);
+      },
+      execFile: () => Promise.resolve({ ok: false, stdout: "", stderr: "missing" }),
+    });
+
+    expect(inventory.status).toBe("ok");
+    expect(inventory.models.find((model) => model.id === "glm-5.3-flash.gguf")?.experimental).toBe(
+      true,
+    );
+    const other = inventory.models.find((model) => model.id === "other.gguf");
+    if (!other) throw new Error("missing other.gguf");
+    expect("experimental" in other).toBe(false);
+  });
+
+  test("keeps the experimental flag when deduping a served model alias group", async () => {
+    const inventory = await collectLlamactlInventory({
+      env: { DEV_STORAGE: "/dev-storage" },
+      readFile: (path) => {
+        expect(path).toBe(join("/dev-storage", "config"));
+        return kubeconfig;
+      },
+      exists: (path) => path === join("/dev-storage", "config"),
+      fetch: (url, init) => {
+        expect(init?.signal).toBeDefined();
+        if (url === "http://127.0.0.1:7944/v1/models") {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                data: [
+                  {
+                    id: "models/glm-5.3-flash.gguf",
+                    owned_by: "mac-mini",
+                    created: 300,
+                    experimental: true,
+                  },
+                  { id: "glm-5.3-flash.gguf", owned_by: "mac-mini", created: 300 },
+                ],
+              }),
+            ),
+          );
+        }
+        if (url === "https://mac-mini.local:7945/v1/fleet/snapshot") {
+          return Promise.resolve(new Response(JSON.stringify({ ok: true })));
+        }
+        throw new Error(`unexpected url ${url}`);
+      },
+      execFile: () => Promise.resolve({ ok: false, stdout: "", stderr: "missing" }),
+    });
+
+    expect(inventory.models.filter((model) => model.id === "glm-5.3-flash.gguf")).toHaveLength(1);
+    expect(inventory.models.find((model) => model.id === "glm-5.3-flash.gguf")?.experimental).toBe(
+      true,
+    );
+  });
 });

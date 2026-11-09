@@ -14,6 +14,7 @@ export interface ServedModelEntry {
   id: string;
   owned_by?: string;
   created?: number;
+  experimental?: boolean;
 }
 
 export function servedModelsUrl(baseUrl: string): string {
@@ -56,20 +57,38 @@ export async function fetchServedModelEntries(
   if (!response.ok) {
     throw new ServedModelsProbeError(response.status);
   }
-  const body = (await response.json()) as {
-    data?: { id?: unknown; owned_by?: unknown; created?: unknown }[];
-  };
+  const body = (await response.json()) as { data?: ServedModelBodyItem[] };
   const entries: ServedModelEntry[] = [];
   for (const model of body.data ?? []) {
-    if (typeof model.id === "string" && model.id.length > 0) {
-      entries.push({
-        id: model.id,
-        ...(typeof model.owned_by === "string" ? { owned_by: model.owned_by } : {}),
-        ...(typeof model.created === "number" ? { created: model.created } : {}),
-      });
-    }
+    const entry = toServedModelEntry(model);
+    if (entry) entries.push(entry);
   }
   return entries;
+}
+
+type ServedModelBodyItem = {
+  id?: unknown;
+  owned_by?: unknown;
+  created?: unknown;
+  experimental?: unknown;
+  qualification?: { stage?: unknown } | null;
+};
+
+function isExperimentalServedModel(model: ServedModelBodyItem): boolean {
+  if (model.experimental === true) return true;
+  const qualification = model.qualification;
+  if (qualification === null || qualification === undefined) return false;
+  return typeof qualification === "object" && qualification.stage === "experimental";
+}
+
+function toServedModelEntry(model: ServedModelBodyItem): ServedModelEntry | undefined {
+  if (typeof model.id !== "string" || model.id.length === 0) return undefined;
+  return {
+    id: model.id,
+    ...(typeof model.owned_by === "string" ? { owned_by: model.owned_by } : {}),
+    ...(typeof model.created === "number" ? { created: model.created } : {}),
+    ...(isExperimentalServedModel(model) ? { experimental: true } : {}),
+  };
 }
 
 export async function fetchServedModels(

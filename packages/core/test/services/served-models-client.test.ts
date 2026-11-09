@@ -122,4 +122,69 @@ describe("served models client", () => {
 
     expect(seenKeys).toEqual(["signal"]);
   });
+
+  test("carries the experimental flag through served model entries", async () => {
+    const entries = await fetchServedModelEntries("http://127.0.0.1:7944", {
+      timeoutMs: 25,
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: "glm-5.3-flash.gguf",
+                  owned_by: "z13",
+                  created: 5,
+                  experimental: true,
+                },
+                { id: "qwen3-coder.gguf", owned_by: "z13", created: 6 },
+              ],
+            }),
+          ),
+        ),
+    });
+    const expected = [
+      { id: "glm-5.3-flash.gguf", owned_by: "z13", created: 5, experimental: true },
+      { id: "qwen3-coder.gguf", owned_by: "z13", created: 6 },
+    ];
+
+    expect(entries).toEqual(expected);
+  });
+
+  test("maps an experimental qualification stage onto served model entries", async () => {
+    const entries = await fetchServedModelEntries("http://127.0.0.1:7944", {
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: [
+                { id: "a", qualification: { stage: "experimental" } },
+                { id: "b", qualification: { stage: "candidate" } },
+              ],
+            }),
+          ),
+        ),
+    });
+    const expected = [{ id: "a", experimental: true }, { id: "b" }];
+
+    expect(entries).toEqual(expected);
+  });
+
+  test("ignores non-boolean experimental values on served model entries", async () => {
+    const entries = await fetchServedModelEntries("http://127.0.0.1:7944", {
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: [
+                { id: "c", experimental: "true" },
+                { id: "d", experimental: false },
+              ],
+            }),
+          ),
+        ),
+    });
+
+    expect(entries).toEqual([{ id: "c" }, { id: "d" }]);
+  });
 });

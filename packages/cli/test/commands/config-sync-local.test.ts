@@ -503,4 +503,173 @@ describe("penumbra config sync-local", () => {
     expect(stdout).toContain("no local models discovered");
     expect(existsSync(join(dir, "agents.yaml"))).toBe(true);
   });
+
+  test("experimental model gets a roleless pinned-only seat", async () => {
+    const dir = await makeTempDir();
+    writeAgents(dir, [{ name: "manual", adapter: "stdio-acp" }]);
+    const node = { name: "z13", endpoint: "https://z13.local:7945", healthy: true };
+    const experimentalModel = { id: "glm-5.3-flash.gguf", experimental: true, node };
+
+    const result = await runConfigSyncLocal({
+      configDir: dir,
+      apply: true,
+      inventory: (): Promise<LlamactlInventory> =>
+        Promise.resolve({
+          status: "ok",
+          messages: [],
+          nodes: [node],
+          models: [experimentalModel],
+        }),
+      reloadConfig: (): Promise<unknown> => Promise.resolve({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const seat = readAgents(dir).agents.find((agent) => agent.name === "local-glm-5-3-flash-http");
+    if (!seat) throw new Error("generated seat was missing");
+    expect(seat.roles).toEqual([]);
+    expect(seat.auto_approve_to).toEqual([]);
+    const tags = seat.tags ?? [];
+    expect(tags).toContain("local");
+    expect(tags).toContain("experimental");
+    expect(tags).toContain("pinned-only");
+    expect(seat.quirks?.some((quirk) => quirk.toLowerCase().includes("experimental"))).toBe(true);
+    expect(seat.options.model).toBe("glm-5.3-flash.gguf");
+  });
+
+  test("experimental coder model gets no executor/reviewer roles", async () => {
+    const dir = await makeTempDir();
+    writeAgents(dir, [{ name: "manual", adapter: "stdio-acp" }]);
+    const node = { name: "z13", endpoint: "https://z13.local:7945", healthy: true };
+    const experimentalModel = {
+      id: "deepseek-v4.1-flash-coder.gguf",
+      experimental: true,
+      node,
+    };
+
+    const result = await runConfigSyncLocal({
+      configDir: dir,
+      apply: true,
+      inventory: (): Promise<LlamactlInventory> =>
+        Promise.resolve({
+          status: "ok",
+          messages: [],
+          nodes: [node],
+          models: [experimentalModel],
+        }),
+      reloadConfig: (): Promise<unknown> => Promise.resolve({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const seat = readAgents(dir).agents.find(
+      (agent) => agent.name === "local-deepseek-v4-1-flash-coder-http",
+    );
+    if (!seat) throw new Error("generated seat was missing");
+    expect(seat.roles).toEqual([]);
+  });
+
+  test("experimental qualification strips hand-tuned roles from an existing seat", async () => {
+    const dir = await makeTempDir();
+    writeAgents(dir, [
+      {
+        name: "local-glm-5-3-flash-http",
+        adapter: "openai-compat-http",
+        api_provider: "local",
+        roles: ["executor", "reviewer"],
+        tags: ["curated"],
+        quirks: ["keep me"],
+        provenance: {
+          source: "llamactl-sync-local",
+          managed_fields: ["options.baseUrl", "options.model", "options.apiKeyKeychain"],
+        },
+        options: { baseUrl: "http://old", model: "glm-5.3-flash.gguf", maxTokens: 4096 },
+      },
+    ]);
+    const node = { name: "z13", endpoint: "https://z13.local:7945", healthy: true };
+    const experimentalModel = { id: "glm-5.3-flash.gguf", experimental: true, node };
+
+    const result = await runConfigSyncLocal({
+      configDir: dir,
+      apply: true,
+      inventory: (): Promise<LlamactlInventory> =>
+        Promise.resolve({
+          status: "ok",
+          messages: [],
+          nodes: [node],
+          models: [experimentalModel],
+        }),
+      reloadConfig: (): Promise<unknown> => Promise.resolve({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const seat = readAgents(dir).agents.find((agent) => agent.name === "local-glm-5-3-flash-http");
+    if (!seat) throw new Error("generated seat was missing");
+    expect(seat.roles).toEqual([]);
+    const tags = seat.tags ?? [];
+    expect(tags).toContain("curated");
+    expect(tags).toContain("pinned-only");
+    expect(tags).toContain("experimental");
+    expect(seat.quirks).toEqual(["keep me"]);
+    expect(seat.options.maxTokens).toBe(4096);
+  });
+
+  test("a model promoted out of experimental regains default roles and loses pinned-only", async () => {
+    const dir = await makeTempDir();
+    writeAgents(dir, [
+      {
+        name: "local-glm-5-3-flash-http",
+        adapter: "openai-compat-http",
+        api_provider: "local",
+        roles: [],
+        tags: ["local", "experimental", "pinned-only", "curated"],
+        provenance: {
+          source: "llamactl-sync-local",
+          managed_fields: ["options.baseUrl", "options.model", "options.apiKeyKeychain"],
+        },
+        options: { baseUrl: "http://old", model: "glm-5.3-flash.gguf" },
+      },
+    ]);
+    const node = { name: "z13", endpoint: "https://z13.local:7945", healthy: true };
+
+    const result = await runConfigSyncLocal({
+      configDir: dir,
+      apply: true,
+      inventory: (): Promise<LlamactlInventory> =>
+        Promise.resolve({
+          status: "ok",
+          messages: [],
+          nodes: [node],
+          models: [{ id: "glm-5.3-flash.gguf", node }],
+        }),
+      reloadConfig: (): Promise<unknown> => Promise.resolve({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const seat = readAgents(dir).agents.find((agent) => agent.name === "local-glm-5-3-flash-http");
+    if (!seat) throw new Error("generated seat was missing");
+    expect(seat.roles).toEqual(["executor"]);
+    expect(seat.tags).toEqual(["local", "curated"]);
+  });
+
+  test("dry run reports experimental qualification for generated seats", async () => {
+    const dir = await makeTempDir();
+    writeAgents(dir, [{ name: "manual", adapter: "stdio-acp" }]);
+    const node = { name: "z13", endpoint: "https://z13.local:7945", healthy: true };
+    const experimentalModel = { id: "glm-5.3-flash.gguf", experimental: true, node };
+
+    const result = await runConfigSyncLocal({
+      configDir: dir,
+      dryRun: true,
+      inventory: (): Promise<LlamactlInventory> =>
+        Promise.resolve({
+          status: "ok",
+          messages: [],
+          nodes: [node],
+          models: [experimentalModel],
+        }),
+    });
+
+    const output = result.stdout.join("\n").toLowerCase();
+    expect(output).toContain("would upsert local-glm-5-3-flash-http");
+    expect(output).toContain("experimental");
+  });
 });

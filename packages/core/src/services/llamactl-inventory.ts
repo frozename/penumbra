@@ -27,6 +27,7 @@ export interface LlamactlModelInventory {
   id: string;
   owned_by?: string;
   created?: number;
+  experimental?: boolean;
   node?: LlamactlNodeInventory;
 }
 
@@ -159,17 +160,27 @@ function aliasForServedModel(id: string): string {
   return last;
 }
 
-function dedupeServedModels(entries: ServedModelEntry[]): ServedModelEntry[] {
+// Collapses exact-duplicate rows fail-closed: if any collapsed row carried the
+// experimental qualification, the kept entry carries it too.
+function collapseExactIdentity(entries: ServedModelEntry[]): ServedModelEntry[] {
   const byExactIdentity = new Map<string, ServedModelEntry>();
   for (const entry of entries) {
     const exactKey = `${entry.owned_by ?? ""}\0${String(entry.created ?? "")}\0${entry.id}`;
-    if (!byExactIdentity.has(exactKey)) {
-      byExactIdentity.set(exactKey, entry);
+    const kept = byExactIdentity.get(exactKey);
+    if (!kept) {
+      byExactIdentity.set(exactKey, { ...entry });
+      continue;
+    }
+    if (entry.experimental === true && kept.experimental !== true) {
+      byExactIdentity.set(exactKey, { ...kept, experimental: true });
     }
   }
+  return [...byExactIdentity.values()];
+}
 
+function dedupeServedModels(entries: ServedModelEntry[]): ServedModelEntry[] {
   const byAlias = new Map<string, ServedModelEntry[]>();
-  for (const entry of byExactIdentity.values()) {
+  for (const entry of collapseExactIdentity(entries)) {
     const aliasKey = `${entry.owned_by ?? ""}\0${String(entry.created ?? "")}\0${aliasForServedModel(entry.id)}`;
     const existing = byAlias.get(aliasKey);
     if (existing) {
@@ -183,7 +194,11 @@ function dedupeServedModels(entries: ServedModelEntry[]): ServedModelEntry[] {
   for (const entriesInAliasGroup of byAlias.values()) {
     const alias = entriesInAliasGroup.find((entry) => !entry.id.includes("/"));
     const chosen = alias ?? entriesInAliasGroup[0];
-    if (chosen) deduped.push(chosen);
+    if (!chosen) continue;
+    const anyExperimental = entriesInAliasGroup.some((entry) => entry.experimental === true);
+    deduped.push(
+      anyExperimental && chosen.experimental !== true ? { ...chosen, experimental: true } : chosen,
+    );
   }
   return deduped;
 }
@@ -198,6 +213,7 @@ function appendModels(
       id: entry.id.includes("/") ? entry.id : aliasForServedModel(entry.id),
       ...(entry.owned_by ? { owned_by: entry.owned_by } : {}),
       ...(entry.created !== undefined ? { created: entry.created } : {}),
+      ...(entry.experimental === true ? { experimental: true } : {}),
       ...(node ? { node } : {}),
     };
   });
