@@ -70,6 +70,12 @@ describe("resolveResourceScopeConfig", () => {
   test("rejects a size systemd would not accept", () => {
     expect(() => resolveResourceScopeConfig({ PENUMBRA_JOB_MEMORY_MAX: "lots" })).toThrow();
   });
+
+  test("carries PENUMBRA_JOB_SLICE through as slice", () => {
+    expect(resolveResourceScopeConfig({ PENUMBRA_JOB_SLICE: "penumbra-jobs.slice" }).slice).toBe(
+      "penumbra-jobs.slice",
+    );
+  });
 });
 
 describe("wrapResourceScopeArgv", () => {
@@ -178,6 +184,33 @@ describe("wrapResourceScopeArgv", () => {
   });
 });
 
+describe("buildResourceScopeArgv slice", () => {
+  test("emits --slice right after --description when configured", () => {
+    const argv = buildResourceScopeArgv(
+      ["bun", "test"],
+      HOST,
+      { ...ON, slice: "penumbra-jobs.slice" },
+      { label: "terminal", childEnv: USER_ENV },
+    );
+    const { outer, inner } = splitAtSeparator(argv);
+    expect(outer.filter((arg) => arg === "--slice=penumbra-jobs.slice")).toHaveLength(1);
+    const descIndex = outer.indexOf("--description=penumbra job (terminal)");
+    expect(descIndex).toBeGreaterThanOrEqual(0);
+    const sliceIndex = outer.indexOf("--slice=penumbra-jobs.slice");
+    expect(sliceIndex).toBe(descIndex + 1);
+    expect(sliceIndex).toBeLessThan(outer.indexOf("-p"));
+    expect(inner).toEqual(["/usr/bin/choom", "-n", "900", "--", "bun", "test"]);
+  });
+
+  test("emits no --slice element without a configured slice", () => {
+    const argv = buildResourceScopeArgv(["bun", "test"], HOST, ON, {
+      label: "terminal",
+      childEnv: USER_ENV,
+    });
+    expect(splitAtSeparator(argv).outer.some((arg) => arg.startsWith("--slice"))).toBe(false);
+  });
+});
+
 describe("detectResourceScopeHost", () => {
   const linuxDeps = {
     platform: "linux" as const,
@@ -263,6 +296,19 @@ describe("primeResourceScope", () => {
     expect(res.available).toBe(true);
     expect(probed[0]?.at(-1)).toBe("true");
     expect(wrapResourceScopeArgv(["bun"], { config: ON })).toContain("/usr/bin/systemd-run");
+  });
+
+  test("the startup probe carries --slice so an invalid slice fails once", async () => {
+    const probed: string[][] = [];
+    await primeResourceScope({
+      config: { ...ON, slice: "penumbra-jobs.slice" },
+      deps,
+      spawn: (argv) => {
+        probed.push(argv);
+        return Promise.resolve({ exitCode: 0, signal: null, stderr: "" });
+      },
+    });
+    expect(probed[0]).toContain("--slice=penumbra-jobs.slice");
   });
 
   test("a failing probe (old systemd, unreachable bus) disables scoping", async () => {

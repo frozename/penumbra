@@ -19,6 +19,7 @@ describe("getJobResourceEnv", () => {
       admitMinGiB: undefined,
       admitWaitS: 900,
       heavyLockPath: undefined,
+      slice: undefined,
     });
   });
 
@@ -103,6 +104,34 @@ describe("getJobResourceEnv", () => {
 
   test.each(["on", "off"] as const)("PENUMBRA_JOB_SCOPE %s is returned as-is", (scope) => {
     expect(getJobResourceEnv({ PENUMBRA_JOB_SCOPE: scope }).scope).toBe(scope);
+  });
+
+  test("PENUMBRA_JOB_SLICE is returned verbatim", () => {
+    expect(getJobResourceEnv({ PENUMBRA_JOB_SLICE: "penumbra-jobs.slice" }).slice).toBe(
+      "penumbra-jobs.slice",
+    );
+  });
+
+  test("PENUMBRA_JOB_SLICE accepts a nested slice name verbatim", () => {
+    expect(getJobResourceEnv({ PENUMBRA_JOB_SLICE: "penumbra-jobs-heavy.slice" }).slice).toBe(
+      "penumbra-jobs-heavy.slice",
+    );
+  });
+
+  test.each([
+    "penumbra-jobs.service",
+    "penumbra jobs.slice",
+    "-penumbra.slice",
+    "penumbra--jobs.slice",
+    "penumbra-.slice",
+    ".slice",
+  ])("rejects non-slice unit %j for PENUMBRA_JOB_SLICE", (value) => {
+    expect(() => getJobResourceEnv({ PENUMBRA_JOB_SLICE: value })).toThrow(/PENUMBRA_JOB_SLICE/);
+  });
+
+  test("PENUMBRA_JOB_SLICE unset or whitespace-only yields no slice", () => {
+    expect(getJobResourceEnv({}).slice).toBeUndefined();
+    expect(getJobResourceEnv({ PENUMBRA_JOB_SLICE: "   " }).slice).toBeUndefined();
   });
 });
 

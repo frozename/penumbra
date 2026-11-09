@@ -176,6 +176,7 @@ Every wrapper step execs in place, so pids, process-group kills, timeouts and ca
 | `PENUMBRA_JOB_ADMIT_MIN_GIB` | min(`20`, 20% of `MemTotal`)       | `MemAvailable` floor (GiB) for claims and heavy stages. When unset, it is derived from `MemTotal`: 20 GiB on the Z13, 3.2 GiB on a 16 GiB CI runner, so a small host is never held below a floor it cannot reach. An explicit value is used as-is; `0` disables admission. |
 | `PENUMBRA_JOB_ADMIT_WAIT_S`  | `900`                              | How long to wait for the floor, and separately for the heavy-stage lock                                                                                                                                                                                                    |
 | `PENUMBRA_JOB_HEAVY_LOCK`    | `~/.penumbra/locks/heavy-job.lock` | `flock(1)` lock file that serializes heavy reconciler stages                                                                                                                                                                                                               |
+| `PENUMBRA_JOB_SLICE`         | unset                              | Optional systemd --user slice (`systemd-run --slice=`) that every job scope is placed in, for an aggregate cap over all jobs. See `docs/systemd/penumbra-jobs.slice`.                                                                                                      |
 
 **Enabling, disabling and checking.**
 
@@ -183,6 +184,7 @@ Every wrapper step execs in place, so pids, process-group kills, timeouts and ca
 - At startup, each process runs the exact scope argv once against `true`. It then logs either `job resource scopes enabled` or a single warning, and falls back to unscoped jobs. A probe can fail on an old systemd or an unreachable user bus.
 - Set `PENUMBRA_JOB_SCOPE=off` to stop scoping, and `PENUMBRA_JOB_ADMIT_MIN_GIB=0` to stop admission. At startup the worker logs the floor it settled on (`job memory admission floor`). When the floor is derived and MemAvailable is already below it, the worker also logs a warning naming `PENUMBRA_JOB_ADMIT_MIN_GIB`, and a claim whose wait expires logs `host memory admission timeout: claim not admitted` at warn with the available memory and the floor.
 - To see live job scopes, run `systemctl --user list-units 'penumbra-*.scope'`. In-scope OOM kills are logged by `journalctl --user` against the `penumbra-<label>-<id>.scope` unit.
+- With `PENUMBRA_JOB_SLICE` set, the per-scope `MemoryMax=` still caps one job while the slice caps their sum. Check it with `systemctl --user status penumbra-jobs.slice`. A slice that does not exist yet is created implicitly without limits, so install the unit first.
 - Tests force `PENUMBRA_JOB_SCOPE=off` (`test/setup.ts`). Scoping tests inject their own config.
 
 **Manual counterpart.** Heavy jobs run outside Penumbra (hand-run gates, whole-repo typecheck or eslint) should use the operator's `flock` + `systemd-run --scope` wrapper (on the Z13, `handoff-kit/heavy.sh`). To make Penumbra's reconcile stages queue behind those jobs, point `PENUMBRA_JOB_HEAVY_LOCK` at that wrapper's lock file.

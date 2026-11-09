@@ -14,6 +14,8 @@ export interface ResourceScopeConfig {
   memoryMax: string;
   swapMax: string;
   oomScoreAdj: number;
+  /** Optional systemd --user slice (systemd-run --slice=) giving all job scopes an aggregate cap. */
+  slice?: string;
 }
 
 /** Host facts needed to build a `systemd-run --user --scope` argv. */
@@ -71,6 +73,7 @@ export function resolveResourceScopeConfig(
     memoryMax: parsed.memoryMax,
     swapMax: parsed.swapMax,
     oomScoreAdj: parsed.oomScoreAdj,
+    slice: parsed.slice,
   };
 }
 
@@ -169,6 +172,11 @@ export function buildResourceScopeArgv(
     "--quiet",
     `--unit=${scopeUnitName(label)}`,
     `--description=penumbra job (${label})`,
+  );
+  if (typeof config.slice === "string" && config.slice !== "") {
+    out.push(`--slice=${config.slice}`);
+  }
+  out.push(
     "-p",
     `MemoryHigh=${config.memoryHigh}`,
     "-p",
