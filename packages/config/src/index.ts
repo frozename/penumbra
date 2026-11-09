@@ -7,12 +7,14 @@ export {
   getDispatchCapsuleMode,
   getJobResourceEnv,
   getMcpResponseBudgetTokens,
+  getRoleMemoryBudgetEnv,
   getSessionExtractMaxCharsPerChunk,
   getSessionExtractMaxChunks,
   getUpdateEnv,
   isMcpInvocationLogEnabled,
   type JobResourceEnv,
   parseEnv,
+  type RoleMemoryBudgetEnv,
   type UpdateEnv,
 } from "./env.js";
 export {
