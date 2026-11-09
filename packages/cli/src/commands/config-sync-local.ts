@@ -196,9 +196,16 @@ function upsertSeat(existing: AgentConfig | undefined, generated: GeneratedSeat)
   // A seat that lost its roles entirely (e.g. never set) falls back to
   // model-inferred defaults instead of being upserted into a roleless seat;
   // an experimental model always owns roles so the qualification can strip
-  // hand-tuned roles down to pinned-only.
+  // hand-tuned roles down to pinned-only. A seat pinned to pinned-only
+  // without the sync-written experimental marker is a hand-pin: its empty
+  // roles are deliberate and stay untouched.
+  const existingTags = existing?.tags ?? [];
+  const handPinnedOnly =
+    existingTags.includes(PINNED_ONLY_TAG) && !existingTags.includes(EXPERIMENTAL_TAG);
   const managedFields =
-    experimental || existing?.roles.length === 0 ? [...MANAGED_FIELDS, "roles"] : MANAGED_FIELDS;
+    experimental || (!handPinnedOnly && existing?.roles.length === 0)
+      ? [...MANAGED_FIELDS, "roles"]
+      : MANAGED_FIELDS;
   const merged = upsertManagedFields(existing, buildGeneratedSeat(generated), managedFields);
   const tagged = applyExperimentalTags(existing, merged, experimental);
   const options = { ...tagged.options };
@@ -221,8 +228,10 @@ function applyExperimentalTags(
     return { ...merged, tags };
   }
   // A model promoted out of experimental loses the qualification tags but
-  // keeps any hand-added ones, in order.
-  if (existing?.tags?.includes(PINNED_ONLY_TAG) === true) {
+  // keeps any hand-added ones, in order. Only strip when the seat carries
+  // the experimental marker sync-local writes — a hand-pinned seat that was
+  // never experimental keeps its pinned-only tag.
+  if (existing?.tags?.includes(EXPERIMENTAL_TAG) === true) {
     return {
       ...merged,
       tags: (merged.tags ?? []).filter(

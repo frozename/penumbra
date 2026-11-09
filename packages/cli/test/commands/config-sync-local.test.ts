@@ -650,6 +650,70 @@ describe("penumbra config sync-local", () => {
     expect(seat.tags).toEqual(["local", "curated"]);
   });
 
+  test("experimental embedding model gets a roleless seat with embedding tags", async () => {
+    const dir = await makeTempDir();
+    writeAgents(dir, [{ name: "manual", adapter: "stdio-acp" }]);
+    const node = { name: "z13", endpoint: "https://z13.local:7945", healthy: true };
+    const experimentalModel = { id: "bge-embed.gguf", experimental: true, node };
+
+    const result = await runConfigSyncLocal({
+      configDir: dir,
+      apply: true,
+      inventory: (): Promise<LlamactlInventory> =>
+        Promise.resolve({
+          status: "ok",
+          messages: [],
+          nodes: [node],
+          models: [experimentalModel],
+        }),
+      reloadConfig: (): Promise<unknown> => Promise.resolve({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const seat = readAgents(dir).agents.find((agent) => agent.name === "local-bge-embed-http");
+    if (!seat) throw new Error("generated seat was missing");
+    expect(seat.roles).toEqual([]);
+    expect(seat.tags).toEqual(["local", "embedding", "experimental", "pinned-only"]);
+  });
+
+  test("a hand-pinned seat without the experimental marker keeps its pin and stays roleless", async () => {
+    const dir = await makeTempDir();
+    writeAgents(dir, [
+      {
+        name: "local-glm-5-3-flash-http",
+        adapter: "openai-compat-http",
+        api_provider: "local",
+        roles: [],
+        tags: ["pinned-only"],
+        provenance: {
+          source: "llamactl-sync-local",
+          managed_fields: ["options.baseUrl", "options.model", "options.apiKeyKeychain"],
+        },
+        options: { baseUrl: "http://old", model: "glm-5.3-flash.gguf" },
+      },
+    ]);
+    const node = { name: "z13", endpoint: "https://z13.local:7945", healthy: true };
+
+    const result = await runConfigSyncLocal({
+      configDir: dir,
+      apply: true,
+      inventory: (): Promise<LlamactlInventory> =>
+        Promise.resolve({
+          status: "ok",
+          messages: [],
+          nodes: [node],
+          models: [{ id: "glm-5.3-flash.gguf", node }],
+        }),
+      reloadConfig: (): Promise<unknown> => Promise.resolve({ ok: true }),
+    });
+
+    expect(result.exitCode).toBe(0);
+    const seat = readAgents(dir).agents.find((agent) => agent.name === "local-glm-5-3-flash-http");
+    if (!seat) throw new Error("generated seat was missing");
+    expect(seat.tags).toEqual(["pinned-only"]);
+    expect(seat.roles).toEqual([]);
+  });
+
   test("dry run reports experimental qualification for generated seats", async () => {
     const dir = await makeTempDir();
     writeAgents(dir, [{ name: "manual", adapter: "stdio-acp" }]);

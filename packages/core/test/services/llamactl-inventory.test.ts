@@ -208,6 +208,47 @@ describe("llamactl inventory", () => {
     expect("experimental" in other).toBe(false);
   });
 
+  test("merges the experimental flag across exact-duplicate served rows", async () => {
+    const inventory = await collectLlamactlInventory({
+      env: { DEV_STORAGE: "/dev-storage" },
+      readFile: (path) => {
+        expect(path).toBe(join("/dev-storage", "config"));
+        return kubeconfig;
+      },
+      exists: (path) => path === join("/dev-storage", "config"),
+      fetch: (url, init) => {
+        expect(init?.signal).toBeDefined();
+        if (url === "http://127.0.0.1:7944/v1/models") {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                data: [
+                  { id: "glm-5.3-flash.gguf", owned_by: "mac-mini", created: 400 },
+                  {
+                    id: "glm-5.3-flash.gguf",
+                    owned_by: "mac-mini",
+                    created: 400,
+                    experimental: true,
+                  },
+                ],
+              }),
+            ),
+          );
+        }
+        if (url === "https://mac-mini.local:7945/v1/fleet/snapshot") {
+          return Promise.resolve(new Response(JSON.stringify({ ok: true })));
+        }
+        throw new Error(`unexpected url ${url}`);
+      },
+      execFile: () => Promise.resolve({ ok: false, stdout: "", stderr: "missing" }),
+    });
+
+    expect(inventory.status).toBe("ok");
+    const matches = inventory.models.filter((model) => model.id === "glm-5.3-flash.gguf");
+    expect(matches).toHaveLength(1);
+    expect(matches[0]?.experimental).toBe(true);
+  });
+
   test("keeps the experimental flag when deduping a served model alias group", async () => {
     const inventory = await collectLlamactlInventory({
       env: { DEV_STORAGE: "/dev-storage" },
