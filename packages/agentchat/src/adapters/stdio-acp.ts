@@ -497,6 +497,13 @@ export interface StdioAcpOptions {
    * `session/set_mode` request, which this adapter does not implement yet.
    */
   permissionMode?: "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk" | "auto";
+  /**
+   * Per-project env overlay keyed by project registry id. When a dispatch's
+   * conversation.project_id matches a key, that project's vars are merged
+   * over opts.env at spawn (after the host-env scrub and opts.env; unsetEnv
+   * still wins). Only stdio-acp consumes this field.
+   */
+  envByProject?: Record<string, Record<string, string>>;
 }
 
 export interface StdioAcpThoughtInput {
@@ -972,6 +979,41 @@ function assertProfileAllowsWriteTool(
 // miss. startServer fails closed on platforms without sandbox-exec rather
 // than spawn unsandboxed. resolveSandboxDenyRoots is synchronous so the
 // unprofiled dispatch path gains no extra microtask hop.
+
+/**
+ * #592: resolve the per-project env overlay for a dispatch. Returns the
+ * project's env map only when projectId is a non-empty string and envByProject
+ * has an own, non-empty entry for it — Object.hasOwn keeps prototype keys
+ * like "constructor" from matching. Module-level so computeDispatchConstants
+ * can call it without an adapter instance.
+ */
+export function resolveProjectEnvOverlay(
+  envByProject: Record<string, Record<string, string>> | undefined,
+  projectId: string | null | undefined,
+): Record<string, string> | undefined {
+  if (!envByProject || typeof projectId !== "string" || projectId.length === 0) {
+    return undefined;
+  }
+  if (!Object.hasOwn(envByProject, projectId)) return undefined;
+  const entry: unknown = envByProject[projectId];
+  if (typeof entry !== "object" || entry === null || Object.keys(entry).length === 0) {
+    return undefined;
+  }
+  return entry as Record<string, string>;
+}
+
+function mergeEnvLayer(
+  mergedEnv: Record<string, string>,
+  layer: Record<string, string> | undefined,
+  unsetEnv: ReadonlySet<string>,
+): void {
+  if (layer === undefined) return;
+  for (const [key, value] of Object.entries(layer)) {
+    if (unsetEnv.has(key)) continue;
+    mergedEnv[key] = value;
+  }
+}
+
 function resolveDispatchSandboxProfile(input: DispatchInput, cwd: string): string | undefined {
   const profile = input.permission_profile;
   if (profile === undefined || profile === null) return undefined;
@@ -1491,9 +1533,10 @@ export class StdioAcpAdapter implements Adapter {
 
   /**
    * Build the dispatch-time process env: inherited env (host-scrubbed) merged
-   * with opts.env, minus unsetEnv.
+   * with opts.env, then the resolved per-project overlay (when one matches),
+   * minus unsetEnv.
    */
-  private buildMergedEnv(): Record<string, string> {
+  private buildMergedEnv(projectId?: string | null): Record<string, string> {
     const hostEnvPolicy = resolveHostEnvPolicy(this.opts);
     const hasScrubPolicy = Object.values(hostEnvPolicy).some(Boolean);
     const inheritedEnv: Record<string, string> = {};
@@ -1503,16 +1546,10 @@ export class StdioAcpAdapter implements Adapter {
       inheritedEnv[key] = value;
     }
     const unsetEnv = new Set(this.opts.unsetEnv ?? []);
-    const overlay = this.opts.env ?? {};
     const mergedEnv: Record<string, string> = {};
-    for (const [key, value] of Object.entries(inheritedEnv)) {
-      if (unsetEnv.has(key)) continue;
-      mergedEnv[key] = value;
-    }
-    for (const [key, value] of Object.entries(overlay)) {
-      if (unsetEnv.has(key)) continue;
-      mergedEnv[key] = value;
-    }
+    mergeEnvLayer(mergedEnv, inheritedEnv, unsetEnv);
+    mergeEnvLayer(mergedEnv, this.opts.env, unsetEnv);
+    mergeEnvLayer(mergedEnv, resolveProjectEnvOverlay(this.opts.envByProject, projectId), unsetEnv);
     return mergedEnv;
   }
 
@@ -2071,7 +2108,7 @@ export class StdioAcpAdapter implements Adapter {
     let detachAbort: (() => void) | undefined;
     try {
       input.signal.throwIfAborted();
-      const mergedEnv = this.buildMergedEnv();
+      const mergedEnv = this.buildMergedEnv(input.conversation.project_id);
       const bootDeadline = this.createBootDeadline();
 
       const warm: WarmAcquire = warmPoolEnabled
@@ -2384,6 +2421,13 @@ function computeDispatchConstants(
 ): DispatchConstants {
   const cwd = opts.cwd ?? process.cwd();
   const poolScope = opts.repoRoot ?? cwd;
+  const projectId = input.conversation.project_id;
+  const projectOverlay = resolveProjectEnvOverlay(opts.envByProject, projectId);
+  const specHashBase = acpSpecHash({
+    binary: opts.binary,
+    args: opts.args,
+    model: opts.model,
+  });
   return {
     dispatchStartTs: Date.now(),
     cwd,
@@ -2399,11 +2443,11 @@ function computeDispatchConstants(
       agent: opts.agentName ?? opts.model ?? opts.binary,
       cwd: poolScope,
     }),
-    specHash: acpSpecHash({
-      binary: opts.binary,
-      args: opts.args,
-      model: opts.model,
-    }),
+    // #592: an env_by_project overlay changes the spawn env, so the spec hash
+    // carries the project id (never env values) to keep overlay-less prewarmed
+    // entries from being reused for overlay dispatches.
+    specHash:
+      projectOverlay && projectId ? `${specHashBase}|env_by_project=${projectId}` : specHashBase,
     holderId: input.handoff_id ?? input.conversation.id,
   };
 }
