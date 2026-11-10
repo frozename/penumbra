@@ -609,6 +609,54 @@ test("propose: receipt at non-final sha is excluded from receipt_digests", () =>
   expect(res.lesson.source.receipt_digests).toEqual([baseReceipt["receipt_digest"]]);
 });
 
+test("propose: invalid draft schema is rejected with invalid_draft_schema", () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const res = proposeLessonFromEpisode()(verifiedEpisode(), draft({ project_id: "" }));
+  expect(res).toEqual({ status: "rejected", reasons: ["invalid_draft_schema"] });
+});
+
+test("propose: buildReceiptDigests includes only pass-only receipts", () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const episode = makeEpisode({
+    split: "dev",
+    attempt_history: {
+      status: "complete",
+      reason: null,
+      count: 1,
+      count_basis: "claim_events",
+    },
+    attempts: [att(1, SHA_A)],
+    final_sha: SHA_A,
+    receipts: [
+      hiddenReceipt(),
+      hiddenReceipt({
+        claimed_verdict: "fail",
+        fail_reason: "hidden_failed",
+        per_check: [{ id: "c1", ok: false }],
+      }),
+    ],
+    harness_build: { sha: SHA_C },
+    model_identity: modelIdentity({
+      engine: { value: ENGINE_VALUE, provenance: "declared" },
+    }),
+    repo: { base_sha: null, dependency_lock_sha256: LOCK_SHA },
+  });
+  const res = proposeLessonFromEpisode()(episode, draft());
+  expect(res.status).toBe("proposed");
+  if (res.status !== "proposed") {
+    return;
+  }
+  expect(res.lesson.source.receipt_digests).toHaveLength(1);
+  const passingReceipt = hiddenReceipt();
+  expect(res.lesson.source.receipt_digests).toEqual([passingReceipt["receipt_digest"]]);
+});
+
 test("propose: expiry equal to creation is rejected", () => {
   expect(mod).not.toBeNull();
   if (!mod) {
@@ -849,8 +897,7 @@ test("eligibility: changed dependency_lock_sha256 invalidates, same value stays 
   if (!mod) {
     return;
   }
-  const LOCK_SHA_B = "g".repeat(64);
-  const lesson = approvedLesson();
+  const LOCK_SHA_B = "b".repeat(64);
   const lockedLesson = lessonOf(
     proposeLessonFromEpisode()(
       verifiedEpisode({
