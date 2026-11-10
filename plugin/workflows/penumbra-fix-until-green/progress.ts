@@ -152,23 +152,32 @@ const ISO_TIMESTAMP =
   /\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?/g;
 const DURATION = /(?<![\w.])\[?\d+(?:\.\d+)?\s?(?:ms|s)\]?(?!\w)/g;
 const HEX_SHA = /\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/g;
+const VERIFIER_MEASURED_FALLBACK =
+  /^Independent CHECK verifier measured check_exit=-?\d+, ran=(?:true|false)$/;
 
 /**
  * Fingerprint failure evidence for progress detection. Normalisation
  * strips ANSI escapes, ISO-8601 timestamps, durations and hex SHAs, then
  * collapses whitespace; bare integers and line:col positions are kept so
  * genuinely different failures stay distinct. Returns the sha256 hex of
- * the normalised text, or null for empty evidence.
+ * the normalised text, or null when the evidence carries no failure
+ * detail: empty input, the verifier's fixed measured-failure fallback
+ * (which reports only that the check exited nonzero, not what failed),
+ * or text that normalises away entirely (for example a bare SHA). A null
+ * fingerprint is unknown evidence and can never match a previous one.
  */
 export function failureFingerprint(evidence: string): string | null {
-  if (evidence.trim().length === 0) return null;
-  const normalized = evidence
+  const trimmed = evidence.trim();
+  if (trimmed.length === 0) return null;
+  if (VERIFIER_MEASURED_FALLBACK.test(trimmed)) return null;
+  const normalized = trimmed
     .replaceAll(ANSI_ESCAPE, " ")
     .replaceAll(ISO_TIMESTAMP, " ")
     .replaceAll(DURATION, " ")
     .replaceAll(HEX_SHA, " ")
     .replaceAll(/\s+/g, " ")
     .trim();
+  if (normalized.length === 0) return null;
   return createHash("sha256").update(normalized).digest("hex");
 }
 
@@ -201,27 +210,33 @@ export type ProgressState = {
   escalated: boolean;
 };
 
-type AgentInput = Pick<FixUntilGreenInput, "agent" | "escalate_to" | "max_rounds">;
+type AgentInput = Pick<
+  FixUntilGreenInput,
+  "agent" | "escalate_to" | "max_rounds" | "progress_stops"
+>;
 
 /**
- * Pick the agent for a round: `escalate_to` on the last round, and on any
- * round after a one-shot `no_progress` escalation, otherwise `agent`.
+ * Pick the agent for a round. With `progress_stops` off (the default) this
+ * is the legacy rule: `escalate_to` only on the last round. With it on,
+ * `escalate_to` also applies on any round after a one-shot `no_progress`
+ * escalation; otherwise `agent`.
  */
 export function agentForRound(
   input: AgentInput,
   roundIndex: number,
   state: { escalated: boolean },
 ): string {
+  if (input.escalate_to === undefined) return input.agent;
   const lastRound = roundIndex === input.max_rounds - 1;
-  if (input.escalate_to !== undefined && (lastRound || state.escalated)) {
-    return input.escalate_to;
-  }
-  return input.agent;
+  const escalate = input.progress_stops ? lastRound || state.escalated : lastRound;
+  return escalate ? input.escalate_to : input.agent;
 }
 
 /**
- * Apply `decideAfterFailure` to workflow state. Repair records the new
- * fingerprint; a one-shot `no_progress` with `escalate_to` available flips
+ * Apply `decideAfterFailure` to workflow state. With `progress_stops` off
+ * every failure repairs with `defaultReason`, matching the pre-progress
+ * loop exactly. With it on, repair records the new fingerprint; a
+ * one-shot `no_progress` with `escalate_to` available flips
  * `state.escalated` and continues as `no_progress_escalate`; every other
  * stop reason stops the loop.
  */
@@ -232,6 +247,7 @@ export function applyFailureDecision(
   output: string | null,
   defaultReason: string,
 ): { reason: string; stop: boolean } {
+  if (!input.progress_stops) return { reason: defaultReason, stop: false };
   const decision = decideAfterFailure({
     output,
     previousFingerprint: state.lastFailureFingerprint,
@@ -250,6 +266,19 @@ export function applyFailureDecision(
     return { reason: "no_progress_escalate", stop: false };
   }
   return { reason: decision.reason, stop: true };
+}
+
+/**
+ * `applyFailureDecision` for a failed rubric grade: repairs continue as
+ * `rubric_failed`, typed stops carry their own reason.
+ */
+export function rubricFailureDecision(
+  state: ProgressState,
+  input: AgentInput,
+  roundIndex: number,
+  failOutput: string,
+): { reason: string; stop: boolean } {
+  return applyFailureDecision(state, input, roundIndex, failOutput, "rubric_failed");
 }
 
 // ---------------------------------------------------------------------------

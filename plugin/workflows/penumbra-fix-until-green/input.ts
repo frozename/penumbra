@@ -63,6 +63,7 @@ export const inputSchema = z
     timeout_ms: z.number().int().positive().default(1_800_000),
     verify_check: z.boolean().default(true),
     verifier_agent: z.string().min(1).optional(),
+    progress_stops: z.boolean().default(false),
     parity_check: z.string().trim().min(1).optional(),
     rubric: RubricSchema.optional(),
     grader_agent: z.string().min(1).optional(),

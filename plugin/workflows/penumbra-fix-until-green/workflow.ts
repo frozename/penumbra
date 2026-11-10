@@ -17,6 +17,7 @@ import {
   firstNonemptyLine,
   type ProgressState,
   resolveTaskTitle,
+  rubricFailureDecision,
 } from "./progress.js";
 import {
   candidateRoundRecord,
@@ -344,9 +345,10 @@ async function handleRubricOutcome(
   }
 
   const rubricPassed = rubricOutcome.status === "passed";
+  const failure = rubricFailureDecision(state, input, roundIndex, rubricOutcome.failOutput);
   const record = rec({
     ...stageBase,
-    reason: rubricPassed ? "rubric_passed" : "rubric_failed",
+    reason: rubricPassed ? "rubric_passed" : failure.reason,
     rubricStatus: rubricPassed ? "PASSED" : "FAILED",
     rubricGrade: rubricOutcome.grade,
     passed: rubricPassed,
@@ -360,7 +362,13 @@ async function handleRubricOutcome(
     return { kind: "green", record, branch: candidate.branch };
   }
 
-  state.lastFailureFingerprint = null;
+  if (failure.stop) {
+    ctx.progress?.("penumbra-fix-until-green: stopping after rubric failure", {
+      round: roundNumber,
+      reason: failure.reason,
+    });
+    return { kind: "stop", record, branch: candidate.branch, output: rubricOutcome.failOutput };
+  }
   return { kind: "continue", record, branch: candidate.branch, output: rubricOutcome.failOutput };
 }
 
@@ -507,7 +515,7 @@ async function dispatchAndCheck(
   const checkLine = firstNonemptyLine(responseText, CHECK_LINE_MAX);
   const failTail = failureTail(responseText, FAILURE_TAIL_MAX);
   const blockedContract = detectBlockedContract([checkLine, responseText, failTail]);
-  if (blockedContract !== null) {
+  if (input.progress_stops && blockedContract !== null) {
     return contractBlockedOutcome(
       ctx,
       roundNumber,

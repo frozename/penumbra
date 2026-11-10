@@ -14,6 +14,7 @@ import { expect, test } from "bun:test";
 import { join } from "node:path";
 
 import { emptyRecall } from "../_shared/test-helpers.js";
+import { classifyFailure, failureFingerprint } from "./progress.js";
 import { DEFAULT_INSPECT_SHA, type InspectConfig, makeInspection } from "./stage-test-helpers.js";
 import { type FixUntilGreenResult, fn, inputSchema } from "./workflow.js";
 
@@ -1443,7 +1444,7 @@ test("a worker CHECK_RESULT: BLOCKED reply stops as contract_defect with no repa
     {
       fanoutResponses: [{ response: "CHECK_RESULT: BLOCKED the fixture contradicts the spec" }],
     },
-    { max_rounds: 3, verify_check: false },
+    { max_rounds: 3, verify_check: false, progress_stops: true },
   );
   const sr = (result as { stop_reason?: unknown }).stop_reason;
   const cdr = (result as { contract_defect_reason?: unknown }).contract_defect_reason;
@@ -1462,7 +1463,7 @@ test("BLOCKED with escalate_to still stops without escalating", async () => {
     {
       fanoutResponses: [{ response: "CHECK_RESULT: BLOCKED the fixture contradicts the spec" }],
     },
-    { max_rounds: 3, verify_check: false, escalate_to: "opus" },
+    { max_rounds: 3, verify_check: false, escalate_to: "opus", progress_stops: true },
   );
   const sr = (result as { stop_reason?: unknown }).stop_reason;
   expect(result.ok).toBe(false);
@@ -1485,7 +1486,7 @@ test("repeated identical fenced failure evidence stops with no_progress", async 
         { response: "CHECK_RESULT: PASS" },
       ],
     },
-    { max_rounds: 3, verify_check: false },
+    { max_rounds: 3, verify_check: false, progress_stops: true },
   );
   const sr = (result as { stop_reason?: unknown }).stop_reason;
   expect(result.ok).toBe(false);
@@ -1507,7 +1508,7 @@ test("different worker prose around the same fenced evidence is still no_progres
         { response: "CHECK_RESULT: PASS" },
       ],
     },
-    { max_rounds: 3, verify_check: false },
+    { max_rounds: 3, verify_check: false, progress_stops: true },
   );
   const sr = (result as { stop_reason?: unknown }).stop_reason;
   expect(result.ok).toBe(false);
@@ -1527,7 +1528,7 @@ test("changed failing evidence keeps repairing until green", async () => {
         { response: "CHECK_RESULT: PASS" },
       ],
     },
-    { max_rounds: 3, verify_check: false },
+    { max_rounds: 3, verify_check: false, progress_stops: true },
   );
   const sr = (result as { stop_reason?: unknown }).stop_reason;
   expect(result.ok).toBe(true);
@@ -1540,7 +1541,7 @@ test("missing tool stops as environment_unavailable", async () => {
     {
       fanoutResponses: [{ response: ENV("bash: line 1: bun: command not found") }],
     },
-    { max_rounds: 3, verify_check: false },
+    { max_rounds: 3, verify_check: false, progress_stops: true },
   );
   const sr = (result as { stop_reason?: unknown }).stop_reason;
   expect(result.ok).toBe(false);
@@ -1561,7 +1562,7 @@ test("heavy-job lock timeout stops as environment_unavailable", async () => {
         },
       ],
     },
-    { max_rounds: 3, verify_check: false },
+    { max_rounds: 3, verify_check: false, progress_stops: true },
   );
   const sr = (result as { stop_reason?: unknown }).stop_reason;
   expect(result.ok).toBe(false);
@@ -1580,7 +1581,7 @@ test("host memory admission timeout stops as environment_unavailable", async () 
         },
       ],
     },
-    { max_rounds: 3, verify_check: false },
+    { max_rounds: 3, verify_check: false, progress_stops: true },
   );
   const sr = (result as { stop_reason?: unknown }).stop_reason;
   expect(result.ok).toBe(false);
@@ -1597,7 +1598,7 @@ test("provider rate limit stops as capacity_unavailable", async () => {
         { response: ENV("Error: HTTP 429 Too Many Requests: rate limit exceeded") },
       ],
     },
-    { max_rounds: 3, verify_check: false },
+    { max_rounds: 3, verify_check: false, progress_stops: true },
   );
   const sr = (result as { stop_reason?: unknown }).stop_reason;
   expect(result.ok).toBe(false);
@@ -1619,7 +1620,7 @@ test("a TS error at line 429 is still repaired", async () => {
         { response: "CHECK_RESULT: PASS" },
       ],
     },
-    { max_rounds: 3, verify_check: false },
+    { max_rounds: 3, verify_check: false, progress_stops: true },
   );
   const sr = (result as { stop_reason?: unknown }).stop_reason;
   expect(result.ok).toBe(true);
@@ -1640,7 +1641,7 @@ test("a failing assertion mentioning 429 and rate limits is still repaired", asy
         { response: "CHECK_RESULT: PASS" },
       ],
     },
-    { max_rounds: 3, verify_check: false },
+    { max_rounds: 3, verify_check: false, progress_stops: true },
   );
   const sr = (result as { stop_reason?: unknown }).stop_reason;
   expect(result.ok).toBe(true);
@@ -1657,7 +1658,7 @@ test("a memory-admission progress line before a real TS error is still repaired"
         { response: "CHECK_RESULT: PASS" },
       ],
     },
-    { max_rounds: 3, verify_check: false },
+    { max_rounds: 3, verify_check: false, progress_stops: true },
   );
   const sr = (result as { stop_reason?: unknown }).stop_reason;
   expect(result.ok).toBe(true);
@@ -1690,7 +1691,7 @@ test("identical verifier-measured failures stop with no_progress", async () => {
         { ran: true, check_exit: 0 },
       ],
     },
-    { max_rounds: 3 },
+    { max_rounds: 3, progress_stops: true },
   );
   const sr = (result as { stop_reason?: unknown }).stop_reason;
   expect(result.ok).toBe(false);
@@ -1725,7 +1726,7 @@ test("no_progress escalates once to escalate_to, then stops if the escalated rou
         { response: FAIL("7.89") },
       ],
     },
-    { max_rounds: 4, verify_check: false, escalate_to: "opus" },
+    { max_rounds: 4, verify_check: false, escalate_to: "opus", progress_stops: true },
   );
   const sr = (result as { stop_reason?: unknown }).stop_reason;
   expect(result.ok).toBe(false);
@@ -1750,7 +1751,7 @@ test("an escalated round after no_progress can still go green", async () => {
         { response: "CHECK_RESULT: PASS" },
       ],
     },
-    { max_rounds: 4, verify_check: false, escalate_to: "opus" },
+    { max_rounds: 4, verify_check: false, escalate_to: "opus", progress_stops: true },
   );
   const sr = (result as { stop_reason?: unknown }).stop_reason;
   expect(result.ok).toBe(true);
@@ -1758,4 +1759,405 @@ test("an escalated round after no_progress can still go green", async () => {
   expect(result.rounds[1]?.reason).toBe("no_progress_escalate");
   expect(result.rounds[2]?.agent).toBe("opus");
   expect(sr ?? null).toBeNull();
+});
+
+// ---------------------------------------------------------------------------
+// progress_stops opt-in: off reproduces the legacy loop, on enables typed stops
+// ---------------------------------------------------------------------------
+
+test("progress_stops defaults to false and accepts an explicit boolean", () => {
+  expect(inputSchema.parse(baseArgs()).progress_stops).toBe(false);
+  expect(inputSchema.parse(baseArgs({ progress_stops: true })).progress_stops).toBe(true);
+  expect(inputSchema.parse(baseArgs({ progress_stops: false })).progress_stops).toBe(false);
+});
+
+test("progress_stops false: identical failure evidence keeps repairing until max_rounds", async () => {
+  const { result, ctx } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: FAIL("1.23") },
+        { response: FAIL("4.56") },
+        { response: FAIL("7.89") },
+      ],
+    },
+    { max_rounds: 3, verify_check: false, escalate_to: "opus" },
+  );
+  expect(result.ok).toBe(false);
+  expect(result.green).toBe(false);
+  expect(result.rounds_used).toBe(3);
+  expect(result.rounds.map((round) => round.reason)).toEqual([
+    "check_failed",
+    "check_failed",
+    "check_failed",
+  ]);
+  expect(result.rounds.map((round) => round.agent)).toEqual(["executor", "executor", "opus"]);
+  expect(result.stop_reason).toBe("max_rounds");
+  expect(ctx.capturedChainStarts).toHaveLength(3);
+});
+
+test("progress_stops false: environment-looking evidence is an ordinary check failure", async () => {
+  const { result } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: ENV("bash: line 1: bun: command not found") },
+        { response: "CHECK_RESULT: PASS" },
+      ],
+    },
+    { max_rounds: 3, verify_check: false },
+  );
+  expect(result.ok).toBe(true);
+  expect(result.rounds_used).toBe(2);
+  expect(result.rounds[0]?.reason).toBe("check_failed");
+  expect(result.stop_reason).toBeNull();
+});
+
+test("progress_stops false: capacity-looking evidence is an ordinary check failure", async () => {
+  const { result } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: ENV("Error: HTTP 429 Too Many Requests: rate limit exceeded") },
+        { response: "CHECK_RESULT: PASS" },
+      ],
+    },
+    { max_rounds: 3, verify_check: false },
+  );
+  expect(result.ok).toBe(true);
+  expect(result.rounds_used).toBe(2);
+  expect(result.rounds[0]?.reason).toBe("check_failed");
+  expect(result.stop_reason).toBeNull();
+});
+
+test("progress_stops false: a BLOCKED reply is an ordinary check failure and loops", async () => {
+  const { result, ctx } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: "CHECK_RESULT: BLOCKED the fixture contradicts the spec" },
+        { response: "CHECK_RESULT: PASS" },
+      ],
+    },
+    { max_rounds: 3, verify_check: false },
+  );
+  expect(result.ok).toBe(true);
+  expect(result.rounds_used).toBe(2);
+  expect(result.rounds[0]?.reason).toBe("check_failed");
+  expect(result.rounds[0]?.check_verify_status).toBe("skipped");
+  expect(result.contract_defect_reason).toBeUndefined();
+  expect(ctx.capturedChainStarts).toHaveLength(2);
+});
+
+test("progress_stops false: identical verifier-measured failures keep feeding rounds", async () => {
+  const measuredFail = {
+    ran: true,
+    check_exit: 1,
+    failing_segment: "typecheck",
+    output_tail: "src/a.ts(3,7): error TS2322: stuck",
+  };
+  const { result } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: "CHECK_RESULT: PASS" },
+        { response: "CHECK_RESULT: PASS", branchName: "feature/branch-2" },
+        { response: "CHECK_RESULT: PASS", branchName: "feature/branch-3" },
+      ],
+      verifierResponses: [measuredFail, measuredFail, { ran: true, check_exit: 0 }],
+    },
+    { max_rounds: 3 },
+  );
+  expect(result.ok).toBe(true);
+  expect(result.rounds_used).toBe(3);
+  expect(result.rounds[0]?.reason).toBe("verifier_measured_fail");
+  expect(result.rounds[1]?.reason).toBe("verifier_measured_fail");
+  expect(result.rounds[2]?.reason).toBe("check_passed");
+});
+
+test("progress_stops false: rubric failure always continues, even with identical evidence", async () => {
+  const failingGrade = {
+    overall_pass: false,
+    criteria: [{ index: 1, criterion: "fix the bug", pass: false, evidence: "still broken" }],
+  };
+  const { result } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: "CHECK_RESULT: PASS" },
+        { response: "CHECK_RESULT: PASS", branchName: "feature/branch-2" },
+        { response: "CHECK_RESULT: PASS", branchName: "feature/branch-3" },
+      ],
+      verifierResponses: [
+        { ran: true, check_exit: 0 },
+        { ran: true, check_exit: 0 },
+        { ran: true, check_exit: 0 },
+      ],
+      graderResponses: [
+        failingGrade,
+        failingGrade,
+        {
+          overall_pass: true,
+          criteria: [{ index: 1, criterion: "fix the bug", pass: true, evidence: "fixed" }],
+        },
+      ],
+    },
+    { max_rounds: 3, rubric: ["fix the bug"] },
+  );
+  expect(result.ok).toBe(true);
+  expect(result.rounds_used).toBe(3);
+  expect(result.rounds[0]?.reason).toBe("rubric_failed");
+  expect(result.rounds[1]?.reason).toBe("rubric_failed");
+  expect(result.rounds[2]?.reason).toBe("rubric_passed");
+});
+
+test("progress_stops false: capacity-looking rubric evidence still continues as rubric_failed", async () => {
+  const { result } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: "CHECK_RESULT: PASS" },
+        { response: "CHECK_RESULT: PASS", branchName: "feature/branch-2" },
+      ],
+      verifierResponses: [
+        { ran: true, check_exit: 0 },
+        { ran: true, check_exit: 0 },
+      ],
+      graderResponses: [
+        {
+          overall_pass: false,
+          criteria: [
+            {
+              index: 1,
+              criterion: "fix the bug",
+              pass: false,
+              evidence: "grader hit HTTP 429 Too Many Requests",
+            },
+          ],
+        },
+        {
+          overall_pass: true,
+          criteria: [{ index: 1, criterion: "fix the bug", pass: true, evidence: "ok" }],
+        },
+      ],
+    },
+    { max_rounds: 3, rubric: ["fix the bug"] },
+  );
+  expect(result.ok).toBe(true);
+  expect(result.rounds_used).toBe(2);
+  expect(result.rounds[0]?.reason).toBe("rubric_failed");
+  expect(result.rounds[0]?.rubric_status).toBe("FAILED");
+  expect(result.rounds[1]?.reason).toBe("rubric_passed");
+});
+
+test("progress_stops true: identical rubric failure evidence stops with no_progress", async () => {
+  const failingGrade = {
+    overall_pass: false,
+    criteria: [{ index: 1, criterion: "fix the bug", pass: false, evidence: "still broken" }],
+  };
+  const { result } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: "CHECK_RESULT: PASS" },
+        { response: "CHECK_RESULT: PASS", branchName: "feature/branch-2" },
+        { response: "CHECK_RESULT: PASS", branchName: "feature/branch-3" },
+      ],
+      verifierResponses: [
+        { ran: true, check_exit: 0 },
+        { ran: true, check_exit: 0 },
+        { ran: true, check_exit: 0 },
+      ],
+      graderResponses: [
+        failingGrade,
+        failingGrade,
+        {
+          overall_pass: true,
+          criteria: [{ index: 1, criterion: "fix the bug", pass: true, evidence: "fixed" }],
+        },
+      ],
+    },
+    { max_rounds: 3, rubric: ["fix the bug"], progress_stops: true },
+  );
+  expect(result.ok).toBe(false);
+  expect(result.rounds_used).toBe(2);
+  expect(result.rounds[0]?.reason).toBe("rubric_failed");
+  expect(result.rounds[1]?.reason).toBe("no_progress");
+  expect(result.stop_reason).toBe("no_progress");
+});
+
+test("progress_stops true: different rubric failure evidence repairs and continues", async () => {
+  const { result } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: "CHECK_RESULT: PASS" },
+        { response: "CHECK_RESULT: PASS", branchName: "feature/branch-2" },
+        { response: "CHECK_RESULT: PASS", branchName: "feature/branch-3" },
+      ],
+      verifierResponses: [
+        { ran: true, check_exit: 0 },
+        { ran: true, check_exit: 0 },
+        { ran: true, check_exit: 0 },
+      ],
+      graderResponses: [
+        {
+          overall_pass: false,
+          criteria: [
+            { index: 1, criterion: "fix the bug", pass: false, evidence: "missing tests" },
+          ],
+        },
+        {
+          overall_pass: false,
+          criteria: [
+            { index: 1, criterion: "fix the bug", pass: false, evidence: "wrong error type" },
+          ],
+        },
+        {
+          overall_pass: true,
+          criteria: [{ index: 1, criterion: "fix the bug", pass: true, evidence: "ok" }],
+        },
+      ],
+    },
+    { max_rounds: 3, rubric: ["fix the bug"], progress_stops: true },
+  );
+  expect(result.ok).toBe(true);
+  expect(result.rounds_used).toBe(3);
+  expect(result.rounds[0]?.reason).toBe("rubric_failed");
+  expect(result.rounds[1]?.reason).toBe("rubric_failed");
+  expect(result.rounds[2]?.reason).toBe("rubric_passed");
+  expect(result.stop_reason).toBeNull();
+});
+
+test("progress_stops true: rubric failure with capacity evidence stops immediately", async () => {
+  const { result, ctx } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: "CHECK_RESULT: PASS" },
+        { response: "CHECK_RESULT: PASS", branchName: "feature/branch-2" },
+      ],
+      verifierResponses: [
+        { ran: true, check_exit: 0 },
+        { ran: true, check_exit: 0 },
+      ],
+      graderResponses: [
+        {
+          overall_pass: false,
+          criteria: [
+            {
+              index: 1,
+              criterion: "fix the bug",
+              pass: false,
+              evidence: "grader hit HTTP 429 Too Many Requests",
+            },
+          ],
+        },
+      ],
+    },
+    { max_rounds: 3, rubric: ["fix the bug"], progress_stops: true },
+  );
+  expect(result.ok).toBe(false);
+  expect(result.rounds_used).toBe(1);
+  expect(result.rounds[0]?.reason).toBe("capacity_unavailable");
+  expect(result.rounds[0]?.rubric_status).toBe("FAILED");
+  expect(result.stop_reason).toBe("capacity_unavailable");
+  expect(ctx.capturedChainStarts).toHaveLength(3);
+});
+
+test("progress_stops true: verifier_not_run resets the failure fingerprint", async () => {
+  const measuredFail = {
+    ran: true,
+    check_exit: 1,
+    failing_segment: "typecheck",
+    output_tail: "src/a.ts(3,7): error TS2322: stuck",
+  };
+  const { result } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: "CHECK_RESULT: PASS" },
+        { response: "CHECK_RESULT: PASS", branchName: "feature/branch-2" },
+        { response: "CHECK_RESULT: PASS", branchName: "feature/branch-3" },
+        { response: "CHECK_RESULT: PASS", branchName: "feature/branch-4" },
+      ],
+      verifierResponses: [
+        measuredFail,
+        { ran: false, check_exit: -1 },
+        measuredFail,
+        { ran: true, check_exit: 0 },
+      ],
+    },
+    { max_rounds: 4, progress_stops: true },
+  );
+  expect(result.ok).toBe(true);
+  expect(result.rounds_used).toBe(4);
+  expect(result.rounds.map((round) => round.reason)).toEqual([
+    "verifier_measured_fail",
+    "verifier_not_run",
+    "verifier_measured_fail",
+    "check_passed",
+  ]);
+});
+
+test("progress_stops true: a bare 429 with no actionable marker does not trip capacity_unavailable", async () => {
+  const { result } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: ENV("the upstream counter reached 429") },
+        { response: "CHECK_RESULT: PASS" },
+      ],
+    },
+    { max_rounds: 3, verify_check: false, progress_stops: true },
+  );
+  expect(result.ok).toBe(true);
+  expect(result.rounds_used).toBe(2);
+  expect(result.rounds[0]?.reason).toBe("check_failed");
+  expect(result.stop_reason).toBeNull();
+  expect(classifyFailure("the upstream counter reached 429")).toBe("actionable");
+});
+
+test("progress_stops true: failures differing only by an ISO-8601 timestamp fingerprint equal", async () => {
+  const failAt = (iso: string) =>
+    "CHECK_RESULT: FAIL\n```\n" + iso + " attempt: " + TS2322 + "\n```";
+  const { result } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: failAt("2026-09-12T10:00:01.000Z") },
+        { response: failAt("2026-09-13T23:59:58.999Z") },
+        { response: "CHECK_RESULT: PASS" },
+      ],
+    },
+    { max_rounds: 3, verify_check: false, progress_stops: true },
+  );
+  expect(result.ok).toBe(false);
+  expect(result.rounds_used).toBe(2);
+  expect(result.rounds[0]?.reason).toBe("check_failed");
+  expect(result.rounds[1]?.reason).toBe("no_progress");
+  expect(result.stop_reason).toBe("no_progress");
+});
+
+test("progress_stops true: last-round no_progress with escalate_to stops as no_progress", async () => {
+  const { result } = await runWorkflow(
+    {
+      fanoutResponses: [{ response: FAIL("1.23") }, { response: FAIL("4.56") }],
+    },
+    { max_rounds: 2, verify_check: false, escalate_to: "opus", progress_stops: true },
+  );
+  expect(result.ok).toBe(false);
+  expect(result.rounds_used).toBe(2);
+  expect(result.rounds[0]?.reason).toBe("check_failed");
+  expect(result.rounds[0]?.agent).toBe("executor");
+  expect(result.rounds[1]?.reason).toBe("no_progress");
+  expect(result.rounds[1]?.agent).toBe("opus");
+  expect(result.stop_reason).toBe("no_progress");
+});
+
+test("failureFingerprint returns null for the verifier's fixed measured-failure fallback", () => {
+  expect(
+    failureFingerprint("Independent CHECK verifier measured check_exit=1, ran=true"),
+  ).toBeNull();
+  expect(
+    failureFingerprint("Independent CHECK verifier measured check_exit=-1, ran=false"),
+  ).toBeNull();
+  expect(
+    failureFingerprint("Independent CHECK verifier measured check_exit=1, ran=true trailing"),
+  ).not.toBeNull();
+});
+
+test("failureFingerprint returns null for evidence that normalises away entirely", () => {
+  expect(failureFingerprint("")).toBeNull();
+  expect(failureFingerprint("   ")).toBeNull();
+  expect(failureFingerprint("0123456789abcdef0123456789abcdef01234567")).toBeNull();
+  expect(failureFingerprint("deadbeefcafe")).toBeNull();
+  expect(failureFingerprint("src/a.ts(3,7): error TS2322: stuck")).not.toBeNull();
 });
