@@ -18,6 +18,7 @@ export interface SeatProfileStoreAppendResult {
 export interface SeatProfileStoreReadResult {
   evidence: SeatEvidence[];
   corrupt_lines: number;
+  duplicate_lines: number;
 }
 
 export interface SeatProfileStore {
@@ -53,26 +54,31 @@ async function readFileState(path: string): Promise<SeatProfileStoreFileState> {
   try {
     const stats = await stat(path);
     if (stats.size === 0) {
-      return { evidence: [], corrupt_lines: 0, raw: "" };
+      return { evidence: [], corrupt_lines: 0, duplicate_lines: 0, raw: "" };
     }
     const raw = await readFile(path, "utf8");
     const evidence: SeatEvidence[] = [];
+    const seenIds = new Set<string>();
     let corrupt_lines = 0;
+    let duplicate_lines = 0;
 
     for (const line of raw.split("\n")) {
       if (line.trim() === "") continue;
       const record = parseEvidenceLine(line);
       if (record === null) {
         corrupt_lines += 1;
+      } else if (seenIds.has(record.evidence_id)) {
+        duplicate_lines += 1;
       } else {
+        seenIds.add(record.evidence_id);
         evidence.push(record);
       }
     }
 
-    return { evidence, corrupt_lines, raw };
+    return { evidence, corrupt_lines, duplicate_lines, raw };
   } catch (error) {
     if (isMissingFileError(error)) {
-      return { evidence: [], corrupt_lines: 0, raw: "" };
+      return { evidence: [], corrupt_lines: 0, duplicate_lines: 0, raw: "" };
     }
     throw error;
   }
@@ -119,7 +125,11 @@ export function createSeatProfileStore(opts: SeatProfileStoreOptions = {}): Seat
   return {
     async read(): Promise<SeatProfileStoreReadResult> {
       const state = await readFileState(path);
-      return { evidence: state.evidence, corrupt_lines: state.corrupt_lines };
+      return {
+        evidence: state.evidence,
+        corrupt_lines: state.corrupt_lines,
+        duplicate_lines: state.duplicate_lines,
+      };
     },
     append: (evidence) => serialAppend(path, evidence),
   };

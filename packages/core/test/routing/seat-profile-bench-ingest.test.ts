@@ -278,6 +278,25 @@ describe("coding-v2 bench row ingest", () => {
     ]);
   });
 
+  test("recorded_at converts ended_epoch to ISO across calendar boundaries", () => {
+    const cases = [
+      { epoch: 1, iso: "1970-01-01T00:00:01.000Z" },
+      { epoch: 951782400, iso: "2000-02-29T00:00:00.000Z" },
+      { epoch: 1709164800, iso: "2024-02-29T00:00:00.000Z" },
+      { epoch: 4102444800, iso: "2100-01-01T00:00:00.000Z" },
+      { epoch: 2147483647, iso: "2038-01-19T03:14:07.000Z" },
+    ];
+
+    for (const { epoch, iso } of cases) {
+      const result = ingestCodingV2BenchRows(
+        benchText(benchRow({ task: `epoch-${String(epoch)}`, ended_epoch: epoch })),
+        { fingerprint: FINGERPRINT },
+      );
+      expect(result.evidence).toHaveLength(1);
+      expect(result.evidence[0]?.recorded_at).toBe(iso);
+    }
+  });
+
   test("a realistic sparse corpus yields one sparse cell and an abstaining profile", () => {
     const rows = ["cache", "duration", "singleflight"].map((task) => benchRow({ task }));
     const { evidence } = ingestCodingV2BenchRows(benchText(...rows), {

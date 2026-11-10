@@ -242,6 +242,7 @@ function cellPassStats(fresh: SeatEvidence[]): {
 
 function wallSecondsP50(fresh: SeatEvidence[]): number | null {
   const values = fresh
+    .filter((e) => e.verdict !== "capacity")
     .map((e) => e.wall_seconds)
     .filter((ws): ws is number => ws !== null)
     .sort((a, b) => a - b);

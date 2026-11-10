@@ -155,10 +155,30 @@ function benchContextBand(row: BenchRow): StepResult<SeatContextBand> {
   return { ok: true, value: band };
 }
 
-// The ambient-clock scan bans the Date-construction token under src/routing;
-// Reflect.construct performs the same deterministic epoch→ISO conversion.
+// The clock scan bans Date construction under src/routing; this is the
+// deterministic civil-from-days conversion (Howard Hinnant's algorithm).
 function epochSecondsToIso(epochSeconds: number): string {
-  return Reflect.construct(Date, [epochSeconds * 1000]).toISOString();
+  const ms = epochSeconds * 1000;
+  const days = Math.floor(ms / 86_400_000);
+  const msOfDay = ms - days * 86_400_000;
+  const z = days + 719_468;
+  const era = Math.floor(z / 146_097);
+  const doe = z - era * 146_097;
+  const yoe = Math.floor(
+    (doe - Math.floor(doe / 1460) + Math.floor(doe / 36_524) - Math.floor(doe / 146_096)) / 365,
+  );
+  const year = yoe + era * 400;
+  const doy = doe - (365 * yoe + Math.floor(yoe / 4) - Math.floor(yoe / 100));
+  const mp = Math.floor((5 * doy + 2) / 153);
+  const day = doy - Math.floor((153 * mp + 2) / 5) + 1;
+  const month = mp < 10 ? mp + 3 : mp - 9;
+  const fullYear = month <= 2 ? year + 1 : year;
+  const pad = (value: number, width = 2): string => String(value).padStart(width, "0");
+  return (
+    `${pad(fullYear, 4)}-${pad(month)}-${pad(day)}` +
+    `T${pad(Math.floor(msOfDay / 3_600_000))}:${pad(Math.floor((msOfDay % 3_600_000) / 60_000))}` +
+    `:${pad(Math.floor((msOfDay % 60_000) / 1_000))}.${pad(msOfDay % 1_000, 3)}Z`
+  );
 }
 
 function buildBenchEvidence(

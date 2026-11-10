@@ -453,4 +453,95 @@ describe("seat capability profiles", () => {
     expect(cell.wall_seconds_p50).toBe(11);
     expect(cell.capacity_count).toBe(0);
   });
+
+  test("wall_seconds_p50 excludes capacity verdicts like the pass rate", () => {
+    const fp = fingerprint();
+    const ev = [
+      evidence({ fp, rootTaskId: "wall-r1", verdict: "pass", wallSeconds: 10 }),
+      evidence({ fp, rootTaskId: "wall-r2", verdict: "pass", wallSeconds: 11 }),
+      evidence({ fp, rootTaskId: "wall-r3", verdict: "pass", wallSeconds: 12 }),
+      ...["wall-c1", "wall-c2", "wall-c3"].map((rootTaskId) =>
+        evidence({ fp, rootTaskId, verdict: "capacity", wallSeconds: 600 }),
+      ),
+    ];
+
+    const profile = buildSeatProfile(ev, fp, { now: NOW });
+    expect(profile.cells).toHaveLength(1);
+    const cell = profile.cells[0]!;
+    expect(cell.wall_seconds_p50).toBe(11);
+    expect(cell.capacity_count).toBe(3);
+    expect(cell.attempts).toBe(6);
+  });
+
+  test("default options qualify at five scored root tasks and stay sparse at four", () => {
+    const fp = fingerprint();
+    const four = Array.from({ length: 4 }, (_, i) =>
+      evidence({ fp, rootTaskId: `def-four-${String(i)}` }),
+    );
+    const five = Array.from({ length: 5 }, (_, i) =>
+      evidence({ fp, rootTaskId: `def-five-${String(i)}` }),
+    );
+
+    const sparse = buildSeatProfile(four, fp, { now: NOW });
+    expect(sparse.cells).toHaveLength(1);
+    expect(sparse.cells[0]?.status).toBe("sparse");
+    expect(sparse.status).toBe("abstain");
+    expect(sparse.abstain_reason).toBe("no_qualified_cells");
+
+    const qualified = buildSeatProfile(five, fp, { now: NOW });
+    expect(qualified.cells).toHaveLength(1);
+    expect(qualified.cells[0]?.status).toBe("qualified");
+    expect(qualified.status).toBe("qualified");
+  });
+
+  test("default maxAgeDays leaves a 45-day-old record stale", () => {
+    const fp = fingerprint();
+    const ev = Array.from({ length: 5 }, (_, i) =>
+      evidence({
+        fp,
+        rootTaskId: `aged-${String(i)}`,
+        recordedAt: "2026-09-25T00:00:00.000Z",
+      }),
+    );
+
+    const profile = buildSeatProfile(ev, fp, { now: NOW });
+    expect(profile.cells).toHaveLength(1);
+    expect(profile.cells[0]?.status).toBe("stale");
+    expect(profile.status).toBe("abstain");
+    expect(profile.abstain_reason).toBe("no_qualified_cells");
+  });
+
+  test("default freshness boundary is inclusive at exactly 30 days", () => {
+    const fp = fingerprint();
+    const edge = (band: SeatContextBand, prefix: string, recordedAt: string): SeatEvidence[] =>
+      Array.from({ length: 5 }, (_, i) =>
+        evidence({ fp, rootTaskId: `${prefix}-${String(i)}`, contextBand: band, recordedAt }),
+      );
+
+    const profile = buildSeatProfile(
+      [
+        ...edge("ctx_8k", "edge-fresh", "2026-10-10T00:00:00.000Z"),
+        ...edge("ctx_32k", "edge-stale", "2026-10-09T23:59:59.999Z"),
+      ],
+      fp,
+      { now: NOW },
+    );
+
+    const freshCell = profile.cells.find((cell) => cell.context_band === "ctx_8k")!;
+    const staleCell = profile.cells.find((cell) => cell.context_band === "ctx_32k")!;
+    expect(freshCell.status).toBe("qualified");
+    expect(staleCell.status).toBe("stale");
+    expect(profile.status).toBe("qualified");
+  });
+
+  test("empty-string routing or effort policy makes the fingerprint incomplete", () => {
+    const ev = Array.from({ length: 6 }, (_, i) => evidence({ rootTaskId: `pol-${String(i)}` }));
+
+    for (const fp of [fingerprint({ routing_policy: "" }), fingerprint({ effort_policy: "" })]) {
+      const profile = buildSeatProfile(ev, fp, { now: NOW });
+      expect(profile.status).toBe("abstain");
+      expect(profile.abstain_reason).toBe("incomplete_fingerprint");
+      expect(profile.cells).toEqual([]);
+    }
+  });
 });

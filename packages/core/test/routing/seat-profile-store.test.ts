@@ -104,7 +104,7 @@ describe("seat profile evidence store", () => {
         path: join(dir, "absent", "evidence.jsonl"),
       });
       const empty = await missing.read();
-      expect(empty).toEqual({ evidence: [], corrupt_lines: 0 });
+      expect(empty).toEqual({ evidence: [], corrupt_lines: 0, duplicate_lines: 0 });
       expect(DEFAULT_SEAT_PROFILE_EVIDENCE_PATH).toBe("~/.penumbra/seat-profiles/evidence.jsonl");
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -253,21 +253,33 @@ describe("seat profile evidence store", () => {
     }
   });
 
-  test("concurrent appends from separate processes do not lose records", async () => {
+  test("concurrent appends from separate processes dedupe overlapping evidence on read", async () => {
     const dir = mkdtempSync(join(tmpdir(), "seat-profile-store-"));
     try {
       const path = join(dir, "evidence.jsonl");
       const storeModuleHref = new URL("../../src/routing/seat-profile-store.ts", import.meta.url)
         .href;
 
-      const children = Array.from({ length: 6 }, (_, child) => {
-        const batches = Array.from({ length: 4 }, (_, batch) =>
-          Array.from({ length: 5 }, (_, record) =>
+      // A cross-process append race leaves the same evidence_id on two lines;
+      // read() keeps the first copy and counts the rest as duplicate_lines.
+      const raced = makeEvidence({ evidence_id: "race-dup" });
+      writeFileSync(path, `${JSON.stringify(raced)}\n${JSON.stringify(raced)}\n`, "utf8");
+
+      const shared = Array.from({ length: 30 }, (_, i) =>
+        makeEvidence({ evidence_id: `shared-${String(i)}` }),
+      );
+      const childCount = 6;
+      const batchesPerChild = 4;
+      const uniquePerBatch = 5;
+      const children = Array.from({ length: childCount }, (_, child) => {
+        const batches = Array.from({ length: batchesPerChild }, (_, batch) => [
+          ...shared,
+          ...Array.from({ length: uniquePerBatch }, (_, record) =>
             makeEvidence({
               evidence_id: `proc-${String(child)}-${String(batch)}-${String(record)}`,
             }),
           ),
-        );
+        ]);
         const scriptPath = join(dir, `append-${String(child)}.ts`);
         writeFileSync(
           scriptPath,
@@ -286,9 +298,11 @@ describe("seat profile evidence store", () => {
       });
 
       const parentStore = createSeatProfileStore({ path });
-      const parentAppends = Array.from({ length: 3 }, (_, i) =>
+      const parentBatches = 3;
+      const parentPerBatch = 4;
+      const parentAppends = Array.from({ length: parentBatches }, (_, i) =>
         parentStore.append(
-          Array.from({ length: 4 }, (_, j) =>
+          Array.from({ length: parentPerBatch }, (_, j) =>
             makeEvidence({ evidence_id: `parent-${String(i)}-${String(j)}` }),
           ),
         ),
@@ -312,8 +326,23 @@ describe("seat profile evidence store", () => {
 
       const read = await parentStore.read();
       expect(read.corrupt_lines).toBe(0);
-      expect(read.evidence).toHaveLength(132);
-      expect(new Set(read.evidence.map((record) => record.evidence_id)).size).toBe(132);
+      expect(read.duplicate_lines).toBeGreaterThan(0);
+
+      const ids = read.evidence.map((record) => record.evidence_id);
+      expect(new Set(ids).size).toBe(ids.length);
+
+      const expectedDistinct =
+        1 +
+        shared.length +
+        childCount * batchesPerChild * uniquePerBatch +
+        parentBatches * parentPerBatch;
+      expect(read.evidence).toHaveLength(expectedDistinct);
+
+      const profile = buildSeatProfile(read.evidence, FINGERPRINT, { now: PROFILE_NOW });
+      expect(profile.status).toBe("qualified");
+      const cell = profile.cells[0]!;
+      expect(cell.attempts).toBe(expectedDistinct);
+      expect(cell.root_tasks).toBe(expectedDistinct);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
