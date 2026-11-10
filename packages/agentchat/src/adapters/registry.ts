@@ -268,6 +268,9 @@ export function createStdioAcpAdapter(
       warmPoolMaxEntries: opts.warmPoolMaxEntries,
       warmPoolSize: opts.warmPoolSize,
       modelWarmupPrompt: opts.modelWarmupPrompt,
+      envByProject:
+        opts.envByProject ??
+        (o as { env_by_project?: Record<string, Record<string, string>> }).env_by_project,
     },
     {
       startServer: startStdioAcpServer,

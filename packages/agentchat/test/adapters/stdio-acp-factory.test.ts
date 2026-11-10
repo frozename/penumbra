@@ -175,3 +175,25 @@ describe("createStdioAcpAdapter options.model warning (#328)", () => {
     }
   });
 });
+
+describe("createStdioAcpAdapter forwards env_by_project", () => {
+  const map = { llamactl: { PENUMBRA_WORKER_INSTRUCTIONS: "/a.md" } };
+  const optsOf = (a: Adapter): { envByProject?: unknown } =>
+    (a as unknown as { opts: { envByProject?: unknown } }).opts;
+
+  test("forwards the agents.yaml snake_case env_by_project", () => {
+    expect(
+      optsOf(createStdioAcpAdapter({ binary: "mock-acp", env_by_project: map })).envByProject,
+    ).toEqual(map);
+  });
+
+  test("forwards camelCase envByProject", () => {
+    expect(
+      optsOf(createStdioAcpAdapter({ binary: "mock-acp", envByProject: map })).envByProject,
+    ).toEqual(map);
+  });
+
+  test("absent overlay stays undefined", () => {
+    expect(optsOf(createStdioAcpAdapter({ binary: "mock-acp" })).envByProject).toBeUndefined();
+  });
+});
