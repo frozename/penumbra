@@ -1034,7 +1034,12 @@ test("eligibility: reasons accumulate sorted", () => {
   });
 });
 
-test("propose: buildReceiptDigests filters to hidden_assertion kind only", () => {
+test.each([
+  { kind: "self_report", title: "self_report" },
+  { kind: "llm_judge", title: "llm_judge" },
+  { kind: "reviewer", title: "reviewer" },
+  { kind: "schema_check", title: "schema_check" },
+])("keeps a $kind companion receipt out of receipt_digests", ({ kind, title }) => {
   expect(mod).not.toBeNull();
   if (!mod) {
     return;
@@ -1053,7 +1058,7 @@ test("propose: buildReceiptDigests filters to hidden_assertion kind only", () =>
     receipts: [
       hiddenReceipt(),
       signReceipt({
-        kind: "llm_judge",
+        kind,
         producer: "grader",
         sha: finalSha,
         claimed_verdict: "pass",
