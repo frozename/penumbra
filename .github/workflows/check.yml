@@ -7,7 +7,9 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # ubuntu-latest moved to 26.04, where the grader sandbox tests find no OS sandbox
+    # (SandboxUnavailableError); pin until the sandbox backend supports the new image.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     # Raised from 15 on 2026-09-04, when packages/e2e joined the sharded test
