@@ -27,6 +27,7 @@ Native TS workflow that dispatches an implementation task to the penumbra fleet,
   "timeout_ms": 1800000,
   "verify_check": true,
   "verifier_agent": "verifier",
+  "progress_stops": false,
   "rubric": ["criterion one", "criterion two"],
   "grader_agent": "grader"
 }
@@ -54,6 +55,7 @@ Native TS workflow that dispatches an implementation task to the penumbra fleet,
 | `timeout_ms`          | `1800000`    | Per-dispatch timeout                                                                                   |
 | `verify_check`        | `true`       | When `true`, an independent verifier re-runs the CHECK after an apparent PASS                          |
 | `verifier_agent`      | `"verifier"` | Agent role for the independent verifier                                                                |
+| `progress_stops`      | `false`      | When `true`, failures are fingerprinted and the loop stops early on no-progress or outage evidence     |
 | `rubric`              | —            | Bounded nonempty array of criteria strings; if supplied, an independent grader evaluates the candidate |
 | `grader_agent`        | `"grader"`   | Agent role for the rubric grader                                                                       |
 
@@ -65,8 +67,8 @@ Native TS workflow that dispatches an implementation task to the penumbra fleet,
    - Dispatch via `runFanout` with `max_hops: 1` and `branch_base` set to the previous round's candidate branch (round 1 uses `base`). Outer workflow rounds, not inner chain continuations, own retries.
    - Resolve the unique completed `latest_handoff_id` from current DB-backed hop evidence. Its non-null branch and handoff id are authoritative only when `latest_reliability_trustworthy === true`; incomplete, ambiguous, missing, non-terminal, or untrusted latest-hop evidence stops immediately. Root reliability remains separate evidence and never substitutes for latest-hop reliability.
    - Require the known `root_handoff_id` that owns `response_text` to equal the selected candidate handoff before parsing CHECK output. Missing or mismatched response identity stops immediately; root response text is never relabeled as a child response.
-   - Parse the worker's `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL` marker from the response.
-   - On FAIL, record the round and continue to the next round.
+   - Parse the worker's `CHECK_RESULT: PASS` or `CHECK_RESULT: FAIL` marker from the response. With `progress_stops: true`, a `CHECK_RESULT: BLOCKED <reason>` reply is a contract defect: the round is recorded and the workflow stops before any verifier or escalation dispatch; with the default `progress_stops: false` it is treated as an ordinary check failure.
+   - On FAIL with `progress_stops: true`, the failure evidence is extracted from the fenced blocks that follow the `CHECK_RESULT: FAIL` marker (the whole response when it has no fenced block), classified, and fingerprinted. Fixable evidence always wins over environment and capacity matches. The round is repaired, escalated once, or stopped — see "Repair checkpoints and typed stops". With `progress_stops: false` every FAIL simply feeds the next round.
    - On PASS with `verify_check: true`, dispatch an independent verifier through `runFanout` on a separate worktree (`use_worktree: true`, `branch_base: candidate`, `isolated_install: true`, `max_hops: 1`, `tool_free: true`, `task_type: review_adversarial`).
      - The host strictly validates the candidate inspection before and after verification: created worktree identity, project identity when present, branch identity, full Git object id, clean state, complete untruncated evidence, and stable HEAD.
      - The verifier response's root handoff identity must equal the selected verifier handoff before the structured report is parsed.
@@ -84,6 +86,24 @@ Native TS workflow that dispatches an implementation task to the penumbra fleet,
    - On PASS with no rubric → return green.
 3. **Return** the result with bounded round records (no response body leaks), candidate/verifier/grader handoff references, and the final branch.
 
+## Repair checkpoints and typed stops
+
+With the default `progress_stops: false`, every FAIL — worker check report, verifier-measured failure, or rubric grade — simply feeds the next round, and `escalate_to` applies only on the final round. With `progress_stops: true`, every FAIL goes through an evidence-bound decision before another round is dispatched:
+
+- **Evidence** comes from the fenced blocks after the `CHECK_RESULT: FAIL` marker, never from the surrounding prose, so reworded retries around identical failure output still count as no progress. When the response has no fenced block, the whole output is the evidence.
+- **Classification** is case-insensitive and checks fixable markers first (`error TS<n>`, `(fail) `, `expect(`, `Expected:`, source `file:line:col` locations). Only when none match does it look for environment outages (`command not found`, spawn `ENOENT`, `ENOSPC`, heavy-job lock timeouts, host memory admission, `claim not admitted`) and then provider-shaped capacity failures (`HTTP 429`, `status 429`, `429 Too Many Requests`, `rate limit exceeded`, `quota exceeded`, `401 Unauthorized`, `overloaded_error`). Anything else is actionable.
+- **Fingerprint** is the sha256 of the evidence after stripping ANSI escapes, ISO-8601 timestamps, durations, and hex SHAs, then collapsing whitespace. Bare integers and line:column positions are preserved, so `error 1` and `error 2` remain distinct failures. Evidence that carries no failure detail fingerprints as unknown (`null`) instead: the verifier's fixed `measured check_exit=…, ran=…` fallback and text that normalises away entirely, such as a bare SHA — unknown evidence can never count as no progress.
+
+The decision outcomes:
+
+- **Repair** — actionable evidence whose fingerprint differs from the previous failure; the fingerprint is recorded and the loop continues.
+- **`no_progress`** — actionable evidence fingerprinting identically to the previous failure. With `escalate_to` set, not already escalated, and rounds remaining, the round is recorded as `no_progress_escalate` once and the next round dispatches on `escalate_to`; a second stuck round stops. Typed stops never dispatch another model turn.
+- **`environment_unavailable` / `capacity_unavailable`** — non-actionable evidence; the workflow stops rather than burning rounds on an outage.
+- **`contract_defect`** — a `CHECK_RESULT: BLOCKED <reason>` reply; stops before parsing, verifying, or escalating, and surfaces the reason in `contract_defect_reason`.
+- **`max_rounds`** — the round cap is exhausted while still failing.
+
+The result's `stop_reason` is `null` on green, the stopping round's `reason` on any stop, and `"max_rounds"` on cap exhaustion; the typed stop reasons above only occur with `progress_stops: true`. Baseline-failure detection (recognising that a check was already failing before the dispatch) is a follow-up, not part of this checkpoint.
+
 ## Modules
 
 - `check-parse.ts` — CHECK parser, fence stripping, round message builder, check command validation.
@@ -92,6 +112,7 @@ Native TS workflow that dispatches an implementation task to the penumbra fleet,
 - `worktree-binding.ts` — Shared strict runtime validator for candidate, verifier, and grader worktree inspections.
 - `verification.ts` — Independent CHECK verifier: dispatches a verifier that re-runs the CHECK on a separately inspected immutable checkout.
 - `rubric.ts` — Independent rubric grader: dispatches a grader that evaluates the immutable candidate against the rubric criteria.
+- `progress.ts` — Failure evidence extraction, actionable/environment/capacity classification, progress fingerprints, and the repair-or-stop decision.
 - `result.ts` — Round record and result types, hop field extraction.
 - `workflow.ts` — Main workflow: input schema, round loop, fanout dispatch, verification, rubric, result assembly.
 

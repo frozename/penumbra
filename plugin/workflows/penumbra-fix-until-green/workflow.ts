@@ -2,131 +2,63 @@ import type { RecallBundle, WorkflowCtx, WorkflowFn, WorkflowSpec } from "@penum
 
 import { join } from "node:path";
 
-import {
-  type FanoutDefaults,
-  type FanoutTask,
-  type FanoutTaskResult,
-  runFanout,
-} from "../_shared/fanout.js";
+import { type FanoutTaskResult, runFanout } from "../_shared/fanout.js";
 import { resolveOutDir, sanitizeFileStem } from "../_shared/io.js";
-import { type CandidateRef, resolveAuthoritativeCandidate } from "./candidate.js";
-import { parseCheck, roundMessage, validateCheckCommand } from "./check-parse.js";
+import { type CandidateRef } from "./candidate.js";
+import { detectBlockedContract, parseCheck, validateCheckCommand } from "./check-parse.js";
 import { type FixUntilGreenInput as Input, inputSchema } from "./input.js";
-import { type FixUntilGreenResult, makeRoundRecord, type RoundRecord } from "./result.js";
+import {
+  agentForRound,
+  applyFailureDecision,
+  buildFanoutDefaults,
+  buildFanoutTask,
+  classifyDispatch,
+  failureTail,
+  firstNonemptyLine,
+  type ProgressState,
+  resolveTaskTitle,
+  rubricFailureDecision,
+} from "./progress.js";
+import {
+  candidateRoundRecord,
+  type CandidateRoundRecordOverrides,
+  type CheckVerifyStatus,
+  type FixUntilGreenResult,
+  makeRoundRecord,
+  type RoundRecord,
+} from "./result.js";
 import { runRubricGrade } from "./rubric.js";
 import { runVerifyCheck } from "./verification.js";
 
-export type { FixUntilGreenResult, RoundRecord };
+export type { RepairStopReason } from "./progress.js";
+export type { FixUntilGreenResult, RoundRecord } from "./result.js";
 export { inputSchema };
 
 const CHECK_LINE_MAX = 300;
 const FAILURE_TAIL_MAX = 4000;
 
-function firstNonemptyLine(text: string | null, maxLen: number): string | null {
-  if (!text) return null;
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed.length > 0) return trimmed.slice(0, maxLen);
-  }
-  return null;
-}
-
-function failureTail(text: string | null, maxLen: number): string | null {
-  if (!text) return null;
-  return text.length > maxLen ? text.slice(-maxLen) : text;
-}
-
-function resolveTaskTitle(task: Input["task"]): string {
-  return task.task_name ?? "Untitled task";
-}
-
-function resolveTaskName(task: Input["task"], roundIndex: number): string {
-  return task.task_name ?? `fix-${String(roundIndex + 1)}`;
-}
-
-function buildFanoutTask(
-  input: Input,
-  roundIndex: number,
-  agentForRound: string,
-  prevBranch: string | null,
-  prevOutput: string | null,
-): FanoutTask {
-  const task = input.task;
-  const t: FanoutTask = {
-    label: `fix#${String(roundIndex + 1)}:${agentForRound}`,
-    task_name: resolveTaskName(task, roundIndex),
-    initial_agent: agentForRound,
-    task_class: task.task_class ?? "STANDARD",
-    task_type: task.task_type ?? "implement_small",
-    message: roundMessage(
-      roundIndex,
-      task.message,
-      input.check,
-      prevBranch,
-      prevOutput,
-      input.parity_check,
-    ),
-    max_hops: 1,
-  };
-  if (task.branch_type) t.branch_type = task.branch_type;
-  if (roundIndex === 0) {
-    if (input.base && input.base !== "main") t.branch_base = input.base;
-  } else {
-    t.branch_base = prevBranch ?? undefined;
-  }
-  return t;
-}
-
-function buildFanoutDefaults(input: Input, projectId: string): FanoutDefaults {
-  const defaults: FanoutDefaults = {
-    project_id: projectId,
-    timeout_ms: input.timeout_ms,
-  };
-  if (input.isolated_install !== undefined) defaults.isolated_install = input.isolated_install;
-  return defaults;
-}
-
 async function writeResponseArtifact(
   ctx: WorkflowCtx,
-  outDirPath: string,
+  input: Input,
   label: string,
   index: number,
   responseText: string,
-): Promise<string | null> {
-  const artifactPath = join(outDirPath, `${sanitizeFileStem(label)}-${String(index)}.txt`);
+): Promise<void> {
+  if (!input.out_dir || responseText.length === 0) return;
+  const outDir = resolveOutDir(ctx, input.out_dir);
+  if (!outDir.ok) return;
+  const artifactPath = join(outDir.path, `${sanitizeFileStem(label)}-${String(index)}.txt`);
   try {
     const written = await ctx.fileWrite(artifactPath, responseText);
     if (typeof written !== "string" || written.trim().length === 0 || written !== artifactPath) {
-      return null;
+      return;
     }
-    return written;
   } catch {
-    return null;
+    return;
   }
 }
 
-type DispatchOutcome =
-  | { ok: true; result: FanoutTaskResult; candidate: CandidateRef }
-  | { ok: false; reason: string };
-
-function classifyDispatch(result: FanoutTaskResult | null): DispatchOutcome {
-  if (!result) return { ok: false, reason: "agent_dropped" };
-  if (result.status !== "completed") return { ok: false, reason: "chain_failed" };
-  const candidate = resolveAuthoritativeCandidate(result);
-  if (!candidate.ok) return { ok: false, reason: candidate.reason };
-  if (typeof result.root_handoff_id !== "string" || result.root_handoff_id.length === 0) {
-    return { ok: false, reason: "candidate_response_handoff_missing" };
-  }
-  if (result.root_handoff_id !== candidate.candidate.handoffId) {
-    return { ok: false, reason: "candidate_response_handoff_mismatch" };
-  }
-  if (typeof result.response_text !== "string" || result.response_text.trim().length === 0) {
-    return { ok: false, reason: result.error_summary ?? "missing_response" };
-  }
-  return { ok: true, result, candidate: candidate.candidate };
-}
-
-type RoundState = {
+type RoundState = ProgressState & {
   prevBranch: string | null;
   prevOutput: string | null;
   consecutiveVerifyNotRun: number;
@@ -157,31 +89,25 @@ async function runVerification(
     parityCheck: input.parity_check,
   });
 
+  const base = {
+    verifierHandoffId: outcome.verifier_handoff_id,
+    verifierBranch: outcome.verifier_branch,
+  };
   if (outcome.status === "unavailable") {
-    return {
-      status: "unavailable",
-      verifierHandoffId: outcome.verifier_handoff_id,
-      verifierBranch: outcome.verifier_branch,
-      checkExit: null,
-      failOutput: outcome.fail_output,
-    };
+    return { ...base, status: "unavailable", checkExit: null, failOutput: outcome.fail_output };
   }
-
   if (outcome.status === "failed") {
     const verifierRan = outcome.result?.ran === true;
     return {
+      ...base,
       status: verifierRan ? "failed" : "not_run",
-      verifierHandoffId: outcome.verifier_handoff_id,
-      verifierBranch: outcome.verifier_branch,
       checkExit: outcome.result?.check_exit ?? null,
       failOutput: outcome.fail_output,
     };
   }
-
   return {
+    ...base,
     status: "passed",
-    verifierHandoffId: outcome.verifier_handoff_id,
-    verifierBranch: outcome.verifier_branch,
     checkExit: outcome.result?.check_exit ?? null,
     failOutput: "",
   };
@@ -214,85 +140,112 @@ async function runRubric(
     projectId,
   });
 
-  if (outcome.status === "unavailable") {
-    return {
-      status: "unavailable",
-      graderHandoffId: outcome.grader_handoff_id,
-      graderBranch: outcome.grader_branch,
-      grade: null,
-      failOutput: outcome.fail_output,
-    };
-  }
-
-  return {
-    status: outcome.status,
+  const base = {
     graderHandoffId: outcome.grader_handoff_id,
     graderBranch: outcome.grader_branch,
-    grade: outcome.grade,
-    failOutput: outcome.fail_output,
   };
+  if (outcome.status === "unavailable") {
+    return { ...base, status: "unavailable", grade: null, failOutput: outcome.fail_output };
+  }
+  return { ...base, status: outcome.status, grade: outcome.grade, failOutput: outcome.fail_output };
 }
 
 type RoundResult =
   | { kind: "green"; record: RoundRecord; branch: string | null }
   | { kind: "continue"; record: RoundRecord; branch: string | null; output: string | null }
-  | { kind: "stop"; record: RoundRecord; branch: string | null; output: string | null };
+  | {
+      kind: "stop";
+      record: RoundRecord;
+      branch: string | null;
+      output: string | null;
+      contractDefectReason?: string;
+    };
 
-type VerifyHandleResult = RoundResult;
+function verifyFailedOutcome(
+  ctx: WorkflowCtx,
+  input: Input,
+  roundIndex: number,
+  agent: string,
+  r: FanoutTaskResult,
+  candidate: CandidateRef,
+  verify: VerifyOutcome,
+  state: RoundState,
+): RoundResult {
+  const roundNumber = roundIndex + 1;
+  state.consecutiveVerifyNotRun = 0;
+  state.prevOutput = verify.failOutput;
+  const failure = applyFailureDecision(
+    state,
+    input,
+    roundIndex,
+    verify.failOutput,
+    "verifier_measured_fail",
+  );
+  const record = candidateRoundRecord({
+    round: roundNumber,
+    agent,
+    result: r,
+    candidate,
+    reason: failure.reason,
+    checkPassed: true,
+    checkVerifyStatus: "failed",
+    checkExit: verify.checkExit,
+    verifierHandoffId: verify.verifierHandoffId,
+    verifierBranch: verify.verifierBranch,
+    passed: false,
+  });
+  if (failure.stop) {
+    ctx.progress?.("penumbra-fix-until-green: stopping after verifier failure", {
+      round: roundNumber,
+      reason: failure.reason,
+    });
+    return { kind: "stop", record, branch: candidate.branch, output: verify.failOutput };
+  }
+  return { kind: "continue", record, branch: candidate.branch, output: verify.failOutput };
+}
 
 async function handleVerifyOutcome(
   ctx: WorkflowCtx,
-  roundNumber: number,
-  agentForRound: string,
+  roundIndex: number,
+  agent: string,
   r: FanoutTaskResult,
   candidate: CandidateRef,
   verify: VerifyOutcome,
   state: RoundState,
   input: Input,
   projectId: string,
-): Promise<VerifyHandleResult> {
+): Promise<RoundResult> {
+  const roundNumber = roundIndex + 1;
+  const rec = (over: CandidateRoundRecordOverrides): RoundRecord =>
+    candidateRoundRecord({ round: roundNumber, agent, result: r, candidate, ...over });
+  const verifierBase = {
+    verifierHandoffId: verify.verifierHandoffId,
+    verifierBranch: verify.verifierBranch,
+  };
+
   if (verify.status === "unavailable") {
-    const record = makeRoundRecord({
-      round: roundNumber,
-      agent: agentForRound,
-      result: r,
-      candidateBranch: candidate.branch,
-      candidateHandoffId: candidate.handoffId,
-      dispatchOk: true,
+    const record = rec({
       reason: "verifier_unavailable",
       checkPassed: true,
       checkVerifyStatus: "unavailable",
-      verifierHandoffId: verify.verifierHandoffId,
-      verifierBranch: verify.verifierBranch,
-      verified: false,
+      ...verifierBase,
       passed: false,
     });
     return { kind: "stop", record, branch: candidate.branch, output: verify.failOutput };
   }
 
-  if (verify.status === "failed" || verify.status === "not_run") {
-    if (verify.status === "not_run") {
-      state.consecutiveVerifyNotRun += 1;
-    } else {
-      state.consecutiveVerifyNotRun = 0;
-    }
-    const record = makeRoundRecord({
-      round: roundNumber,
-      agent: agentForRound,
-      result: r,
-      candidateBranch: candidate.branch,
-      candidateHandoffId: candidate.handoffId,
-      dispatchOk: true,
-      reason: verify.status === "failed" ? "verifier_measured_fail" : "verifier_not_run",
+  if (verify.status === "not_run") {
+    state.consecutiveVerifyNotRun += 1;
+    state.lastFailureFingerprint = null;
+    state.prevOutput = verify.failOutput;
+    const record = rec({
+      reason: "verifier_not_run",
       checkPassed: true,
-      checkVerifyStatus: verify.status,
+      checkVerifyStatus: "not_run",
       checkExit: verify.checkExit,
-      verifierHandoffId: verify.verifierHandoffId,
-      verifierBranch: verify.verifierBranch,
-      verified: false,
+      ...verifierBase,
       passed: false,
     });
-    state.prevOutput = verify.failOutput;
     if (state.consecutiveVerifyNotRun >= 2) {
       ctx.progress?.("penumbra-fix-until-green: verifier not run twice consecutively, stopping", {
         round: roundNumber,
@@ -302,34 +255,32 @@ async function handleVerifyOutcome(
     return { kind: "continue", record, branch: candidate.branch, output: verify.failOutput };
   }
 
+  if (verify.status === "failed") {
+    return verifyFailedOutcome(ctx, input, roundIndex, agent, r, candidate, verify, state);
+  }
+
   state.consecutiveVerifyNotRun = 0;
 
   if (input.rubric && input.rubric.length > 0) {
     return await handleRubricOutcome(
       ctx,
-      roundNumber,
-      agentForRound,
+      roundIndex,
+      agent,
       r,
       candidate,
       input,
       verify,
+      state,
       projectId,
     );
   }
 
-  const record = makeRoundRecord({
-    round: roundNumber,
-    agent: agentForRound,
-    result: r,
-    candidateBranch: candidate.branch,
-    candidateHandoffId: candidate.handoffId,
-    dispatchOk: true,
+  const record = rec({
     reason: "check_passed",
     checkPassed: true,
     checkVerifyStatus: "passed",
     checkExit: verify.checkExit,
-    verifierHandoffId: verify.verifierHandoffId,
-    verifierBranch: verify.verifierBranch,
+    ...verifierBase,
     verified: true,
     ciParity: input.parity_check !== undefined,
     passed: true,
@@ -343,15 +294,19 @@ async function handleVerifyOutcome(
 
 async function handleRubricOutcome(
   ctx: WorkflowCtx,
-  roundNumber: number,
-  agentForRound: string,
+  roundIndex: number,
+  agent: string,
   r: FanoutTaskResult,
   candidate: CandidateRef,
   input: Input,
   verify: VerifyOutcome | null,
+  state: RoundState,
   projectId: string,
 ): Promise<RoundResult> {
-  const checkVerifyStatus = verify ? "passed" : "skipped";
+  const roundNumber = roundIndex + 1;
+  const rec = (over: CandidateRoundRecordOverrides): RoundRecord =>
+    candidateRoundRecord({ round: roundNumber, agent, result: r, candidate, ...over });
+  const checkVerifyStatus: CheckVerifyStatus = verify ? "passed" : "skipped";
   const verified = verify !== null;
   const ciParity = verified && input.parity_check !== undefined;
   const rubricOutcome = await runRubric(
@@ -367,50 +322,35 @@ async function handleRubricOutcome(
     status: rubricOutcome.status,
   });
 
+  const stageBase = {
+    checkPassed: true,
+    checkVerifyStatus,
+    checkExit: verify?.checkExit ?? null,
+    verifierHandoffId: verify?.verifierHandoffId ?? null,
+    verifierBranch: verify?.verifierBranch ?? null,
+    graderHandoffId: rubricOutcome.graderHandoffId,
+    graderBranch: rubricOutcome.graderBranch,
+    verified,
+    ciParity,
+  };
+
   if (rubricOutcome.status === "unavailable") {
-    const record = makeRoundRecord({
-      round: roundNumber,
-      agent: agentForRound,
-      result: r,
-      candidateBranch: candidate.branch,
-      candidateHandoffId: candidate.handoffId,
-      dispatchOk: true,
+    const record = rec({
+      ...stageBase,
       reason: "grader_unavailable",
-      checkPassed: true,
-      checkVerifyStatus,
       rubricStatus: "GRADER_UNAVAILABLE",
-      checkExit: verify?.checkExit ?? null,
-      verifierHandoffId: verify?.verifierHandoffId ?? null,
-      verifierBranch: verify?.verifierBranch ?? null,
-      graderHandoffId: rubricOutcome.graderHandoffId,
-      graderBranch: rubricOutcome.graderBranch,
-      verified,
-      ciParity,
       passed: false,
     });
     return { kind: "stop", record, branch: candidate.branch, output: rubricOutcome.failOutput };
   }
 
   const rubricPassed = rubricOutcome.status === "passed";
-  const record = makeRoundRecord({
-    round: roundNumber,
-    agent: agentForRound,
-    result: r,
-    candidateBranch: candidate.branch,
-    candidateHandoffId: candidate.handoffId,
-    dispatchOk: true,
-    reason: rubricPassed ? "rubric_passed" : "rubric_failed",
-    checkPassed: true,
-    checkVerifyStatus,
+  const failure = rubricFailureDecision(state, input, roundIndex, rubricOutcome.failOutput);
+  const record = rec({
+    ...stageBase,
+    reason: rubricPassed ? "rubric_passed" : failure.reason,
     rubricStatus: rubricPassed ? "PASSED" : "FAILED",
-    checkExit: verify?.checkExit ?? null,
-    verifierHandoffId: verify?.verifierHandoffId ?? null,
-    verifierBranch: verify?.verifierBranch ?? null,
     rubricGrade: rubricOutcome.grade,
-    graderHandoffId: rubricOutcome.graderHandoffId,
-    graderBranch: rubricOutcome.graderBranch,
-    verified,
-    ciParity,
     passed: rubricPassed,
   });
 
@@ -422,6 +362,13 @@ async function handleRubricOutcome(
     return { kind: "green", record, branch: candidate.branch };
   }
 
+  if (failure.stop) {
+    ctx.progress?.("penumbra-fix-until-green: stopping after rubric failure", {
+      round: roundNumber,
+      reason: failure.reason,
+    });
+    return { kind: "stop", record, branch: candidate.branch, output: rubricOutcome.failOutput };
+  }
   return { kind: "continue", record, branch: candidate.branch, output: rubricOutcome.failOutput };
 }
 
@@ -434,11 +381,96 @@ type CheckOutcome =
     }
   | { kind: "check_fail"; record: RoundRecord; branch: string | null; output: string }
   | { kind: "green_no_verify"; record: RoundRecord; branch: string | null }
-  | {
-      kind: "proceed";
-      r: FanoutTaskResult;
-      candidate: CandidateRef;
-    };
+  | { kind: "contract_blocked"; record: RoundRecord; branch: string | null; reason: string }
+  | { kind: "stop"; record: RoundRecord; branch: string | null; output: string | null }
+  | { kind: "proceed"; r: FanoutTaskResult; candidate: CandidateRef };
+
+function dispatchFailureOutcome(
+  ctx: WorkflowCtx,
+  roundNumber: number,
+  agent: string,
+  r: FanoutTaskResult | null,
+  reason: string,
+  state: RoundState,
+  rounds: RoundRecord[],
+): CheckOutcome {
+  const record = makeRoundRecord({
+    round: roundNumber,
+    agent,
+    result: r,
+    dispatchOk: false,
+    reason,
+    checkPassed: false,
+    checkVerifyStatus: "skipped",
+    passed: false,
+  });
+  rounds.push(record);
+  ctx.progress?.("penumbra-fix-until-green: dispatch failed", { round: roundNumber, reason });
+  return {
+    kind: "dispatch_fail",
+    record,
+    prevBranch: state.prevBranch,
+    prevOutput: state.prevOutput,
+  };
+}
+
+function contractBlockedOutcome(
+  ctx: WorkflowCtx,
+  roundNumber: number,
+  agent: string,
+  r: FanoutTaskResult,
+  candidate: CandidateRef,
+  reason: string,
+  rounds: RoundRecord[],
+): CheckOutcome {
+  const record = candidateRoundRecord({
+    round: roundNumber,
+    agent,
+    result: r,
+    candidate,
+    reason: "contract_defect",
+    checkPassed: false,
+    checkVerifyStatus: "skipped",
+    passed: false,
+  });
+  rounds.push(record);
+  ctx.progress?.("penumbra-fix-until-green: contract defect detected", {
+    round: roundNumber,
+    reason,
+  });
+  return { kind: "contract_blocked", record, branch: candidate.branch, reason };
+}
+
+function passedCheckOutcome(
+  ctx: WorkflowCtx,
+  input: Input,
+  roundNumber: number,
+  agent: string,
+  r: FanoutTaskResult,
+  candidate: CandidateRef,
+  rounds: RoundRecord[],
+): CheckOutcome {
+  if (!input.verify_check && !input.rubric?.length) {
+    const record = candidateRoundRecord({
+      round: roundNumber,
+      agent,
+      result: r,
+      candidate,
+      reason: "check_passed",
+      checkPassed: true,
+      checkVerifyStatus: "skipped",
+      verified: false,
+      passed: true,
+    });
+    rounds.push(record);
+    ctx.progress?.("penumbra-fix-until-green: green", {
+      round: roundNumber,
+      branch: candidate.branch,
+    });
+    return { kind: "green_no_verify", record, branch: candidate.branch };
+  }
+  return { kind: "proceed", r, candidate };
+}
 
 async function dispatchAndCheck(
   ctx: WorkflowCtx,
@@ -448,71 +480,53 @@ async function dispatchAndCheck(
   rounds: RoundRecord[],
   projectId: string,
 ): Promise<CheckOutcome> {
-  const isLastRound = roundIndex === input.max_rounds - 1;
-  const agentForRound = isLastRound && input.escalate_to ? input.escalate_to : input.agent;
   const roundNumber = roundIndex + 1;
+  const agent = agentForRound(input, roundIndex, state);
 
   ctx.progress?.("penumbra-fix-until-green: round", {
     round: roundNumber,
-    agent: agentForRound,
+    agent,
     max_rounds: input.max_rounds,
   });
 
-  const fanoutTask = buildFanoutTask(
-    input,
-    roundIndex,
-    agentForRound,
-    state.prevBranch,
-    state.prevOutput,
-  );
-  const fanoutDefaults = buildFanoutDefaults(input, projectId);
-
-  const fan = await runFanout(ctx, { tasks: [fanoutTask], defaults: fanoutDefaults });
+  const fanoutTask = buildFanoutTask(input, roundIndex, agent, state.prevBranch, state.prevOutput);
+  const fan = await runFanout(ctx, {
+    tasks: [fanoutTask],
+    defaults: buildFanoutDefaults(input, projectId),
+  });
   const r = fan.results[0] ?? null;
 
   const dispatch = classifyDispatch(r);
   if (!dispatch.ok) {
-    const record = makeRoundRecord({
-      round: roundNumber,
-      agent: agentForRound,
-      result: r,
-      dispatchOk: false,
-      reason: dispatch.reason,
-      checkPassed: false,
-      checkVerifyStatus: "skipped",
-      passed: false,
-    });
-    rounds.push(record);
-    ctx.progress?.("penumbra-fix-until-green: dispatch failed", {
-      round: roundNumber,
-      reason: dispatch.reason,
-    });
-    return {
-      kind: "dispatch_fail",
-      record,
-      prevBranch: state.prevBranch,
-      prevOutput: state.prevOutput,
-    };
+    return dispatchFailureOutcome(ctx, roundNumber, agent, r, dispatch.reason, state, rounds);
   }
 
   const candidate = dispatch.candidate;
-  const responseText = dispatch.result.response_text;
+  const responseText = dispatch.result.response_text ?? "";
 
-  if (input.out_dir && responseText) {
-    const outDir = resolveOutDir(ctx, input.out_dir);
-    if (outDir.ok) {
-      await writeResponseArtifact(
-        ctx,
-        outDir.path,
-        fanoutTask.label ?? `fix-${String(roundNumber)}`,
-        roundIndex,
-        responseText,
-      );
-    }
-  }
+  await writeResponseArtifact(
+    ctx,
+    input,
+    fanoutTask.label ?? `fix-${String(roundNumber)}`,
+    roundIndex,
+    responseText,
+  );
 
   const checkLine = firstNonemptyLine(responseText, CHECK_LINE_MAX);
   const failTail = failureTail(responseText, FAILURE_TAIL_MAX);
+  const blockedContract = detectBlockedContract([checkLine, responseText, failTail]);
+  if (input.progress_stops && blockedContract !== null) {
+    return contractBlockedOutcome(
+      ctx,
+      roundNumber,
+      agent,
+      dispatch.result,
+      candidate,
+      blockedContract.reason,
+      rounds,
+    );
+  }
+
   const verdict = parseCheck(
     { check_line: checkLine, response: responseText, failure_tail: failTail },
     "first_line",
@@ -527,46 +541,30 @@ async function dispatchAndCheck(
     branch: candidate.branch,
   });
 
-  if (!verdict.passed) {
-    const record = makeRoundRecord({
-      round: roundNumber,
-      agent: agentForRound,
-      result: r,
-      candidateBranch: candidate.branch,
-      candidateHandoffId: candidate.handoffId,
-      dispatchOk: true,
-      reason: "check_failed",
-      checkPassed: false,
-      checkVerifyStatus: "skipped",
-      passed: false,
-    });
-    rounds.push(record);
-    return { kind: "check_fail", record, branch: candidate.branch, output: verdict.output };
+  if (verdict.passed) {
+    return passedCheckOutcome(ctx, input, roundNumber, agent, dispatch.result, candidate, rounds);
   }
 
-  if (!input.verify_check && !input.rubric?.length) {
-    const record = makeRoundRecord({
+  const failure = applyFailureDecision(state, input, roundIndex, responseText, "check_failed");
+  const record = candidateRoundRecord({
+    round: roundNumber,
+    agent,
+    result: dispatch.result,
+    candidate,
+    reason: failure.reason,
+    checkPassed: false,
+    checkVerifyStatus: "skipped",
+    passed: false,
+  });
+  rounds.push(record);
+  if (failure.stop) {
+    ctx.progress?.("penumbra-fix-until-green: stopping after check failure", {
       round: roundNumber,
-      agent: agentForRound,
-      result: r,
-      candidateBranch: candidate.branch,
-      candidateHandoffId: candidate.handoffId,
-      dispatchOk: true,
-      reason: "check_passed",
-      checkPassed: true,
-      checkVerifyStatus: "skipped",
-      verified: false,
-      passed: true,
+      reason: failure.reason,
     });
-    rounds.push(record);
-    ctx.progress?.("penumbra-fix-until-green: green", {
-      round: roundNumber,
-      branch: candidate.branch,
-    });
-    return { kind: "green_no_verify", record, branch: candidate.branch };
+    return { kind: "stop", record, branch: candidate.branch, output: verdict.output };
   }
-
-  return { kind: "proceed", r: dispatch.result, candidate };
+  return { kind: "check_fail", record, branch: candidate.branch, output: verdict.output };
 }
 
 async function executeRound(
@@ -577,9 +575,8 @@ async function executeRound(
   rounds: RoundRecord[],
   projectId: string,
 ): Promise<RoundResult> {
-  const isLastRound = roundIndex === input.max_rounds - 1;
-  const agentForRound = isLastRound && input.escalate_to ? input.escalate_to : input.agent;
   const roundNumber = roundIndex + 1;
+  const agent = agentForRound(input, roundIndex, state);
 
   const check = await dispatchAndCheck(ctx, input, roundIndex, state, rounds, projectId);
 
@@ -597,16 +594,29 @@ async function executeRound(
   if (check.kind === "green_no_verify") {
     return { kind: "green", record: check.record, branch: check.branch };
   }
+  if (check.kind === "contract_blocked") {
+    return {
+      kind: "stop",
+      record: check.record,
+      branch: check.branch,
+      output: `CHECK_RESULT: BLOCKED ${check.reason}`,
+      contractDefectReason: check.reason,
+    };
+  }
+  if (check.kind === "stop") {
+    return { kind: "stop", record: check.record, branch: check.branch, output: check.output };
+  }
 
   if (!input.verify_check) {
     const result = await handleRubricOutcome(
       ctx,
-      roundNumber,
-      agentForRound,
+      roundIndex,
+      agent,
       check.r,
       check.candidate,
       input,
       null,
+      state,
       projectId,
     );
     rounds.push(result.record);
@@ -627,8 +637,8 @@ async function executeRound(
 
   const result = await handleVerifyOutcome(
     ctx,
-    roundNumber,
-    agentForRound,
+    roundIndex,
+    agent,
     check.r,
     check.candidate,
     verify,
@@ -683,7 +693,10 @@ export const fn: WorkflowFn = async (
     prevBranch: null,
     prevOutput: null,
     consecutiveVerifyNotRun: 0,
+    lastFailureFingerprint: null,
+    escalated: false,
   };
+  const resultBase = { rounds, check: input.check, rubric };
 
   for (let i = 0; i < input.max_rounds; i += 1) {
     const outcome = await executeRound(ctx, input, i, state, rounds, projectId);
@@ -695,10 +708,9 @@ export const fn: WorkflowFn = async (
         rounds_used: rounds.length,
         final_branch: outcome.branch,
         last_output: null,
-        rounds,
-        check: input.check,
-        rubric,
+        ...resultBase,
         ci_parity: outcome.record.ci_parity,
+        stop_reason: null,
       };
     }
 
@@ -709,10 +721,12 @@ export const fn: WorkflowFn = async (
         rounds_used: rounds.length,
         final_branch: outcome.branch,
         last_output: outcome.output,
-        rounds,
-        check: input.check,
-        rubric,
+        ...resultBase,
         ci_parity: false,
+        stop_reason: outcome.record.reason,
+        ...(outcome.contractDefectReason === undefined
+          ? {}
+          : { contract_defect_reason: outcome.contractDefectReason }),
       };
     }
 
@@ -726,10 +740,9 @@ export const fn: WorkflowFn = async (
     rounds_used: rounds.length,
     final_branch: state.prevBranch,
     last_output: state.prevOutput,
-    rounds,
-    check: input.check,
-    rubric,
+    ...resultBase,
     ci_parity: false,
+    stop_reason: "max_rounds",
   };
 };
 

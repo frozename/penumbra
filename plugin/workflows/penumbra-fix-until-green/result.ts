@@ -1,5 +1,6 @@
 import type { FanoutHop } from "../_shared/fanout-hop-evidence.js";
 import type { FanoutTaskResult } from "../_shared/fanout.js";
+import type { CandidateRef } from "./candidate.js";
 export type HopFields = {
   root_handoff_id: string | null;
   latest_handoff_id: string | null;
@@ -75,6 +76,8 @@ export type FixUntilGreenResult = {
   check: string;
   rubric: string[];
   ci_parity: boolean;
+  stop_reason: string | null;
+  contract_defect_reason?: string;
 };
 
 export function makeRoundRecord(opts: {
@@ -123,4 +126,29 @@ export function makeRoundRecord(opts: {
       ? { autocommit_sha: opts.result.autocommit_sha }
       : {}),
   };
+}
+
+export type CandidateRoundRecordOverrides = Omit<
+  Parameters<typeof makeRoundRecord>[0],
+  "round" | "agent" | "result" | "candidateBranch" | "candidateHandoffId" | "dispatchOk"
+>;
+
+export type CandidateRoundRecordOpts = {
+  round: number;
+  agent: string;
+  result: FanoutTaskResult;
+  candidate: CandidateRef;
+} & CandidateRoundRecordOverrides;
+
+export function candidateRoundRecord(opts: CandidateRoundRecordOpts): RoundRecord {
+  const { round, agent, result, candidate, ...over } = opts;
+  return makeRoundRecord({
+    round,
+    agent,
+    result,
+    candidateBranch: candidate.branch,
+    candidateHandoffId: candidate.handoffId,
+    dispatchOk: true,
+    ...over,
+  });
 }
