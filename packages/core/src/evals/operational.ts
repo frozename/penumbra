@@ -1,4 +1,4 @@
-import { GROUP_BY_KEYS } from "./aggregate.js";
+import { assertGroupBy, GROUP_BY_KEYS, groupKeyOf } from "./aggregate.js";
 import { AssistanceSchema, type Episode } from "./manifest.js";
 
 const ASSISTANCE_KINDS = AssistanceSchema.shape.kind.options;
@@ -18,7 +18,7 @@ type OutcomeCounts = {
   unknown: number;
 };
 
-type TerminalReport = { n_terminal: number; n_unknown: number; rate: number };
+type TerminalReport = { n_terminal: number; n_unknown: number; rate: number | null };
 
 type ArtifactReport = { produced: number; absent: number; rate: number };
 
@@ -96,17 +96,6 @@ type GroupAcc = {
 const TIMING_KEYS = ["queue_ms", "exec_ms", "check_ms", "e2e_ms"] as const;
 
 type TimingKey = (typeof TIMING_KEYS)[number];
-
-function assertGroupBy(groupBy: string): GroupByKey {
-  if ((GROUP_BY_KEYS as readonly string[]).includes(groupBy)) {
-    return groupBy as GroupByKey;
-  }
-  throw new Error(`unsupported groupBy key: ${groupBy}`);
-}
-
-function groupKeyOf(ep: Episode, groupBy: GroupByKey): string {
-  return ep[groupBy] ?? "none";
-}
 
 function newOutcomes(): OutcomeCounts {
   return {
@@ -191,6 +180,17 @@ function finalCommitKind(ep: Episode): FinalCommitKind {
   if (takenOver) {
     return "human_takeover";
   }
+  const historyStatus = ep.attempt_history.status;
+  if (historyStatus === "unavailable") {
+    const count = ep.attempt_history.count;
+    if (count === null || count > 0) {
+      return "unknown";
+    }
+    return "no_attempts";
+  }
+  if (historyStatus === "partial") {
+    return "unknown";
+  }
   const last = ep.attempts[ep.attempts.length - 1];
   if (last === undefined) {
     return "no_attempts";
@@ -253,7 +253,14 @@ function accumulateCost(acc: CostAcc, ep: Episode): void {
 
 function accumulateEpisode(acc: GroupAcc, ep: Episode): void {
   acc.nEpisodes += 1;
-  acc.nAttempts += ep.attempts.length;
+  const historyStatus = ep.attempt_history.status;
+  if (historyStatus === "partial" && ep.attempt_history.count !== null) {
+    acc.nAttempts += ep.attempt_history.count;
+  } else if (historyStatus === "unavailable" && ep.attempt_history.count !== null) {
+    acc.nAttempts += ep.attempt_history.count;
+  } else {
+    acc.nAttempts += ep.attempts.length;
+  }
   accumulateOutcome(acc.outcomes, ep);
   accumulateTerminal(acc, ep);
   if (ep.final_sha !== null) {
@@ -266,6 +273,10 @@ function accumulateEpisode(acc: GroupAcc, ep: Episode): void {
 }
 
 function episodeTimingValue(ep: Episode, key: TimingKey): number | null {
+  const historyStatus = ep.attempt_history.status;
+  if (historyStatus === "partial" || historyStatus === "unavailable") {
+    return null;
+  }
   if (ep.attempts.length === 0) {
     return null;
   }
@@ -322,6 +333,7 @@ function buildTimings(episodes: readonly Episode[]): TimingsReport {
 
 function buildGroup(acc: GroupAcc, episodes: readonly Episode[]): OperationalGroupReport {
   const nEpisodes = acc.nEpisodes;
+  const nExcludingUnknown = nEpisodes - acc.nUnknown;
   return {
     key: acc.key,
     n_episodes: nEpisodes,
@@ -330,7 +342,7 @@ function buildGroup(acc: GroupAcc, episodes: readonly Episode[]): OperationalGro
     terminal_completion: {
       n_terminal: acc.nTerminal,
       n_unknown: acc.nUnknown,
-      rate: acc.nTerminal / nEpisodes,
+      rate: nExcludingUnknown === 0 ? null : acc.nTerminal / nExcludingUnknown,
     },
     artifact: {
       produced: acc.produced,

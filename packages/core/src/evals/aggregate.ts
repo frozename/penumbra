@@ -397,6 +397,8 @@ export {
   type ClassifiedEpisode,
   classifyEpisode,
   GROUP_BY_KEYS,
+  groupKeyOf,
+  assertGroupBy,
   type GroupByKey,
   type GroupReport,
   type Metric,

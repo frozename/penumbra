@@ -336,7 +336,7 @@ test("4: terminal_completion counts every non-unknown outcome as terminal", () =
   expect(res.groups[0]?.terminal_completion).toEqual({
     n_terminal: 4,
     n_unknown: 1,
-    rate: 0.8,
+    rate: 1,
   });
 });
 
@@ -383,9 +383,9 @@ test("6: final_commit classifies each episode by its last attempt", () => {
   expect(res.groups[0]?.final_commit).toEqual({
     model: 1,
     recovery: 1,
-    unknown: 0,
+    unknown: 1,
     human_takeover: 1,
-    no_attempts: 1,
+    no_attempts: 0,
   });
 });
 
@@ -566,4 +566,142 @@ test("11: group output is deterministic under input reordering", () => {
   const forward = summarizeOperational()(eps, { groupBy: "recipe_id" });
   const reversed = summarizeOperational()([...eps].reverse(), { groupBy: "recipe_id" });
   expect(reversed.groups).toEqual(forward.groups);
+});
+
+test("12: partial attempt_history reports n_attempts from count and null timings", () => {
+  expect(typeof mod?.["summarizeOperational"]).toBe("function");
+  const partialHistory: JsonObject = {
+    status: "partial",
+    reason: "claims_pruned",
+    count: 10,
+    count_basis: "handoff_counter",
+  };
+  const eps = [
+    controlledEpisode("e-partial", {
+      recipe_id: "recipe-partial",
+      attempts: [att(8, SHA_A), att(9, SHA_B), att(10, SHA_C)],
+      attempt_history: partialHistory,
+    }),
+  ];
+  const res = summarizeOperational()(eps, { groupBy: "recipe_id" });
+  expect(res.groups[0]?.n_attempts).toBe(10);
+  expect(res.groups[0]?.timings.e2e_ms.n_missing).toBe(1);
+  expect(res.groups[0]?.timings.e2e_ms.n).toBe(0);
+  expect(res.groups[0]?.final_commit.unknown).toBe(1);
+});
+
+test("13: unavailable attempt_history with count > 0 reports final_commit unknown", () => {
+  expect(typeof mod?.["summarizeOperational"]).toBe("function");
+  const unavailableHistory: JsonObject = {
+    status: "unavailable",
+    reason: "events_absent",
+    count: 5,
+    count_basis: "unknown",
+  };
+  const eps = [
+    controlledEpisode("e-unavail", {
+      recipe_id: "recipe-unavail",
+      attempts: [],
+      attempt_history: unavailableHistory,
+    }),
+  ];
+  const res = summarizeOperational()(eps, { groupBy: "recipe_id" });
+  expect(res.groups[0]?.final_commit.no_attempts).toBe(0);
+  expect(res.groups[0]?.final_commit.unknown).toBe(1);
+  expect(res.groups[0]?.n_attempts).toBe(5);
+});
+
+test("14: unavailable attempt_history with count 0 reports no_attempts", () => {
+  expect(typeof mod?.["summarizeOperational"]).toBe("function");
+  const unavailableHistory: JsonObject = {
+    status: "unavailable",
+    reason: "events_absent",
+    count: 0,
+    count_basis: "unknown",
+  };
+  const eps = [
+    controlledEpisode("e-unavail0", {
+      recipe_id: "recipe-unavail0",
+      attempts: [],
+      attempt_history: unavailableHistory,
+    }),
+  ];
+  const res = summarizeOperational()(eps, { groupBy: "recipe_id" });
+  expect(res.groups[0]?.final_commit.no_attempts).toBe(1);
+  expect(res.groups[0]?.final_commit.unknown).toBe(0);
+  expect(res.groups[0]?.n_attempts).toBe(0);
+});
+
+test("15: unavailable attempt_history with count null reports unknown final_commit", () => {
+  expect(typeof mod?.["summarizeOperational"]).toBe("function");
+  const unavailableHistory: JsonObject = {
+    status: "unavailable",
+    reason: "events_absent",
+    count: null,
+    count_basis: "unknown",
+  };
+  const eps = [
+    controlledEpisode("e-unavailnull", {
+      recipe_id: "recipe-unavailnull",
+      attempts: [],
+      attempt_history: unavailableHistory,
+    }),
+  ];
+  const res = summarizeOperational()(eps, { groupBy: "recipe_id" });
+  expect(res.groups[0]?.final_commit.no_attempts).toBe(0);
+  expect(res.groups[0]?.final_commit.unknown).toBe(1);
+  expect(res.groups[0]?.n_attempts).toBe(0);
+});
+
+test("16: takeover with ref !== final_sha is not counted as human_takeover", () => {
+  expect(typeof mod?.["summarizeOperational"]).toBe("function");
+  const eps = [
+    controlledEpisode("e-takeover-mismatch", {
+      recipe_id: "recipe-takeover-mismatch",
+      final_sha: SHA_E,
+      attempts: [att(1, SHA_A), att(2, SHA_E, { commits: modelCommits() })],
+      assistance: [{ kind: "human_takeover", attempt_n: 1, ref: SHA_C }],
+    }),
+  ];
+  const res = summarizeOperational()(eps, { groupBy: "recipe_id" });
+  expect(res.groups[0]?.final_commit.human_takeover).toBe(0);
+  expect(res.groups[0]?.final_commit.model).toBe(1);
+});
+
+test("17: terminal_completion rate divides by nEpisodes - nUnknown", () => {
+  expect(typeof mod?.["summarizeOperational"]).toBe("function");
+  const eps = [
+    controlledEpisode("e-term1", {
+      recipe_id: "recipe-term",
+      observed_outcome: { class: "terminal_unverified" },
+    }),
+    controlledEpisode("e-unk1", {
+      recipe_id: "recipe-term",
+      observed_outcome: { class: "unknown", missing_reason: "events_lost" },
+    }),
+    controlledEpisode("e-unk2", {
+      recipe_id: "recipe-term",
+      observed_outcome: { class: "unknown", missing_reason: "events_lost" },
+    }),
+  ];
+  const res = summarizeOperational()(eps, { groupBy: "recipe_id" });
+  expect(res.groups[0]?.terminal_completion.n_terminal).toBe(1);
+  expect(res.groups[0]?.terminal_completion.n_unknown).toBe(2);
+  expect(res.groups[0]?.terminal_completion.rate).toBe(1 / 1);
+});
+
+test("18: terminal_completion rate is null when all episodes are unknown", () => {
+  expect(typeof mod?.["summarizeOperational"]).toBe("function");
+  const eps = [
+    controlledEpisode("e-allunk1", {
+      recipe_id: "recipe-allunk",
+      observed_outcome: { class: "unknown", missing_reason: "events_lost" },
+    }),
+    controlledEpisode("e-allunk2", {
+      recipe_id: "recipe-allunk",
+      observed_outcome: { class: "unknown", missing_reason: "events_lost" },
+    }),
+  ];
+  const res = summarizeOperational()(eps, { groupBy: "recipe_id" });
+  expect(res.groups[0]?.terminal_completion.rate).toBe(null);
 });
