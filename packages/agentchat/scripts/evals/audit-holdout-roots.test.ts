@@ -1136,6 +1136,75 @@ test("reservation passes when history fixtures do not collide", async () => {
   expect(result.reservation).toEqual({ ok: true, collisions: [] });
 });
 
+test("a fixture.json with no reconstructs key (raw JSON) reserves cleanly when root matches no lock entry", async () => {
+  const api = await loadAudit();
+  const fixturePath = `${FIXTURES_PREFIX}fam-op-norecon/v1/fixture.json`;
+  const rawJson = `{
+  "schema_version": 1,
+  "family_id": "fam-op-other",
+  "variant_id": "v1",
+  "root": { "kind": "operator_bundle", "id": "other" },
+  "failure_type": "missed_commit",
+  "split": "holdout",
+  "synthetic": false,
+  "base_sha": "${"a".repeat(40)}",
+  "task_digest": "${"b".repeat(64)}",
+  "source_root_handoff_digests": [],
+  "expect_blocked": false,
+  "hidden_ref": { "assertion_set_digest": "${"c".repeat(64)}" },
+  "content_digest": "${"d".repeat(64)}"
+}\n`;
+  const { repo } = mkRepoWithCommittedFixture(fixturePath, rawJson);
+
+  const lock = mkLock([mkEntry(OP_ROOT, "v9", false)]);
+  const { result } = await runAudit(api, { repo, lock, patch: cleanPatch() });
+
+  expect(result.reservation).toEqual({ ok: true, collisions: [] });
+});
+
+test("a fixture.json with no reconstructs key (raw JSON) and matching OP_ROOT yields exactly one root collision", async () => {
+  const api = await loadAudit();
+  const fixturePath = `${FIXTURES_PREFIX}fam-op-canary/v1/fixture.json`;
+  const actualRepo = mkRepo();
+  writeRepoFile(actualRepo, "src/x.ts", "export const x = 1;\n");
+  commitAll(actualRepo, "code");
+  const rawJson = `{
+  "schema_version": 1,
+  "family_id": "fam-op-canary",
+  "variant_id": "v1",
+  "root": { "kind": "operator_bundle", "id": "canary" },
+  "failure_type": "missed_commit",
+  "split": "holdout",
+  "synthetic": false,
+  "base_sha": "${"a".repeat(40)}",
+  "task_digest": "${"b".repeat(64)}",
+  "source_root_handoff_digests": [],
+  "expect_blocked": false,
+  "hidden_ref": { "assertion_set_digest": "${"c".repeat(64)}" },
+  "content_digest": "${"d".repeat(64)}"
+}\n`;
+  writeRepoFile(actualRepo, fixturePath, rawJson);
+  commitAll(actualRepo, "add fixture");
+
+  const lock = mkLock([mkEntry(OP_ROOT, "v9", false)]);
+  const { result } = await runAudit(api, { repo: actualRepo, lock, patch: cleanPatch() });
+
+  expect(result.reservation.ok).toBe(false);
+  const expectedCollision: AuditCollision = {
+    commit: headSha(actualRepo),
+    path: fixturePath,
+    fixture_family_id: "fam-op-canary",
+    fixture_variant_id: "v1",
+    lock_family_id: "fam-op-canary",
+    lock_variant_id: "v9",
+    via: "root",
+  };
+  expect(result.reservation.collisions).toEqual([expectedCollision]);
+  for (const collision of result.reservation.collisions) {
+    expect(collision.via).not.toBe("unparseable");
+  }
+});
+
 test("valid root + invalid non-null reconstructs yields one unparseable collision", async () => {
   const api = await loadAudit();
   const fixturePath = `${FIXTURES_PREFIX}fam-op-probe/v1/fixture.json`;
