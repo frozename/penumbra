@@ -2,7 +2,7 @@ import type { DispatchEventInput } from "@penumbra/core";
 
 import { describe, expect, it, vi } from "bun:test";
 
-import { createAcpWarmPool } from "@src/adapters/acp-warm-pool.js";
+import { acpSpecHash, createAcpWarmPool, poolKeyFor } from "@src/adapters/acp-warm-pool.js";
 import { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
 import type { StartStdioAcpServerOptions, StdioAcpHandle } from "@src/adapters/stdio-acp-server.js";
 import { StdioAcpAdapter, type StdioAcpOptions } from "@src/adapters/stdio-acp.js";
@@ -122,26 +122,30 @@ function createOverlayAdapter(startServer: AcpStartServerMock): StdioAcpAdapter 
   });
 }
 
-function createWarmAdapter(): {
+function createWarmAdapter(
+  envByProject: Record<string, Record<string, string>> = { llamactl: LLAMACTL_OVERLAY },
+): {
   adapter: StdioAcpAdapter;
   startServer: AcpStartServerMock;
   envs: (Record<string, string> | undefined)[];
+  pool: ReturnType<typeof createAcpWarmPool>;
 } {
   const { startServer, envs } = envCapturingFreshHandleStartServer();
+  const pool = createAcpWarmPool();
   const opts = {
     ...BASE_OPTS,
     agentName: "seat",
     repoRoot: "/r",
     cwd: "/r",
     warmPool: true,
-    envByProject: { llamactl: LLAMACTL_OVERLAY },
+    envByProject,
   } as StdioAcpOptions;
   const adapter = new StdioAcpAdapter(opts, {
     startServer,
     createClient: (): StdioAcpClient => makeMockClient(),
-    pool: createAcpWarmPool(),
+    pool,
   });
-  return { adapter, startServer, envs };
+  return { adapter, startServer, envs, pool };
 }
 
 describe("StdioAcpAdapter env_by_project overlay (#592)", () => {
@@ -277,5 +281,44 @@ describe("StdioAcpAdapter env_by_project overlay (#592)", () => {
 
     expect(events.length).toBeGreaterThan(0);
     expect(JSON.stringify(events)).not.toContain("/abs/WORKER-llamactl.md");
+  });
+
+  it("resolves overlay and spec hash per project across two configured projects", async () => {
+    const { adapter, startServer, envs, pool } = createWarmAdapter({
+      llamactl: { PENUMBRA_WORKER_INSTRUCTIONS: "/a.md" },
+      penumbra: { PENUMBRA_WORKER_INSTRUCTIONS: "/b.md" },
+    });
+
+    await dispatch(adapter, {
+      prompt: "hi",
+      signal: new AbortController().signal,
+      conversation: { id: "c-llamactl", project_id: "llamactl" },
+    });
+    expect(envs).toHaveLength(1);
+    expect(envs[0]).toHaveProperty("PENUMBRA_WORKER_INSTRUCTIONS", "/a.md");
+
+    const poolKey = poolKeyFor({ agent: "seat", cwd: "/r" });
+    const specHashBase = acpSpecHash({ binary: "fake-acp" });
+    expect(pool.peekMissReason?.(poolKey, `${specHashBase}|env_by_project=llamactl`)).toBe(
+      "would_hit",
+    );
+    expect(pool.peekMissReason?.(poolKey, `${specHashBase}|env_by_project=penumbra`)).toBe(
+      "spec_mismatch",
+    );
+
+    await dispatch(adapter, {
+      prompt: "hi",
+      signal: new AbortController().signal,
+      conversation: { id: "c-penumbra", project_id: "penumbra" },
+    });
+    expect(startServer).toHaveBeenCalledTimes(2);
+    expect(envs[1]).toHaveProperty("PENUMBRA_WORKER_INSTRUCTIONS", "/b.md");
+
+    await dispatch(adapter, {
+      prompt: "hi",
+      signal: new AbortController().signal,
+      conversation: { id: "c-penumbra-2", project_id: "penumbra" },
+    });
+    expect(startServer).toHaveBeenCalledTimes(2);
   });
 });
