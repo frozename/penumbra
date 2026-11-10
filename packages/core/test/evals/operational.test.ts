@@ -705,3 +705,54 @@ test("18: terminal_completion rate is null when all episodes are unknown", () =>
   const res = summarizeOperational()(eps, { groupBy: "recipe_id" });
   expect(res.groups[0]?.terminal_completion.rate).toBe(null);
 });
+
+test("19: partial/unavailable attempt_history forces null timings even with attempts", () => {
+  expect(typeof mod?.["summarizeOperational"]).toBe("function");
+  const partialHistory: JsonObject = {
+    status: "partial",
+    reason: "claims_pruned",
+    count: 3,
+    count_basis: "handoff_counter",
+  };
+  const eps = [
+    controlledEpisode("e-partial-timing", {
+      recipe_id: "recipe-partial-timing",
+      attempts: [
+        att(2, SHA_A, { timings: e2eOnly(100) }),
+        att(3, SHA_B, { timings: e2eOnly(200) }),
+      ],
+      attempt_history: partialHistory,
+    }),
+  ];
+  const res = summarizeOperational()(eps, { groupBy: "recipe_id" });
+  expect(res.groups[0]?.timings.e2e_ms.n).toBe(0);
+  expect(res.groups[0]?.timings.e2e_ms.n_missing).toBe(1);
+});
+
+test("20: median computed on sorted values [70,10,20] returns 20", () => {
+  expect(typeof mod?.["summarizeOperational"]).toBe("function");
+  const eps = [70, 10, 20].map((ms, index) =>
+    makeEpisode({
+      episode_id: `e-med-${String(index)}`,
+      family_id: `fam-med-${String(index)}`,
+      attempts: [att(1, SHA_A, { timings: e2eOnly(ms) })],
+    }),
+  );
+  const res = summarizeOperational()(eps, { groupBy: "recipe_id" });
+  expect(res.groups[0]?.timings.e2e_ms.median).toBe(20);
+});
+
+test("21: cost_usd complete is false when nIncomplete > 0 despite nMissing === 0", () => {
+  expect(typeof mod?.["summarizeOperational"]).toBe("function");
+  const eps = [
+    makeEpisode({
+      episode_id: "e-complete-partial",
+      family_id: "fam-complete-partial",
+      lineage_usage: lineageIncomplete(0.5),
+    }),
+  ];
+  const res = summarizeOperational()(eps, { groupBy: "recipe_id" });
+  expect(res.groups[0]?.cost_usd.n_missing).toBe(0);
+  expect(res.groups[0]?.cost_usd.n_incomplete).toBe(1);
+  expect(res.groups[0]?.cost_usd.complete).toBe(false);
+});
