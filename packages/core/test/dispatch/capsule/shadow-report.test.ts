@@ -147,6 +147,11 @@ describe("CapsuleShadowMetaSchema", () => {
     );
   });
 
+  test("rejects a non-hex input_hash", () => {
+    const schema = metaSchema();
+    expect(schema.safeParse({ ...compiledMeta(), input_hash: "g".repeat(64) }).success).toBe(false);
+  });
+
   test("rejects unknown keys", () => {
     const schema = metaSchema();
     expect(schema.safeParse({ ...compiledMeta(), surprise: true }).success).toBe(false);
@@ -209,6 +214,7 @@ describe("summarizeCapsuleShadow", () => {
       { input_hash: H2, dropped_ids: [], preflight_codes: [] },
       { ...refusedMeta(), refusal_code: "nope" },
       { ...compiledMeta(), output_hash: "g".repeat(64) },
+      { ...compiledMeta(), input_hash: "g".repeat(64) },
       { ...compiledMeta(), surprise: true },
     ];
     const events = malformedMetas.map((meta, index) => shadowEvent(`m${String(index + 1)}`, meta));
@@ -305,6 +311,68 @@ describe("summarizeCapsuleShadow", () => {
       by_preflight: { clean: 2, flagged: 2 },
     });
     expect(summarize(events).outcomes).toBeNull();
+  });
+
+  test("pins preflight clean/flagged with asymmetric fixtures", () => {
+    const summarize = summarizer();
+    const events = [
+      // Only worktree_deferred -> clean
+      shadowEvent("h1", compiledMeta()),
+      // Has non-worktree_deferred -> flagged
+      shadowEvent("h2", compiledMeta({ preflight_codes: ["base_missing"] })),
+      // Empty preflight_codes -> flagged (every on empty array is true, but we need at least one non-worktree_deferred to be flagged)
+      shadowEvent("h3", compiledMeta({ preflight_codes: [] })),
+      // worktree_deferred alone -> clean
+      shadowEvent("h4", compiledMeta({ preflight_codes: ["worktree_deferred"] })),
+      // worktree_deferred mixed with another -> flagged
+      shadowEvent("h5", compiledMeta({ preflight_codes: ["worktree_deferred", "base_missing"] })),
+      // Refused with only worktree_deferred -> clean
+      shadowEvent("r1", refusedMeta({ preflight_codes: ["worktree_deferred"] })),
+      // Refused with non-worktree_deferred -> flagged
+      shadowEvent("r2", refusedMeta({ preflight_codes: ["base_missing"] })),
+    ];
+    const withOutcomes = summarize(events, {
+      outcomes: new Map([
+        ["h1", "success"],
+        ["h2", "failure"],
+        ["h3", "success"],
+        ["h4", "success"],
+        ["h5", "failure"],
+        ["r1", "success"],
+        ["r2", "failure"],
+      ]),
+    });
+    // h1: worktree_deferred only -> clean
+    // h2: base_missing -> flagged
+    // h3: empty preflight_codes -> flagged (every on empty array is true, so clean++)
+    // h4: worktree_deferred -> clean
+    // h5: worktree_deferred + base_missing -> flagged (every returns false)
+    // r1: worktree_deferred -> clean (refused)
+    // r2: base_missing -> flagged (refused)
+    // clean: h1, h3, h4, r1 = 4
+    // flagged: h2, h5, r2 = 3
+    // compiled: h1(success), h2(failure), h3(success), h4(success), h5(failure) = 3 success, 2 failure
+    // refused: r1(success), r2(failure) = 1 success, 1 failure
+    expect(withOutcomes.outcomes).toEqual({
+      by_status: {
+        compiled: { success: 3, failure: 2, unknown: 0 },
+        refused: { success: 1, failure: 1, unknown: 0 },
+      },
+      by_preflight: { clean: 4, flagged: 3 },
+    });
+  });
+
+  test("excludes refused rows from estimator and with_dropped", () => {
+    const summarize = summarizer();
+    const events = [
+      shadowEvent("h1", compiledMeta()),
+      shadowEvent("r1", refusedMeta()),
+      // Refused with non-empty dropped_ids should not affect with_dropped
+      shadowEvent("r2", refusedMeta({ dropped_ids: ["memory:auto_recall:0"] })),
+    ];
+    const summary = summarize(events);
+    expect(summary.estimator).toEqual({ tokenizer: 1, fallback_estimate: 0, missing: 0 });
+    expect(summary.with_dropped).toBe(1);
   });
 
   test("marks every summary as an observational shadow without uplift", () => {

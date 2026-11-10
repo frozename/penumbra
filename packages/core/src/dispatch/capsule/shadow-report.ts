@@ -7,7 +7,7 @@ export const CAPSULE_SHADOW_KIND = "dispatch.capsule_shadow";
 
 export const CapsuleShadowMetaSchema = z
   .strictObject({
-    input_hash: z.string().min(1),
+    input_hash: Sha256HexSchema,
     dropped_ids: z.array(z.string()),
     preflight_codes: z.array(z.string()),
     recipe_hash: Sha256HexSchema.optional(),
@@ -80,18 +80,11 @@ function parseShadowEvents(
       malformed++;
       continue;
     }
-    const { refusal_code, output_hash } = result.data;
-    const hasRefusal = refusal_code !== undefined;
-    const hasOutput = output_hash !== undefined;
-    if (!hasRefusal && !hasOutput) {
-      malformed++;
-      continue;
-    }
-    if (hasRefusal && hasOutput) {
-      malformed++;
-      continue;
-    }
-    parsed.push({ handoff_id: event.handoff_id, meta: result.data, is_refused: hasRefusal });
+    parsed.push({
+      handoff_id: event.handoff_id,
+      meta: result.data,
+      is_refused: result.data.refusal_code !== undefined,
+    });
   }
   return { parsed, malformed };
 }
@@ -219,8 +212,8 @@ function computeOutcomes(
     } else {
       compiledTally = mergeTally(compiledTally, tally);
     }
-    if (event.meta.preflight_codes.some((code) => code !== "worktree_deferred")) flagged++;
-    else clean++;
+    if (event.meta.preflight_codes.every((code) => code === "worktree_deferred")) clean++;
+    else flagged++;
   }
   return {
     by_status: { compiled: compiledTally, refused: refusedTally },
