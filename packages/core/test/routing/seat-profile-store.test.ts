@@ -154,6 +154,57 @@ describe("seat profile evidence store", () => {
     }
   });
 
+  test("read keeps the first line when an evidence_id repeats with different content", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "seat-profile-store-"));
+    try {
+      const path = join(dir, "evidence.jsonl");
+      const first = makeEvidence({ evidence_id: "order-dup", verdict: "pass", outcome: "pass" });
+      const second = makeEvidence({
+        evidence_id: "order-dup",
+        verdict: "fail",
+        outcome: "model-fail",
+      });
+      writeFileSync(path, `${JSON.stringify(first)}\n${JSON.stringify(second)}\n`, "utf8");
+
+      const store = createSeatProfileStore({ path });
+      const read = await store.read();
+      expect(read.evidence).toHaveLength(1);
+      expect(read.evidence[0]?.evidence_id).toBe("order-dup");
+      expect(read.evidence[0]?.verdict).toBe("pass");
+      expect(read.duplicate_lines).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("read counts every repeated evidence_id line in duplicate_lines", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "seat-profile-store-"));
+    try {
+      const path = join(dir, "evidence.jsonl");
+      const lines = [
+        makeEvidence({ evidence_id: "count-a" }),
+        makeEvidence({ evidence_id: "count-b" }),
+        makeEvidence({ evidence_id: "count-a" }),
+        makeEvidence({ evidence_id: "count-c" }),
+        makeEvidence({ evidence_id: "count-a" }),
+        makeEvidence({ evidence_id: "count-b" }),
+      ];
+      writeFileSync(path, `${lines.map((record) => JSON.stringify(record)).join("\n")}\n`, "utf8");
+
+      const store = createSeatProfileStore({ path });
+      const read = await store.read();
+      expect(read.evidence.map((record) => record.evidence_id)).toEqual([
+        "count-a",
+        "count-b",
+        "count-c",
+      ]);
+      expect(read.corrupt_lines).toBe(0);
+      expect(read.duplicate_lines).toBe(3);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("append validates records and leaves the file untouched on a schema violation", async () => {
     const dir = mkdtempSync(join(tmpdir(), "seat-profile-store-"));
     try {

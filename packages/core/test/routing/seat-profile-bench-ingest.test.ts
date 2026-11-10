@@ -297,6 +297,44 @@ describe("coding-v2 bench row ingest", () => {
     }
   });
 
+  test("recorded_at converts century leap boundaries: 2000 leap, later centuries not", () => {
+    const cases = [
+      { epoch: 951696000, iso: "2000-02-28T00:00:00.000Z" },
+      { epoch: 951782400, iso: "2000-02-29T00:00:00.000Z" },
+      { epoch: 951868800, iso: "2000-03-01T00:00:00.000Z" },
+      { epoch: 4107456000, iso: "2100-02-28T00:00:00.000Z" },
+      { epoch: 4107542400, iso: "2100-03-01T00:00:00.000Z" },
+      { epoch: 7263216000, iso: "2200-03-01T00:00:00.000Z" },
+      { epoch: 10418889600, iso: "2300-03-01T00:00:00.000Z" },
+      { epoch: 13574649600, iso: "2400-03-01T00:00:00.000Z" },
+    ];
+
+    for (const { epoch, iso } of cases) {
+      const result = ingestCodingV2BenchRows(
+        benchText(benchRow({ task: `century-${String(epoch)}`, ended_epoch: epoch })),
+        { fingerprint: FINGERPRINT },
+      );
+      expect(result.evidence).toHaveLength(1);
+      expect(result.evidence[0]?.recorded_at).toBe(iso);
+    }
+  });
+
+  test("pre-1970 epochs are rejected before recorded_at conversion", () => {
+    const result = ingestCodingV2BenchRows(
+      benchText(
+        benchRow({ task: "y1900-feb28", ended_epoch: -2203977600 }),
+        benchRow({ task: "y1900-mar01", ended_epoch: -2203891200 }),
+      ),
+      { fingerprint: FINGERPRINT },
+    );
+
+    expect(result.evidence).toHaveLength(0);
+    expect(result.rejected).toEqual([
+      { line: 1, reason: "schema:ended_epoch" },
+      { line: 2, reason: "schema:ended_epoch" },
+    ]);
+  });
+
   test("a realistic sparse corpus yields one sparse cell and an abstaining profile", () => {
     const rows = ["cache", "duration", "singleflight"].map((task) => benchRow({ task }));
     const { evidence } = ingestCodingV2BenchRows(benchText(...rows), {
