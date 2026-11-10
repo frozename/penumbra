@@ -1111,6 +1111,30 @@ test("round records do not leak response body", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// Response artifacts
+// ---------------------------------------------------------------------------
+
+test("out_dir empty string writes no response artifact", async () => {
+  const inner = makeTestCtx({
+    fanoutResponses: [{ response: "CHECK_RESULT: PASS" }],
+    verifierResponses: [{ ran: true, check_exit: 0 }],
+  });
+  const writes: string[] = [];
+  const ctx: TestCtx = {
+    ...inner,
+    fileWrite: async (path: string) => {
+      writes.push(path);
+      return path;
+    },
+    args: baseArgs({ out_dir: "", verify_check: false }),
+  };
+  const result = (await fn(ctx, emptyRecall())) as FixUntilGreenResult;
+
+  expect(result.ok).toBe(true);
+  expect(writes).toEqual([]);
+});
+
+// ---------------------------------------------------------------------------
 // Verifier dispatch contract
 // ---------------------------------------------------------------------------
 
@@ -1701,6 +1725,32 @@ test("identical verifier-measured failures stop with no_progress", async () => {
   expect(sr).toBe("no_progress");
 });
 
+test("progress_stops true: detail-less verifier measured failures never stop as no_progress", async () => {
+  const { result } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: "CHECK_RESULT: PASS" },
+        { response: "CHECK_RESULT: PASS", branchName: "feature/branch-2" },
+        { response: "CHECK_RESULT: PASS", branchName: "feature/branch-3" },
+      ],
+      verifierResponses: [
+        { ran: true, check_exit: 1 },
+        { ran: true, check_exit: 1 },
+        { ran: true, check_exit: 0 },
+      ],
+    },
+    { max_rounds: 3, progress_stops: true },
+  );
+  expect(result.ok).toBe(true);
+  expect(result.rounds_used).toBe(3);
+  expect(result.rounds.map((round) => round.reason)).toEqual([
+    "verifier_measured_fail",
+    "verifier_measured_fail",
+    "check_passed",
+  ]);
+  expect(result.stop_reason).toBeNull();
+});
+
 test("exhausting max_rounds reports stop_reason max_rounds", async () => {
   const { result } = await runWorkflow(
     {
@@ -2087,6 +2137,33 @@ test("progress_stops true: verifier_not_run resets the failure fingerprint", asy
     "verifier_measured_fail",
     "check_passed",
   ]);
+});
+
+test("progress_stops true: unknown verifier evidence resets the failure fingerprint", async () => {
+  const { result } = await runWorkflow(
+    {
+      fanoutResponses: [
+        { response: FAIL("1.23") },
+        { response: "CHECK_RESULT: PASS", branchName: "feature/branch-2" },
+        { response: FAIL("4.56"), branchName: "feature/branch-3" },
+        { response: "CHECK_RESULT: PASS", branchName: "feature/branch-4" },
+      ],
+      verifierResponses: [
+        { ran: true, check_exit: 1 },
+        { ran: true, check_exit: 0 },
+      ],
+    },
+    { max_rounds: 4, progress_stops: true },
+  );
+  expect(result.ok).toBe(true);
+  expect(result.rounds_used).toBe(4);
+  expect(result.rounds.map((round) => round.reason)).toEqual([
+    "check_failed",
+    "verifier_measured_fail",
+    "check_failed",
+    "check_passed",
+  ]);
+  expect(result.stop_reason).toBeNull();
 });
 
 test("progress_stops true: a bare 429 with no actionable marker does not trip capacity_unavailable", async () => {

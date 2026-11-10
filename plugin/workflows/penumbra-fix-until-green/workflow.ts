@@ -44,7 +44,7 @@ async function writeResponseArtifact(
   index: number,
   responseText: string,
 ): Promise<void> {
-  if (input.out_dir === undefined || responseText.length === 0) return;
+  if (!input.out_dir || responseText.length === 0) return;
   const outDir = resolveOutDir(ctx, input.out_dir);
   if (!outDir.ok) return;
   const artifactPath = join(outDir.path, `${sanitizeFileStem(label)}-${String(index)}.txt`);
