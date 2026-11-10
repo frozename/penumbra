@@ -4,6 +4,7 @@ import { digestOf } from "./canonical.js";
 import {
   AssistanceSchema,
   type EpisodeBody,
+  EpisodeSchema,
   GitShaSchema,
   IsoTsSchema,
   receiptDigest,
@@ -85,6 +86,7 @@ function buildReceiptDigests(episode: EpisodeBody): string[] {
       (r) =>
         r.kind === "hidden_assertion" &&
         r.producer === "grader" &&
+        r.sha === episode.final_sha &&
         r.sha !== null &&
         r.claimed_verdict === "pass" &&
         r.control_verdict === "pass",
@@ -109,6 +111,11 @@ export function proposeLessonFromEpisode(
 ):
   | { status: "rejected"; reasons: string[] }
   | { status: "proposed"; lesson: z.infer<typeof LessonSchema>; provenance_gaps: string[] } {
+  const parsedEpisode = EpisodeSchema.safeParse(episode);
+  if (!parsedEpisode.success) {
+    return { status: "rejected", reasons: ["invalid_episode_schema"] };
+  }
+
   const parsedDraft = LessonDraftSchema.safeParse(draft);
   if (!parsedDraft.success) {
     return { status: "rejected", reasons: ["invalid_draft_schema"] };

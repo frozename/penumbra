@@ -552,6 +552,18 @@ test("propose: secrets in exclusions are rejected", () => {
   );
 });
 
+test("propose: secrets in applicability are rejected", () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  expectProposedRejection(
+    verifiedEpisode(),
+    draft({ applicability: ["packages/core tests", SK_TOKEN] }),
+    "secret_detected",
+  );
+});
+
 test("propose: secrets in counterexample are rejected", () => {
   expect(mod).not.toBeNull();
   if (!mod) {
@@ -562,6 +574,37 @@ test("propose: secrets in counterexample are rejected", () => {
     draft({ counterexample: SK_TOKEN }),
     "secret_detected",
   );
+});
+
+test("propose: receipt at non-final sha is excluded from receipt_digests", () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const episode = makeEpisode({
+    split: "dev",
+    attempt_history: {
+      status: "complete",
+      reason: null,
+      count: 1,
+      count_basis: "claim_events",
+    },
+    attempts: [att(1, SHA_A)],
+    final_sha: SHA_A,
+    receipts: [hiddenReceipt(), hiddenReceipt({ sha: SHA_B })],
+    harness_build: { sha: SHA_C },
+    model_identity: modelIdentity({
+      engine: { value: ENGINE_VALUE, provenance: "declared" },
+    }),
+    repo: { base_sha: null, dependency_lock_sha256: LOCK_SHA },
+  });
+  const res = proposeLessonFromEpisode()(episode, draft());
+  expect(res.status).toBe("proposed");
+  if (res.status !== "proposed") {
+    return;
+  }
+  const baseReceipt = hiddenReceipt();
+  expect(res.lesson.source.receipt_digests).toEqual([baseReceipt["receipt_digest"]]);
 });
 
 test("propose: expiry equal to creation is rejected", () => {
@@ -582,6 +625,79 @@ test("propose: expiry before creation is rejected", () => {
     draft({ expires_at: "2026-10-01T00:00:00.000Z" }),
     "invalid_expiry",
   );
+});
+
+test("propose: unparsed episode is rejected with invalid_episode_schema", () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const unparsed = {
+    episode_id: "bad",
+    final_sha: SHA_A,
+    receipts: [] as unknown[],
+  };
+  const res = proposeLessonFromEpisode()(unparsed, draft());
+  expect(res.status).toBe("rejected");
+  if (res.status === "rejected") {
+    expect(res.reasons).toContain("invalid_episode_schema");
+  }
+});
+
+test("propose: episode with receipt producer 'worker' is rejected", () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const rawEpisode: JsonObject = {
+    ...verifiedEpisode(),
+    receipts: [
+      signReceipt({
+        kind: "hidden_assertion",
+        producer: "worker",
+        sha: SHA_A,
+        claimed_verdict: "pass",
+        fail_reason: null,
+        assertion_set_digest: ASSERTION_DIGEST,
+        grader_build: GRADER_BUILD,
+        per_check: [{ id: "c1", ok: true }],
+        control_verdict: "pass",
+      }),
+    ],
+  };
+  const res = proposeLessonFromEpisode()(rawEpisode, draft());
+  expect(res.status).toBe("rejected");
+  if (res.status === "rejected") {
+    expect(res.reasons).toContain("invalid_episode_schema");
+  }
+});
+
+test("propose: episode with receipt control_verdict 'fail' is rejected", () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const rawEpisode: JsonObject = {
+    ...verifiedEpisode(),
+    receipts: [
+      signReceipt({
+        kind: "hidden_assertion",
+        producer: "grader",
+        sha: SHA_A,
+        claimed_verdict: "pass",
+        fail_reason: null,
+        assertion_set_digest: ASSERTION_DIGEST,
+        grader_build: GRADER_BUILD,
+        per_check: [{ id: "c1", ok: true }],
+        control_verdict: "fail",
+      }),
+    ],
+  };
+  const res = proposeLessonFromEpisode()(rawEpisode, draft());
+  expect(res.status).toBe("rejected");
+  if (res.status === "rejected") {
+    expect(res.reasons).toContain("invalid_episode_schema");
+  }
 });
 
 test("propose: negative drafts are proposed for unverified episodes", () => {
@@ -705,6 +821,24 @@ test("eligibility: changed engine or harness build invalidates", () => {
     if (!res.eligible) {
       expect(res.reasons).toContain("source_version_changed");
     }
+  }
+  const lockedLesson = lessonOf(
+    proposeLessonFromEpisode()(
+      verifiedEpisode({
+        model_identity: modelIdentity({
+          engine: { value: ENGINE_VALUE, provenance: "declared" },
+          effective: { value: "qwen3-coder", provenance: "acp_selected" },
+        }),
+        repo: { base_sha: null, dependency_lock_sha256: LOCK_SHA },
+      }),
+      draft(),
+    ),
+  );
+  const lockedLessonApproved = { ...lockedLesson, review: "approved", approved_by: "human:alex" };
+  const lockedRes = lessonEligibility()(lockedLessonApproved, ctx({ engine: ENGINE_CHANGED }));
+  expect(lockedRes.eligible).toBe(false);
+  if (!lockedRes.eligible) {
+    expect(lockedRes.reasons).toContain("source_version_changed");
   }
 });
 
