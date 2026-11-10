@@ -640,11 +640,18 @@ async function computeReservation(
   const collisions: ReservationCollision[] = [];
 
   for (const fb of fixtureBlobs) {
-    const parsedRoot = parseRootRef(fb.data["root"]);
-    const parsedReconstructs = parseRootRefNullable(fb.data["reconstructs"]);
+    const rootRaw = fb.data["root"];
+    const reconstructsRaw = fb.data["reconstructs"];
+    const parsedRoot = parseRootRef(rootRaw);
+    const parsedReconstructs = parseRootRefNullable(reconstructsRaw);
     const { family_id: fixtureFamilyId, variant_id: fixtureVariantId } = extractFixtureIds(fb.data);
 
     if (parsedRoot === null && parsedReconstructs === null) {
+      pushUnparseableCollisions(collisions, fb, fixtureFamilyId, fixtureVariantId);
+      continue;
+    }
+
+    if (isPartlyParseable(rootRaw, reconstructsRaw)) {
       pushUnparseableCollisions(collisions, fb, fixtureFamilyId, fixtureVariantId);
       continue;
     }
@@ -696,6 +703,15 @@ function parseRootRefNullable(root: unknown): RootRef | null {
   const result = RootRefSchema.nullable().safeParse(root);
   if (result.success) return result.data;
   return null;
+}
+
+function isPartlyParseable(rootRaw: unknown, reconstructsRaw: unknown): boolean {
+  const rootFailed = !RootRefSchema.safeParse(rootRaw).success;
+  const reconstructsFailed =
+    reconstructsRaw !== null &&
+    reconstructsRaw !== undefined &&
+    !RootRefSchema.nullable().safeParse(reconstructsRaw).success;
+  return rootFailed || reconstructsFailed;
 }
 
 function detectCollisionVia(

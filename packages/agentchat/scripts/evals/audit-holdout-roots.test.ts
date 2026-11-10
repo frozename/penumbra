@@ -242,6 +242,41 @@ function fixtureJson(args: Parameters<typeof mkFixturePublic>[0]): string {
   return `${JSON.stringify(mkFixturePublic(args), null, 2)}\n`;
 }
 
+function fixtureJsonRaw(args: {
+  family_id: string;
+  variant_id: string;
+  root: unknown;
+  reconstructs?: unknown;
+  synthetic?: boolean;
+  failure_type: string | null;
+}): string {
+  const synthetic =
+    args.synthetic ??
+    (typeof args.root === "object" && args.root !== null && "kind" in args.root
+      ? (args.root as { kind: string }).kind === "synthetic"
+      : false);
+  return `${JSON.stringify(
+    {
+      schema_version: 1,
+      family_id: args.family_id,
+      variant_id: args.variant_id,
+      root: args.root,
+      reconstructs: args.reconstructs ?? null,
+      failure_type: args.failure_type,
+      split: "holdout",
+      synthetic,
+      base_sha: "a".repeat(40),
+      task_digest: "b".repeat(64),
+      source_root_handoff_digests: [],
+      expect_blocked: false,
+      hidden_ref: { assertion_set_digest: "c".repeat(64) },
+      content_digest: "d".repeat(64),
+    },
+    null,
+    2,
+  )}\n`;
+}
+
 // --- runner ---------------------------------------------------------------------
 
 interface RecordedCall {
@@ -1091,6 +1126,88 @@ test("reservation passes when history fixtures do not collide", async () => {
       family_id: "fam-op-other",
       variant_id: "v1",
       root: { kind: "operator_bundle", id: "other" },
+      failure_type: "missed_commit",
+    }),
+  );
+
+  const lock = mkLock([mkEntry(OP_ROOT, "v9", false)]);
+  const { result } = await runAudit(api, { repo, lock, patch: cleanPatch() });
+
+  expect(result.reservation).toEqual({ ok: true, collisions: [] });
+});
+
+test("valid root + invalid non-null reconstructs yields one unparseable collision", async () => {
+  const api = await loadAudit();
+  const fixturePath = `${FIXTURES_PREFIX}fam-op-probe/v1/fixture.json`;
+  const { repo, addSha } = mkRepoWithCommittedFixture(
+    fixturePath,
+    fixtureJsonRaw({
+      family_id: "fam-op-probe",
+      variant_id: "v1",
+      root: { kind: "operator_bundle", id: "probe-x" },
+      reconstructs: { kind: "operator_bundle", id: "canary", note: "reused" },
+      failure_type: "missed_commit",
+    }),
+  );
+
+  const lock = mkLock([mkEntry(OP_ROOT, "v9", false)]);
+  const { result } = await runAudit(api, { repo, lock, patch: cleanPatch() });
+
+  expect(result.reservation.ok).toBe(false);
+  expect(result.reservation.collisions).toEqual([
+    {
+      commit: addSha,
+      path: fixturePath,
+      fixture_family_id: "fam-op-probe",
+      fixture_variant_id: "v1",
+      lock_family_id: "",
+      lock_variant_id: "",
+      via: "unparseable",
+    },
+  ]);
+});
+
+test("invalid root + valid non-matching reconstructs yields one unparseable collision", async () => {
+  const api = await loadAudit();
+  const fixturePath = `${FIXTURES_PREFIX}fam-badroot-validrecon/v1/fixture.json`;
+  const { repo, addSha } = mkRepoWithCommittedFixture(
+    fixturePath,
+    fixtureJsonRaw({
+      family_id: "fam-badroot-validrecon",
+      variant_id: "v1",
+      root: { kind: "operator_bundle", id: "bad-root", extraKey: "should-fail" },
+      reconstructs: { kind: "operator_bundle", id: "other" },
+      failure_type: "missed_commit",
+    }),
+  );
+
+  const lock = mkLock([mkEntry(OP_ROOT, "v9", false)]);
+  const { result } = await runAudit(api, { repo, lock, patch: cleanPatch() });
+
+  expect(result.reservation.ok).toBe(false);
+  expect(result.reservation.collisions).toEqual([
+    {
+      commit: addSha,
+      path: fixturePath,
+      fixture_family_id: "fam-badroot-validrecon",
+      fixture_variant_id: "v1",
+      lock_family_id: "",
+      lock_variant_id: "",
+      via: "unparseable",
+    },
+  ]);
+});
+
+test("valid root + null reconstructs parses normally (no unparseable collision)", async () => {
+  const api = await loadAudit();
+  const fixturePath = `${FIXTURES_PREFIX}fam-op-probe/v1/fixture.json`;
+  const { repo } = mkRepoWithCommittedFixture(
+    fixturePath,
+    fixtureJson({
+      family_id: "fam-op-probe",
+      variant_id: "v1",
+      root: { kind: "operator_bundle", id: "probe-x" },
+      reconstructs: null,
       failure_type: "missed_commit",
     }),
   );
