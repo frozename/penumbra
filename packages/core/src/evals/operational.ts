@@ -342,7 +342,6 @@ function buildTimings(episodes: readonly Episode[]): TimingsReport {
 
 function buildGroup(acc: GroupAcc, episodes: readonly Episode[]): OperationalGroupReport {
   const nEpisodes = acc.nEpisodes;
-  const nExcludingUnknown = nEpisodes - acc.nUnknown;
   return {
     key: acc.key,
     n_episodes: nEpisodes,
