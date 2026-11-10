@@ -184,7 +184,7 @@ function hasNonEmptyStringProperty(source: string, property: string): boolean {
       continue;
     }
 
-    if (objectDepth === 1 && arrayDepth === 0 && /[$A-Za-z_]/.test(ch)) {
+    if (objectDepth === 1 && arrayDepth === 0 && ch !== undefined && /[$A-Za-z_]/.test(ch)) {
       let end = i + 1;
       while (/[$\w]/.test(source[end] ?? "")) end++;
       const key = source.slice(i, end);
