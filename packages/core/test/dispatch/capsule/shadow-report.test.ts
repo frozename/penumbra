@@ -472,7 +472,7 @@ describe("summarizeCapsuleShadow", () => {
       expected: { clean: 0, flagged: 1 },
     },
   ])(
-    "classifies preflight shape '%label' -> { clean: %i, flagged: %i }",
+    "classifies preflight shape $label -> clean $expected.clean, flagged $expected.flagged",
     ({ preflight_codes, expected }) => {
       const summarize = summarizer();
       const events = [shadowEvent("h1", compiledMeta({ preflight_codes }))];
