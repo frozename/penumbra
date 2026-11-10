@@ -121,28 +121,31 @@ export function proposeLessonFromEpisode(
     return { status: "rejected", reasons: ["invalid_draft_schema"] };
   }
 
+  const e = parsedEpisode.data;
+  const d = parsedDraft.data;
+
   const reasons: string[] = [];
 
-  if (holdoutEpisode(episode)) {
+  if (holdoutEpisode(e)) {
     reasons.push("holdout_episode");
   }
 
-  if (unverifiedFinalSha(episode, draft.polarity)) {
+  if (unverifiedFinalSha(e, d.polarity)) {
     reasons.push("unverified_final_sha");
   }
 
-  if (invalidExpiry(draft)) {
+  if (invalidExpiry(d)) {
     reasons.push("invalid_expiry");
   }
 
   if (
     secretsDetected(
-      draft.failure_signature,
-      draft.root_cause,
-      draft.counterexample,
-      draft.procedure,
-      draft.applicability,
-      draft.exclusions,
+      d.failure_signature,
+      d.root_cause,
+      d.counterexample,
+      d.procedure,
+      d.applicability,
+      d.exclusions,
     )
   ) {
     reasons.push("secret_detected");
@@ -152,35 +155,35 @@ export function proposeLessonFromEpisode(
     return { status: "rejected", reasons: [...new Set(reasons)].toSorted() };
   }
 
-  const receiptDigests = buildReceiptDigests(episode);
-  const contributions = episode.assistance.map((a) => ({ kind: a.kind, attempt_n: a.attempt_n }));
-  const provenanceGaps = buildProvenanceGaps(episode);
+  const receiptDigests = buildReceiptDigests(e);
+  const contributions = e.assistance.map((a) => ({ kind: a.kind, attempt_n: a.attempt_n }));
+  const provenanceGaps = buildProvenanceGaps(e);
 
   const lessonBody = {
     review: "proposed" as const,
     approved_by: null as string | null,
     authority: "advisory" as const,
-    polarity: draft.polarity,
+    polarity: d.polarity,
     source: {
-      episode_id: episode.episode_id,
-      family_id: episode.family_id,
-      final_sha: episode.final_sha,
+      episode_id: e.episode_id,
+      family_id: e.family_id,
+      final_sha: e.final_sha,
       receipt_digests: receiptDigests,
     },
     scope: {
-      project_id: draft.project_id,
-      harness_build_sha: episode.harness_build.sha,
-      engine: episode.model_identity.engine.value,
-      dependency_lock_sha256: episode.repo.dependency_lock_sha256,
+      project_id: d.project_id,
+      harness_build_sha: e.harness_build.sha,
+      engine: e.model_identity.engine.value,
+      dependency_lock_sha256: e.repo.dependency_lock_sha256,
     },
-    failure_signature: draft.failure_signature,
-    root_cause: draft.root_cause,
-    procedure: draft.procedure,
-    applicability: draft.applicability,
-    exclusions: draft.exclusions,
-    counterexample: draft.counterexample,
-    created_at: draft.created_at,
-    expires_at: draft.expires_at,
+    failure_signature: d.failure_signature,
+    root_cause: d.root_cause,
+    procedure: d.procedure,
+    applicability: d.applicability,
+    exclusions: d.exclusions,
+    counterexample: d.counterexample,
+    created_at: d.created_at,
+    expires_at: d.expires_at,
     contributions: contributions,
     provenance_gaps: provenanceGaps,
   };

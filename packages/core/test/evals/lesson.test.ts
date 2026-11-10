@@ -297,6 +297,7 @@ type CtxOpts = {
   revoked?: string[];
   engine?: string | null;
   harness_build_sha?: string | null;
+  dependency_lock_sha256?: string | null;
 };
 
 function ctx(opts: CtxOpts = {}): EligibilityCtx {
@@ -307,7 +308,8 @@ function ctx(opts: CtxOpts = {}): EligibilityCtx {
     current: {
       harness_build_sha: opts.harness_build_sha === undefined ? SHA_C : opts.harness_build_sha,
       engine: opts.engine === undefined ? ENGINE_VALUE : opts.engine,
-      dependency_lock_sha256: LOCK_SHA,
+      dependency_lock_sha256:
+        opts.dependency_lock_sha256 === undefined ? LOCK_SHA : opts.dependency_lock_sha256,
     },
   };
 }
@@ -840,6 +842,38 @@ test("eligibility: changed engine or harness build invalidates", () => {
   if (!lockedRes.eligible) {
     expect(lockedRes.reasons).toContain("source_version_changed");
   }
+});
+
+test("eligibility: changed dependency_lock_sha256 invalidates, same value stays eligible", () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const LOCK_SHA_B = "g".repeat(64);
+  const lesson = approvedLesson();
+  const lockedLesson = lessonOf(
+    proposeLessonFromEpisode()(
+      verifiedEpisode({
+        model_identity: modelIdentity({
+          engine: { value: ENGINE_VALUE, provenance: "declared" },
+          effective: { value: "qwen3-coder", provenance: "acp_selected" },
+        }),
+        repo: { base_sha: null, dependency_lock_sha256: LOCK_SHA },
+      }),
+      draft(),
+    ),
+  );
+  const lockedLessonApproved = { ...lockedLesson, review: "approved", approved_by: "human:alex" };
+  const diffLockRes = lessonEligibility()(
+    lockedLessonApproved,
+    ctx({ dependency_lock_sha256: LOCK_SHA_B }),
+  );
+  expect(diffLockRes.eligible).toBe(false);
+  if (!diffLockRes.eligible) {
+    expect(diffLockRes.reasons).toContain("source_version_changed");
+  }
+  const sameLockRes = lessonEligibility()(lockedLessonApproved, ctx());
+  expect(sameLockRes).toEqual({ eligible: true });
 });
 
 test("eligibility: a null current engine is not a version change", () => {
