@@ -124,6 +124,7 @@ const DEEP_RELATIVE_IMPORT_EXCEPTIONS = [
   "packages/agentchat/test/scripts/acp-promotion/scenarios.test.ts",
   "packages/config/test/commands/config-sync-providers.test.ts",
   "packages/config/test/files/schemas.test.ts",
+  "packages/core/test/readers/embed-recipe-bench.ts",
   "packages/core/test/tasks/requires-tools-constraint.test.ts",
   "packages/daemon/test/routes/otlp.test.ts",
   "packages/e2e/test/task-board.test.ts",
