@@ -13,6 +13,7 @@ import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 
+import { resolveOutDir } from "../_shared/io.js";
 import { emptyRecall } from "../_shared/test-helpers.js";
 import { classifyFailure, failureFingerprint } from "./progress.js";
 import { DEFAULT_INSPECT_SHA, type InspectConfig, makeInspection } from "./stage-test-helpers.js";
@@ -1132,6 +1133,28 @@ test("out_dir empty string writes no response artifact", async () => {
 
   expect(result.ok).toBe(true);
   expect(writes).toEqual([]);
+});
+
+test("out_dir set writes the response artifact once at the sanitized label path", async () => {
+  const response = "CHECK_RESULT: PASS\nartifact body";
+  const inner = makeTestCtx({
+    fanoutResponses: [{ response }],
+  });
+  const writes: { path: string; body: string }[] = [];
+  const ctx: TestCtx = {
+    ...inner,
+    fileWrite: async (path: string, body: string) => {
+      writes.push({ path, body });
+      return path;
+    },
+    args: baseArgs({ out_dir: "artifacts", verify_check: false }),
+  };
+  const result = (await fn(ctx, emptyRecall())) as FixUntilGreenResult;
+
+  expect(result.ok).toBe(true);
+  const outDir = resolveOutDir(ctx, "artifacts");
+  if (!outDir.ok) throw new Error("expected artifacts out_dir to resolve");
+  expect(writes).toEqual([{ path: join(outDir.path, "fix-1-executor-0.txt"), body: response }]);
 });
 
 // ---------------------------------------------------------------------------
