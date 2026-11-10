@@ -566,6 +566,7 @@ describe("penumbra-fix-until-green full response parsing", () => {
     expect(result?.green).toBe(true);
     const fanout = workflowCalls[0];
     expect(fanout).toBeDefined();
+    if (!fanout) throw new Error("expected a fanout workflow call");
     const args = fanout.args as FanoutArgs;
     expect(args.tasks[0]?.response_mode).toBe("full");
   });

@@ -23,7 +23,7 @@ export function readArgs(
       paths.push(value);
       continue;
     }
-    if (extraFlags.has(arg)) {
+    if (arg !== undefined && extraFlags.has(arg)) {
       continue;
     }
     throw new Error(`unknown arg: ${String(arg)}`);
