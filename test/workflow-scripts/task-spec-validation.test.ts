@@ -319,7 +319,9 @@ function readValidatorBlock(path: string): string {
     /\/\/ task-spec-validation:begin\n([\s\S]*?)\/\/ task-spec-validation:end/,
   );
   expect(match, `${path} should include the task-spec validator block`).not.toBeNull();
-  return match![1];
+  const block = match?.[1];
+  if (block === undefined) throw new Error(`${path} task-spec validator block is empty`);
+  return block;
 }
 
 function parseDispatchSpec(prompt: string): Record<string, unknown> {
@@ -386,9 +388,10 @@ describe("workflow task-spec validation block", () => {
 
     test(`${workflow.name} rejects missing required task keys`, () => {
       const missingKey = workflow.taskRequiredKeys[0];
+      if (missingKey === undefined) throw new Error(`${workflow.name} has no required task keys`);
       const validTask =
-        workflow.validTasks?.[0] ?? workflow.validInput.task ?? workflow.validInput.tasks[0];
-      const invalidTask = { ...validTask };
+        workflow.validTasks?.[0] ?? workflow.validInput.task ?? workflow.validInput.tasks?.[0];
+      const invalidTask: Record<string, unknown> = { ...validTask };
       delete invalidTask[missingKey];
 
       expect(() =>
