@@ -714,4 +714,188 @@ describe("summarizeSeatShadowReplay", () => {
     expect(summary.agree).toBe(0);
     expect(summary.disagree).toBe(0);
   });
+
+  test("aggregates agree/disagree buckets correctly with 2 agree and 1 disagree", () => {
+    expect(typeof summarizeSeatShadowReplay).toBe("function");
+    const summarize = summarizeSeatShadowReplay!;
+    const rank = rankSeatShadow!;
+
+    const fpA = seatFp("seat-a");
+    const fpB = seatFp("seat-b");
+    const fpC = seatFp("seat-c");
+    const profileA = scoredProfile(fpA, 5, 0);
+    const profileB = scoredProfile(fpB, 3, 2);
+    const profileC = scoredProfile(fpC, 4, 1);
+
+    const agree1 = rank(query({ root_task_id: "r1", current_route_seat_id: "seat-a" }), [
+      seatCandidate("seat-a", profileA),
+    ]);
+    const agree2 = rank(query({ root_task_id: "r2", current_route_seat_id: "seat-a" }), [
+      seatCandidate("seat-a", profileA),
+    ]);
+    const disagree1 = rank(query({ root_task_id: "r3", current_route_seat_id: "seat-b" }), [
+      seatCandidate("seat-b", profileB),
+      seatCandidate("seat-c", profileC),
+    ]);
+
+    const summary = summarize([agree1, agree2, disagree1]);
+    expect(summary.agree).toBe(2);
+    expect(summary.disagree).toBe(1);
+    expect(summary.shadow_abstain).toBe(0);
+    expect(summary.current_missing).toBe(0);
+  });
+
+  test("filters pin_honored from unknown_reasons in summarizeSeatShadowReplay", () => {
+    expect(typeof summarizeSeatShadowReplay).toBe("function");
+    const summarize = summarizeSeatShadowReplay!;
+    const rank = rankSeatShadow!;
+
+    const fpA = seatFp("seat-a");
+    const fpB = seatFp("seat-b");
+    const profileA = scoredProfile(fpA, 5, 0);
+    const profileB = scoredProfile(fpB, 3, 2);
+
+    const mismatchedPin = rank(query({ root_task_id: "r1", pinned_seat_id: "seat-b" }), [
+      seatCandidate("seat-a", profileA),
+      seatCandidate("seat-b", profileB, {
+        fingerprint: { ...fpB, harness: "acp-other" },
+      }),
+    ]);
+
+    const summary = summarize([mismatchedPin]);
+    expect(Object.keys(summary.unknown_reasons)).toEqual(["fingerprint_mismatch"]);
+    expect(summary.unknown_reasons["fingerprint_mismatch"]).toBe(1);
+    expect("pin_honored" in summary.unknown_reasons).toBe(false);
+  });
+
+  test("marks qualified cells with null pass_rate or null interval as cell_unscored", () => {
+    expect(typeof rankSeatShadow).toBe("function");
+    const rank = rankSeatShadow!;
+
+    const fp = seatFp("seat-unscored-pass-null");
+
+    const cellPassNull: routing.SeatProfileCell = {
+      tier: "T2",
+      effort: "medium",
+      budget: 1,
+      context_band: "ctx_32k",
+      root_tasks: 5,
+      capacity_root_tasks: 0,
+      attempts: 5,
+      pass_rate: null,
+      interval: { lo: 0.5, hi: 0.9 },
+      wall_seconds_p50: null,
+      capacity_count: 0,
+      status: "qualified",
+    };
+
+    const profilePassNull: routing.SeatProfile = {
+      fingerprint_key: seatFingerprintKey(fp),
+      fingerprint: fp,
+      status: "qualified",
+      cells: [cellPassNull],
+    };
+
+    const decisionPassNull = rank(query(), [
+      seatCandidate("seat-unscored-pass-null", profilePassNull),
+    ]);
+    const recordPassNull = recordFor(decisionPassNull, "seat-unscored-pass-null");
+    expect(recordPassNull.disposition).toBe("unknown");
+    expect(recordPassNull.reasons).toContain("cell_unscored");
+
+    const fp2 = seatFp("seat-unscored-int-null");
+
+    const cellIntNull: routing.SeatProfileCell = {
+      tier: "T2",
+      effort: "medium",
+      budget: 1,
+      context_band: "ctx_32k",
+      root_tasks: 5,
+      capacity_root_tasks: 0,
+      attempts: 5,
+      pass_rate: 0.8,
+      interval: null,
+      wall_seconds_p50: null,
+      capacity_count: 0,
+      status: "qualified",
+    };
+
+    const profileIntNull: routing.SeatProfile = {
+      fingerprint_key: seatFingerprintKey(fp2),
+      fingerprint: fp2,
+      status: "qualified",
+      cells: [cellIntNull],
+    };
+
+    const decisionIntNull = rank(query(), [
+      seatCandidate("seat-unscored-int-null", profileIntNull),
+    ]);
+    const recordIntNull = recordFor(decisionIntNull, "seat-unscored-int-null");
+    expect(recordIntNull.disposition).toBe("unknown");
+    expect(recordIntNull.reasons).toContain("cell_unscored");
+  });
+
+  test("ranks higher pass_rate first when interval_lo is equal", () => {
+    expect(typeof rankSeatShadow).toBe("function");
+    const rank = rankSeatShadow!;
+
+    const fpA = seatFp("seat-z-higher-rate");
+    const fpB = seatFp("seat-a-lower-rate");
+
+    const cellA: routing.SeatProfileCell = {
+      tier: "T2",
+      effort: "medium",
+      budget: 1,
+      context_band: "ctx_32k",
+      root_tasks: 4,
+      capacity_root_tasks: 0,
+      attempts: 4,
+      pass_rate: 0.75,
+      interval: { lo: 0.4, hi: 0.9 },
+      wall_seconds_p50: null,
+      capacity_count: 0,
+      status: "qualified",
+    };
+
+    const profileA: routing.SeatProfile = {
+      fingerprint_key: seatFingerprintKey(fpA),
+      fingerprint: fpA,
+      status: "qualified",
+      cells: [cellA],
+    };
+
+    const cellB: routing.SeatProfileCell = {
+      tier: "T2",
+      effort: "medium",
+      budget: 1,
+      context_band: "ctx_32k",
+      root_tasks: 3,
+      capacity_root_tasks: 0,
+      attempts: 3,
+      pass_rate: 0.5,
+      interval: { lo: 0.4, hi: 0.85 },
+      wall_seconds_p50: null,
+      capacity_count: 0,
+      status: "qualified",
+    };
+
+    const profileB: routing.SeatProfile = {
+      fingerprint_key: seatFingerprintKey(fpB),
+      fingerprint: fpB,
+      status: "qualified",
+      cells: [cellB],
+    };
+
+    const decision = rank(query(), [
+      seatCandidate("seat-z-higher-rate", profileA),
+      seatCandidate("seat-a-lower-rate", profileB),
+    ]);
+
+    const recordA = recordFor(decision, "seat-z-higher-rate");
+    const recordB = recordFor(decision, "seat-a-lower-rate");
+
+    expect(recordA.rank).toBe(1);
+    expect(recordB.rank).toBe(2);
+    expect(decision.shadow_choice).toBe("seat-z-higher-rate");
+  });
 });
