@@ -17,5 +17,21 @@ export * from "./decision-log.js";
 export * from "./replay.js";
 export * from "./router.js";
 export * from "./schemas.js";
+export {
+  type CodingV2BenchExclusion,
+  type CodingV2BenchIngestOptions,
+  type CodingV2BenchIngestResult,
+  type CodingV2BenchRejection,
+  ingestCodingV2BenchRows,
+} from "./seat-profile-bench-ingest.js";
+export {
+  createSeatProfileStore,
+  DEFAULT_SEAT_PROFILE_EVIDENCE_PATH,
+  type SeatProfileStore,
+  type SeatProfileStoreAppendResult,
+  type SeatProfileStoreOptions,
+  type SeatProfileStoreReadResult,
+} from "./seat-profile-store.js";
+export * from "./seat-profile.js";
 export * from "./task-profile-judge.js";
 export * from "./task-profile.js";
