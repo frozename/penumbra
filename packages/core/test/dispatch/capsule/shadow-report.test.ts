@@ -188,6 +188,7 @@ describe("summarizeCapsuleShadow", () => {
     expect(summary.preflight_codes).toEqual({ base_missing: 1 });
     expect(summary.token_utilization).toBeNull();
     expect(summary.with_dropped).toBe(0);
+    expect(summary.estimator).toEqual({ tokenizer: 0, fallback_estimate: 0, missing: 0 });
     expect(summary.outcomes).toBeNull();
   });
 
@@ -318,14 +319,12 @@ describe("summarizeCapsuleShadow", () => {
     const events = [
       // Only worktree_deferred -> clean
       shadowEvent("h1", compiledMeta()),
+      // Second row with only worktree_deferred -> clean (unbalances so every->some mutant fails)
+      shadowEvent("h6", compiledMeta({ preflight_codes: ["worktree_deferred"] })),
       // Has non-worktree_deferred -> flagged
       shadowEvent("h2", compiledMeta({ preflight_codes: ["base_missing"] })),
-      // Empty preflight_codes -> flagged (every on empty array is true, but we need at least one non-worktree_deferred to be flagged)
+      // Empty preflight_codes -> clean (every on empty array returns true)
       shadowEvent("h3", compiledMeta({ preflight_codes: [] })),
-      // worktree_deferred alone -> clean
-      shadowEvent("h4", compiledMeta({ preflight_codes: ["worktree_deferred"] })),
-      // worktree_deferred mixed with another -> flagged
-      shadowEvent("h5", compiledMeta({ preflight_codes: ["worktree_deferred", "base_missing"] })),
       // Refused with only worktree_deferred -> clean
       shadowEvent("r1", refusedMeta({ preflight_codes: ["worktree_deferred"] })),
       // Refused with non-worktree_deferred -> flagged
@@ -336,29 +335,27 @@ describe("summarizeCapsuleShadow", () => {
         ["h1", "success"],
         ["h2", "failure"],
         ["h3", "success"],
-        ["h4", "success"],
-        ["h5", "failure"],
+        ["h6", "success"],
         ["r1", "success"],
         ["r2", "failure"],
       ]),
     });
-    // h1: worktree_deferred only -> clean
-    // h2: base_missing -> flagged
-    // h3: empty preflight_codes -> flagged (every on empty array is true, so clean++)
-    // h4: worktree_deferred -> clean
-    // h5: worktree_deferred + base_missing -> flagged (every returns false)
+    // h1: worktree_deferred only -> clean (every on ["worktree_deferred"] is true)
+    // h6: worktree_deferred only -> clean (every on ["worktree_deferred"] is true)
+    // h2: base_missing -> flagged (every on ["base_missing"] is false)
+    // h3: empty preflight_codes -> clean (every on [] is true)
     // r1: worktree_deferred -> clean (refused)
     // r2: base_missing -> flagged (refused)
-    // clean: h1, h3, h4, r1 = 4
-    // flagged: h2, h5, r2 = 3
-    // compiled: h1(success), h2(failure), h3(success), h4(success), h5(failure) = 3 success, 2 failure
+    // clean: h1, h3, h6, r1 = 4
+    // flagged: h2, r2 = 2
+    // compiled: h1(success), h2(failure), h3(success), h6(success) = 3 success, 1 failure
     // refused: r1(success), r2(failure) = 1 success, 1 failure
     expect(withOutcomes.outcomes).toEqual({
       by_status: {
-        compiled: { success: 3, failure: 2, unknown: 0 },
+        compiled: { success: 3, failure: 1, unknown: 0 },
         refused: { success: 1, failure: 1, unknown: 0 },
       },
-      by_preflight: { clean: 4, flagged: 3 },
+      by_preflight: { clean: 4, flagged: 2 },
     });
   });
 
