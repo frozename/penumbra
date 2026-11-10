@@ -523,6 +523,27 @@ test("4: a capsule recipe with drifted limits is refused pairing_drift", async (
   await expectRefusal(devPair(), baseOpts({ recipes: [MINIMAL, capsuleDrift] }), "pairing_drift");
 });
 
+test("4b: a capsule recipe with a different seed is refused pairing_drift", async () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const capsuleSeedDrift = makeRecipe({
+    recipe_id: "capsule-v1",
+    arm: "capsule",
+    components: {
+      base: { status: "materialized", sha256: COMPONENT_SHA },
+      capsule: { status: "materialized", sha256: CAPSULE_SHA },
+    },
+    seed: { value: 8, supported: true },
+  });
+  await expectRefusal(
+    devPair(),
+    baseOpts({ recipes: [MINIMAL, capsuleSeedDrift] }),
+    "pairing_drift",
+  );
+});
+
 test("5: a pending capsule component is refused arm_unavailable with its blocker", async () => {
   expect(mod).not.toBeNull();
   if (!mod) {
@@ -556,6 +577,30 @@ test("6: an observational episode is refused observational_episodes", async () =
     recipe_id: null,
   });
   const report = await measureCapsuleUplift()([...devPair(), observational], baseOpts());
+  expect(report).toEqual({
+    status: "refused",
+    reason: "observational_episodes",
+    detail: expect.any(String) as string,
+  });
+});
+
+test("6b: an observational episode on the non-measured split is still refused observational_episodes", async () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const devPairEpisodes = devPair();
+  const observationalOnHoldout = makeEpisode({
+    episode_id: "O-holdout",
+    design: "observational",
+    split: "holdout",
+    fixture_ref: null,
+    recipe_id: null,
+  });
+  const report = await measureCapsuleUplift()(
+    [...devPairEpisodes, observationalOnHoldout],
+    baseOpts(),
+  );
   expect(report).toEqual({
     status: "refused",
     reason: "observational_episodes",
