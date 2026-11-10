@@ -520,7 +520,12 @@ test("4: a capsule recipe with drifted limits is refused pairing_drift", async (
     },
     limits: { max_rounds: 4 },
   });
-  await expectRefusal(devPair(), baseOpts({ recipes: [MINIMAL, capsuleDrift] }), "pairing_drift");
+  await expectRefusal(
+    devPair(),
+    baseOpts({ recipes: [MINIMAL, capsuleDrift] }),
+    "pairing_drift",
+    expect.stringContaining("limits"),
+  );
 });
 
 test("4b: a capsule recipe with a different seed is refused pairing_drift", async () => {
@@ -541,6 +546,7 @@ test("4b: a capsule recipe with a different seed is refused pairing_drift", asyn
     devPair(),
     baseOpts({ recipes: [MINIMAL, capsuleSeedDrift] }),
     "pairing_drift",
+    expect.stringContaining("seed"),
   );
 });
 
