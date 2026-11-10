@@ -394,10 +394,12 @@ const aggregate = aggregateEpisodes;
 export {
   aggregate,
   aggregateEpisodes,
+  assertGroupBy,
   type ClassifiedEpisode,
   classifyEpisode,
   GROUP_BY_KEYS,
   type GroupByKey,
+  groupKeyOf,
   type GroupReport,
   type Metric,
   type ModelFailureReason,
