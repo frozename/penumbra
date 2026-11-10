@@ -50,7 +50,12 @@ type Lesson = {
   expires_at: string;
 };
 type ProposeResult =
-  | { status: "proposed"; lesson: Lesson; provenance_gaps: string[] }
+  | {
+      status: "proposed";
+      lesson: Lesson;
+      provenance_gaps: string[];
+      redactions?: { rule_id: string; count: number }[];
+    }
   | { status: "rejected"; reasons: string[] };
 type EligibilityCtx = {
   now: string;
@@ -68,7 +73,8 @@ interface SchemaLike {
   safeParse: (value: unknown) => { success: boolean };
 }
 
-type ProposeFn = (episode: unknown, draft: LessonDraft) => ProposeResult;
+type ProposeOpts = { production_identifiers?: string[] };
+type ProposeFn = (episode: unknown, draft: LessonDraft, opts?: ProposeOpts) => ProposeResult;
 type EligibilityFn = (lesson: Lesson, ctx: EligibilityCtx) => EligibilityResult;
 
 const MOD_URL = new URL("../../src/evals/lesson.ts", import.meta.url).href;
@@ -322,8 +328,13 @@ function lessonOf(res: ProposeResult): Lesson {
   return res.lesson;
 }
 
-function expectProposedRejection(episode: JsonObject, d: LessonDraft, reason: string): void {
-  const res = proposeLessonFromEpisode()(episode, d);
+function expectProposedRejection(
+  episode: JsonObject,
+  d: LessonDraft,
+  reason: string,
+  opts?: ProposeOpts,
+): void {
+  const res = proposeLessonFromEpisode()(episode, d, opts);
   expect(res.status).toBe("rejected");
   if (res.status === "rejected") {
     expect(res.reasons).toContain(reason);
@@ -1118,4 +1129,103 @@ test("propose: buildReceiptDigests recomputes digest for unsigned receipts", () 
   expect(res.lesson.source.receipt_digests).toHaveLength(1);
   const expectedUnsigned = receiptDigest(unsignedHidden as ReceiptClaimBody);
   expect(res.lesson.source.receipt_digests).toEqual([expectedUnsigned]);
+});
+
+test("propose: production identifiers in drafts are redacted before the lesson is built", () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const res = proposeLessonFromEpisode()(
+    verifiedEpisode(),
+    draft({ root_cause: "pool exhausted on db-prod-7.acme.example" }),
+    { production_identifiers: ["db-prod-7.acme.example"] },
+  );
+  expect(res.status).toBe("proposed");
+  if (res.status !== "proposed") {
+    return;
+  }
+  expect(res.lesson.root_cause).not.toContain("db-prod-7");
+  expect(res.lesson.root_cause).toContain("[REDACTED:production_identifier]");
+  expect(res.redactions).toEqual([{ rule_id: "production_identifier", count: 1 }]);
+});
+
+test("propose: lesson_id digests the redacted draft body", () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const viaOpts = lessonOf(
+    proposeLessonFromEpisode()(
+      verifiedEpisode(),
+      draft({ root_cause: "pool exhausted on db-prod-7.acme.example" }),
+      { production_identifiers: ["db-prod-7.acme.example"] },
+    ),
+  );
+  const preRedacted = lessonOf(
+    proposeLessonFromEpisode()(
+      verifiedEpisode(),
+      draft({ root_cause: "pool exhausted on [REDACTED:production_identifier]" }),
+    ),
+  );
+  expect(viaOpts.lesson_id).toBe(preRedacted.lesson_id);
+});
+
+test("propose: home paths in drafts are redacted with no opts", () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const res = proposeLessonFromEpisode()(
+    verifiedEpisode(),
+    draft({ procedure: ["/Users/alex/repo"] }),
+  );
+  expect(res.status).toBe("proposed");
+  if (res.status !== "proposed") {
+    return;
+  }
+  expect(res.lesson.procedure[0]?.startsWith("~/repo")).toBe(true);
+  expect(res.redactions).toEqual([{ rule_id: "home_path", count: 1 }]);
+});
+
+test("propose: a clean draft reports no redactions", () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const res = proposeLessonFromEpisode()(verifiedEpisode(), draft());
+  expect(res.status).toBe("proposed");
+  if (res.status !== "proposed") {
+    return;
+  }
+  expect(res.redactions).toEqual([]);
+});
+
+test("propose: invalid redaction options are rejected", () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const badType = proposeLessonFromEpisode()(verifiedEpisode(), draft(), {
+    production_identifiers: [42],
+  } as unknown as ProposeOpts);
+  expect(badType).toEqual({ status: "rejected", reasons: ["invalid_redaction_options"] });
+  const unknownKey = proposeLessonFromEpisode()(verifiedEpisode(), draft(), {
+    production_identifiers: ["db-prod-7.acme.example"],
+    extra_rule: true,
+  } as unknown as ProposeOpts);
+  expect(unknownKey).toEqual({ status: "rejected", reasons: ["invalid_redaction_options"] });
+});
+
+test("propose: a secret listed as an identifier is still rejected", () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  expectProposedRejection(
+    verifiedEpisode(),
+    draft({ root_cause: `leaked ${SK_TOKEN} in config` }),
+    "secret_detected",
+    { production_identifiers: [SK_TOKEN] },
+  );
 });

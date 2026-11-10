@@ -2,6 +2,12 @@ import { z } from "zod";
 
 import { digestOf } from "./canonical.js";
 import {
+  type LessonRedactionHit,
+  type LessonRedactionOptions,
+  LessonRedactionOptionsSchema,
+  redactLessonDraft,
+} from "./lesson-redaction.js";
+import {
   AssistanceSchema,
   type EpisodeBody,
   EpisodeSchema,
@@ -108,9 +114,15 @@ function buildProvenanceGaps(episode: EpisodeBody): string[] {
 export function proposeLessonFromEpisode(
   episode: EpisodeBody,
   draft: LessonDraft,
+  opts?: LessonRedactionOptions,
 ):
   | { status: "rejected"; reasons: string[] }
-  | { status: "proposed"; lesson: z.infer<typeof LessonSchema>; provenance_gaps: string[] } {
+  | {
+      status: "proposed";
+      lesson: z.infer<typeof LessonSchema>;
+      provenance_gaps: string[];
+      redactions: LessonRedactionHit[];
+    } {
   const parsedEpisode = EpisodeSchema.safeParse(episode);
   if (!parsedEpisode.success) {
     return { status: "rejected", reasons: ["invalid_episode_schema"] };
@@ -119,6 +131,13 @@ export function proposeLessonFromEpisode(
   const parsedDraft = LessonDraftSchema.safeParse(draft);
   if (!parsedDraft.success) {
     return { status: "rejected", reasons: ["invalid_draft_schema"] };
+  }
+
+  if (opts !== undefined) {
+    const parsedOpts = LessonRedactionOptionsSchema.safeParse(opts);
+    if (!parsedOpts.success) {
+      return { status: "rejected", reasons: ["invalid_redaction_options"] };
+    }
   }
 
   const e = parsedEpisode.data;
@@ -155,6 +174,8 @@ export function proposeLessonFromEpisode(
     return { status: "rejected", reasons: [...new Set(reasons)].toSorted() };
   }
 
+  const redacted = redactLessonDraft(d, opts);
+
   const receiptDigests = buildReceiptDigests(e);
   const contributions = e.assistance.map((a) => ({ kind: a.kind, attempt_n: a.attempt_n }));
   const provenanceGaps = buildProvenanceGaps(e);
@@ -176,12 +197,12 @@ export function proposeLessonFromEpisode(
       engine: e.model_identity.engine.value,
       dependency_lock_sha256: e.repo.dependency_lock_sha256,
     },
-    failure_signature: d.failure_signature,
-    root_cause: d.root_cause,
-    procedure: d.procedure,
-    applicability: d.applicability,
-    exclusions: d.exclusions,
-    counterexample: d.counterexample,
+    failure_signature: redacted.draft.failure_signature,
+    root_cause: redacted.draft.root_cause,
+    procedure: redacted.draft.procedure,
+    applicability: redacted.draft.applicability,
+    exclusions: redacted.draft.exclusions,
+    counterexample: redacted.draft.counterexample,
     created_at: d.created_at,
     expires_at: d.expires_at,
     contributions: contributions,
@@ -195,7 +216,12 @@ export function proposeLessonFromEpisode(
 
   const validated = LessonSchema.parse(lesson);
 
-  return { status: "proposed", lesson: validated, provenance_gaps: provenanceGaps };
+  return {
+    status: "proposed",
+    lesson: validated,
+    provenance_gaps: provenanceGaps,
+    redactions: redacted.redactions,
+  };
 }
 
 export const LessonSchema = z
