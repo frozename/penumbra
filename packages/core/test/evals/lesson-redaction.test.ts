@@ -208,3 +208,175 @@ test("redact: redactions are sorted, omit zero-hit rules, and sum across fields"
     { rule_id: "production_identifier", count: 1 },
   ]);
 });
+
+test("redact: an email is fully redacted even when its domain is a listed identifier", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "page ops@acme.example" }), {
+    production_identifiers: ["acme.example"],
+  });
+  expect(res.draft.root_cause).toBe("page [REDACTED:email]");
+  expect(res.redactions).toEqual([{ rule_id: "email", count: 1 }]);
+});
+
+test("redact: an email is fully redacted even when its local part is a listed identifier", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "mail alex@acme.example now" }), {
+    production_identifiers: ["alex"],
+  });
+  expect(res.draft.root_cause).toBe("mail [REDACTED:email] now");
+  expect(res.redactions).toEqual([{ rule_id: "email", count: 1 }]);
+});
+
+test("redact: a home path whose user segment is a listed identifier counts once as home_path", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "lock under /Users/alex/work/x" }), {
+    production_identifiers: ["alex"],
+  });
+  expect(res.draft.root_cause).toBe("lock under ~/work/x");
+  expect(res.redactions).toEqual([{ rule_id: "home_path", count: 1 }]);
+});
+
+test("redact: an identifier outside the home path is still redacted and counted once", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "cd /home/alex/repo and ping alex" }), {
+    production_identifiers: ["alex"],
+  });
+  expect(res.draft.root_cause).toBe("cd ~/repo and ping [REDACTED:production_identifier]");
+  expect(res.redactions).toEqual([
+    { rule_id: "home_path", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
+});
+
+test("redact: four-part versions after 'version' or 'v' are not treated as ipv4", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(
+    draft({
+      failure_signature: "bump to version 1.2.3.4",
+      root_cause: "Version: 1.2.3.4 ships",
+      procedure: ["pin version=1.2.3.4"],
+      applicability: ["v 1.2.3.4 only"],
+    }),
+  );
+  expect(res.draft.failure_signature).toBe("bump to version 1.2.3.4");
+  expect(res.draft.root_cause).toBe("Version: 1.2.3.4 ships");
+  expect(res.draft.procedure[0]).toBe("pin version=1.2.3.4");
+  expect(res.draft.applicability[0]).toBe("v 1.2.3.4 only");
+  expect(res.redactions).toEqual([]);
+});
+
+test("redact: a glued v-prefix is not an ipv4 match", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "v1.2.3.4" }));
+  expect(res.draft.root_cause).toBe("v1.2.3.4");
+  expect(res.redactions).toEqual([]);
+});
+
+test("redact: ipv4 redaction is not suppressed by a v inside a word", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "dev 10.20.30.40" }));
+  expect(res.draft.root_cause).toBe("dev [REDACTED:ipv4]");
+  expect(res.redactions).toEqual([{ rule_id: "ipv4", count: 1 }]);
+});
+
+test("redact: glued v-versions stay while bare addresses are redacted", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "release v2.0.0.1 then dial 10.0.0.1" }));
+  expect(res.draft.root_cause).toBe("release v2.0.0.1 then dial [REDACTED:ipv4]");
+  expect(res.redactions).toEqual([{ rule_id: "ipv4", count: 1 }]);
+});
+
+test("redact: a listed identifier does not match inside an existing placeholder", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "page ops@acme.example" }), {
+    production_identifiers: ["ted"],
+  });
+  expect(res.draft.root_cause).toBe("page [REDACTED:email]");
+  expect(res.redactions).toEqual([{ rule_id: "email", count: 1 }]);
+});
+
+test("redact: identifier redaction composes with email redaction", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "page ops@acme.example on red" }), {
+    production_identifiers: ["red"],
+  });
+  expect(res.draft.root_cause).toBe("page [REDACTED:email] on [REDACTED:production_identifier]");
+  expect(res.redactions).toEqual([
+    { rule_id: "email", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
+});
+
+test("redact: built-in ipv4 placeholder is not re-scanned by identifiers", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "dial 10.0.0.1" }), {
+    production_identifiers: ["ipv4"],
+  });
+  expect(res.draft.root_cause).toBe("dial [REDACTED:ipv4]");
+  expect(res.redactions).toEqual([{ rule_id: "ipv4", count: 1 }]);
+});
+
+test("redact: addresses after a -v CLI flag are still redacted", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "curl -v 10.0.0.5" }));
+  expect(res.draft.root_cause).toBe("curl -v [REDACTED:ipv4]");
+  expect(res.redactions).toEqual([{ rule_id: "ipv4", count: 1 }]);
+});
+
+test("redact: multiple -v flag addresses are all redacted", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(
+    draft({ root_cause: "ssh -v 192.168.1.10 then tcpdump -v 10.0.0.1" }),
+  );
+  expect(res.draft.root_cause).toBe("ssh -v [REDACTED:ipv4] then tcpdump -v [REDACTED:ipv4]");
+  expect(res.redactions).toEqual([{ rule_id: "ipv4", count: 2 }]);
+});
+
+test("redact: a --version flag does not suppress ipv4 redaction", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "--version=1.2.3.4" }));
+  expect(res.draft.root_cause).toBe("--version=[REDACTED:ipv4]");
+  expect(res.redactions).toEqual([{ rule_id: "ipv4", count: 1 }]);
+});
