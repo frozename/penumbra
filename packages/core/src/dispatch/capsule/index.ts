@@ -5,3 +5,4 @@ export * from "./refs.js";
 export * from "./render.js";
 export * from "./resume.js";
 export * from "./schema.js";
+export * from "./shadow-report.js";
