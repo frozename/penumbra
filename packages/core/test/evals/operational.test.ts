@@ -22,7 +22,7 @@ type OperationalGroup = {
     terminal_unverified: number;
     unknown: number;
   };
-  terminal_completion: { n_terminal: number; n_unknown: number; rate: number };
+  terminal_completion: { n_terminal: number; n_unknown: number };
   artifact: { produced: number; absent: number; rate: number };
   final_commit: {
     model: number;
@@ -336,7 +336,6 @@ test("4: terminal_completion counts every non-unknown outcome as terminal", () =
   expect(res.groups[0]?.terminal_completion).toEqual({
     n_terminal: 4,
     n_unknown: 1,
-    rate: 1,
   });
 });
 
@@ -579,7 +578,7 @@ test("12: partial attempt_history reports n_attempts from count and null timings
   const eps = [
     controlledEpisode("e-partial", {
       recipe_id: "recipe-partial",
-      attempts: [att(8, SHA_A), att(9, SHA_B), att(10, SHA_C)],
+      attempts: [att(8, SHA_A), att(9, SHA_B), att(10, SHA_C, { commits: recoveryCommits() })],
       attempt_history: partialHistory,
     }),
   ];
@@ -587,7 +586,8 @@ test("12: partial attempt_history reports n_attempts from count and null timings
   expect(res.groups[0]?.n_attempts).toBe(10);
   expect(res.groups[0]?.timings.e2e_ms.n_missing).toBe(1);
   expect(res.groups[0]?.timings.e2e_ms.n).toBe(0);
-  expect(res.groups[0]?.final_commit.unknown).toBe(1);
+  expect(res.groups[0]?.final_commit.recovery).toBe(1);
+  expect(res.groups[0]?.final_commit.unknown).toBe(0);
 });
 
 test("13: unavailable attempt_history with count > 0 reports final_commit unknown", () => {
@@ -668,7 +668,7 @@ test("16: takeover with ref !== final_sha is not counted as human_takeover", () 
   expect(res.groups[0]?.final_commit.model).toBe(1);
 });
 
-test("17: terminal_completion rate divides by nEpisodes - nUnknown", () => {
+test("17: terminal_completion counts n_terminal and n_unknown", () => {
   expect(typeof mod?.["summarizeOperational"]).toBe("function");
   const eps = [
     controlledEpisode("e-term1", {
@@ -687,10 +687,9 @@ test("17: terminal_completion rate divides by nEpisodes - nUnknown", () => {
   const res = summarizeOperational()(eps, { groupBy: "recipe_id" });
   expect(res.groups[0]?.terminal_completion.n_terminal).toBe(1);
   expect(res.groups[0]?.terminal_completion.n_unknown).toBe(2);
-  expect(res.groups[0]?.terminal_completion.rate).toBe(1 / 1);
 });
 
-test("18: terminal_completion rate is null when all episodes are unknown", () => {
+test("18: terminal_completion when all episodes are unknown", () => {
   expect(typeof mod?.["summarizeOperational"]).toBe("function");
   const eps = [
     controlledEpisode("e-allunk1", {
@@ -703,7 +702,8 @@ test("18: terminal_completion rate is null when all episodes are unknown", () =>
     }),
   ];
   const res = summarizeOperational()(eps, { groupBy: "recipe_id" });
-  expect(res.groups[0]?.terminal_completion.rate).toBe(null);
+  expect(res.groups[0]?.terminal_completion.n_terminal).toBe(0);
+  expect(res.groups[0]?.terminal_completion.n_unknown).toBe(2);
 });
 
 test("19: partial/unavailable attempt_history forces null timings even with attempts", () => {
@@ -755,4 +755,53 @@ test("21: cost_usd complete is false when nIncomplete > 0 despite nMissing === 0
   expect(res.groups[0]?.cost_usd.n_missing).toBe(0);
   expect(res.groups[0]?.cost_usd.n_incomplete).toBe(1);
   expect(res.groups[0]?.cost_usd.complete).toBe(false);
+});
+
+test("22: partial attempt_history pruned attempts count as unknown in contract flags", () => {
+  expect(typeof mod?.["summarizeOperational"]).toBe("function");
+  const partialHistory: JsonObject = {
+    status: "partial",
+    reason: "claims_pruned",
+    count: 5,
+    count_basis: "handoff_counter",
+  };
+  const ep = makeEpisode({
+    episode_id: "e-contract-pruned",
+    family_id: "fam-contract-pruned",
+    attempts: [
+      att(4, SHA_A, { contract_flags: contractFlags(true, false) }),
+      att(5, SHA_B, { contract_flags: contractFlags(false, true) }),
+    ],
+    attempt_history: partialHistory,
+  });
+  const res = summarizeOperational()([ep], { groupBy: "recipe_id" });
+  const base = res.groups[0]?.contract.base_not_ancestor;
+  const identity = res.groups[0]?.contract.identity_mismatch;
+  expect(base?.yes).toBe(1);
+  expect(base?.no).toBe(1);
+  expect(base?.unknown).toBe(3);
+  expect(identity?.yes).toBe(1);
+  expect(identity?.no).toBe(1);
+  expect(identity?.unknown).toBe(3);
+});
+
+test("23: unavailable attempt_history with count > 0 pruned attempts count as unknown in contract flags", () => {
+  expect(typeof mod?.["summarizeOperational"]).toBe("function");
+  const unavailableHistory: JsonObject = {
+    status: "unavailable",
+    reason: "events_absent",
+    count: 5,
+    count_basis: "unknown",
+  };
+  const ep = makeEpisode({
+    episode_id: "e-unavail-contract",
+    family_id: "fam-unavail-contract",
+    attempts: [],
+    attempt_history: unavailableHistory,
+  });
+  const res = summarizeOperational()([ep], { groupBy: "recipe_id" });
+  const base = res.groups[0]?.contract.base_not_ancestor;
+  const identity = res.groups[0]?.contract.identity_mismatch;
+  expect(base?.unknown).toBe(5);
+  expect(identity?.unknown).toBe(5);
 });

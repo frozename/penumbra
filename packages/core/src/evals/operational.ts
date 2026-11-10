@@ -1,11 +1,9 @@
-import { assertGroupBy, GROUP_BY_KEYS, groupKeyOf } from "./aggregate.js";
+import { assertGroupBy, groupKeyOf } from "./aggregate.js";
 import { AssistanceSchema, type Episode } from "./manifest.js";
 
 const ASSISTANCE_KINDS = AssistanceSchema.shape.kind.options;
 
 type AssistanceKind = (typeof ASSISTANCE_KINDS)[number];
-
-type GroupByKey = (typeof GROUP_BY_KEYS)[number];
 
 type OutcomeCounts = {
   model_failure: number;
@@ -18,7 +16,7 @@ type OutcomeCounts = {
   unknown: number;
 };
 
-type TerminalReport = { n_terminal: number; n_unknown: number; rate: number | null };
+type TerminalReport = { n_terminal: number; n_unknown: number };
 
 type ArtifactReport = { produced: number; absent: number; rate: number };
 
@@ -188,9 +186,6 @@ function finalCommitKind(ep: Episode): FinalCommitKind {
     }
     return "no_attempts";
   }
-  if (historyStatus === "partial") {
-    return "unknown";
-  }
   const last = ep.attempts[ep.attempts.length - 1];
   if (last === undefined) {
     return "no_attempts";
@@ -228,6 +223,20 @@ function accumulateContract(
   identity: ContractFlagCount,
   ep: Episode,
 ): void {
+  const historyStatus = ep.attempt_history.status;
+  if (historyStatus === "partial" && ep.attempt_history.count !== null) {
+    const pruned = ep.attempt_history.count - ep.attempts.length;
+    for (let i = 0; i < pruned; i += 1) {
+      accumulateFlag(base, null);
+      accumulateFlag(identity, null);
+    }
+  } else if (historyStatus === "unavailable" && ep.attempt_history.count !== null) {
+    const pruned = ep.attempt_history.count - ep.attempts.length;
+    for (let i = 0; i < pruned; i += 1) {
+      accumulateFlag(base, null);
+      accumulateFlag(identity, null);
+    }
+  }
   for (const attempt of ep.attempts) {
     accumulateFlag(base, attempt.contract_flags.base_not_ancestor);
     accumulateFlag(identity, attempt.contract_flags.identity_mismatch);
@@ -342,7 +351,6 @@ function buildGroup(acc: GroupAcc, episodes: readonly Episode[]): OperationalGro
     terminal_completion: {
       n_terminal: acc.nTerminal,
       n_unknown: acc.nUnknown,
-      rate: nExcludingUnknown === 0 ? null : acc.nTerminal / nExcludingUnknown,
     },
     artifact: {
       produced: acc.produced,
