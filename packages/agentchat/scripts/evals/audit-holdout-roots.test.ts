@@ -1218,6 +1218,68 @@ test("valid root + null reconstructs parses normally (no unparseable collision)"
   expect(result.reservation).toEqual({ ok: true, collisions: [] });
 });
 
+test("valid root matching a lock entry with invalid non-null reconstructs yields one unparseable collision", async () => {
+  const api = await loadAudit();
+  const fixturePath = `${FIXTURES_PREFIX}fam-op-matchlock-badrecon/v1/fixture.json`;
+  const { repo, addSha } = mkRepoWithCommittedFixture(
+    fixturePath,
+    fixtureJsonRaw({
+      family_id: "fam-op-matchlock-badrecon",
+      variant_id: "v1",
+      root: OP_ROOT,
+      reconstructs: { kind: "bogus" },
+      failure_type: "missed_commit",
+    }),
+  );
+
+  const lock = mkLock([mkEntry(OP_ROOT, "v9", false)]);
+  const { result } = await runAudit(api, { repo, lock, patch: cleanPatch() });
+
+  expect(result.reservation.ok).toBe(false);
+  expect(result.reservation.collisions).toEqual([
+    {
+      commit: addSha,
+      path: fixturePath,
+      fixture_family_id: "fam-op-matchlock-badrecon",
+      fixture_variant_id: "v1",
+      lock_family_id: "",
+      lock_variant_id: "",
+      via: "unparseable",
+    },
+  ]);
+});
+
+test("invalid root plus valid reconstructs matching a lock entry yields one unparseable collision", async () => {
+  const api = await loadAudit();
+  const fixturePath = `${FIXTURES_PREFIX}fam-badroot-matchlock/v1/fixture.json`;
+  const { repo, addSha } = mkRepoWithCommittedFixture(
+    fixturePath,
+    fixtureJsonRaw({
+      family_id: "fam-badroot-matchlock",
+      variant_id: "v1",
+      root: { kind: "operator_bundle", id: "bad-root", extraKey: "should-fail" },
+      reconstructs: OP_ROOT,
+      failure_type: "missed_commit",
+    }),
+  );
+
+  const lock = mkLock([mkEntry(OP_ROOT, "v9", false)]);
+  const { result } = await runAudit(api, { repo, lock, patch: cleanPatch() });
+
+  expect(result.reservation.ok).toBe(false);
+  expect(result.reservation.collisions).toEqual([
+    {
+      commit: addSha,
+      path: fixturePath,
+      fixture_family_id: "fam-badroot-matchlock",
+      fixture_variant_id: "v1",
+      lock_family_id: "",
+      lock_variant_id: "",
+      via: "unparseable",
+    },
+  ]);
+});
+
 // --- case 7: lock digest -----------------------------------------------------------------
 
 test("a lock with a wrong digest rejects with HoldoutLockError before any run", async () => {
