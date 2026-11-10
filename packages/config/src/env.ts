@@ -310,6 +310,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: "http://127.0.0.1:7944",
     description: "Base URL for llamactl proxy served-model discovery.",
   },
+  PENUMBRA_WORKER_INSTRUCTIONS: {
+    schema: OptStr,
+    description:
+      "Path to a per-repo worker instructions file; set on ACP seats via env_by_project and read by the worker, not the daemon.",
+  },
   PENUMBRA_HANDOFF_ID: {
     schema: OptStr,
     description: "Current handoff ID (set by dispatch).",

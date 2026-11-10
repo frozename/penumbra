@@ -42,6 +42,11 @@ export const AgentOptionsSchema = z.strictObject({
   cwd: z.string().optional(),
   emit_stdout_thoughts: z.boolean().optional(),
   env: z.record(z.string(), z.unknown()).optional(),
+  /**
+   * Per-project env overlay keyed by the project registry id, merged over
+   * `env` at spawn. Overlay values must be strings — stricter than `env`.
+   */
+  env_by_project: z.record(z.string().min(1), z.record(z.string().min(1), z.string())).optional(),
   extraBody: z.unknown().optional(),
   firstEventTimeoutMs: z.number().int().positive().optional(),
   framing: z.string().optional(),
@@ -195,6 +200,7 @@ export const ADAPTER_SPECIFIC_OPTION_KEYS = {
     "claudeCodeSettingSources",
     "claudeCodeStrictMcpConfig",
     "claudeCodeTools",
+    "env_by_project",
     "framing",
     "hostEnvPolicy",
     "repoRoot",

@@ -31,6 +31,7 @@ const fullAgentOptions = {
   cwd: "/tmp/worktree",
   emit_stdout_thoughts: true,
   env: { TEST_ENV: "1" },
+  env_by_project: { llamactl: { PENUMBRA_WORKER_INSTRUCTIONS: "/abs/WORKER-llamactl.md" } },
   extraBody: { temperature: 0 },
   firstEventTimeoutMs: 120000,
   framing: "newline",
@@ -228,5 +229,61 @@ describe("AgentConfigSchema adapter-aware options", () => {
         options: { model: "future", warm_pool: true },
       }),
     ).not.toThrow();
+  });
+});
+
+describe("AgentConfigSchema env_by_project", () => {
+  test("accepts env_by_project on stdio-acp", () => {
+    const res = AgentConfigSchema.safeParse({
+      name: "s",
+      adapter: "stdio-acp",
+      options: {
+        binary: "opencode",
+        env_by_project: {
+          llamactl: { PENUMBRA_WORKER_INSTRUCTIONS: "/a.md" },
+          penumbra: {
+            PENUMBRA_WORKER_INSTRUCTIONS: "/b.md",
+            OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+          },
+        },
+      },
+    });
+    expect(res.success).toBe(true);
+  });
+
+  test("rejects non-string env_by_project values", () => {
+    const res = AgentConfigSchema.safeParse({
+      name: "s",
+      adapter: "stdio-acp",
+      options: { binary: "opencode", env_by_project: { llamactl: { X: 1 } } },
+    });
+    expect(res.success).toBe(false);
+  });
+
+  test("rejects non-object env_by_project project entries", () => {
+    const res = AgentConfigSchema.safeParse({
+      name: "s",
+      adapter: "stdio-acp",
+      options: { binary: "opencode", env_by_project: { llamactl: "x" } },
+    });
+    expect(res.success).toBe(false);
+  });
+
+  test("rejects empty env_by_project project keys", () => {
+    const res = AgentConfigSchema.safeParse({
+      name: "s",
+      adapter: "stdio-acp",
+      options: { binary: "opencode", env_by_project: { "": { X: "1" } } },
+    });
+    expect(res.success).toBe(false);
+  });
+
+  test("rejects env_by_project on adapters that do not consume it", () => {
+    const res = AgentConfigSchema.safeParse({
+      name: "claude",
+      adapter: "claude-cli",
+      options: { command: "claude", env_by_project: { p: { X: "1" } } },
+    });
+    expect(res.success).toBe(false);
   });
 });
