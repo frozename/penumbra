@@ -253,6 +253,123 @@ describe("seat profile evidence store", () => {
     }
   });
 
+  test("concurrent appends from separate processes do not lose records", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "seat-profile-store-"));
+    try {
+      const path = join(dir, "evidence.jsonl");
+      const storeModuleHref = new URL("../../src/routing/seat-profile-store.ts", import.meta.url)
+        .href;
+
+      const children = Array.from({ length: 6 }, (_, child) => {
+        const batches = Array.from({ length: 4 }, (_, batch) =>
+          Array.from({ length: 5 }, (_, record) =>
+            makeEvidence({
+              evidence_id: `proc-${String(child)}-${String(batch)}-${String(record)}`,
+            }),
+          ),
+        );
+        const scriptPath = join(dir, `append-${String(child)}.ts`);
+        writeFileSync(
+          scriptPath,
+          [
+            `import { createSeatProfileStore } from ${JSON.stringify(storeModuleHref)};`,
+            `const store = createSeatProfileStore({ path: ${JSON.stringify(path)} });`,
+            `const batches = ${JSON.stringify(batches)};`,
+            "for (const batch of batches) {",
+            "  await store.append(batch);",
+            "}",
+            "",
+          ].join("\n"),
+          "utf8",
+        );
+        return Bun.spawn([process.execPath, scriptPath]);
+      });
+
+      const parentStore = createSeatProfileStore({ path });
+      const parentAppends = Array.from({ length: 3 }, (_, i) =>
+        parentStore.append(
+          Array.from({ length: 4 }, (_, j) =>
+            makeEvidence({ evidence_id: `parent-${String(i)}-${String(j)}` }),
+          ),
+        ),
+      );
+
+      const exits = await Promise.all(
+        children.map(async (child) => {
+          const [code, stderr] = await Promise.all([
+            child.exited,
+            new Response(child.stderr).text(),
+          ]);
+          return { code, stderr };
+        }),
+      );
+      await Promise.all(parentAppends);
+
+      for (const { code, stderr } of exits) {
+        expect(stderr).toBe("");
+        expect(code).toBe(0);
+      }
+
+      const read = await parentStore.read();
+      expect(read.corrupt_lines).toBe(0);
+      expect(read.evidence).toHaveLength(132);
+      expect(new Set(read.evidence.map((record) => record.evidence_id)).size).toBe(132);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("concurrent appends with overlapping ids dedup through the queue", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "seat-profile-store-"));
+    try {
+      const store = createSeatProfileStore({ path: join(dir, "evidence.jsonl") });
+      const a = makeEvidence({ evidence_id: "shared-a" });
+      const b = makeEvidence({ evidence_id: "shared-b" });
+      const c = makeEvidence({ evidence_id: "shared-c" });
+
+      const results = await Promise.all([
+        store.append([a, b]),
+        store.append([b, c]),
+        store.append([a, c]),
+      ]);
+
+      expect(results.reduce((sum, r) => sum + r.appended, 0)).toBe(3);
+      expect(results.reduce((sum, r) => sum + r.duplicates, 0)).toBe(3);
+
+      const read = await store.read();
+      expect(read.evidence).toHaveLength(3);
+      expect(read.evidence.map((record) => record.evidence_id).sort()).toEqual([
+        "shared-a",
+        "shared-b",
+        "shared-c",
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("appending to a file without a trailing newline keeps records on separate lines", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "seat-profile-store-"));
+    try {
+      const path = join(dir, "evidence.jsonl");
+      const first = makeEvidence({ evidence_id: "noeol-1" });
+      writeFileSync(path, JSON.stringify(first), "utf8");
+
+      const store = createSeatProfileStore({ path });
+      await store.append([makeEvidence({ evidence_id: "noeol-2" })]);
+
+      const raw = readFileSync(path, "utf8");
+      expect(raw.endsWith("\n")).toBe(true);
+      expect(raw.split("\n").filter((line) => line.trim() !== "")).toHaveLength(2);
+
+      const read = await store.read();
+      expect(read.corrupt_lines).toBe(0);
+      expect(read.evidence.map((record) => record.evidence_id)).toEqual(["noeol-1", "noeol-2"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("capacity verdicts are stored and excluded from pass rate", async () => {
     const dir = mkdtempSync(join(tmpdir(), "seat-profile-store-"));
     try {
@@ -283,11 +400,12 @@ describe("seat profile evidence store", () => {
 
       const profile = buildSeatProfile(stored, FINGERPRINT, {
         now: PROFILE_NOW,
-        minRootTasks: 3,
+        minRootTasks: 2,
       });
       expect(profile.status).toBe("qualified");
       const cell = profile.cells[0]!;
-      expect(cell.root_tasks).toBe(3);
+      expect(cell.root_tasks).toBe(2);
+      expect(cell.capacity_root_tasks).toBe(1);
       expect(cell.attempts).toBe(3);
       expect(cell.pass_rate).toBeCloseTo(0.5, 10);
       expect(cell.capacity_count).toBe(1);

@@ -319,14 +319,67 @@ describe("seat capability profiles", () => {
     const profile = buildSeatProfile(ev, fp, { now: NOW, minRootTasks: 4 });
     expect(profile.cells).toHaveLength(1);
     const cell = profile.cells[0]!;
-    expect(cell.root_tasks).toBe(4);
+    expect(cell.root_tasks).toBe(2);
+    expect(cell.capacity_root_tasks).toBe(2);
     expect(cell.attempts).toBe(7);
-    expect(cell.pass_rate).toBeCloseTo(0.5, 10);
+    expect(cell.pass_rate).toBeNull();
     expect(cell.capacity_count).toBe(2);
     expect(cell.interval).not.toBeNull();
     expect(cell.interval!.lo).toBeCloseTo(0.0945, 4);
     expect(cell.interval!.hi).toBeCloseTo(0.9055, 4);
-    expect(cell.status).toBe("qualified");
+    expect(cell.status).toBe("sparse");
+    expect(profile.status).toBe("abstain");
+    expect(profile.abstain_reason).toBe("no_qualified_cells");
+  });
+
+  test("capacity-only root tasks cannot qualify a cell", () => {
+    const fp = fingerprint();
+    const ev = Array.from({ length: 5 }, (_, i) =>
+      evidence({
+        fp,
+        rootTaskId: `cap-${String(i)}`,
+        verdict: "capacity",
+        outcome: "wall-cap",
+      }),
+    );
+
+    const profile = buildSeatProfile(ev, fp, { now: NOW });
+    expect(profile.cells).toHaveLength(1);
+    const cell = profile.cells[0]!;
+    expect(cell.status).toBe("sparse");
+    expect(cell.root_tasks).toBe(0);
+    expect(cell.capacity_root_tasks).toBe(5);
+    expect(cell.capacity_count).toBe(5);
+    expect(cell.attempts).toBe(5);
+    expect(cell.pass_rate).toBeNull();
+    expect(profile.status).toBe("abstain");
+    expect(profile.abstain_reason).toBe("no_qualified_cells");
+  });
+
+  test("a mostly-capacity cell stays sparse until enough tasks are scored", () => {
+    const fp = fingerprint();
+    const ev = [
+      ...Array.from({ length: 4 }, (_, i) =>
+        evidence({
+          fp,
+          rootTaskId: `cap-${String(i)}`,
+          verdict: "capacity",
+          outcome: "wall-cap",
+        }),
+      ),
+      evidence({ fp, rootTaskId: "scored-1", verdict: "pass" }),
+    ];
+
+    const profile = buildSeatProfile(ev, fp, { now: NOW });
+    expect(profile.cells).toHaveLength(1);
+    const cell = profile.cells[0]!;
+    expect(cell.status).toBe("sparse");
+    expect(cell.root_tasks).toBe(1);
+    expect(cell.capacity_root_tasks).toBe(4);
+    expect(cell.capacity_count).toBe(4);
+    expect(cell.pass_rate).toBeNull();
+    expect(profile.status).toBe("abstain");
+    expect(profile.abstain_reason).toBe("no_qualified_cells");
   });
 
   test("Wilson interval is computed from actual successes and trials", () => {
@@ -338,12 +391,14 @@ describe("seat capability profiles", () => {
       evidence({ fp, rootTaskId: "r4", verdict: "capacity", outcome: "wall-cap" }),
     ];
 
-    const profile = buildSeatProfile(ev, fp, { now: NOW, minRootTasks: 4 });
+    const profile = buildSeatProfile(ev, fp, { now: NOW, minRootTasks: 3 });
     expect(profile.cells).toHaveLength(1);
     const cell = profile.cells[0]!;
-    expect(cell.root_tasks).toBe(4);
+    expect(cell.root_tasks).toBe(3);
+    expect(cell.capacity_root_tasks).toBe(1);
     expect(cell.attempts).toBe(11);
     expect(cell.capacity_count).toBe(1);
+    expect(cell.status).toBe("qualified");
 
     const interval = cell.interval!;
     expect(interval).not.toBeNull();
@@ -355,6 +410,32 @@ describe("seat capability profiles", () => {
     // Per-task pass fractions are [1, 1, 0]; the capacity-only task adds no
     // quality trial, so the interval is Wilson over 2 successes / 3 tasks.
     expect(cell.pass_rate).toBeCloseTo(0.6667, 4);
+  });
+
+  test("Wilson interval keeps fractional per-task pass rates unrounded", () => {
+    const fp = fingerprint();
+    const ev = [
+      evidence({ fp, rootTaskId: "r1", verdict: "pass" }),
+      evidence({ fp, rootTaskId: "r1", verdict: "fail" }),
+      evidence({ fp, rootTaskId: "r2", verdict: "pass" }),
+      evidence({ fp, rootTaskId: "r3", verdict: "pass" }),
+      evidence({ fp, rootTaskId: "r4", verdict: "pass" }),
+      evidence({ fp, rootTaskId: "r5", verdict: "pass" }),
+    ];
+
+    const profile = buildSeatProfile(ev, fp, { now: NOW });
+    expect(profile.cells).toHaveLength(1);
+    const cell = profile.cells[0]!;
+    expect(cell.root_tasks).toBe(5);
+    expect(cell.attempts).toBe(6);
+    expect(cell.pass_rate).toBeCloseTo(0.9, 10);
+    expect(cell.status).toBe("qualified");
+
+    // Per-task fractions are [0.5, 1, 1, 1, 1]: Wilson over 4.5 summed
+    // successes / 5 tasks. Rounding the sum to 5 would give lo 0.5655, hi 1.
+    const interval = cell.interval!;
+    expect(interval.lo).toBeCloseTo(0.4629, 4);
+    expect(interval.hi).toBeCloseTo(0.9895, 4);
   });
 
   test("sparse cell includes interval and wall_seconds_p50 when data exists", () => {

@@ -10,8 +10,9 @@ import { wilson } from "../evals/stats.js";
  *     changes outcomes: server context size (n_ctx), KV/cache flags and
  *     parallel slots.
  *
- * (ii) harness must encode harness name/version, the tool/permission set and
- *     the routing/effort policy, so that different recipes never share a key.
+ * (ii) harness must encode harness name/version and the tool/permission set;
+ *     the routing/effort policy lives in the routing_policy/effort_policy
+ *     fingerprint fields, so that different recipes never share a key.
  *     A bench harness and an ACP harness are different strings.
  *
  * (iii) At the default minRootTasks of 5, the current coding-v2 corpus
@@ -111,6 +112,7 @@ export interface SeatProfileCell {
   budget: number;
   context_band: SeatContextBand;
   root_tasks: number;
+  capacity_root_tasks: number;
   attempts: number;
   pass_rate: number | null;
   interval: { lo: number; hi: number } | null;
@@ -185,7 +187,7 @@ function splitFreshStale(
   const fresh: SeatEvidence[] = [];
   let staleCount = 0;
   for (const ev of cellEvidence) {
-    if (new Date(ev.recorded_at).getTime() >= cutoffMs) {
+    if (Date.parse(ev.recorded_at) >= cutoffMs) {
       fresh.push(ev);
     } else {
       staleCount += 1;
@@ -196,6 +198,7 @@ function splitFreshStale(
 
 function cellPassStats(fresh: SeatEvidence[]): {
   rootTasks: number;
+  capacityRootTasks: number;
   passRate: number | null;
   interval: { lo: number; hi: number } | null;
   capacityCount: number;
@@ -212,26 +215,29 @@ function cellPassStats(fresh: SeatEvidence[]): {
 
   const fractions: number[] = [];
   let capacityCount = 0;
+  let capacityRootTasks = 0;
   for (const taskEvidence of taskGroups.values()) {
     capacityCount += taskEvidence.filter((e) => e.verdict === "capacity").length;
     const nonCapacity = taskEvidence.filter((e) => e.verdict !== "capacity");
     if (nonCapacity.length === 0) {
+      capacityRootTasks += 1;
       continue;
     }
     const passes = nonCapacity.filter((e) => e.verdict === "pass").length;
     fractions.push(passes / nonCapacity.length);
   }
 
-  if (fractions.length === 0) {
-    return { rootTasks: taskGroups.size, passRate: null, interval: null, capacityCount };
+  const rootTasks = fractions.length;
+  if (rootTasks === 0) {
+    return { rootTasks, capacityRootTasks, passRate: null, interval: null, capacityCount };
   }
   const successSum = fractions.reduce((sum, fraction) => sum + fraction, 0);
-  const passRate = successSum / fractions.length;
+  const passRate = successSum / rootTasks;
   // Wilson over per-root-task fractions: each scored root task is one trial and
   // the summed fractions stand in for successes — an approximation because
   // per-task rates are not integer counts.
-  const interval = wilson(successSum, fractions.length);
-  return { rootTasks: taskGroups.size, passRate, interval, capacityCount };
+  const interval = wilson(successSum, rootTasks);
+  return { rootTasks, capacityRootTasks, passRate, interval, capacityCount };
 }
 
 function wallSecondsP50(fresh: SeatEvidence[]): number | null {
@@ -253,6 +259,7 @@ function buildCell(group: SeatCellGroup, cutoffMs: number, minRootTasks: number)
       budget: group.budget,
       context_band: group.context_band,
       root_tasks: 0,
+      capacity_root_tasks: 0,
       attempts: staleCount,
       pass_rate: null,
       interval: null,
@@ -270,6 +277,7 @@ function buildCell(group: SeatCellGroup, cutoffMs: number, minRootTasks: number)
     budget: group.budget,
     context_band: group.context_band,
     root_tasks: stats.rootTasks,
+    capacity_root_tasks: stats.capacityRootTasks,
     attempts: fresh.length,
     pass_rate: sparse ? null : stats.passRate,
     interval: stats.interval,

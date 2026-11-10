@@ -227,10 +227,14 @@ describe("coding-v2 bench row ingest", () => {
       { line: 4, reason: "fingerprint_mismatch:effort_policy" },
     ]);
 
-    const cardFingerprint: SeatFingerprint = { ...FINGERPRINT, sampling: "card:seeded" };
+    const cardFingerprint: SeatFingerprint = {
+      ...FINGERPRINT,
+      sampling: "card:seeded",
+      routing_policy: "router-v0",
+    };
     const cardResult = ingestCodingV2BenchRows(
       benchText(benchRow({ task: "card-ok", sampling: "card", routing_policy: "router-v0" })),
-      { fingerprint: cardFingerprint, routingPolicy: "router-v0" },
+      { fingerprint: cardFingerprint },
     );
     expect(cardResult.evidence).toHaveLength(1);
     expect(cardResult.evidence[0]!.fingerprint_key).toBe(seatFingerprintKey(cardFingerprint));
@@ -244,10 +248,34 @@ describe("coding-v2 bench row ingest", () => {
       benchText(
         benchRow({ task: "effort-ok", routing_policy: "balanced", effort_policy: "conservative" }),
       ),
-      { fingerprint: effortFingerprint, routingPolicy: "balanced", effortPolicy: "conservative" },
+      { fingerprint: effortFingerprint },
     );
     expect(effortResult.evidence).toHaveLength(1);
     expect(effortResult.evidence[0]!.fingerprint_key).toBe(seatFingerprintKey(effortFingerprint));
+  });
+
+  test("policy guard defaults come from the fingerprint and mismatches are rejected", () => {
+    const policyFingerprint: SeatFingerprint = {
+      ...FINGERPRINT,
+      routing_policy: "router-a",
+      effort_policy: "effort-a",
+    };
+    const text = benchText(
+      benchRow({ task: "match", routing_policy: "router-a", effort_policy: "effort-a" }),
+      benchRow({ task: "wrong-routing", routing_policy: "router-b", effort_policy: "effort-a" }),
+      benchRow({ task: "wrong-effort", routing_policy: "router-a", effort_policy: "effort-b" }),
+      benchRow({ task: "missing-policy" }),
+    );
+
+    const result = ingestCodingV2BenchRows(text, { fingerprint: policyFingerprint });
+
+    expect(result.evidence).toHaveLength(1);
+    expect(result.evidence[0]!.fingerprint_key).toBe(seatFingerprintKey(policyFingerprint));
+    expect(result.rejected).toEqual([
+      { line: 2, reason: "fingerprint_mismatch:routing_policy" },
+      { line: 3, reason: "fingerprint_mismatch:effort_policy" },
+      { line: 4, reason: "fingerprint_mismatch:routing_policy" },
+    ]);
   });
 
   test("a realistic sparse corpus yields one sparse cell and an abstaining profile", () => {
