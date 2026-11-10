@@ -565,6 +565,70 @@ describe("rankSeatShadow", () => {
     expect(abstaining.shadow_choice).toBeNull();
     expect(abstaining.agrees_with_current).toBeNull();
   });
+
+  test("ranks 9/10 above 5/5 when Wilson lower bound ordering diverges from pass_rate", () => {
+    expect(typeof rankSeatShadow).toBe("function");
+    const rank = rankSeatShadow!;
+
+    const fpPerfect = seatFp("seat-perfect");
+    const fpReliable = seatFp("seat-reliable");
+    const profilePerfect = scoredProfile(fpPerfect, 5, 0);
+    const profileReliable = scoredProfile(fpReliable, 9, 1);
+    const candidates = [
+      seatCandidate("seat-perfect", profilePerfect),
+      seatCandidate("seat-reliable", profileReliable),
+    ];
+
+    const decision = rank(query(), candidates);
+
+    const recordPerfect = recordFor(decision, "seat-perfect");
+    const recordReliable = recordFor(decision, "seat-reliable");
+    expect(recordPerfect.pass_rate).toBe(1);
+    expect(recordReliable.pass_rate).toBe(0.9);
+    expect(recordPerfect.rank).toBe(2);
+    expect(recordReliable.rank).toBe(1);
+    expect(decision.shadow_choice).toBe("seat-reliable");
+  });
+
+  test("marks qualified cells with null pass_rate or interval as cell_unscored", () => {
+    expect(typeof rankSeatShadow).toBe("function");
+    const rank = rankSeatShadow!;
+
+    const fp = seatFp("seat-unscored");
+    const capacityEvidence = [
+      evidence({
+        fp,
+        rootTaskId: "root-cap",
+        tier: "T2",
+        effort: "medium",
+        budget: 1,
+        contextBand: "ctx_32k",
+        verdict: "capacity",
+      }),
+    ];
+    const profile = buildSeatProfile(capacityEvidence, fp, { now: NOW, minRootTasks: 0 });
+    expect(profile.status).toBe("qualified");
+
+    const cell = profile.cells.find(
+      (cell) =>
+        cell.tier === "T2" &&
+        cell.effort === "medium" &&
+        cell.budget === 1 &&
+        cell.context_band === "ctx_32k",
+    );
+    expect(cell).toBeDefined();
+    expect(cell!.status).toBe("qualified");
+    expect(cell!.pass_rate).toBeNull();
+    expect(cell!.interval).toBeNull();
+
+    const decision = rank(query(), [seatCandidate("seat-unscored", profile)]);
+
+    const record = recordFor(decision, "seat-unscored");
+    expect(record.disposition).toBe("unknown");
+    expect(record.reasons).toContain("cell_unscored");
+    expect(record.rank).toBeNull();
+    expect(decision.shadow_choice).toBeNull();
+  });
 });
 
 describe("summarizeSeatShadowReplay", () => {
@@ -626,5 +690,28 @@ describe("summarizeSeatShadowReplay", () => {
         "profile_abstain:no_matching_evidence": 1,
       },
     });
+  });
+
+  test("counts current_missing when current_route_seat_id is null with a scored shadow choice", () => {
+    expect(typeof summarizeSeatShadowReplay).toBe("function");
+    const summarize = summarizeSeatShadowReplay!;
+    const rank = rankSeatShadow!;
+
+    const fpA = seatFp("seat-a");
+    const fpB = seatFp("seat-b");
+    const profileA = scoredProfile(fpA, 5, 0);
+    const profileB = scoredProfile(fpB, 3, 2);
+    const candidates = [seatCandidate("seat-a", profileA), seatCandidate("seat-b", profileB)];
+
+    const missingCurrent = rank(
+      query({ root_task_id: "r1", current_route_seat_id: null }),
+      candidates,
+    );
+
+    const summary = summarize([missingCurrent]);
+    expect(summary.current_missing).toBe(1);
+    expect(summary.shadow_abstain).toBe(0);
+    expect(summary.agree).toBe(0);
+    expect(summary.disagree).toBe(0);
   });
 });
