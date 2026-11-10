@@ -33,5 +33,6 @@ export {
   type SeatProfileStoreReadResult,
 } from "./seat-profile-store.js";
 export * from "./seat-profile.js";
+export * from "./seat-shadow-ranker.js";
 export * from "./task-profile-judge.js";
 export * from "./task-profile.js";
