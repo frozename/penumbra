@@ -469,7 +469,12 @@ test("propose: positive drafts reject non-independent receipt kinds", () => {
   expectProposedRejection(episode, draft(), "unverified_final_sha");
 });
 
-test("propose: positive drafts reject episodes with only llm_judge/self_report receipts", () => {
+test.each([
+  { kind: "self_report" as const },
+  { kind: "llm_judge" as const },
+  { kind: "reviewer" as const },
+  { kind: "schema_check" as const },
+])("rejects a positive lesson verified only by a $kind receipt", ({ kind }) => {
   expect(mod).not.toBeNull();
   if (!mod) {
     return;
@@ -486,7 +491,7 @@ test("propose: positive drafts reject episodes with only llm_judge/self_report r
     final_sha: SHA_A,
     receipts: [
       signReceipt({
-        kind: "llm_judge",
+        kind,
         producer: "grader",
         sha: SHA_A,
         claimed_verdict: "pass",
@@ -504,10 +509,7 @@ test("propose: positive drafts reject episodes with only llm_judge/self_report r
     repo: { base_sha: null, dependency_lock_sha256: LOCK_SHA },
   });
   const res = proposeLessonFromEpisode()(episode, draft());
-  expect(res.status).toBe("rejected");
-  if (res.status === "rejected") {
-    expect(res.reasons).toContain("unverified_final_sha");
-  }
+  expect(res).toEqual({ status: "rejected", reasons: ["unverified_final_sha"] });
 });
 
 test("propose: positive drafts reject a receipt bound to another sha", () => {
@@ -666,8 +668,8 @@ test("propose: draft with extra keys is rejected through the boundary", () => {
   if (!mod) {
     return;
   }
-  const bad: Record<string, unknown> = { ...draft(), authority: "binding" };
-  const res = proposeLessonFromEpisode()(verifiedEpisode(), bad as LessonDraft);
+  const bad = { ...draft(), authority: "binding" };
+  const res = proposeLessonFromEpisode()(verifiedEpisode(), bad);
   expect(res).toEqual({ status: "rejected", reasons: ["invalid_draft_schema"] });
 });
 
