@@ -30,10 +30,14 @@ export const SeatFingerprintSchema = z.strictObject({
   template_hash: z.string().min(1).nullable(),
   sampling: z.string().min(1).nullable(),
   harness: z.string().min(1).nullable(),
+  routing_policy: z.string().min(1).nullish(),
+  effort_policy: z.string().min(1).nullish(),
 });
 export type SeatFingerprint = z.infer<typeof SeatFingerprintSchema>;
 
 export function isSeatFingerprintComplete(fingerprint: SeatFingerprint): boolean {
+  const routingPolicy = fingerprint.routing_policy ?? null;
+  const effortPolicy = fingerprint.effort_policy ?? null;
   return (
     fingerprint.seat_id.length > 0 &&
     fingerprint.model_sha !== null &&
@@ -45,12 +49,25 @@ export function isSeatFingerprintComplete(fingerprint: SeatFingerprint): boolean
     fingerprint.sampling !== null &&
     fingerprint.sampling.length > 0 &&
     fingerprint.harness !== null &&
-    fingerprint.harness.length > 0
+    fingerprint.harness.length > 0 &&
+    (routingPolicy === null || routingPolicy.length > 0) &&
+    (effortPolicy === null || effortPolicy.length > 0)
   );
 }
 
 export function seatFingerprintKey(fingerprint: SeatFingerprint): string {
-  return sha256Hex(canonicalJson(fingerprint));
+  return sha256Hex(
+    canonicalJson({
+      seat_id: fingerprint.seat_id,
+      model_sha: fingerprint.model_sha,
+      engine_build: fingerprint.engine_build,
+      template_hash: fingerprint.template_hash,
+      sampling: fingerprint.sampling,
+      harness: fingerprint.harness,
+      routing_policy: fingerprint.routing_policy ?? null,
+      effort_policy: fingerprint.effort_policy ?? null,
+    }),
+  );
 }
 
 export const SEAT_CONTEXT_BANDS = ["ctx_8k", "ctx_32k", "ctx_64k", "ctx_96k", "ctx_128k"] as const;
@@ -74,7 +91,7 @@ export const SeatEvidenceSchema = z.strictObject({
   effort: z.string().min(1),
   budget: z.number().int().positive(),
   context_band: z.enum(SEAT_CONTEXT_BANDS),
-  verdict: z.enum(["pass", "fail"]),
+  verdict: z.enum(["pass", "fail", "capacity"]),
   outcome: z.string().min(1),
   wall_seconds: z.number().nonnegative().nullable(),
   recorded_at: z.iso.datetime({ offset: true }),
@@ -98,6 +115,7 @@ export interface SeatProfileCell {
   pass_rate: number | null;
   interval: { lo: number; hi: number } | null;
   wall_seconds_p50: number | null;
+  capacity_count: number;
   status: SeatCellStatus;
 }
 
@@ -178,8 +196,9 @@ function splitFreshStale(
 
 function cellPassStats(fresh: SeatEvidence[]): {
   rootTasks: number;
-  passRate: number;
+  passRate: number | null;
   interval: { lo: number; hi: number } | null;
+  capacityCount: number;
 } {
   const taskGroups = new Map<string, SeatEvidence[]>();
   for (const ev of fresh) {
@@ -192,14 +211,27 @@ function cellPassStats(fresh: SeatEvidence[]): {
   }
 
   const fractions: number[] = [];
+  let capacityCount = 0;
   for (const taskEvidence of taskGroups.values()) {
-    const passes = taskEvidence.filter((e) => e.verdict === "pass").length;
-    fractions.push(passes / taskEvidence.length);
+    capacityCount += taskEvidence.filter((e) => e.verdict === "capacity").length;
+    const nonCapacity = taskEvidence.filter((e) => e.verdict !== "capacity");
+    if (nonCapacity.length === 0) {
+      continue;
+    }
+    const passes = nonCapacity.filter((e) => e.verdict === "pass").length;
+    fractions.push(passes / nonCapacity.length);
   }
 
-  const passRate = fractions.reduce((sum, fraction) => sum + fraction, 0) / fractions.length;
-  const interval = wilson(Math.round(passRate * fractions.length), fractions.length);
-  return { rootTasks: taskGroups.size, passRate, interval };
+  if (fractions.length === 0) {
+    return { rootTasks: taskGroups.size, passRate: null, interval: null, capacityCount };
+  }
+  const successSum = fractions.reduce((sum, fraction) => sum + fraction, 0);
+  const passRate = successSum / fractions.length;
+  // Wilson over per-root-task fractions: each scored root task is one trial and
+  // the summed fractions stand in for successes — an approximation because
+  // per-task rates are not integer counts.
+  const interval = wilson(successSum, fractions.length);
+  return { rootTasks: taskGroups.size, passRate, interval, capacityCount };
 }
 
 function wallSecondsP50(fresh: SeatEvidence[]): number | null {
@@ -225,22 +257,24 @@ function buildCell(group: SeatCellGroup, cutoffMs: number, minRootTasks: number)
       pass_rate: null,
       interval: null,
       wall_seconds_p50: null,
+      capacity_count: 0,
       status: "stale",
     };
   }
 
-  const { rootTasks, passRate, interval } = cellPassStats(fresh);
-  const sparse = rootTasks < minRootTasks;
+  const stats = cellPassStats(fresh);
+  const sparse = stats.rootTasks < minRootTasks;
   return {
     tier: group.tier,
     effort: group.effort,
     budget: group.budget,
     context_band: group.context_band,
-    root_tasks: rootTasks,
+    root_tasks: stats.rootTasks,
     attempts: fresh.length,
-    pass_rate: sparse ? null : passRate,
-    interval: sparse ? null : interval,
+    pass_rate: sparse ? null : stats.passRate,
+    interval: stats.interval,
     wall_seconds_p50: wallSecondsP50(fresh),
+    capacity_count: stats.capacityCount,
     status: sparse ? "sparse" : "qualified",
   };
 }

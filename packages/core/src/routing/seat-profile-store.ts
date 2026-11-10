@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -30,8 +30,6 @@ function expandHome(path: string): string {
   if (path.startsWith("~/")) return join(homedir(), path.slice(2));
   return path;
 }
-
-let writeSeq = 0;
 
 function isMissingFileError(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
@@ -97,6 +95,24 @@ function partitionAppends(
   return { appendedRecords, duplicates };
 }
 
+const appendQueues = new Map<string, Promise<void>>();
+
+function serialAppend(
+  path: string,
+  evidence: SeatEvidence[],
+): Promise<SeatProfileStoreAppendResult> {
+  const prior = appendQueues.get(path) ?? Promise.resolve();
+  const run = prior.then(() => executeAppend(path, evidence));
+  appendQueues.set(
+    path,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return run;
+}
+
 export function createSeatProfileStore(opts: SeatProfileStoreOptions = {}): SeatProfileStore {
   const path = expandHome(opts.path ?? DEFAULT_SEAT_PROFILE_EVIDENCE_PATH);
 
@@ -105,38 +121,34 @@ export function createSeatProfileStore(opts: SeatProfileStoreOptions = {}): Seat
       const state = await readFileState(path);
       return { evidence: state.evidence, corrupt_lines: state.corrupt_lines };
     },
-    async append(evidence: SeatEvidence[]): Promise<SeatProfileStoreAppendResult> {
-      for (const record of evidence) {
-        SeatEvidenceSchema.parse(record);
-      }
-
-      const state = await readFileState(path);
-      const knownIds = new Set(state.evidence.map((e) => e.evidence_id));
-      const { appendedRecords, duplicates } = partitionAppends(evidence, knownIds);
-
-      if (appendedRecords.length === 0) {
-        return { appended: 0, duplicates: duplicates.size };
-      }
-
-      await mkdir(dirname(path), { recursive: true });
-
-      let existingRaw = state.raw;
-      if (existingRaw !== "" && !existingRaw.endsWith("\n")) {
-        existingRaw += "\n";
-      }
-
-      const newLines = `${appendedRecords.map((r) => JSON.stringify(r)).join("\n")}\n`;
-      const tmpPath = `${path}.tmp-${String(process.pid)}-${String(++writeSeq)}`;
-
-      try {
-        await writeFile(tmpPath, `${existingRaw}${newLines}`, "utf8");
-        await rename(tmpPath, path);
-      } catch (error) {
-        await rm(tmpPath, { force: true });
-        throw error;
-      }
-
-      return { appended: appendedRecords.length, duplicates: duplicates.size };
-    },
+    append: (evidence) => serialAppend(path, evidence),
   };
+}
+
+async function executeAppend(
+  path: string,
+  evidence: SeatEvidence[],
+): Promise<SeatProfileStoreAppendResult> {
+  for (const record of evidence) {
+    SeatEvidenceSchema.parse(record);
+  }
+
+  const state = await readFileState(path);
+  const knownIds = new Set(state.evidence.map((e) => e.evidence_id));
+  const { appendedRecords, duplicates } = partitionAppends(evidence, knownIds);
+
+  if (appendedRecords.length === 0) {
+    return { appended: 0, duplicates: duplicates.size };
+  }
+
+  await mkdir(dirname(path), { recursive: true });
+
+  // O_APPEND writes are atomic per call, so concurrent appends from separate
+  // processes or store instances cannot clobber each other's records the way
+  // a read-modify-write + rename could.
+  const needsNewline = state.raw !== "" && !state.raw.endsWith("\n");
+  const chunk = `${needsNewline ? "\n" : ""}${appendedRecords.map((r) => JSON.stringify(r)).join("\n")}\n`;
+  await appendFile(path, chunk, "utf8");
+
+  return { appended: appendedRecords.length, duplicates: duplicates.size };
 }

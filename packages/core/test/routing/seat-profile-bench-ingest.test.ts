@@ -18,6 +18,8 @@ const FINGERPRINT: SeatFingerprint = {
   template_hash: "template-v1",
   sampling: "greedy",
   harness: "acp-stdio",
+  routing_policy: null,
+  effort_policy: null,
 };
 
 function benchRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -79,24 +81,23 @@ describe("coding-v2 bench row ingest", () => {
     expect(SeatEvidenceSchema.safeParse(record).success).toBe(true);
   });
 
-  test("failure outcomes map to verdict fail with the outcome preserved", () => {
-    const outcomes = [
-      "wall-cap",
-      "context-overflow",
-      "request-timeout",
-      "truncated",
-      "turn-cap",
-      "model-fail",
-      "gave-up",
-    ];
+  test("capacity outcomes map to verdict capacity and failure outcomes to fail", () => {
+    const capacityOutcomes = ["wall-cap", "context-overflow", "request-timeout", "truncated"];
+    const failOutcomes = ["turn-cap", "model-fail", "gave-up"];
+    const outcomes = [...capacityOutcomes, ...failOutcomes];
     const rows = outcomes.map((outcome, i) =>
-      benchRow({ task: `fail-${String(i)}`, outcome, pass: false }),
+      benchRow({ task: `outcome-${String(i)}`, outcome, pass: false }),
     );
 
     const result = ingestCodingV2BenchRows(benchText(...rows), { fingerprint: FINGERPRINT });
 
     expect(result.evidence).toHaveLength(outcomes.length);
-    for (const outcome of outcomes) {
+    for (const outcome of capacityOutcomes) {
+      const matches = result.evidence.filter((record) => record.outcome === outcome);
+      expect(matches).toHaveLength(1);
+      expect(matches[0]?.verdict).toBe("capacity");
+    }
+    for (const outcome of failOutcomes) {
       const matches = result.evidence.filter((record) => record.outcome === outcome);
       expect(matches).toHaveLength(1);
       expect(matches[0]?.verdict).toBe("fail");
@@ -209,11 +210,12 @@ describe("coding-v2 bench row ingest", () => {
     expect(repResult.evidence[0]!.evidence_id).not.toBe(repResult.evidence[1]!.evidence_id);
   });
 
-  test("rows are fingerprint-guarded on sampling and policy", () => {
+  test("rows are fingerprint-guarded on sampling and policy fields", () => {
     const text = benchText(
       benchRow({ task: "greedy-ok" }),
       benchRow({ task: "card-row", sampling: "card" }),
-      benchRow({ task: "policy-row", policy: "router-v0" }),
+      benchRow({ task: "routing-row", routing_policy: "router-v0" }),
+      benchRow({ task: "effort-row", effort_policy: "aggressive" }),
     );
 
     const result = ingestCodingV2BenchRows(text, { fingerprint: FINGERPRINT });
@@ -221,16 +223,31 @@ describe("coding-v2 bench row ingest", () => {
     expect(result.evidence).toHaveLength(1);
     expect(result.rejected).toEqual([
       { line: 2, reason: "fingerprint_mismatch:sampling" },
-      { line: 3, reason: "fingerprint_mismatch:policy" },
+      { line: 3, reason: "fingerprint_mismatch:routing_policy" },
+      { line: 4, reason: "fingerprint_mismatch:effort_policy" },
     ]);
 
     const cardFingerprint: SeatFingerprint = { ...FINGERPRINT, sampling: "card:seeded" };
     const cardResult = ingestCodingV2BenchRows(
-      benchText(benchRow({ task: "card-ok", sampling: "card", policy: "router-v0" })),
-      { fingerprint: cardFingerprint, policy: "router-v0" },
+      benchText(benchRow({ task: "card-ok", sampling: "card", routing_policy: "router-v0" })),
+      { fingerprint: cardFingerprint, routingPolicy: "router-v0" },
     );
     expect(cardResult.evidence).toHaveLength(1);
     expect(cardResult.evidence[0]!.fingerprint_key).toBe(seatFingerprintKey(cardFingerprint));
+
+    const effortFingerprint: SeatFingerprint = {
+      ...FINGERPRINT,
+      routing_policy: "balanced",
+      effort_policy: "conservative",
+    };
+    const effortResult = ingestCodingV2BenchRows(
+      benchText(
+        benchRow({ task: "effort-ok", routing_policy: "balanced", effort_policy: "conservative" }),
+      ),
+      { fingerprint: effortFingerprint, routingPolicy: "balanced", effortPolicy: "conservative" },
+    );
+    expect(effortResult.evidence).toHaveLength(1);
+    expect(effortResult.evidence[0]!.fingerprint_key).toBe(seatFingerprintKey(effortFingerprint));
   });
 
   test("a realistic sparse corpus yields one sparse cell and an abstaining profile", () => {

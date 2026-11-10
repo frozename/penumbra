@@ -23,6 +23,8 @@ function fingerprint(overrides: Partial<SeatFingerprint> = {}): SeatFingerprint 
     template_hash: "template-v1",
     sampling: "greedy",
     harness: "acp-stdio",
+    routing_policy: null,
+    effort_policy: null,
     ...overrides,
   };
 }
@@ -33,7 +35,7 @@ interface EvidenceOverrides {
   fp?: SeatFingerprint;
   id?: string;
   rootTaskId?: string;
-  verdict?: "pass" | "fail";
+  verdict?: "pass" | "fail" | "capacity";
   outcome?: string;
   recordedAt?: string;
   tier?: SeatTier;
@@ -46,6 +48,12 @@ interface EvidenceOverrides {
 function evidence(overrides: EvidenceOverrides = {}): SeatEvidence {
   evidenceSeq += 1;
   const verdict = overrides.verdict ?? "pass";
+  const capacityOutcomes: Record<string, string> = {
+    "wall-cap": "wall-cap",
+    "context-overflow": "context-overflow",
+    "request-timeout": "request-timeout",
+    truncated: "truncated",
+  };
   return {
     evidence_id: overrides.id ?? `ev-${String(evidenceSeq)}`,
     fingerprint_key: seatFingerprintKey(overrides.fp ?? fingerprint()),
@@ -56,7 +64,9 @@ function evidence(overrides: EvidenceOverrides = {}): SeatEvidence {
     budget: overrides.budget ?? 16384,
     context_band: overrides.contextBand ?? "ctx_8k",
     verdict,
-    outcome: overrides.outcome ?? (verdict === "pass" ? "pass" : "model-fail"),
+    outcome:
+      overrides.outcome ??
+      (verdict === "pass" ? "pass" : verdict === "capacity" ? "wall-cap" : "model-fail"),
     wall_seconds: overrides.wallSeconds ?? null,
     recorded_at: overrides.recordedAt ?? FRESH_RECORDED_AT,
   };
@@ -65,7 +75,7 @@ function evidence(overrides: EvidenceOverrides = {}): SeatEvidence {
 function attempts(
   fp: SeatFingerprint,
   rootTaskId: string,
-  verdict: "pass" | "fail",
+  verdict: "pass" | "fail" | "capacity",
   count: number,
 ): SeatEvidence[] {
   return Array.from({ length: count }, () => evidence({ fp, rootTaskId, verdict }));
@@ -97,10 +107,43 @@ describe("seat capability profiles", () => {
       { ...fp, template_hash: "template-v2" },
       { ...fp, sampling: "card" },
       { ...fp, harness: "acp-other" },
+      { ...fp, routing_policy: "router-v0" },
+      { ...fp, effort_policy: "aggressive" },
     ];
     for (const variant of variants) {
       expect(seatFingerprintKey(variant)).not.toBe(key);
     }
+  });
+
+  test("routing and effort policies give different keys and profiles", () => {
+    const fp = fingerprint();
+    const fpA: SeatFingerprint = {
+      ...fp,
+      routing_policy: "router-a",
+      effort_policy: "effort-a",
+    };
+    const fpB: SeatFingerprint = {
+      ...fp,
+      routing_policy: "router-b",
+      effort_policy: "effort-b",
+    };
+
+    const keyA = seatFingerprintKey(fpA);
+    const keyB = seatFingerprintKey(fpB);
+    expect(keyA).not.toBe(keyB);
+    expect(keyA).not.toBe(seatFingerprintKey(fp));
+    expect(keyB).not.toBe(seatFingerprintKey(fp));
+
+    const ev = Array.from({ length: 5 }, (_, i) =>
+      evidence({ fp: fpA, rootTaskId: `policy-${String(i)}` }),
+    );
+    const profileA = buildSeatProfile(ev, fpA, { now: NOW });
+    const profileB = buildSeatProfile(ev, fpB, { now: NOW });
+    expect(profileA.status).toBe("qualified");
+    expect(profileA.fingerprint_key).toBe(keyA);
+    expect(profileB.status).toBe("abstain");
+    expect(profileB.abstain_reason).toBe("no_matching_evidence");
+    expect(profileB.fingerprint_key).toBe(keyB);
   });
 
   test("contextBandFor maps token counts to bands and rejects invalid input", () => {
@@ -173,9 +216,11 @@ describe("seat capability profiles", () => {
     expect(cell.status).toBe("qualified");
     expect(cell.interval).not.toBeNull();
     const interval = cell.interval!;
-    expect(interval.lo).toBeGreaterThanOrEqual(0);
+    expect(interval.lo).toBeCloseTo(0.0362, 4);
+    expect(interval.hi).toBeCloseTo(0.6245, 4);
     expect(interval.lo).toBeLessThanOrEqual(0.2);
     expect(interval.hi).toBeGreaterThanOrEqual(0.2);
+    expect(interval.lo).toBeGreaterThanOrEqual(0);
     expect(interval.hi).toBeLessThanOrEqual(1);
   });
 
@@ -190,7 +235,8 @@ describe("seat capability profiles", () => {
     const cell = profile.cells[0]!;
     expect(cell.status).toBe("sparse");
     expect(cell.pass_rate).toBeNull();
-    expect(cell.interval).toBeNull();
+    expect(cell.interval).not.toBeNull();
+    expect(cell.wall_seconds_p50).toBeNull();
     expect(cell.root_tasks).toBe(4);
     expect(cell.attempts).toBe(4);
     expect(profile.status).toBe("abstain");
@@ -259,5 +305,71 @@ describe("seat capability profiles", () => {
       "T1|medium|16384|ctx_8k",
       "T2|low|16384|ctx_8k",
     ]);
+  });
+
+  test("capacity verdicts are excluded from pass rate and tracked separately", () => {
+    const fp = fingerprint();
+    const ev = [
+      ...attempts(fp, "r1", "pass", 3),
+      ...attempts(fp, "r2", "fail", 2),
+      evidence({ fp, rootTaskId: "r3", verdict: "capacity", outcome: "wall-cap" }),
+      evidence({ fp, rootTaskId: "r4", verdict: "capacity", outcome: "context-overflow" }),
+    ];
+
+    const profile = buildSeatProfile(ev, fp, { now: NOW, minRootTasks: 4 });
+    expect(profile.cells).toHaveLength(1);
+    const cell = profile.cells[0]!;
+    expect(cell.root_tasks).toBe(4);
+    expect(cell.attempts).toBe(7);
+    expect(cell.pass_rate).toBeCloseTo(0.5, 10);
+    expect(cell.capacity_count).toBe(2);
+    expect(cell.interval).not.toBeNull();
+    expect(cell.interval!.lo).toBeCloseTo(0.0945, 4);
+    expect(cell.interval!.hi).toBeCloseTo(0.9055, 4);
+    expect(cell.status).toBe("qualified");
+  });
+
+  test("Wilson interval is computed from actual successes and trials", () => {
+    const fp = fingerprint();
+    const ev = [
+      ...attempts(fp, "r1", "pass", 3),
+      ...attempts(fp, "r2", "pass", 3),
+      ...attempts(fp, "r3", "fail", 4),
+      evidence({ fp, rootTaskId: "r4", verdict: "capacity", outcome: "wall-cap" }),
+    ];
+
+    const profile = buildSeatProfile(ev, fp, { now: NOW, minRootTasks: 4 });
+    expect(profile.cells).toHaveLength(1);
+    const cell = profile.cells[0]!;
+    expect(cell.root_tasks).toBe(4);
+    expect(cell.attempts).toBe(11);
+    expect(cell.capacity_count).toBe(1);
+
+    const interval = cell.interval!;
+    expect(interval).not.toBeNull();
+    expect(interval.lo).toBeCloseTo(0.2077, 4);
+    expect(interval.hi).toBeCloseTo(0.9385, 4);
+    expect(interval.lo).toBeGreaterThanOrEqual(0);
+    expect(interval.hi).toBeLessThanOrEqual(1);
+
+    // Per-task pass fractions are [1, 1, 0]; the capacity-only task adds no
+    // quality trial, so the interval is Wilson over 2 successes / 3 tasks.
+    expect(cell.pass_rate).toBeCloseTo(0.6667, 4);
+  });
+
+  test("sparse cell includes interval and wall_seconds_p50 when data exists", () => {
+    const fp = fingerprint();
+    const ev = Array.from({ length: 4 }, (_, i) =>
+      evidence({ fp, rootTaskId: `root-${String(i)}`, wallSeconds: 10.0 + i }),
+    );
+
+    const profile = buildSeatProfile(ev, fp, { now: NOW, minRootTasks: 5 });
+    expect(profile.cells).toHaveLength(1);
+    const cell = profile.cells[0]!;
+    expect(cell.status).toBe("sparse");
+    expect(cell.pass_rate).toBeNull();
+    expect(cell.interval).not.toBeNull();
+    expect(cell.wall_seconds_p50).toBe(11);
+    expect(cell.capacity_count).toBe(0);
   });
 });

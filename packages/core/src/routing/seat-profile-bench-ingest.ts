@@ -21,18 +21,19 @@ const benchRowSchema = z.looseObject({
   wall_seconds: z.number().nullable().optional(),
   prior_context_tokens: z.number().optional(),
   sampling: z.string().nullable().optional(),
-  policy: z.string().nullable().optional(),
+  routing_policy: z.string().nullable().optional(),
+  effort_policy: z.string().nullable().optional(),
   turns: z.array(z.looseObject({ prompt_tokens: z.number().nullable().optional() })),
 });
 
 type BenchRow = z.infer<typeof benchRowSchema>;
 
-const VERDICT_MAP: Record<string, "pass" | "fail"> = {
+const VERDICT_MAP: Record<string, "pass" | "fail" | "capacity"> = {
   pass: "pass",
-  "wall-cap": "fail",
-  "context-overflow": "fail",
-  "request-timeout": "fail",
-  truncated: "fail",
+  "wall-cap": "capacity",
+  "context-overflow": "capacity",
+  "request-timeout": "capacity",
+  truncated: "capacity",
   "turn-cap": "fail",
   "model-fail": "fail",
   "gave-up": "fail",
@@ -40,7 +41,8 @@ const VERDICT_MAP: Record<string, "pass" | "fail"> = {
 
 export interface CodingV2BenchIngestOptions {
   fingerprint: SeatFingerprint;
-  policy?: string | null;
+  routingPolicy?: string | null;
+  effortPolicy?: string | null;
 }
 
 export interface CodingV2BenchRejection {
@@ -70,7 +72,8 @@ type BenchLineResult =
 interface IngestContext {
   fingerprint: SeatFingerprint;
   fingerprintKey: string;
-  policy: string | null;
+  routingPolicy: string | null;
+  effortPolicy: string | null;
 }
 
 function parseBenchJson(line: string): StepResult<unknown> {
@@ -116,14 +119,18 @@ function fingerprintGuard(row: BenchRow, ctx: IngestContext): GuardResult {
   ) {
     return { ok: false, reason: "fingerprint_mismatch:sampling" };
   }
-  const rowPolicy = row.policy === undefined ? null : row.policy;
-  if (rowPolicy !== ctx.policy) {
-    return { ok: false, reason: "fingerprint_mismatch:policy" };
+  const rowRoutingPolicy = row.routing_policy === undefined ? null : row.routing_policy;
+  const rowEffortPolicy = row.effort_policy === undefined ? null : row.effort_policy;
+  if (rowRoutingPolicy !== ctx.routingPolicy) {
+    return { ok: false, reason: "fingerprint_mismatch:routing_policy" };
+  }
+  if (rowEffortPolicy !== ctx.effortPolicy) {
+    return { ok: false, reason: "fingerprint_mismatch:effort_policy" };
   }
   return { ok: true };
 }
 
-function benchVerdict(row: BenchRow): StepResult<"pass" | "fail"> {
+function benchVerdict(row: BenchRow): StepResult<"pass" | "fail" | "capacity"> {
   const verdict = VERDICT_MAP[row.outcome];
   if (verdict === undefined) {
     return { ok: false, reason: "unknown_outcome" };
@@ -154,7 +161,7 @@ function benchContextBand(row: BenchRow): StepResult<SeatContextBand> {
 
 function buildBenchEvidence(
   row: BenchRow,
-  verdict: "pass" | "fail",
+  verdict: "pass" | "fail" | "capacity",
   contextBand: SeatContextBand,
   ctx: IngestContext,
 ): SeatEvidence {
@@ -216,7 +223,8 @@ export function ingestCodingV2BenchRows(
   const ctx: IngestContext = {
     fingerprint: opts.fingerprint,
     fingerprintKey: seatFingerprintKey(opts.fingerprint),
-    policy: opts.policy === undefined ? null : opts.policy,
+    routingPolicy: opts.routingPolicy ?? opts.fingerprint.routing_policy ?? null,
+    effortPolicy: opts.effortPolicy ?? opts.fingerprint.effort_policy ?? null,
   };
   const evidence: SeatEvidence[] = [];
   const rejected: CodingV2BenchRejection[] = [];

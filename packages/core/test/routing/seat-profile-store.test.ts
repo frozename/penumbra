@@ -25,6 +25,8 @@ const FINGERPRINT: SeatFingerprint = {
   template_hash: "template-v1",
   sampling: "greedy",
   harness: "acp-stdio",
+  routing_policy: null,
+  effort_policy: null,
 };
 const FINGERPRINT_KEY = seatFingerprintKey(FINGERPRINT);
 
@@ -64,7 +66,8 @@ function benchRow(overrides: Record<string, unknown> = {}): Record<string, unkno
     label: "coding-v2",
     ended_epoch: ENDED_EPOCH,
     sampling: "greedy",
-    policy: null,
+    routing_policy: null,
+    effort_policy: null,
     seed: 7,
     turns: [{ prompt_tokens: 900, completion_tokens: 120 }],
     ...overrides,
@@ -197,6 +200,97 @@ describe("seat profile evidence store", () => {
       const cell = profile.cells[0]!;
       expect(cell.root_tasks).toBe(6);
       expect(cell.pass_rate).toBeCloseTo(1, 10);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("concurrent appends are serialized and all records survive", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "seat-profile-store-"));
+    try {
+      const store = createSeatProfileStore({ path: join(dir, "evidence.jsonl") });
+      const batches = Array.from({ length: 5 }, (_, i) => [
+        makeEvidence({ evidence_id: `batch-${String(i)}-a` }),
+        makeEvidence({ evidence_id: `batch-${String(i)}-b` }),
+      ]);
+
+      const results = await Promise.all(batches.map((batch) => store.append(batch)));
+
+      const allAppended = results.reduce((sum, r) => sum + r.appended, 0);
+      expect(allAppended).toBe(10);
+
+      const read = await store.read();
+      expect(read.evidence).toHaveLength(10);
+      const ids = read.evidence.map((record) => record.evidence_id);
+      expect(new Set(ids).size).toBe(10);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("appends from independent store instances on the same path do not lose records", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "seat-profile-store-"));
+    try {
+      const path = join(dir, "evidence.jsonl");
+      const storeA = createSeatProfileStore({ path });
+      const storeB = createSeatProfileStore({ path });
+      const batches = Array.from({ length: 10 }, (_, i) => [
+        makeEvidence({ evidence_id: `xinst-${String(i)}-a` }),
+        makeEvidence({ evidence_id: `xinst-${String(i)}-b` }),
+      ]);
+
+      const results = await Promise.all(
+        batches.map((batch, i) => (i % 2 === 0 ? storeA : storeB).append(batch)),
+      );
+
+      expect(results.reduce((sum, r) => sum + r.appended, 0)).toBe(20);
+
+      const read = await createSeatProfileStore({ path }).read();
+      expect(read.evidence).toHaveLength(20);
+      expect(new Set(read.evidence.map((record) => record.evidence_id)).size).toBe(20);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("capacity verdicts are stored and excluded from pass rate", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "seat-profile-store-"));
+    try {
+      const passEvidence = makeEvidence({
+        evidence_id: "cap-pass",
+        verdict: "pass",
+        outcome: "pass",
+      });
+      const capacityEvidence = makeEvidence({
+        evidence_id: "cap-capacity",
+        verdict: "capacity",
+        outcome: "wall-cap",
+      });
+      const failEvidence = makeEvidence({
+        evidence_id: "cap-fail",
+        verdict: "fail",
+        outcome: "model-fail",
+      });
+
+      const store = createSeatProfileStore({ path: join(dir, "evidence.jsonl") });
+      await store.append([passEvidence, capacityEvidence, failEvidence]);
+
+      const { evidence: stored } = await store.read();
+      expect(stored).toHaveLength(3);
+      expect(stored.find((e) => e.evidence_id === "cap-pass")?.verdict).toBe("pass");
+      expect(stored.find((e) => e.evidence_id === "cap-capacity")?.verdict).toBe("capacity");
+      expect(stored.find((e) => e.evidence_id === "cap-fail")?.verdict).toBe("fail");
+
+      const profile = buildSeatProfile(stored, FINGERPRINT, {
+        now: PROFILE_NOW,
+        minRootTasks: 3,
+      });
+      expect(profile.status).toBe("qualified");
+      const cell = profile.cells[0]!;
+      expect(cell.root_tasks).toBe(3);
+      expect(cell.attempts).toBe(3);
+      expect(cell.pass_rate).toBeCloseTo(0.5, 10);
+      expect(cell.capacity_count).toBe(1);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
