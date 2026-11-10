@@ -428,4 +428,58 @@ describe("summarizeCapsuleShadow", () => {
       Object.keys(forward.preflight_codes).toSorted(),
     );
   });
+
+  test.each([
+    { label: "empty", preflight_codes: [], expected: { clean: 1, flagged: 0 } },
+    {
+      label: "worktree_deferred",
+      preflight_codes: ["worktree_deferred"],
+      expected: { clean: 1, flagged: 0 },
+    },
+    {
+      label: "worktree_deferred duplicated",
+      preflight_codes: ["worktree_deferred", "worktree_deferred"],
+      expected: { clean: 1, flagged: 0 },
+    },
+    {
+      label: "base_missing",
+      preflight_codes: ["base_missing"],
+      expected: { clean: 0, flagged: 1 },
+    },
+    {
+      label: "runtime_mismatch",
+      preflight_codes: ["runtime_mismatch"],
+      expected: { clean: 0, flagged: 1 },
+    },
+    {
+      label: "worktree_deferred + base_missing",
+      preflight_codes: ["worktree_deferred", "base_missing"],
+      expected: { clean: 0, flagged: 1 },
+    },
+    {
+      label: "worktree_deferred + runtime_mismatch",
+      preflight_codes: ["worktree_deferred", "runtime_mismatch"],
+      expected: { clean: 0, flagged: 1 },
+    },
+    {
+      label: "base_missing + worktree_deferred",
+      preflight_codes: ["base_missing", "worktree_deferred"],
+      expected: { clean: 0, flagged: 1 },
+    },
+    {
+      label: "runtime_mismatch + worktree_deferred",
+      preflight_codes: ["runtime_mismatch", "worktree_deferred"],
+      expected: { clean: 0, flagged: 1 },
+    },
+  ])(
+    "classifies preflight shape '%label' -> { clean: %i, flagged: %i }",
+    ({ preflight_codes, expected }) => {
+      const summarize = summarizer();
+      const events = [shadowEvent("h1", compiledMeta({ preflight_codes }))];
+      const summary = summarize(events, {
+        outcomes: new Map([["h1", "success"]]),
+      });
+      expect(summary.outcomes!.by_preflight).toEqual(expected);
+    },
+  );
 });
