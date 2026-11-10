@@ -329,6 +329,15 @@ describe("summarizeCapsuleShadow", () => {
       shadowEvent("r1", refusedMeta({ preflight_codes: ["worktree_deferred"] })),
       // Refused with non-worktree_deferred -> flagged
       shadowEvent("r2", refusedMeta({ preflight_codes: ["base_missing"] })),
+      // Mixed: worktree_deferred + base_missing -> flagged (every returns false)
+      shadowEvent("h4", compiledMeta({ preflight_codes: ["worktree_deferred", "base_missing"] })),
+      // Mixed: worktree_deferred + runtime_mismatch -> flagged (every returns false)
+      shadowEvent(
+        "h5",
+        compiledMeta({ preflight_codes: ["worktree_deferred", "runtime_mismatch"] }),
+      ),
+      // Flagged with only runtime_mismatch -> flagged
+      shadowEvent("h7", compiledMeta({ preflight_codes: ["runtime_mismatch"] })),
     ];
     const withOutcomes = summarize(events, {
       outcomes: new Map([
@@ -338,6 +347,9 @@ describe("summarizeCapsuleShadow", () => {
         ["h6", "success"],
         ["r1", "success"],
         ["r2", "failure"],
+        ["h4", "failure"],
+        ["h5", "failure"],
+        ["h7", "success"],
       ]),
     });
     // h1: worktree_deferred only -> clean (every on ["worktree_deferred"] is true)
@@ -346,16 +358,19 @@ describe("summarizeCapsuleShadow", () => {
     // h3: empty preflight_codes -> clean (every on [] is true)
     // r1: worktree_deferred -> clean (refused)
     // r2: base_missing -> flagged (refused)
+    // h4: [worktree_deferred, base_missing] -> flagged (every returns false)
+    // h5: [worktree_deferred, runtime_mismatch] -> flagged (every returns false)
+    // h7: [runtime_mismatch] -> flagged (every returns false)
     // clean: h1, h3, h6, r1 = 4
-    // flagged: h2, r2 = 2
-    // compiled: h1(success), h2(failure), h3(success), h6(success) = 3 success, 1 failure
+    // flagged: h2, h4, h5, h7, r2 = 5
+    // compiled: h1(success), h2(failure), h3(success), h6(success), h4(failure), h5(failure), h7(success) = 4 success, 3 failure
     // refused: r1(success), r2(failure) = 1 success, 1 failure
     expect(withOutcomes.outcomes).toEqual({
       by_status: {
-        compiled: { success: 3, failure: 1, unknown: 0 },
+        compiled: { success: 4, failure: 3, unknown: 0 },
         refused: { success: 1, failure: 1, unknown: 0 },
       },
-      by_preflight: { clean: 4, flagged: 2 },
+      by_preflight: { clean: 4, flagged: 5 },
     });
   });
 
