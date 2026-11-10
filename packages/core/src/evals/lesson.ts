@@ -80,7 +80,7 @@ function invalidExpiry(draft: LessonDraft): boolean {
   return Date.parse(draft.expires_at) <= Date.parse(draft.created_at);
 }
 
-function buildReceiptDigests(episode: EpisodeBody): string[] {
+export function buildReceiptDigests(episode: EpisodeBody): string[] {
   return episode.receipts
     .filter(
       (r) =>

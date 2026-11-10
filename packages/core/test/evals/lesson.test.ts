@@ -90,6 +90,9 @@ beforeAll(async () => {
 const proposeLessonFromEpisode = (): ProposeFn => mod?.["proposeLessonFromEpisode"] as ProposeFn;
 const lessonEligibility = (): EligibilityFn => mod?.["lessonEligibility"] as EligibilityFn;
 const LessonSchema = (): SchemaLike => mod?.["LessonSchema"] as SchemaLike;
+const LessonDraftSchema = (): SchemaLike => mod?.["LessonDraftSchema"] as SchemaLike;
+const buildReceiptDigests = (): ((episode: JsonObject) => string[]) | undefined =>
+  (mod?.["buildReceiptDigests"] ?? undefined) as ((episode: JsonObject) => string[]) | undefined;
 
 const SHA_A = "a".repeat(40);
 const SHA_B = "b".repeat(40);
@@ -975,4 +978,137 @@ test("eligibility: reasons accumulate sorted", () => {
     eligible: false,
     reasons: ["cross_project", "expired", "not_approved", "source_version_changed"],
   });
+});
+
+test("propose: buildReceiptDigests filters to hidden_assertion kind only", () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const finalSha = SHA_A;
+  const episode = makeEpisode({
+    split: "dev",
+    attempt_history: {
+      status: "complete",
+      reason: null,
+      count: 1,
+      count_basis: "claim_events",
+    },
+    attempts: [att(1, finalSha)],
+    final_sha: finalSha,
+    receipts: [
+      hiddenReceipt(),
+      signReceipt({
+        kind: "llm_judge",
+        producer: "grader",
+        sha: finalSha,
+        claimed_verdict: "pass",
+        fail_reason: null,
+        assertion_set_digest: null,
+        grader_build: null,
+        per_check: null,
+        control_verdict: "pass",
+      }),
+    ],
+    harness_build: { sha: SHA_C },
+    model_identity: modelIdentity({
+      engine: { value: ENGINE_VALUE, provenance: "declared" },
+    }),
+    repo: { base_sha: null, dependency_lock_sha256: LOCK_SHA },
+  });
+  const res = proposeLessonFromEpisode()(episode, draft());
+  expect(res.status).toBe("proposed");
+  if (res.status !== "proposed") {
+    return;
+  }
+  const hidden = hiddenReceipt();
+  expect(res.lesson.source.receipt_digests).toEqual([hidden["receipt_digest"]]);
+});
+
+test("LessonDraftSchema rejects unknown keys with strictObject", () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const draftSchema = LessonDraftSchema();
+  // Verify unknown keys are rejected by strictObject
+  const extraDraft: LessonDraft = { ...draft(), extra_field: "should be rejected" } as LessonDraft;
+  const result = draftSchema.safeParse(extraDraft);
+  expect(result.success).toBe(false);
+  // Verify it fails for an unknown key not in the strictObject schema
+  const strictDraft: LessonDraft = { ...draft(), authority: "binding" as keyof LessonDraft };
+  const strictResult = draftSchema.safeParse(strictDraft);
+  expect(strictResult.success).toBe(false);
+});
+
+test("propose: buildReceiptDigests recomputes digest for unsigned receipts", () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const finalSha = SHA_A;
+  const unsignedHidden: JsonObject = { ...hiddenReceipt(), receipt_digest: null };
+  const episode = makeEpisode({
+    split: "dev",
+    attempt_history: {
+      status: "complete",
+      reason: null,
+      count: 1,
+      count_basis: "claim_events",
+    },
+    attempts: [att(1, finalSha)],
+    final_sha: finalSha,
+    receipts: [unsignedHidden],
+    harness_build: { sha: SHA_C },
+    model_identity: modelIdentity({
+      engine: { value: ENGINE_VALUE, provenance: "declared" },
+    }),
+    repo: { base_sha: null, dependency_lock_sha256: LOCK_SHA },
+  });
+  const res = proposeLessonFromEpisode()(episode, draft());
+  expect(res.status).toBe("proposed");
+  if (res.status !== "proposed") {
+    return;
+  }
+  expect(res.lesson.source.receipt_digests).toHaveLength(1);
+  const expectedUnsigned = receiptDigest(unsignedHidden as ReceiptClaimBody);
+  expect(res.lesson.source.receipt_digests).toEqual([expectedUnsigned]);
+});
+
+test("propose: buildReceiptDigests uses recomputed digest even when stored digest exists", () => {
+  expect(mod).not.toBeNull();
+  if (!mod) {
+    return;
+  }
+  const bd = buildReceiptDigests();
+  expect(typeof bd).toBe("function");
+  if (typeof bd !== "function") {
+    throw new Error("buildReceiptDigests not exported");
+  }
+  const finalSha = SHA_A;
+  const signedHidden = hiddenReceipt();
+  const wrongDigest = "0".repeat(64);
+  const signedWithWrongDigest = { ...signedHidden, receipt_digest: wrongDigest };
+  const rawEpisode = {
+    ...ep({}),
+    split: "dev",
+    attempt_history: {
+      status: "complete" as const,
+      reason: null,
+      count: 1,
+      count_basis: "claim_events" as const,
+    },
+    attempts: [att(1, finalSha)],
+    final_sha: finalSha,
+    receipts: [signedWithWrongDigest],
+    harness_build: { sha: SHA_C },
+    model_identity: modelIdentity({
+      engine: { value: ENGINE_VALUE, provenance: "declared" },
+    }),
+    repo: { base_sha: null, dependency_lock_sha256: LOCK_SHA },
+  };
+  const digests = bd(rawEpisode);
+  const recomputed = receiptDigest(signedHidden as ReceiptClaimBody);
+  expect(digests).toEqual([recomputed]);
+  expect(digests).not.toEqual([wrongDigest]);
 });
