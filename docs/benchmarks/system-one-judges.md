@@ -108,7 +108,7 @@ Even after Granite was stopped, the Nano and d1 Q4 full-bundle windows coincided
 
 Filesystem/Metal caches were not flushed. These are cold **process** starts with warm/local artifacts, not equivalent cold-machine trials or a proven model-intrinsic startup ranking. Sampled median residency over minutes is not a sustained day-long memory result. The first co-resident Nano run remains separately marked as interrupted/confounded.
 
-Granite was restored with its original binary, model and flags; port 8086 returned HTTP 200. Embeddings and control-plane health also returned HTTP 200. The temporary port 18944 was closed. [Restoration record](results/system-one-judges-2026-11-11/granite-restored.json).
+Granite was restored with its original binary, model and flags; port 8086 returned HTTP 200. Embeddings and control-plane health also returned HTTP 200. The temporary port 18944 was closed. [Restoration record](results/system-one-judges-2026-11-11/granite-restored.json). HTTP availability does not establish complete subsystem health: the final daemon response reported its T2-promotion extraction-streak subcheck as unhealthy. This experiment does not establish that condition's onset or cause, and did not repair that path. See the [final service-health snapshot](results/system-one-judges-2026-11-11/final-service-health.json).
 
 Brier score is mean squared probability error on answered independently labeled binary examples. ECE uses ten fixed equal-width bins. Categorical Brier is the unhalved sum across classes; it must not be numerically ranked against binary Brier. Categorical ECE uses selected-option probability, not the provider's entropy/confidence field. Ordinal axes use mean absolute error in original 0–4 rubric units.
 
