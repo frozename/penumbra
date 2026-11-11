@@ -56,6 +56,61 @@ function draft(overrides: Partial<LessonDraft> = {}): LessonDraft {
   };
 }
 
+const PLACEHOLDER_TOKEN = /\[REDACTED:[a-z0-9_]+\]/g;
+
+function clearTextLength(text: string): number {
+  return text.replaceAll(PLACEHOLDER_TOKEN, "").replaceAll("~", "").length;
+}
+
+// Each `main` value is origin/main's redaction of `text`; the fixed engine must
+// reproduce it exactly (and so leak no more clear text than main).
+const MAIN_PARITY_CASES: {
+  text: string;
+  identifiers: string[];
+  main: string;
+}[] = [
+  {
+    text: "alerts@acme.io:8443 paged",
+    identifiers: ["alerts@acme.io:8443", "acme"],
+    main: "[REDACTED:production_identifier] paged",
+  },
+  {
+    text: "acme prod.ops@corp.com",
+    identifiers: ["acme prod", "corp"],
+    main: "[REDACTED:production_identifier].ops@[REDACTED:production_identifier].com",
+  },
+  {
+    text: "prod ops@acme.io x",
+    identifiers: ["prod ops@acme.io", "acme"],
+    main: "[REDACTED:production_identifier] x",
+  },
+  {
+    text: "acme10.0.0.1",
+    identifiers: ["acme"],
+    main: "[REDACTED:production_identifier][REDACTED:ipv4]",
+  },
+  {
+    text: "10.0.0.1acme",
+    identifiers: ["acme"],
+    main: "[REDACTED:ipv4][REDACTED:production_identifier]",
+  },
+  {
+    text: "rack 10.20.30.40",
+    identifiers: ["rack 1"],
+    main: "[REDACTED:production_identifier][REDACTED:ipv4]",
+  },
+  {
+    text: "/Users/alice prod-cluster",
+    identifiers: ["alice prod-cluster"],
+    main: "~",
+  },
+  {
+    text: "v 8.8.8.8",
+    identifiers: [],
+    main: "v [REDACTED:ipv4]",
+  },
+];
+
 test("redact: production identifiers are replaced in every text field", () => {
   expect(typeof mod?.["redactLessonDraft"]).toBe("function");
   if (!mod) {
@@ -207,4 +262,540 @@ test("redact: redactions are sorted, omit zero-hit rules, and sum across fields"
     { rule_id: "email", count: 2 },
     { rule_id: "production_identifier", count: 1 },
   ]);
+});
+
+test("redact: a listed identifier that is an email domain matches origin/main (local part stays)", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "page ops@acme.example" }), {
+    production_identifiers: ["acme.example"],
+  });
+  // Parity with origin/main's sequential engine: production_identifier claims the
+  // domain, the email rule can no longer match, and the post-pass only collapses a
+  // placeholder that precedes a domain, so main's 'ops@' leftover stays.
+  expect(res.draft.root_cause).toBe("page ops@[REDACTED:production_identifier]");
+  expect(res.redactions).toEqual([{ rule_id: "production_identifier", count: 1 }]);
+});
+
+test("redact: a listed identifier that is an email local part collapses to one email placeholder", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "mail alex@acme.example now" }), {
+    production_identifiers: ["alex"],
+  });
+  // The identifier pass claims 'alex', then the post-pass collapses the leftover
+  // '@acme.example' into an email placeholder, so both rules are recorded once.
+  expect(res.draft.root_cause).toBe("mail [REDACTED:email] now");
+  expect(res.redactions).toEqual([
+    { rule_id: "email", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
+});
+
+test("redact: a home path whose user segment is a listed identifier counts once as home_path", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "lock under /Users/alex/work/x" }), {
+    production_identifiers: ["alex"],
+  });
+  expect(res.draft.root_cause).toBe("lock under ~/work/x");
+  expect(res.redactions).toEqual([
+    { rule_id: "home_path", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
+});
+
+test("redact: an identifier outside the home path is still redacted and counted once", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "cd /home/alex/repo and ping alex" }), {
+    production_identifiers: ["alex"],
+  });
+  expect(res.draft.root_cause).toBe("cd ~/repo and ping [REDACTED:production_identifier]");
+  expect(res.redactions).toEqual([
+    { rule_id: "home_path", count: 1 },
+    { rule_id: "production_identifier", count: 2 },
+  ]);
+});
+
+test("redact: four-part versions after 'version' or 'v' are redacted as ipv4", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(
+    draft({
+      failure_signature: "bump to version 1.2.3.4",
+      root_cause: "Version: 1.2.3.4 ships",
+      procedure: ["pin version=1.2.3.4"],
+      applicability: ["v 1.2.3.4 only"],
+    }),
+  );
+  expect(res.draft.failure_signature).toBe("bump to version [REDACTED:ipv4]");
+  expect(res.draft.root_cause).toBe("Version: [REDACTED:ipv4] ships");
+  expect(res.draft.procedure[0]).toBe("pin version=[REDACTED:ipv4]");
+  expect(res.draft.applicability[0]).toBe("v [REDACTED:ipv4] only");
+  expect(res.redactions).toEqual([{ rule_id: "ipv4", count: 4 }]);
+});
+
+test("redact: 'v 8.8.8.8', 'version\\n8.8.8.8', 'v=1.0.0.1' and CIDR are redacted as ipv4", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(
+    draft({
+      failure_signature: "v 8.8.8.8",
+      root_cause: "version\n8.8.8.8",
+      procedure: ["v=1.0.0.1"],
+      applicability: ["route v 1.2.3.4/24 down"],
+    }),
+  );
+  expect(res.draft.failure_signature).toBe("v [REDACTED:ipv4]");
+  expect(res.draft.root_cause).toBe("version\n[REDACTED:ipv4]");
+  expect(res.draft.procedure[0]).toBe("v=[REDACTED:ipv4]");
+  expect(res.draft.applicability[0]).toBe("route v [REDACTED:ipv4]/24 down");
+  expect(res.redactions).toEqual([{ rule_id: "ipv4", count: 4 }]);
+});
+
+test("redact: a version-prefixed email is redacted whole as email", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "v1.2.3.4@acme.example" }));
+  expect(res.draft.root_cause).toBe("[REDACTED:email]");
+  expect(res.redactions).toEqual([{ rule_id: "email", count: 1 }]);
+});
+
+test("redact: an identifier that starts with an email is redacted whole, not just its email prefix", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(
+    draft({
+      failure_signature: "ops@acme.example-prod flapped",
+      root_cause: "alerts@acme.io:8443 paged",
+    }),
+    { production_identifiers: ["ops@acme.example-prod", "alerts@acme.io:8443"] },
+  );
+  expect(res.draft.failure_signature).toBe("[REDACTED:production_identifier] flapped");
+  expect(res.draft.root_cause).toBe("[REDACTED:production_identifier] paged");
+  expect(res.redactions).toEqual([{ rule_id: "production_identifier", count: 2 }]);
+});
+
+test("redact: an identifier containing a home path is redacted whole as identifier", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "lock under /Users/alex/keys/staging" }), {
+    production_identifiers: ["/Users/alex/keys/staging"],
+  });
+  expect(res.draft.root_cause).toBe("lock under [REDACTED:production_identifier]");
+  expect(res.redactions).toEqual([{ rule_id: "production_identifier", count: 1 }]);
+});
+
+test("redact: a listed identifier inside a placeholder-shaped string is still redacted", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(
+    draft({
+      failure_signature: "[REDACTED:acme_prod]",
+      root_cause: "[redacted:acme_prod] x",
+    }),
+    { production_identifiers: ["acme_prod"] },
+  );
+  expect(res.draft.failure_signature).toBe("[REDACTED:[REDACTED:production_identifier]]");
+  expect(res.draft.root_cause).toBe("[redacted:[REDACTED:production_identifier]] x");
+  expect(res.redactions).toEqual([{ rule_id: "production_identifier", count: 2 }]);
+});
+
+test("redact: a glued v-prefix is not an ipv4 match", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "v1.2.3.4" }));
+  expect(res.draft.root_cause).toBe("v1.2.3.4");
+  expect(res.redactions).toEqual([]);
+});
+
+test("redact: ipv4 redaction is not suppressed by a v inside a word", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "dev 10.20.30.40" }));
+  expect(res.draft.root_cause).toBe("dev [REDACTED:ipv4]");
+  expect(res.redactions).toEqual([{ rule_id: "ipv4", count: 1 }]);
+});
+
+test("redact: glued v-versions stay while bare addresses are redacted", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "release v2.0.0.1 then dial 10.0.0.1" }));
+  expect(res.draft.root_cause).toBe("release v2.0.0.1 then dial [REDACTED:ipv4]");
+  expect(res.redactions).toEqual([{ rule_id: "ipv4", count: 1 }]);
+});
+
+test("redact: a listed identifier does not match inside an existing placeholder", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "page ops@acme.example" }), {
+    production_identifiers: ["ted"],
+  });
+  expect(res.draft.root_cause).toBe("page [REDACTED:email]");
+  expect(res.redactions).toEqual([{ rule_id: "email", count: 1 }]);
+});
+
+test("redact: identifier redaction composes with email redaction", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "page ops@acme.example on red" }), {
+    production_identifiers: ["red"],
+  });
+  expect(res.draft.root_cause).toBe("page [REDACTED:email] on [REDACTED:production_identifier]");
+  expect(res.redactions).toEqual([
+    { rule_id: "email", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
+});
+
+test("redact: built-in ipv4 placeholder is not re-scanned by identifiers", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "dial 10.0.0.1" }), {
+    production_identifiers: ["ipv4"],
+  });
+  expect(res.draft.root_cause).toBe("dial [REDACTED:ipv4]");
+  expect(res.redactions).toEqual([{ rule_id: "ipv4", count: 1 }]);
+});
+
+test("redact: addresses after a -v CLI flag are still redacted", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "curl -v 10.0.0.5" }));
+  expect(res.draft.root_cause).toBe("curl -v [REDACTED:ipv4]");
+  expect(res.redactions).toEqual([{ rule_id: "ipv4", count: 1 }]);
+});
+
+test("redact: multiple -v flag addresses are all redacted", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(
+    draft({ root_cause: "ssh -v 192.168.1.10 then tcpdump -v 10.0.0.1" }),
+  );
+  expect(res.draft.root_cause).toBe("ssh -v [REDACTED:ipv4] then tcpdump -v [REDACTED:ipv4]");
+  expect(res.redactions).toEqual([{ rule_id: "ipv4", count: 2 }]);
+});
+
+test("redact: a --version flag does not suppress ipv4 redaction", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "--version=1.2.3.4" }));
+  expect(res.draft.root_cause).toBe("--version=[REDACTED:ipv4]");
+  expect(res.redactions).toEqual([{ rule_id: "ipv4", count: 1 }]);
+});
+
+test("redact: newline/tab after version does not suppress ipv4 redaction", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(
+    draft({
+      failure_signature: "version\n10.0.0.12",
+      root_cause: "version\t10.0.0.11",
+    }),
+  );
+  expect(res.draft.failure_signature).toBe("version\n[REDACTED:ipv4]");
+  expect(res.draft.root_cause).toBe("version\t[REDACTED:ipv4]");
+  expect(res.redactions).toEqual([{ rule_id: "ipv4", count: 2 }]);
+});
+
+test("redact: 'see v', 'V:', '/v' with space followed by IPv4 is redacted", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(
+    draft({
+      failure_signature: "see v 10.0.0.1",
+      root_cause: "V: 172.16.0.9",
+    }),
+  );
+  expect(res.draft.failure_signature).toBe("see v [REDACTED:ipv4]");
+  expect(res.draft.root_cause).toBe("V: [REDACTED:ipv4]");
+  expect(res.redactions).toEqual([{ rule_id: "ipv4", count: 2 }]);
+});
+
+test("redact: '/v 10.0.0.1' and 'version=10.1.2.3' are redacted", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(
+    draft({
+      failure_signature: "/v 10.0.0.1",
+      root_cause: "version=10.1.2.3",
+    }),
+  );
+  expect(res.draft.failure_signature).toBe("/v [REDACTED:ipv4]");
+  expect(res.draft.root_cause).toBe("version=[REDACTED:ipv4]");
+  expect(res.redactions).toEqual([{ rule_id: "ipv4", count: 2 }]);
+});
+
+test("redact: identifier containing a built-in match is redacted whole", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(
+    draft({
+      failure_signature: "/Users/alex/acme-private-repo",
+      root_cause: "db.acme-prod.10.0.0.5.nip.io",
+    }),
+    { production_identifiers: ["acme-private-repo", "db.acme-prod.10.0.0.5.nip.io"] },
+  );
+  expect(res.draft.failure_signature).toBe("~/[REDACTED:production_identifier]");
+  expect(res.draft.root_cause).toBe("[REDACTED:production_identifier]");
+  expect(res.redactions).toEqual([
+    { rule_id: "home_path", count: 1 },
+    { rule_id: "production_identifier", count: 2 },
+  ]);
+});
+
+test("redact: a home path prefixing a listed identifier reports both rules", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "/Users/alex/acme-private-repo" }), {
+    production_identifiers: ["acme-private-repo"],
+  });
+  expect(res.draft.root_cause).toBe("~/[REDACTED:production_identifier]");
+  expect(res.redactions).toEqual([
+    { rule_id: "home_path", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
+});
+
+test("redact: identifier containing an IPv4 and email is redacted whole", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(
+    draft({
+      failure_signature: "10.0.0.5:6443",
+      root_cause: "admin@10.0.0.5",
+    }),
+    { production_identifiers: ["10.0.0.5:6443", "admin@10.0.0.5"] },
+  );
+  expect(res.draft.failure_signature).toBe("[REDACTED:production_identifier]");
+  expect(res.draft.root_cause).toBe("[REDACTED:production_identifier]");
+  expect(res.redactions).toEqual([{ rule_id: "production_identifier", count: 2 }]);
+});
+
+test("redact: identifiers adjacent to ipv4 addresses redact both, like the sequential engine", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const redact = redactLessonDraft();
+
+  let res = redact(draft({ root_cause: "acme10.0.0.1" }), {
+    production_identifiers: ["acme"],
+  });
+  expect(res.draft.root_cause).toBe("[REDACTED:production_identifier][REDACTED:ipv4]");
+  expect(res.redactions).toEqual([
+    { rule_id: "ipv4", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
+
+  res = redact(draft({ root_cause: "10.0.0.1acme" }), {
+    production_identifiers: ["acme"],
+  });
+  expect(res.draft.root_cause).toBe("[REDACTED:ipv4][REDACTED:production_identifier]");
+  expect(res.redactions).toEqual([
+    { rule_id: "ipv4", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
+
+  res = redact(draft({ root_cause: "rack 10.20.30.40" }), {
+    production_identifiers: ["rack 1"],
+  });
+  expect(res.draft.root_cause).toBe("[REDACTED:production_identifier][REDACTED:ipv4]");
+  expect(res.redactions).toEqual([
+    { rule_id: "ipv4", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
+
+  res = redact(draft({ root_cause: "10.0.0.1 rack-a" }), {
+    production_identifiers: ["1 rack-a"],
+  });
+  expect(res.draft.root_cause).toBe("10.0.0.[REDACTED:production_identifier]");
+  expect(res.redactions).toEqual([{ rule_id: "production_identifier", count: 1 }]);
+});
+
+test("redact: identifiers next to an email or home path redact like the sequential engine", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const redact = redactLessonDraft();
+
+  let res = redact(draft({ root_cause: "acme prod.ops@corp.com" }), {
+    production_identifiers: ["acme prod"],
+  });
+  expect(res.draft.root_cause).toBe("[REDACTED:production_identifier].[REDACTED:email]");
+  expect(res.redactions).toEqual([
+    { rule_id: "email", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
+
+  res = redact(draft({ root_cause: "/Users/alice prod-cluster" }), {
+    production_identifiers: ["alice prod-cluster"],
+  });
+  // Known: the identifier pass claims 'alice prod-cluster' first, then the
+  // home_path pass collapses '/Users/<placeholder>' to '~', so the path counts
+  // once under each rule.
+  expect(res.draft.root_cause).toBe("~");
+  expect(res.redactions).toEqual([
+    { rule_id: "home_path", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
+});
+
+test("redact: an identifier that is an email local part redacts the whole address via the post-pass", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "page ACMEBOT@corp.io" }), {
+    production_identifiers: ["acmebot"],
+  });
+  expect(res.draft.root_cause).toBe("page [REDACTED:email]");
+  expect(res.redactions).toEqual([
+    { rule_id: "email", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
+});
+
+test("redact: reviewer email-overlap repros match origin/main exactly with no extra clear text", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const redact = redactLessonDraft();
+  for (const testCase of MAIN_PARITY_CASES) {
+    const res = redact(draft({ root_cause: testCase.text }), {
+      production_identifiers: testCase.identifiers,
+    });
+    expect(res.draft.root_cause).toBe(testCase.main);
+    expect(clearTextLength(res.draft.root_cause)).toBeLessThanOrEqual(
+      clearTextLength(testCase.main),
+    );
+  }
+});
+
+test("redact: an email exactly equal to a listed identifier stays a production_identifier", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "contact ops@acme.example today" }), {
+    production_identifiers: ["ops@acme.example"],
+  });
+  expect(res.draft.root_cause).toBe("contact [REDACTED:production_identifier] today");
+  expect(res.redactions).toEqual([{ rule_id: "production_identifier", count: 1 }]);
+});
+
+test("redact: the post-pass only turns clear text into placeholders, never the reverse", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  // origin/main leaves the domain of an identifier-local-part email in clear text;
+  // the post-pass must collapse it and never widen the clear-text region.
+  const mainLeftover = "page [REDACTED:production_identifier]@corp.io";
+  const res = redactLessonDraft()(draft({ root_cause: "page ACMEBOT@corp.io" }), {
+    production_identifiers: ["acmebot"],
+  });
+  expect(res.draft.root_cause).toBe("page [REDACTED:email]");
+  expect(clearTextLength(res.draft.root_cause)).toBeLessThanOrEqual(clearTextLength(mainLeftover));
+});
+
+test("redact: the post-pass collapses every leftover in a string and counts each one", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "alice@example.com,alice@b.org" }), {
+    production_identifiers: ["alice"],
+  });
+  expect(res.draft.root_cause).toBe("[REDACTED:email],[REDACTED:email]");
+  expect(res.redactions).toEqual([
+    { rule_id: "email", count: 2 },
+    { rule_id: "production_identifier", count: 2 },
+  ]);
+});
+
+test("redact: the post-pass matches uppercase, hyphenated and subdomain domains", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "mail ALICE@Sub.Example-Corp.IO now" }), {
+    production_identifiers: ["alice"],
+  });
+  expect(res.draft.root_cause).toBe("mail [REDACTED:email] now");
+});
+
+test("redact: the post-pass requires a TLD, like the email rule on origin/main", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "ssh alice@localhost" }), {
+    production_identifiers: ["alice"],
+  });
+  expect(res.draft.root_cause).toBe("ssh [REDACTED:production_identifier]@localhost");
+});
+
+test("redact: the post-pass does not consume the token before the placeholder", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "bob-alice@example.com" }), {
+    production_identifiers: ["alice"],
+  });
+  expect(res.draft.root_cause).toBe("bob-[REDACTED:email]");
 });
