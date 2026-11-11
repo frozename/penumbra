@@ -28,12 +28,18 @@ const REGEX_SYNTAX_CHARACTERS = /[.*+?^${}()|[\]\\]/g;
 const HOME_PATH_PATTERN = /\/(?:Users|home)\/[^/\s]+/g;
 const EMAIL_PATTERN = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
 const IPV4_OCTET = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
-const IPV4_PATTERN = new RegExp(
-  `(?<!(?<![\\w-])(?:v|version)[ :|=]?)\\b${IPV4_OCTET}\\.${IPV4_OCTET}\\.${IPV4_OCTET}\\.${IPV4_OCTET}\\b`,
-  "gi",
-);
+const IPV4_SOURCE = `\\b${IPV4_OCTET}\\.${IPV4_OCTET}\\.${IPV4_OCTET}\\.${IPV4_OCTET}\\b`;
 
 const PLACEHOLDER_SOURCE = "\\[REDACTED:[a-z0-9_]+\\]";
+const VERSION_DOT_MASK = "\u0000";
+
+// Four-part versions ("v1.2.3.4", "version=1.2.3.4") are not addresses: their
+// dots are masked before matching so the ipv4 branch cannot claim them.
+// Single-digit parts keep real addresses (10.x, 192.168.x) redactable.
+const LESSON_VERSION_PATTERN = new RegExp(
+  "(?<![\\w-])(?:version|v)[:=]? ?(?<![\\d.])\\d\\.\\d\\.\\d\\.\\d(?![\\d.])",
+  "gi",
+);
 
 function compareByIdentifierLength(a: string, b: string): number {
   if (b.length !== a.length) {
@@ -45,7 +51,7 @@ function compareByIdentifierLength(a: string, b: string): number {
   return a > b ? 1 : 0;
 }
 
-function buildIdentifierPattern(identifiers: readonly string[]): RegExp | null {
+function buildIdentifierAlternation(identifiers: readonly string[]): string | null {
   const seen = new Set<string>();
   const cleaned: string[] = [];
   for (const raw of identifiers) {
@@ -59,51 +65,136 @@ function buildIdentifierPattern(identifiers: readonly string[]): RegExp | null {
   if (cleaned.length === 0) {
     return null;
   }
-  const alternation = cleaned
+  return cleaned
     .toSorted(compareByIdentifierLength)
     .map((identifier) => identifier.replaceAll(REGEX_SYNTAX_CHARACTERS, "\\$&"))
     .join("|");
-  return new RegExp(`${PLACEHOLDER_SOURCE}|${alternation}`, "gi");
 }
 
-function buildRules(options?: LessonRedactionOptions): ValuePatternRule[] {
-  const rules: ValuePatternRule[] = [];
-  const identifierPattern = buildIdentifierPattern(options?.production_identifiers ?? []);
-  const identifierRules: ValuePatternRule[] = [];
-  if (identifierPattern !== null) {
-    identifierRules.push({
-      id: "production_identifier",
-      pattern: identifierPattern,
-      replacement: (match: string) =>
-        match.startsWith("[REDACTED:") && match.endsWith("]")
-          ? match
-          : "[REDACTED:production_identifier]",
+function buildCombinedPattern(options?: LessonRedactionOptions): RegExp {
+  const identifiers = buildIdentifierAlternation(options?.production_identifiers ?? []);
+  return new RegExp(
+    `(?<redacted_placeholder>${PLACEHOLDER_SOURCE})` +
+      `|(?<email>${EMAIL_PATTERN.source})` +
+      `|(?<production_identifier>${identifiers ?? "[^\\s\\S]"})` +
+      `|(?<home_path>${HOME_PATH_PATTERN.source})` +
+      `|(?<ipv4>${IPV4_SOURCE})`,
+    "gi",
+  );
+}
+
+function buildRules(options?: LessonRedactionOptions): {
+  rules: ValuePatternRule[];
+  pattern: RegExp;
+} {
+  const pattern = buildCombinedPattern(options);
+  return {
+    pattern,
+    rules: [
+      {
+        id: "lesson_text",
+        pattern,
+        replacement: (match: string, ...groups: string[]): string => {
+          if (groups[1] !== undefined) {
+            return "[REDACTED:email]";
+          }
+          if (groups[2] !== undefined) {
+            return "[REDACTED:production_identifier]";
+          }
+          if (groups[3] !== undefined) {
+            return "~";
+          }
+          if (groups[4] !== undefined) {
+            return "[REDACTED:ipv4]";
+          }
+          return match;
+        },
+      },
+    ],
+  };
+}
+
+type RedactionSpan = { rule_id: string; start: number; end: number };
+
+function ruleIdForGroups(groups: Record<string, string> | undefined): string | undefined {
+  if (groups === undefined) {
+    return undefined;
+  }
+  if (groups.email !== undefined) {
+    return "email";
+  }
+  if (groups.production_identifier !== undefined) {
+    return "production_identifier";
+  }
+  if (groups.home_path !== undefined) {
+    return "home_path";
+  }
+  if (groups.ipv4 !== undefined) {
+    return "ipv4";
+  }
+  return undefined;
+}
+
+// Matches that touch only through "/" form one sensitive span (a path); the
+// longest match in the span wins the hit attribution while every match still
+// applies its own replacement.
+function collectRedactionHits(text: string, pattern: RegExp): LessonRedactionHit[] {
+  const spans: RedactionSpan[] = [];
+  for (const match of text.matchAll(pattern)) {
+    const rule_id = ruleIdForGroups(match.groups);
+    if (rule_id === undefined) {
+      continue;
+    }
+    spans.push({ rule_id, start: match.index, end: match.index + match[0].length });
+  }
+
+  const counts = new Map<string, number>();
+  let region: RedactionSpan[] = [];
+  let regionPreviousEnd = 0;
+  const flushRegion = (): void => {
+    if (region.length === 0) {
+      return;
+    }
+    const winner = region.reduce((best, span) => {
+      const bestLength = best.end - best.start;
+      const length = span.end - span.start;
+      return length > bestLength || (length === bestLength && span.start < best.start)
+        ? span
+        : best;
     });
+    const winnerCount = region.filter((span) => span.rule_id === winner.rule_id).length;
+    counts.set(winner.rule_id, (counts.get(winner.rule_id) ?? 0) + winnerCount);
+    region = [];
+  };
+  for (const span of spans) {
+    if (region.length > 0 && !/^\/+$/.test(text.slice(regionPreviousEnd, span.start))) {
+      flushRegion();
+    }
+    region.push(span);
+    regionPreviousEnd = span.end;
   }
-  const builtInRules: ValuePatternRule[] = [];
-  builtInRules.push({ id: "email", pattern: EMAIL_PATTERN, replacement: "[REDACTED:email]" });
-  builtInRules.push({ id: "home_path", pattern: HOME_PATH_PATTERN, replacement: "~" });
-  builtInRules.push({ id: "ipv4", pattern: IPV4_PATTERN, replacement: "[REDACTED:ipv4]" });
-  const orderedRules = [...identifierRules, ...builtInRules];
-  for (const rule of orderedRules) {
-    rules.push(rule);
-  }
-  return rules;
+  flushRegion();
+
+  return [...counts.entries()].map(([rule_id, count]) => ({ rule_id, count }));
 }
 
 export function redactLessonDraft<T extends LessonTextFields>(
   draft: T,
   opts?: LessonRedactionOptions,
 ): { draft: T; redactions: LessonRedactionHit[] } {
-  const redactor = new ValuePatternRedactor(buildRules(opts));
+  const { rules, pattern } = buildRules(opts);
+  const redactor = new ValuePatternRedactor(rules);
   const hitCounts = new Map<string, number>();
 
-  const redact = (text: string): string => {
+  const redact = (input: string): string => {
+    const text = input.replaceAll(LESSON_VERSION_PATTERN, (match) =>
+      match.replaceAll(".", VERSION_DOT_MASK),
+    );
     const result = redactor.redactString(text);
-    for (const hit of result.hits) {
+    for (const hit of collectRedactionHits(text, pattern)) {
       hitCounts.set(hit.rule_id, (hitCounts.get(hit.rule_id) ?? 0) + hit.count);
     }
-    return result.redacted;
+    return result.redacted.replaceAll(VERSION_DOT_MASK, ".");
   };
 
   const redactedDraft = {
