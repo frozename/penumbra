@@ -1,6 +1,11 @@
 import { expect, test } from "bun:test";
 
-import { buildReviewPacket, type ReviewSource } from "./system-one-judge-review.js";
+import {
+  buildReviewPacket,
+  type CompletedReview,
+  mergeReviewPackets,
+  type ReviewSource,
+} from "./system-one-judge-review.js";
 
 const source = (id: string, body: string, promoted = false): ReviewSource => ({
   rollup_id: id,
@@ -49,4 +54,75 @@ test("sampling covers time, length and retention strata before filling a large b
   const result = buildReviewPacket(rows, { seed: "frozen", limit: 3, excludedHashes: [] });
   expect(result.manifest.strata).toHaveLength(3);
   expect(result.cases).toHaveLength(3);
+});
+
+const reviewed = (reviewer: string, promote: boolean | null): CompletedReview => ({
+  caseId: "id",
+  body: "visible input",
+  promote,
+  rationale: "specific reason",
+  factualSupport: "insufficient",
+  evidence: [],
+  reviewer,
+});
+
+test("review merge preserves uncertainty and requires independent identities", () => {
+  const packet = [{ caseId: "id", body: "visible input" }];
+  expect(
+    mergeReviewPackets(packet, [reviewed("a", null)], [reviewed("b", null)])[0]?.promote,
+  ).toBeNull();
+  expect(() =>
+    mergeReviewPackets(packet, [reviewed("a", false)], [reviewed("a", false)]),
+  ).toThrow();
+  expect(() =>
+    mergeReviewPackets(
+      packet,
+      [reviewed("a", false)],
+      [{ ...reviewed("b", false), body: "changed" }],
+    ),
+  ).toThrow();
+});
+
+test("disagreements require explicit distinct adjudication and never become implicit negatives", () => {
+  const packet = [{ caseId: "id", body: "visible input" }];
+  expect(() => mergeReviewPackets(packet, [reviewed("a", true)], [reviewed("b", false)])).toThrow();
+  expect(() =>
+    mergeReviewPackets(
+      packet,
+      [reviewed("a", true)],
+      [reviewed("b", false)],
+      [reviewed("a", false)],
+    ),
+  ).toThrow();
+  const merged = mergeReviewPackets(
+    packet,
+    [reviewed("a", true)],
+    [reviewed("b", false)],
+    [reviewed("c", null)],
+  );
+  expect(merged[0]).toMatchObject({
+    promote: null,
+    reviewProvenance: {
+      reviewers: ["a", "b"],
+      adjudicator: "c",
+      method: "blind-source-checks",
+      commonBaseModel: true,
+    },
+  });
+});
+
+test("each verified review must carry its own source evidence", () => {
+  expect(() =>
+    mergeReviewPackets(
+      [{ caseId: "id", body: "visible input" }],
+      [{ ...reviewed("a", true), factualSupport: "verified" }],
+      [
+        {
+          ...reviewed("b", true),
+          factualSupport: "verified",
+          evidence: ["packages/core/src/db/schema.ts:122"],
+        },
+      ],
+    ),
+  ).toThrow();
 });

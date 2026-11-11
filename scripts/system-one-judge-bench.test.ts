@@ -46,6 +46,25 @@ test("dry run performs no inference and does not claim measured quality", async 
   expect(result.status).toBe("not_run");
 });
 
+test("independent AI labels require distinct reviewers and explicit provenance", () => {
+  const ai = { ...fixture, labelStatus: "independently-ai-reviewed" };
+  expect(fixtureSchema.safeParse(ai).success).toBe(false);
+  const provenance = {
+    method: "blind-source-checks",
+    reviewers: ["reviewer-a", "reviewer-b"],
+    commonBaseModel: true,
+    factualSupport: "verified",
+    evidence: ["packages/core/src/db/schema.ts:122"],
+  };
+  expect(fixtureSchema.safeParse({ ...ai, reviewProvenance: provenance }).success).toBe(true);
+  expect(
+    fixtureSchema.safeParse({
+      ...ai,
+      reviewProvenance: { ...provenance, reviewers: ["reviewer-a", "reviewer-a"] },
+    }).success,
+  ).toBe(false);
+});
+
 test("responses, failures and repeated requests remain non-authoritative and coverage is honest", async () => {
   let calls = 0;
   const output = await runJudgeBench(config, [fixture], {

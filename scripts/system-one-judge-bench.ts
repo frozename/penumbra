@@ -21,6 +21,7 @@ import {
   derivePromoteProbability,
   LOCAL_PROMOTION_QUESTIONS,
   PROMOTION_QUESTION_IDS,
+  SystemOneWireAnswerSchema,
 } from "../packages/integrations/typesafe/src/index.js";
 import {
   binaryMetrics,
@@ -30,24 +31,50 @@ import {
   selectThreshold,
 } from "./system-one-judge-metrics.js";
 
-export const fixtureSchema = z.object({
-  id: z.string().min(1),
-  family: z.string().min(1),
-  split: z.enum(["calibration", "test"]),
-  workload: z.enum(["promotion", "efficacy", "task-profile"]),
-  state: z.record(z.string(), z.unknown()),
-  labels: z.record(z.string(), z.union([z.boolean(), z.string(), z.number()])),
-  labelRationale: z.string().min(1),
-  labeler: z.string().min(1),
-  labelStatus: z.enum(["provisional-single-annotator", "independently-adjudicated"]),
-  source: z.object({
-    kind: z.enum(["synthetic", "historical"]),
-    table: z.string().optional(),
-    id: z.string().optional(),
-    sha256: z.string().optional(),
-  }),
-  tags: z.array(z.string()),
-});
+export const fixtureSchema = z
+  .object({
+    id: z.string().min(1),
+    family: z.string().min(1),
+    split: z.enum(["calibration", "test"]),
+    workload: z.enum(["promotion", "efficacy", "task-profile"]),
+    state: z.record(z.string(), z.unknown()),
+    labels: z.record(z.string(), z.union([z.boolean(), z.string(), z.number()])),
+    labelRationale: z.string().min(1),
+    labeler: z.string().min(1),
+    labelStatus: z.enum([
+      "provisional-single-annotator",
+      "independently-adjudicated",
+      "independently-ai-reviewed",
+    ]),
+    reviewProvenance: z
+      .object({
+        method: z.literal("blind-source-checks"),
+        reviewers: z
+          .array(z.string().trim().min(1))
+          .min(2)
+          .refine((ids) => new Set(ids).size === ids.length),
+        adjudicator: z.string().trim().min(1).optional(),
+        commonBaseModel: z.boolean(),
+        factualSupport: z.enum(["verified", "contradicted", "insufficient"]),
+        evidence: z.array(z.string().min(1)),
+      })
+      .optional(),
+    source: z.object({
+      kind: z.enum(["synthetic", "historical"]),
+      table: z.string().optional(),
+      id: z.string().optional(),
+      sha256: z.string().optional(),
+    }),
+    tags: z.array(z.string()),
+  })
+  .superRefine((fixture, ctx) => {
+    if (fixture.labelStatus === "independently-ai-reviewed" && !fixture.reviewProvenance)
+      ctx.addIssue({
+        code: "custom",
+        path: ["reviewProvenance"],
+        message: "AI review provenance required",
+      });
+  });
 export type JudgeFixture = z.infer<typeof fixtureSchema>;
 export const benchConfigSchema = z.object({
   protocol: z.enum(["systemone", "incumbent-promotion", "constrained-promotion"]),
@@ -178,7 +205,12 @@ export async function runJudgeBench(
       });
       if (!outcome.ok) row.error = outcome.kind;
       else {
-        row.answers = outcome.answers;
+        row.answers = Object.fromEntries(
+          Object.entries(outcome.answers).map(([id, answer]) => [
+            id,
+            SystemOneWireAnswerSchema.parse(answer),
+          ]),
+        );
         row.usage = outcome.usage;
       }
     }

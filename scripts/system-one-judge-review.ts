@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
+import { z } from "zod";
 
 import { openReplayDb } from "./typesafe-shadow-eval.js";
 
@@ -14,6 +15,85 @@ export interface ReviewSource {
   t2_promoted_at: string | null;
 }
 const hash = (text: string): string => createHash("sha256").update(text).digest("hex");
+
+const completedReviewSchema = z
+  .object({
+    caseId: z.string().min(1),
+    body: z.string(),
+    promote: z.boolean().nullable(),
+    rationale: z.string().min(1),
+    reviewer: z.string().min(1),
+    factualSupport: z.enum(["verified", "contradicted", "insufficient"]),
+    evidence: z.array(z.string().min(1)),
+  })
+  .refine(
+    (row) => row.factualSupport !== "verified" || row.evidence.length > 0,
+    "verified review requires source evidence",
+  );
+export type CompletedReview = z.infer<typeof completedReviewSchema>;
+export interface MergedReview extends CompletedReview {
+  reviewProvenance: {
+    method: "blind-source-checks";
+    reviewers: string[];
+    adjudicator?: string;
+    commonBaseModel: true;
+    factualSupport: CompletedReview["factualSupport"];
+    evidence: string[];
+  };
+}
+
+function indexedReviews(rows: unknown[]): Map<string, CompletedReview> {
+  const parsed = rows.map((row) => completedReviewSchema.parse(row));
+  const map = new Map(parsed.map((row) => [row.caseId, row]));
+  if (map.size !== parsed.length) throw new Error("duplicate review case");
+  return map;
+}
+
+export function mergeReviewPackets(
+  packet: { caseId: string; body: string }[],
+  reviewA: unknown[],
+  reviewB: unknown[],
+  adjudications: unknown[] = [],
+): MergedReview[] {
+  const a = indexedReviews(reviewA);
+  const b = indexedReviews(reviewB);
+  const c = indexedReviews(adjudications);
+  if (
+    a.size !== packet.length ||
+    b.size !== packet.length ||
+    new Set(packet.map((row) => row.caseId)).size !== packet.length
+  )
+    throw new Error("review coverage mismatch");
+  const merged = packet.map((input): MergedReview => {
+    const x = a.get(input.caseId);
+    const y = b.get(input.caseId);
+    const zed = c.get(input.caseId);
+    if (!x || !y || x.body !== input.body || y.body !== input.body || x.reviewer === y.reviewer)
+      throw new Error("review identity/body mismatch");
+    if (zed && (zed.body !== input.body || [x.reviewer, y.reviewer].includes(zed.reviewer)))
+      throw new Error("adjudicator must be distinct and see the same input");
+    if ((x.promote !== y.promote || x.factualSupport !== y.factualSupport) && !zed)
+      throw new Error("explicit adjudication required");
+    const selected = zed ?? x;
+    const evidence = [...new Set([...x.evidence, ...y.evidence, ...(zed?.evidence ?? [])])];
+    if (selected.factualSupport === "verified" && evidence.length === 0)
+      throw new Error("verified labels require source evidence");
+    return {
+      ...selected,
+      rationale: zed?.rationale ?? `A: ${x.rationale} B: ${y.rationale}`,
+      reviewProvenance: {
+        method: "blind-source-checks",
+        reviewers: [x.reviewer, y.reviewer],
+        ...(zed ? { adjudicator: zed.reviewer } : {}),
+        commonBaseModel: true,
+        factualSupport: selected.factualSupport,
+        evidence,
+      },
+    };
+  });
+  if ([...c.keys()].some((id) => !a.has(id))) throw new Error("unknown adjudication case");
+  return merged;
+}
 
 interface RankedSource {
   row: ReviewSource;
