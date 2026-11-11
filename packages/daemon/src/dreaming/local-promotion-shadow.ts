@@ -10,8 +10,11 @@ export interface LocalPromotionShadowDecision {
   applied: false;
   subjectId: string;
   inputSha256: string;
+  questionSha256: string;
   revision: string;
   model: string | null;
+  usage: { inputTokens: number; outputTokens: number } | null;
+  createdAt: string;
   probability: number | null;
   threshold: number;
   answers: Record<string, number> | null;
@@ -24,6 +27,15 @@ export interface LocalPromotionShadowDecision {
 function readProbability(answer: { noul: number } | null): number | null {
   if (answer === null) return null;
   return Number.isFinite(answer.noul) && answer.noul >= 0 && answer.noul <= 1 ? answer.noul : null;
+}
+
+function failureReason(
+  result: { ok: true } | { ok: false; kind: string } | null,
+  probability: number | null,
+): string | null {
+  if (result === null) return "timeout";
+  if (!result.ok) return result.kind;
+  return probability === null ? "invalid_response" : null;
 }
 
 export function createLocalPromotionShadowSeat(options: {
@@ -51,30 +63,36 @@ export function createLocalPromotionShadowSeat(options: {
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         const { LOCAL_PROMOTION_QUESTIONS } = await import("@penumbra/typesafe");
+        const deadline = new Promise<null>((resolve) => {
+          timer = setTimeout(() => {
+            controller.abort();
+            resolve(null);
+          }, budgetMs);
+        });
         const result = await Promise.race([
           options.client.evaluate({
             state: { kind: args.kind, body: args.body },
             questions: { promote: LOCAL_PROMOTION_QUESTIONS.promote },
             signal: controller.signal,
           }),
-          new Promise<null>((resolve) => {
-            timer = setTimeout(() => {
-              controller.abort();
-              resolve(null);
-            }, budgetMs);
-          }),
+          deadline,
         ]);
         const answer = result?.ok ? result.answers.promote : null;
         const probability = readProbability(answer);
         const latencyMs = performance.now() - started;
-        const votes = await incumbent.catch(() => null);
+        const votes = await Promise.race([incumbent.catch(() => null), deadline]);
         options.writeDecision({
           mode: "shadow",
           applied: false,
           subjectId: args.subjectId,
           inputSha256: createHash("sha256").update(args.body).digest("hex"),
+          questionSha256: createHash("sha256")
+            .update(JSON.stringify({ promote: LOCAL_PROMOTION_QUESTIONS.promote }))
+            .digest("hex"),
           revision: options.revision,
           model: result?.ok ? result.model : null,
+          usage: result?.ok ? { ...result.usage } : null,
+          createdAt: new Date().toISOString(),
           probability,
           threshold,
           answers: result?.ok
@@ -85,14 +103,7 @@ export function createLocalPromotionShadowSeat(options: {
           candidatePromote: probability === null ? null : probability >= threshold,
           incumbentVotes: votes?.map((vote) => ({ ...vote })) ?? null,
           latencyMs,
-          failure:
-            result === null
-              ? "timeout"
-              : !result.ok
-                ? result.kind
-                : probability === null
-                  ? "invalid_response"
-                  : null,
+          failure: failureReason(result, probability),
         });
       } catch {
         /* A shadow transport or sink cannot affect incumbent authority. */

@@ -21,6 +21,7 @@ import { type DreamConfig, resolveP1JevShadowEstimateUsd } from "./config.js";
 import { ContentQualityJudge } from "./curator/content-quality-judge.js";
 import { createDreamingJudgePoolFromAgentchat } from "./dreaming-judge-pool.js";
 import { type JudgeVote, type SerializedJudgeVote, StubJudgePool } from "./judge-pool.js";
+import { wireLocalPromotionShadow } from "./local-promotion-shadow-runtime.js";
 import {
   createCachedDreamingRewriterInventory,
   DREAMING_REWRITER_LOCAL_SECONDARY_MODEL,
@@ -57,6 +58,7 @@ interface DreamDepsServices {
   // Test seam only: production leaves this unset and the judge pool uses the
   // global fetch.
   judgeFetch?: typeof fetch;
+  localJudgeFetch?: import("@penumbra/typesafe").TypesafeFetch;
 }
 
 export function createDreamingRewriterCandidates(
@@ -222,6 +224,14 @@ export function buildDreamCycleDeps(
     wireTypesafeShadow(deps, services, db, dreamConfig);
   }
 
+  if (deps.judgePool) {
+    deps.judgePool = wireLocalPromotionShadow(
+      deps.judgePool,
+      dreamConfig.localPromotionShadow,
+      db,
+      services,
+    );
+  }
   return deps;
 }
 

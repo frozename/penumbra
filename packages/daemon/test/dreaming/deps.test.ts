@@ -266,6 +266,55 @@ test("shadow and off modes leave promotionVeto unwired", () => {
   }
 });
 
+test("local observer wiring preserves existing Jev veto configuration", async () => {
+  writeAgentsYaml(TWO_JUDGE_SEATS);
+  const db = openSchemaDb();
+  try {
+    const deps = buildDreamCycleDeps(
+      {
+        loadTypesafeModule: () => Promise.resolve(enabledTypesafeModule()),
+        judgeFetch: () =>
+          Promise.resolve(
+            Response.json({
+              choices: [{ message: { content: '{"promote":true,"confidence":0.9}' } }],
+            }),
+          ),
+        localJudgeFetch: () =>
+          Promise.resolve(
+            Response.json({
+              model: "nano",
+              answers: { promote: { type: "noul", noul: 0.1 } },
+              usage: { input_tokens: 2, output_tokens: 0 },
+            }),
+          ),
+      },
+      db,
+      {
+        ...vetoConfig(),
+        localPromotionShadow: { baseUrl: "http://127.0.0.1:18944", model: "nano", revision: "sha" },
+      },
+    );
+    expect(typeof deps.promotionVeto).toBe("function");
+    const votes = await deps.judgePool?.judgeAll?.({
+      body: "private",
+      kind: "promote_t1",
+      subjectId: "r",
+    });
+    expect(votes?.every((vote) => vote.promote)).toBe(true);
+    const { drainShadowJudgements } = await import("@src/dreaming/typesafe-judge-seat.js");
+    await drainShadowJudgements(2000);
+    expect(
+      db
+        .query(
+          "SELECT site, applied FROM judge_decisions WHERE site='dream.p1.local-promotion-shadow'",
+        )
+        .get(),
+    ).toEqual({ site: "dream.p1.local-promotion-shadow", applied: 0 });
+  } finally {
+    db.close();
+  }
+});
+
 function vetoJudgementOutcome(shadowPromote: boolean): JevShadowOutcome {
   return {
     ok: true,

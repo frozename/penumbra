@@ -1,5 +1,7 @@
 import type { ConfigBundle } from "@penumbra/config";
 
+import type { LocalPromotionShadowConfig } from "./local-promotion-shadow-runtime.js";
+
 export const DEFAULT_DREAMING_AUTO_PROMOTE_MIN_JUDGES = 2;
 
 export interface JudgePoolConfig {
@@ -95,6 +97,7 @@ export interface DreamConfig {
   phaseCostEstimatesUsd?: DreamPhaseCostEstimatesUsd;
   typesafeJudgePromotion?: "off" | "shadow" | "veto";
   typesafeEnv?: TypesafeEnvSlice;
+  localPromotionShadow?: LocalPromotionShadowConfig;
 }
 
 // Local typed view of the dreaming slice of EnvConfig (config-refactor F16):
@@ -155,6 +158,19 @@ interface DreamingEnvSlice {
   PENUMBRA_TYPESAFE_MODEL: string;
   PENUMBRA_TYPESAFE_TIMEOUT_MS: number;
   PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "off" | "shadow" | "veto";
+  PENUMBRA_LOCAL_JUDGE_SHADOW: unknown;
+  PENUMBRA_LOCAL_JUDGE_BASE_URL: string;
+  PENUMBRA_LOCAL_JUDGE_MODEL?: string;
+  PENUMBRA_LOCAL_JUDGE_REVISION?: string;
+}
+
+function localShadowConfig(env: DreamingEnvSlice): LocalPromotionShadowConfig | undefined {
+  if (env.PENUMBRA_LOCAL_JUDGE_SHADOW !== true) return undefined;
+  const model = env.PENUMBRA_LOCAL_JUDGE_MODEL?.trim();
+  const revision = env.PENUMBRA_LOCAL_JUDGE_REVISION?.trim();
+  if (!model || !revision)
+    throw new Error("Local judge shadow requires explicit model and revision");
+  return { baseUrl: env.PENUMBRA_LOCAL_JUDGE_BASE_URL, model, revision };
 }
 
 // Fail closed: only the exact literals shadow/veto arm a Jev lane; anything
@@ -297,5 +313,6 @@ export function buildDreamingConfig(bundle: ConfigBundle): DreamConfig {
     },
     typesafeJudgePromotion: resolveTypesafeJudgePromotion(env.PENUMBRA_TYPESAFE_JUDGE_PROMOTION),
     typesafeEnv: typesafeEnvSlice(env),
+    localPromotionShadow: localShadowConfig(env),
   };
 }

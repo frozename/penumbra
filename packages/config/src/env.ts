@@ -786,6 +786,25 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   },
 
   // ── typesafe (Jev judge) ──────────────────────────────────────────────
+  PENUMBRA_LOCAL_JUDGE_SHADOW: {
+    schema: Bool,
+    default: false,
+    description:
+      "Opt in to the bounded local promotion observer. Never grants promotion or veto authority.",
+  },
+  PENUMBRA_LOCAL_JUDGE_BASE_URL: {
+    schema: z.url(),
+    default: "http://127.0.0.1:18944",
+    description: "Dedicated loopback System One origin; no model loading or remote fleet routing.",
+  },
+  PENUMBRA_LOCAL_JUDGE_MODEL: {
+    schema: OptStr,
+    description: "Exact served model alias; required when local shadow is enabled.",
+  },
+  PENUMBRA_LOCAL_JUDGE_REVISION: {
+    schema: OptStr,
+    description: "Verified model artifact revision/hash; required when local shadow is enabled.",
+  },
   PENUMBRA_TYPESAFE_API_KEY: {
     schema: OptStr,
     description: "TypeSafe API key. Wins over the keychain ref when non-empty.",

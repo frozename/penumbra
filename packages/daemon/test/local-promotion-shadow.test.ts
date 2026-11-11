@@ -148,3 +148,21 @@ test("shadow requests only the direct bounded decision", async () => {
   await seat.shadow({ body: "untrusted", kind: "promote_t1", subjectId: "x" }, Promise.resolve([]));
   expect(ids).toEqual(["promote"]);
 });
+
+test("a hung incumbent cannot retain the detached shadow indefinitely", async () => {
+  const recorded: unknown[] = [];
+  const seat = createLocalPromotionShadowSeat({
+    client,
+    budgetMs: 20,
+    revision: "sha",
+    writeDecision: (row) => {
+      recorded.push(row);
+    },
+  });
+  await seat.shadow(
+    { body: "input", kind: "promote_t1", subjectId: "x" },
+    new Promise(() => undefined),
+  );
+  expect(recorded).toHaveLength(1);
+  expect(recorded[0]).toMatchObject({ incumbentVotes: null, failure: "timeout", applied: false });
+});
