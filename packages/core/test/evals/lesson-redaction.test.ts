@@ -837,6 +837,21 @@ test("redact: a domain identifier and a local-part identifier collapse to one em
   ]);
 });
 
+test("redact: a mid-local-part identifier with a domain identifier collapses to one email placeholder", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "bob-alice-ops@acme.example" }), {
+    production_identifiers: ["alice", "acme.example"],
+  });
+  expect(res.draft.root_cause).toBe("[REDACTED:email]");
+  expect(res.redactions).toEqual([
+    { rule_id: "email", count: 1 },
+    { rule_id: "production_identifier", count: 2 },
+  ]);
+});
+
 test("redact: dot and plus separated local-part suffixes redact the whole addresses", () => {
   expect(typeof mod?.["redactLessonDraft"]).toBe("function");
   if (!mod) {
@@ -879,6 +894,13 @@ test("redact: whole-email collapses never widen the clear-text region", () => {
       identifiers: ["alice", "acme.example"],
       expected: "[REDACTED:email]",
       base: "[REDACTED:production_identifier]@[REDACTED:production_identifier]",
+    },
+
+    {
+      text: "bob-alice-ops@acme.example",
+      identifiers: ["alice", "acme.example"],
+      expected: "[REDACTED:email]",
+      base: "bob-[REDACTED:production_identifier]-ops@[REDACTED:production_identifier]",
     },
   ];
   for (const testCase of cases) {
