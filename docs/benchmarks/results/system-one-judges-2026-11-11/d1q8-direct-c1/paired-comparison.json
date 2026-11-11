@@ -1,0 +1,94 @@
+{
+  "evaluation": "provisional labels; answered common held-out cases only, not population quality",
+  "selected": 34,
+  "commonAnswered": 34,
+  "missing": [],
+  "incumbent": {
+    "selected": 34,
+    "answered": 34,
+    "abstained": 0,
+    "coverage": 1,
+    "threshold": 0.5,
+    "tp": 10,
+    "fp": 4,
+    "tn": 15,
+    "fn": 5,
+    "precision": 0.7142857142857143,
+    "recall": 0.6666666666666666,
+    "f1": 0.6896551724137931,
+    "falsePromotionRate": 0.21052631578947367,
+    "falseVetoRate": 0.3333333333333333,
+    "falseDiscoveryRate": 0.2857142857142857,
+    "brier": 0.31379117647058824,
+    "calibrationError": 0.2726470588235295,
+    "falseVetoRateWithRejectFallback": 0.3333333333333333,
+    "p50LatencyMs": 1679.0104169999977,
+    "p95LatencyMs": 12676.194416999992
+  },
+  "candidate": {
+    "selected": 34,
+    "answered": 34,
+    "abstained": 0,
+    "coverage": 1,
+    "threshold": 0.5,
+    "tp": 9,
+    "fp": 2,
+    "tn": 17,
+    "fn": 6,
+    "precision": 0.8181818181818182,
+    "recall": 0.6,
+    "f1": 0.6923076923076923,
+    "falsePromotionRate": 0.10526315789473684,
+    "falseVetoRate": 0.4,
+    "falseDiscoveryRate": 0.18181818181818182,
+    "brier": 0.14214998766414993,
+    "calibrationError": 0.11445406008662623,
+    "falseVetoRateWithRejectFallback": 0.4,
+    "p50LatencyMs": 297.19233299999996,
+    "p95LatencyMs": 6907.999542000001
+  },
+  "disagreements": [
+    {
+      "caseId": "syn-gotcha",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "syn-repo-export",
+      "expected": true,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "syn-failed-test",
+      "expected": false,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "syn-long-lived-dispatch",
+      "expected": false,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "syn-injection-json",
+      "expected": false,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "syn-license-intent",
+      "expected": true,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "syn-long-injection",
+      "expected": false,
+      "incumbent": true,
+      "candidate": false
+    }
+  ]
+}

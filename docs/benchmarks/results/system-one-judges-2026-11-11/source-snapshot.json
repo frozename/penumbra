@@ -1,0 +1,78 @@
+{
+  "repositoryBase": "ae513e5acea5160ab9aa36a80fe32b05c23e39b5",
+  "note": "Final harness source hashes. Derived analyses were recomputed from preserved raw records; the harness was developed during the exploratory pilot. No model measurements were regenerated or fabricated.",
+  "files": [
+    {
+      "path": "packages/daemon/src/dreaming/dreaming-judge-pool.ts",
+      "sha256": "0e6b6b5a59bb03a57880cb5fb2597335fddf08909633652005c0ced6c8dd6403"
+    },
+    {
+      "path": "packages/daemon/src/dreaming/local-promotion-shadow.ts",
+      "sha256": "b425a229157652246feb8cc1591abe8e342d28e4a6f70e9a180838f59db7beb5"
+    },
+    {
+      "path": "packages/integrations/typesafe/src/client.ts",
+      "sha256": "64b61e09fd14dd33750837304a79f9a31a82ff3405dbf72439585ab7c6145304"
+    },
+    {
+      "path": "packages/integrations/typesafe/src/config.ts",
+      "sha256": "3281a1bcab541bc0933dcfd443b2a563f73472a7dc96792c151ad423d752c138"
+    },
+    {
+      "path": "packages/integrations/typesafe/src/index.ts",
+      "sha256": "e5d3790c53160281d87476985aea465cdff240419155b119b16ab1ea48223f00"
+    },
+    {
+      "path": "packages/integrations/typesafe/src/local-decision.ts",
+      "sha256": "13940833b47fff7f2548cc1582ef8e5202878db6428480afdb80ea3ee896dcd8"
+    },
+    {
+      "path": "packages/integrations/typesafe/src/memory-efficacy.ts",
+      "sha256": "f78cf2b88e684ab5ec34d6937345c9d0951ea8a932107f1fe658fee6b47de255"
+    },
+    {
+      "path": "packages/integrations/typesafe/src/questions/promotion.ts",
+      "sha256": "2bae4f1957ad3b1e078ffbd1b9292c0de8505caf29584e64c10d216ea80e49fe"
+    },
+    {
+      "path": "packages/integrations/typesafe/src/questions.ts",
+      "sha256": "4bb5ab2ec5fdc0cecfdd13cce2d6e70d5bce067aac5d105da91f20456e487493"
+    },
+    {
+      "path": "packages/integrations/typesafe/src/task-profile.ts",
+      "sha256": "ee4ef87f14c716aaf6f2f93319b8dbfd9e3f0afd1287c53d37044ac534bf7f3b"
+    },
+    {
+      "path": "packages/integrations/typesafe/src/types.ts",
+      "sha256": "e7ccb1e5cf3b983fe54ce0ea8d3c15d86530a73b525307afedb711088a83ba03"
+    },
+    {
+      "path": "scripts/system-one-judge-analyze.ts",
+      "sha256": "24e34b530acc58889c29db2352fb3c94376ee92068683785b0eb0f063b1723fa"
+    },
+    {
+      "path": "scripts/system-one-judge-bench.test.ts",
+      "sha256": "0ec6f33a28c9ed966fa326a95cc8001bf9d37ab630253797fdbe85ad53aa735b"
+    },
+    {
+      "path": "scripts/system-one-judge-bench.ts",
+      "sha256": "292d8572f3e67b9041820b285b1d8032692d799e0e50c602831dc7b6cb42dd3d"
+    },
+    {
+      "path": "scripts/system-one-judge-compare.ts",
+      "sha256": "bd28031c0ab8dc6c23cb1cbf6d38edb0a2c33fc996d6d83eea4d0123c8f0b4ea"
+    },
+    {
+      "path": "scripts/system-one-judge-history.ts",
+      "sha256": "bbd8bc6bb9cf77e8a1b5fac737b3b97e4db069619d05c2cceb35fc1a0302f82b"
+    },
+    {
+      "path": "scripts/system-one-judge-metrics.test.ts",
+      "sha256": "031cc0c1fe7fc3f7ebf522b31627fbafefc74beb1597289a566f5a08a719ffcc"
+    },
+    {
+      "path": "scripts/system-one-judge-metrics.ts",
+      "sha256": "21aba889da025d3b84a666cf9423c9cd77c9f5e800180fffdd91ab269d0c1a31"
+    }
+  ]
+}

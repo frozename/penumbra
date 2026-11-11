@@ -1,0 +1,2829 @@
+{
+  "schemaVersion": 1,
+  "status": "executed",
+  "config": {
+    "protocol": "systemone",
+    "promotionQuestionSet": "all",
+    "baseUrl": "http://127.0.0.1:18944",
+    "model": "d3-nano-eval",
+    "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+    "hardware": "Mac mini M4 16 GiB; shared control plane",
+    "runtime": "llama.cpp 2cbe0ec429b849a88664e0f62388fc92a5abd699; Metal; threads=2; ubatch=8192; slots=1; Granite temporarily stopped with user authorization",
+    "quantization": "Q8_0, text only, no mmproj",
+    "contextTokens": 8192,
+    "timeoutMs": 30000,
+    "maxRequestBytes": 100000,
+    "allowRemote": false
+  },
+  "concurrency": 1,
+  "repeats": 1,
+  "startedAt": "2026-11-11T20:57:29.559Z",
+  "elapsedMs": 133299.9715,
+  "fixtureSha256": "f2a08cc10309e6c5009d40674cf7a76fbc381bdbd74be710077dc72c6e524c54",
+  "rows": [
+    {
+      "caseId": "efficacy-0",
+      "iteration": 0,
+      "inputSha256": "0bfcf0da676bccef76cfd111048baf9845e2bdc851d8d1e2510f409b4912acd0",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 422.5692909999925,
+      "answers": {
+        "bucket": {
+          "type": "choice",
+          "choice": "missed_registration",
+          "probabilities": {
+            "missed_registration": 0.9746749659675564,
+            "recall_miss": 0.014564028134702835,
+            "memory_ignored": 0.0003540929039700337,
+            "not_memory_related": 0.010406912993770922
+          },
+          "confidence": 0.901233141639181
+        }
+      },
+      "usage": {
+        "inputTokens": 354,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "efficacy-1",
+      "iteration": 0,
+      "inputSha256": "21e5aeb1367ff909720d1ef0c6b76567b62cd9629b559df7d570c3b8b6c0b5cd",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 418.8888330000045,
+      "answers": {
+        "bucket": {
+          "type": "choice",
+          "choice": "recall_miss",
+          "probabilities": {
+            "missed_registration": 0.001658990777534008,
+            "recall_miss": 0.9486633371923019,
+            "memory_ignored": 0.0018543809646422087,
+            "not_memory_related": 0.047823291065521856
+          },
+          "confidence": 0.8429808715156957
+        }
+      },
+      "usage": {
+        "inputTokens": 358,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "efficacy-2",
+      "iteration": 0,
+      "inputSha256": "d06ca2c580f48258cce8ebb93bb7bb3195b7452817f3f01cebb1ad61078d3188",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 418.2611670000042,
+      "answers": {
+        "bucket": {
+          "type": "choice",
+          "choice": "memory_ignored",
+          "probabilities": {
+            "missed_registration": 0.0012874079417146158,
+            "recall_miss": 0.058776300080483186,
+            "memory_ignored": 0.8958824971573148,
+            "not_memory_related": 0.044053794820487366
+          },
+          "confidence": 0.7033886283394989
+        }
+      },
+      "usage": {
+        "inputTokens": 361,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "efficacy-3",
+      "iteration": 0,
+      "inputSha256": "e26a5d930830365a11c1047e3a96800767ec63559662be21d582ce1d4f2052d5",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 414.8651250000112,
+      "answers": {
+        "bucket": {
+          "type": "choice",
+          "choice": "not_memory_related",
+          "probabilities": {
+            "missed_registration": 0.003832942978414708,
+            "recall_miss": 0.008673954373514542,
+            "memory_ignored": 0.0021171700616905687,
+            "not_memory_related": 0.9853759325863801
+          },
+          "confidence": 0.9350358643202624
+        }
+      },
+      "usage": {
+        "inputTokens": 356,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "efficacy-4",
+      "iteration": 0,
+      "inputSha256": "f829807e81610dc0368c27363c50210f6f1c5e07800699cdfe4cc1d98c48ba71",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 411.3053329999966,
+      "answers": {
+        "bucket": {
+          "type": "choice",
+          "choice": "not_memory_related",
+          "probabilities": {
+            "missed_registration": 0.0009961802881666415,
+            "recall_miss": 0.025888195954866397,
+            "memory_ignored": 0.001139093625066742,
+            "not_memory_related": 0.9719765301319003
+          },
+          "confidence": 0.9013000739944268
+        }
+      },
+      "usage": {
+        "inputTokens": 353,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "efficacy-5",
+      "iteration": 0,
+      "inputSha256": "046c4103ae66ee3477050c0be295a62434458c872f8ea68ef134a6deb27fed50",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 382.59104099997785,
+      "answers": {
+        "bucket": {
+          "type": "choice",
+          "choice": "not_memory_related",
+          "probabilities": {
+            "missed_registration": 0.02504705131670982,
+            "recall_miss": 0.0034316243202719924,
+            "memory_ignored": 0.0018524852000513584,
+            "not_memory_related": 0.9696688391629669
+          },
+          "confidence": 0.8893865342107644
+        }
+      },
+      "usage": {
+        "inputTokens": 348,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "efficacy-6",
+      "iteration": 0,
+      "inputSha256": "c5e3a74b532af367818dd1b7ade0515dda7dcb57f80f2e0814897fa6cccf1209",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 415.64516600000206,
+      "answers": {
+        "bucket": {
+          "type": "choice",
+          "choice": "not_memory_related",
+          "probabilities": {
+            "missed_registration": 0.010368730083166864,
+            "recall_miss": 0.006527316821881243,
+            "memory_ignored": 0.12543275385235772,
+            "not_memory_related": 0.8576711992425943
+          },
+          "confidence": 0.6593098179554209
+        }
+      },
+      "usage": {
+        "inputTokens": 358,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "efficacy-7",
+      "iteration": 0,
+      "inputSha256": "2b0257e5e3b34f862e2207d6bdd67ce2bebb349ffe8733cd66ce756c69cf567f",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 420.68008300001384,
+      "answers": {
+        "bucket": {
+          "type": "choice",
+          "choice": "missed_registration",
+          "probabilities": {
+            "missed_registration": 0.9403745750955738,
+            "recall_miss": 0.042421487065153494,
+            "memory_ignored": 0.0010538993998665367,
+            "not_memory_related": 0.01615003843940629
+          },
+          "confidence": 0.8083201671742649
+        }
+      },
+      "usage": {
+        "inputTokens": 361,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-100c8269-0ebf-4280-b96e-9754a7bc1f1d",
+      "iteration": 0,
+      "inputSha256": "c5d61cbdb38b04cb91d8df66b757d585316ad7b5633ccff513992ac13fdb2b86",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1659.6507079999865,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.009152728968744783
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.07649973377125528
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.9480450525873843
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.8802492849486097
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.08791634848708016
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.0039745396451646734
+        }
+      },
+      "usage": {
+        "inputTokens": 1440,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-2003549c-74c8-4e05-96f0-ea08004179f9",
+      "iteration": 0,
+      "inputSha256": "98d094559b557f60270b37ce59c5928b6d27f91bbf128db8e9a35ec41b47d1d2",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 2249.8355420000007,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.708174537095662
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.9200566614980261
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.24235899621778217
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.07994600405391346
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.029794865065921487
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.6970726525538807
+        }
+      },
+      "usage": {
+        "inputTokens": 2060,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-211aefd9-e5ed-499c-8baf-107a73c69855",
+      "iteration": 0,
+      "inputSha256": "60bf598632a614f14d9640bebf3cc42468ea4268e9244b637f1b611ed6595fef",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1528.642875000005,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8606162046909859
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.9498562936882884
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.0919965271385877
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.010577283240311862
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.7835908976413244
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.20555754788682104
+        }
+      },
+      "usage": {
+        "inputTokens": 1375,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-28a61336-c6b0-4795-a5f6-148f594a7dc9",
+      "iteration": 0,
+      "inputSha256": "da7d534867635f3e15370d73d8eb91420ce5b53e23fdb35879e1cb44cc80c885",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 2642.392292000004,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8630221348044145
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.8818119400150549
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.6608475014257883
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.06466640807283348
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.5219623300446808
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.2990687227286788
+        }
+      },
+      "usage": {
+        "inputTokens": 2395,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-301383ca-d7f3-4cdc-b3ba-303efae33fbb",
+      "iteration": 0,
+      "inputSha256": "75ddc00265c46772e58c25c6bc6f52fa232612473c5400a0825f7406d231322d",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1474.7131249999948,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8985238253224332
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.9507346210652883
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.12356161437675818
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.25832946022571274
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.19574417595991642
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.7051318595875948
+        }
+      },
+      "usage": {
+        "inputTokens": 1280,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-4a1e1b97-5533-49f6-b085-db87df4fa688",
+      "iteration": 0,
+      "inputSha256": "9fd1dbf8b1d0981c91dac829db4bbf16fc81e927f9ef7bd00035ad365be5cdae",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1514.3757909999986,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9638359644734484
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.9621057306385021
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.11307342556711983
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.011217650215680166
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.016373577911112016
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.85331713991745
+        }
+      },
+      "usage": {
+        "inputTokens": 1330,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-4bf2a9d7-9ba0-4de6-8b49-b257e98be584",
+      "iteration": 0,
+      "inputSha256": "192a05ae272c98f9e4d35c87e92687996853e05077d7b25746dc14f37c131bd6",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1688.8673750000016,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.2880599253208258
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.8054636838579147
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.1577699396858674
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.9953418974718357
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.014156013293160862
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.003751932422123117
+        }
+      },
+      "usage": {
+        "inputTokens": 1470,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-523f9389-386e-44ef-a6b4-826b0e12eb6c",
+      "iteration": 0,
+      "inputSha256": "f7e66c80bd8483b2daab9be66ef01771015390c3d87059b59ad0c874da3c4131",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1596.9394159999938,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.016279873861541935
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.04577952217234462
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.7857115633793851
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.9775064270627598
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.11931511289150366
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.0010297450210156383
+        }
+      },
+      "usage": {
+        "inputTokens": 1425,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-52a9e34e-96f5-4f34-bfc3-5312803efe5e",
+      "iteration": 0,
+      "inputSha256": "89821e0cc3472583ea3977c1bce57f5f8a0e15bd99f7d062aa430b69dc0550ee",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1699.7010830000072,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.33819621951913775
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.45192476694461264
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.30260216040339016
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.8382881651064717
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.1055400351759734
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.07308158329644343
+        }
+      },
+      "usage": {
+        "inputTokens": 1475,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-550eaabe-51ff-41d1-91cf-35a8a6fa147b",
+      "iteration": 0,
+      "inputSha256": "1c2ed6c97fcec54defe422f62916c1eafd6bf8b874c8fc8f3ee729d3d4f67e73",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1633.9894170000043,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.005597526634590864
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.04013314548163934
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.8835820367231695
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.997331612000491
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.06252847365874015
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.00010709080378575405
+        }
+      },
+      "usage": {
+        "inputTokens": 1455,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-95047116-ecf4-46f8-8b03-f5813becb361",
+      "iteration": 0,
+      "inputSha256": "4d910e0fe6f6ed565971f8335beaf804eef41c6d5f0489045d62ac82fcb6fadc",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 2604.845042000001,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9208143651924017
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.9512771253600933
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.481501443345177
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.20360282137328456
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.03710494731800497
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.49323581647795756
+        }
+      },
+      "usage": {
+        "inputTokens": 2350,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-cade7ea4-c596-4e6f-9bad-7fdad32086b9",
+      "iteration": 0,
+      "inputSha256": "df15358c421ebfe0dc98f127d8f251d473bfc9315783982df4bae6267120912c",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1666.6670000000013,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.026332163325080787
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.4787032787024243
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.48694787978491944
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.9973707254591475
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.00912714661947642
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.0012586423433148975
+        }
+      },
+      "usage": {
+        "inputTokens": 1460,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "profile-0",
+      "iteration": 0,
+      "inputSha256": "9abce2c0c085541cca317e26bfdf38e6c4afac2f4dbf26d5455a419750eb4302",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1075.3840829999972,
+      "answers": {
+        "primary_task_type": {
+          "type": "choice",
+          "choice": "coding",
+          "probabilities": {
+            "coding": 0.6063852162878526,
+            "debugging": 0.3373931733898828,
+            "code_review": 0.04260270580428986,
+            "architecture": 0.001704680283495398,
+            "agentic": 0.0055003304041121625,
+            "research": 0.00045158138362099315,
+            "analysis": 0.0006289075970190267,
+            "writing": 0.00025932359705992076,
+            "summarization": 0.00037674819196813273,
+            "multimodal": 0.00014953735946217507,
+            "tool_use": 0.00045462539265100265,
+            "other": 0.004093170308585901
+          },
+          "confidence": 0.6440923528716431
+        },
+        "codingDemand": {
+          "type": "score",
+          "score": 2.5437474407033305,
+          "legend": {
+            "0": "No code is read or written",
+            "1": "A trivial or one-line edit",
+            "2": "A contained change in one area",
+            "3": "A substantial multi-file change",
+            "4": "A deep or repository-wide change"
+          },
+          "probabilities": {
+            "0": 0.11165463487945387,
+            "1": 0.021693430190524565,
+            "2": 0.33706331659971495,
+            "3": 0.2704270960078503,
+            "4": 0.25916152232245626
+          },
+          "confidence": 0.1313506752055661
+        },
+        "reasoningDemand": {
+          "type": "score",
+          "score": 2.0126243882984736,
+          "legend": {
+            "0": "No reasoning beyond reading is needed",
+            "1": "Simple lookup or pattern matching",
+            "2": "Single-step deduction in one area",
+            "3": "Multi-step reasoning across components",
+            "4": "Deep analysis across the whole system"
+          },
+          "probabilities": {
+            "0": 0.33086586049550726,
+            "1": 0.06796457131717701,
+            "2": 0.0820240902442132,
+            "3": 0.29597027527954006,
+            "4": 0.22317520266356247
+          },
+          "confidence": 0.09976384368031488
+        },
+        "agenticDemand": {
+          "type": "score",
+          "score": 2.552192248483473,
+          "legend": {
+            "0": "A single direct answer suffices",
+            "1": "One tool call or file read",
+            "2": "A short sequence of tool calls",
+            "3": "Multi-step tool use with intermediate decisions",
+            "4": "Long-horizon autonomous work across many steps"
+          },
+          "probabilities": {
+            "0": 0.11758183802977418,
+            "1": 0.05331868361927255,
+            "2": 0.20718682939269165,
+            "3": 0.4031506897542298,
+            "4": 0.21876195920403196
+          },
+          "confidence": 0.109721275137874
+        }
+      },
+      "usage": {
+        "inputTokens": 912,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "profile-1",
+      "iteration": 0,
+      "inputSha256": "daf4088591f2dffe05ccacf317d01b43f00226a80010e825b3766c9cb3488aac",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1017.9907910000038,
+      "answers": {
+        "primary_task_type": {
+          "type": "choice",
+          "choice": "writing",
+          "probabilities": {
+            "coding": 0.0008117976623323499,
+            "debugging": 0.0000356524262830987,
+            "code_review": 0.00005478738026416315,
+            "architecture": 0.00015779720847629742,
+            "agentic": 0.00013126625390319307,
+            "research": 0.00004873552736840253,
+            "analysis": 0.00003597170392543598,
+            "writing": 0.9961290597511765,
+            "summarization": 0.0005439273429038941,
+            "multimodal": 0.000016625796153176674,
+            "tool_use": 0.00004144831379227875,
+            "other": 0.001992930633421212
+          },
+          "confidence": 0.9875118506573952
+        },
+        "codingDemand": {
+          "type": "score",
+          "score": 0.14348186246090933,
+          "legend": {
+            "0": "No code is read or written",
+            "1": "A trivial or one-line edit",
+            "2": "A contained change in one area",
+            "3": "A substantial multi-file change",
+            "4": "A deep or repository-wide change"
+          },
+          "probabilities": {
+            "0": 0.9097914470642994,
+            "1": 0.04742018719224455,
+            "2": 0.03524560620586103,
+            "3": 0.004600575293438205,
+            "4": 0.0029421842441570293
+          },
+          "confidence": 0.7574307385174723
+        },
+        "reasoningDemand": {
+          "type": "score",
+          "score": 0.2923879126499852,
+          "legend": {
+            "0": "No reasoning beyond reading is needed",
+            "1": "Simple lookup or pattern matching",
+            "2": "Single-step deduction in one area",
+            "3": "Multi-step reasoning across components",
+            "4": "Deep analysis across the whole system"
+          },
+          "probabilities": {
+            "0": 0.8564778436546254,
+            "1": 0.007918473594894799,
+            "2": 0.12385017566765988,
+            "3": 0.010244940611509776,
+            "4": 0.0015085664713103374
+          },
+          "confidence": 0.697769374793518
+        },
+        "agenticDemand": {
+          "type": "score",
+          "score": 0.2647967625935856,
+          "legend": {
+            "0": "A single direct answer suffices",
+            "1": "One tool call or file read",
+            "2": "A short sequence of tool calls",
+            "3": "Multi-step tool use with intermediate decisions",
+            "4": "Long-horizon autonomous work across many steps"
+          },
+          "probabilities": {
+            "0": 0.894797292830483,
+            "1": 0.015925326135701245,
+            "2": 0.04387309323472583,
+            "3": 0.020491901207927227,
+            "4": 0.024912386591162756
+          },
+          "confidence": 0.7053551026710487
+        }
+      },
+      "usage": {
+        "inputTokens": 896,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "profile-2",
+      "iteration": 0,
+      "inputSha256": "941b4adf63a7ff4da4d4406662641da6cc93724b76ed3a3f7b8ca351b115468d",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1038.552834000002,
+      "answers": {
+        "primary_task_type": {
+          "type": "choice",
+          "choice": "summarization",
+          "probabilities": {
+            "coding": 0.00014142953059867314,
+            "debugging": 0.00007678182290334185,
+            "code_review": 0.0002659118779354331,
+            "architecture": 0.00010163328282921526,
+            "agentic": 0.00026043465355698255,
+            "research": 0.00016746997961450486,
+            "analysis": 0.0012425448196953708,
+            "writing": 0.008575072055465859,
+            "summarization": 0.9847631087491219,
+            "multimodal": 0.000014158748858043474,
+            "tool_use": 0.00006875143686905507,
+            "other": 0.004322703042551602
+          },
+          "confidence": 0.9608432547055258
+        },
+        "codingDemand": {
+          "type": "score",
+          "score": 0.15327333987339653,
+          "legend": {
+            "0": "No code is read or written",
+            "1": "A trivial or one-line edit",
+            "2": "A contained change in one area",
+            "3": "A substantial multi-file change",
+            "4": "A deep or repository-wide change"
+          },
+          "probabilities": {
+            "0": 0.8692054834033888,
+            "1": 0.11420364657483405,
+            "2": 0.012555520238482014,
+            "3": 0.0021827463115825733,
+            "4": 0.0018526034717126813
+          },
+          "confidence": 0.720629509328257
+        },
+        "reasoningDemand": {
+          "type": "score",
+          "score": 0.41574646750960337,
+          "legend": {
+            "0": "No reasoning beyond reading is needed",
+            "1": "Simple lookup or pattern matching",
+            "2": "Single-step deduction in one area",
+            "3": "Multi-step reasoning across components",
+            "4": "Deep analysis across the whole system"
+          },
+          "probabilities": {
+            "0": 0.781254862735806,
+            "1": 0.04168912168280288,
+            "2": 0.1589871237775333,
+            "3": 0.016192468943697656,
+            "4": 0.001876422860160239
+          },
+          "confidence": 0.5674042817403064
+        },
+        "agenticDemand": {
+          "type": "score",
+          "score": 0.3456556374335035,
+          "legend": {
+            "0": "A single direct answer suffices",
+            "1": "One tool call or file read",
+            "2": "A short sequence of tool calls",
+            "3": "Multi-step tool use with intermediate decisions",
+            "4": "Long-horizon autonomous work across many steps"
+          },
+          "probabilities": {
+            "0": 0.7752158373428599,
+            "1": 0.13550628615268576,
+            "2": 0.06571104101822463,
+            "3": 0.015540072700550014,
+            "4": 0.00802676278567961
+          },
+          "confidence": 0.5336492315874373
+        }
+      },
+      "usage": {
+        "inputTokens": 900,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "profile-3",
+      "iteration": 0,
+      "inputSha256": "86140b8f562659548c2d8c93b9184f2f770e098801e7dece7fd03388669ae961",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1019.8556669999962,
+      "answers": {
+        "primary_task_type": {
+          "type": "choice",
+          "choice": "code_review",
+          "probabilities": {
+            "coding": 0.006942394090639932,
+            "debugging": 0.00011546928500956874,
+            "code_review": 0.9883472066433248,
+            "architecture": 0.00017090677793087135,
+            "agentic": 0.0006400352519185478,
+            "research": 0.00019679158474763443,
+            "analysis": 0.002173451510479536,
+            "writing": 0.0001528721957942178,
+            "summarization": 0.0000656014477211522,
+            "multimodal": 0.000016521726227724648,
+            "tool_use": 0.00012534173915195642,
+            "other": 0.0010534077470541726
+          },
+          "confidence": 0.9682740992697635
+        },
+        "codingDemand": {
+          "type": "score",
+          "score": 0.5219821337309484,
+          "legend": {
+            "0": "No code is read or written",
+            "1": "A trivial or one-line edit",
+            "2": "A contained change in one area",
+            "3": "A substantial multi-file change",
+            "4": "A deep or repository-wide change"
+          },
+          "probabilities": {
+            "0": 0.8145666024363567,
+            "1": 0.008842533781900894,
+            "2": 0.06808337739970959,
+            "3": 0.057057100378502486,
+            "4": 0.051450386003530225
+          },
+          "confidence": 0.5601741163453966
+        },
+        "reasoningDemand": {
+          "type": "score",
+          "score": 2.0933602535785667,
+          "legend": {
+            "0": "No reasoning beyond reading is needed",
+            "1": "Simple lookup or pattern matching",
+            "2": "Single-step deduction in one area",
+            "3": "Multi-step reasoning across components",
+            "4": "Deep analysis across the whole system"
+          },
+          "probabilities": {
+            "0": 0.3589465069329936,
+            "1": 0.05308734181737059,
+            "2": 0.09855903508207824,
+            "3": 0.11447362307319077,
+            "4": 0.3749334930943668
+          },
+          "confidence": 0.1500638182990407
+        },
+        "agenticDemand": {
+          "type": "score",
+          "score": 1.4699242541700668,
+          "legend": {
+            "0": "A single direct answer suffices",
+            "1": "One tool call or file read",
+            "2": "A short sequence of tool calls",
+            "3": "Multi-step tool use with intermediate decisions",
+            "4": "Long-horizon autonomous work across many steps"
+          },
+          "probabilities": {
+            "0": 0.23811321127065388,
+            "1": 0.3049147047918329,
+            "2": 0.2690734518033723,
+            "3": 0.12473188276507431,
+            "4": 0.06316674936906656
+          },
+          "confidence": 0.0734738681340461
+        }
+      },
+      "usage": {
+        "inputTokens": 888,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "profile-4",
+      "iteration": 0,
+      "inputSha256": "2c859f416cbed3aa9f91e5b7da3040b5bde8e24c48383fbd8efec89b7662f4c1",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1001.8063750000001,
+      "answers": {
+        "primary_task_type": {
+          "type": "choice",
+          "choice": "research",
+          "probabilities": {
+            "coding": 0.0006487767599372075,
+            "debugging": 0.00037293298007717174,
+            "code_review": 0.0006499174469803845,
+            "architecture": 0.0013422706927723766,
+            "agentic": 0.02685825712973293,
+            "research": 0.8912531177854551,
+            "analysis": 0.01549203637141223,
+            "writing": 0.0053631643637995375,
+            "summarization": 0.0004713853789557959,
+            "multimodal": 0.00014493433459482474,
+            "tool_use": 0.02569832488826481,
+            "other": 0.03170488186801789
+          },
+          "confidence": 0.789884580343928
+        },
+        "codingDemand": {
+          "type": "score",
+          "score": 0.0740307885633339,
+          "legend": {
+            "0": "No code is read or written",
+            "1": "A trivial or one-line edit",
+            "2": "A contained change in one area",
+            "3": "A substantial multi-file change",
+            "4": "A deep or repository-wide change"
+          },
+          "probabilities": {
+            "0": 0.9742498135575673,
+            "1": 0.004309972139675598,
+            "2": 0.0045930022145085165,
+            "3": 0.0068540363583521075,
+            "4": 0.009993175729896237
+          },
+          "confidence": 0.9044406944861773
+        },
+        "reasoningDemand": {
+          "type": "score",
+          "score": 0.7503350590094494,
+          "legend": {
+            "0": "No reasoning beyond reading is needed",
+            "1": "Simple lookup or pattern matching",
+            "2": "Single-step deduction in one area",
+            "3": "Multi-step reasoning across components",
+            "4": "Deep analysis across the whole system"
+          },
+          "probabilities": {
+            "0": 0.566856990721714,
+            "1": 0.2862247864593737,
+            "2": 0.03538793882422157,
+            "3": 0.052786741077130016,
+            "4": 0.05874354291756063
+          },
+          "confidence": 0.3041882609637986
+        },
+        "agenticDemand": {
+          "type": "score",
+          "score": 2.3660471824473492,
+          "legend": {
+            "0": "A single direct answer suffices",
+            "1": "One tool call or file read",
+            "2": "A short sequence of tool calls",
+            "3": "Multi-step tool use with intermediate decisions",
+            "4": "Long-horizon autonomous work across many steps"
+          },
+          "probabilities": {
+            "0": 0.06898251822391593,
+            "1": 0.11409046149381508,
+            "2": 0.3812962324522019,
+            "3": 0.25315889527113783,
+            "4": 0.18247189255892918
+          },
+          "confidence": 0.0941301143460711
+        }
+      },
+      "usage": {
+        "inputTokens": 896,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "profile-5",
+      "iteration": 0,
+      "inputSha256": "aad746b28f9a4c7aa935f64eac2ed97b93ebf9c1e1e97dcead968939a6dd58ed",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1071.0797080000048,
+      "answers": {
+        "primary_task_type": {
+          "type": "choice",
+          "choice": "architecture",
+          "probabilities": {
+            "coding": 0.002517747859697791,
+            "debugging": 0.000060435972252849044,
+            "code_review": 0.00011946049697896063,
+            "architecture": 0.9868010647757012,
+            "agentic": 0.0008241072611436381,
+            "research": 0.00022867844359698264,
+            "analysis": 0.0006157867613591311,
+            "writing": 0.006723278505705014,
+            "summarization": 0.00004464546993626852,
+            "multimodal": 0.00003741771601522973,
+            "tool_use": 0.00008621921179390569,
+            "other": 0.0019411575258189973
+          },
+          "confidence": 0.9639607103929254
+        },
+        "codingDemand": {
+          "type": "score",
+          "score": 1.0543552216279575,
+          "legend": {
+            "0": "No code is read or written",
+            "1": "A trivial or one-line edit",
+            "2": "A contained change in one area",
+            "3": "A substantial multi-file change",
+            "4": "A deep or repository-wide change"
+          },
+          "probabilities": {
+            "0": 0.6966461449416486,
+            "1": 0.0037422086984185434,
+            "2": 0.014286508949985115,
+            "3": 0.11926055461022182,
+            "4": 0.16606458279972577
+          },
+          "confidence": 0.45000741781147435
+        },
+        "reasoningDemand": {
+          "type": "score",
+          "score": 2.8356085875634314,
+          "legend": {
+            "0": "No reasoning beyond reading is needed",
+            "1": "Simple lookup or pattern matching",
+            "2": "Single-step deduction in one area",
+            "3": "Multi-step reasoning across components",
+            "4": "Deep analysis across the whole system"
+          },
+          "probabilities": {
+            "0": 0.1902491654446133,
+            "1": 0.0031000964143236827,
+            "2": 0.036660907575194884,
+            "3": 0.32077264626475427,
+            "4": 0.44921718430111374
+          },
+          "confidence": 0.26743093802578954
+        },
+        "agenticDemand": {
+          "type": "score",
+          "score": 2.412795236037467,
+          "legend": {
+            "0": "A single direct answer suffices",
+            "1": "One tool call or file read",
+            "2": "A short sequence of tool calls",
+            "3": "Multi-step tool use with intermediate decisions",
+            "4": "Long-horizon autonomous work across many steps"
+          },
+          "probabilities": {
+            "0": 0.34165347882032787,
+            "1": 0.00526085021234271,
+            "2": 0.032282152069316394,
+            "3": 0.1402439939055606,
+            "4": 0.4805595249924524
+          },
+          "confidence": 0.296022898538971
+        }
+      },
+      "usage": {
+        "inputTokens": 904,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "profile-6",
+      "iteration": 0,
+      "inputSha256": "c4d101a4d2afcf6b97468491ee2b3283773397318993931f4224714b8c7e235f",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1085.0852089999971,
+      "answers": {
+        "primary_task_type": {
+          "type": "choice",
+          "choice": "tool_use",
+          "probabilities": {
+            "coding": 0.0004285419724399429,
+            "debugging": 0.002051007377808765,
+            "code_review": 0.00022820276465709802,
+            "architecture": 0.00004751896655622783,
+            "agentic": 0.002765077330460696,
+            "research": 0.00012237748778006152,
+            "analysis": 0.00025737996138496466,
+            "writing": 0.00005054413496603401,
+            "summarization": 0.00005475035734504781,
+            "multimodal": 0.000019578202949433935,
+            "tool_use": 0.9926763400757194,
+            "other": 0.0012986813679324231
+          },
+          "confidence": 0.9778260345665923
+        },
+        "codingDemand": {
+          "type": "score",
+          "score": 0.31028087942189236,
+          "legend": {
+            "0": "No code is read or written",
+            "1": "A trivial or one-line edit",
+            "2": "A contained change in one area",
+            "3": "A substantial multi-file change",
+            "4": "A deep or repository-wide change"
+          },
+          "probabilities": {
+            "0": 0.7514910667638381,
+            "1": 0.20005265825836097,
+            "2": 0.03982695973013604,
+            "3": 0.003942959287399898,
+            "4": 0.0046863559602649
+          },
+          "confidence": 0.5576410571321428
+        },
+        "reasoningDemand": {
+          "type": "score",
+          "score": 0.7774958022793373,
+          "legend": {
+            "0": "No reasoning beyond reading is needed",
+            "1": "Simple lookup or pattern matching",
+            "2": "Single-step deduction in one area",
+            "3": "Multi-step reasoning across components",
+            "4": "Deep analysis across the whole system"
+          },
+          "probabilities": {
+            "0": 0.597048054432943,
+            "1": 0.1208750243646799,
+            "2": 0.20816966057144975,
+            "3": 0.05534758575195088,
+            "4": 0.018559674878976338
+          },
+          "confidence": 0.3014838390694886
+        },
+        "agenticDemand": {
+          "type": "score",
+          "score": 1.2545856433970624,
+          "legend": {
+            "0": "A single direct answer suffices",
+            "1": "One tool call or file read",
+            "2": "A short sequence of tool calls",
+            "3": "Multi-step tool use with intermediate decisions",
+            "4": "Long-horizon autonomous work across many steps"
+          },
+          "probabilities": {
+            "0": 0.24544035649609228,
+            "1": 0.3075465803891955,
+            "2": 0.4022936110976948,
+            "3": 0.036425967255592724,
+            "4": 0.008293484761424769
+          },
+          "confidence": 0.2331919676756693
+        }
+      },
+      "usage": {
+        "inputTokens": 904,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "profile-7",
+      "iteration": 0,
+      "inputSha256": "1fa6a847223658e86b6aef5352059db21d036841534d26165d0567120494a3b7",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1147.0940830000036,
+      "answers": {
+        "primary_task_type": {
+          "type": "choice",
+          "choice": "coding",
+          "probabilities": {
+            "coding": 0.9217233697841218,
+            "debugging": 0.0017909895316558296,
+            "code_review": 0.001663726130552898,
+            "architecture": 0.004070494791972967,
+            "agentic": 0.0064576205609475235,
+            "research": 0.0004135496712406075,
+            "analysis": 0.0006877018970105611,
+            "writing": 0.011032214859059105,
+            "summarization": 0.00038486092366935834,
+            "multimodal": 0.00014775917507357168,
+            "tool_use": 0.029515855321215406,
+            "other": 0.02211185735348048
+          },
+          "confidence": 0.8379769268731299
+        },
+        "codingDemand": {
+          "type": "score",
+          "score": 3.021851286675013,
+          "legend": {
+            "0": "No code is read or written",
+            "1": "A trivial or one-line edit",
+            "2": "A contained change in one area",
+            "3": "A substantial multi-file change",
+            "4": "A deep or repository-wide change"
+          },
+          "probabilities": {
+            "0": 0.03120818845197794,
+            "1": 0.006513000684293261,
+            "2": 0.08307141250335905,
+            "3": 0.6676341324574772,
+            "4": 0.21157326590289252
+          },
+          "confidence": 0.41220480972939066
+        },
+        "reasoningDemand": {
+          "type": "score",
+          "score": 0.9762371929025606,
+          "legend": {
+            "0": "No reasoning beyond reading is needed",
+            "1": "Simple lookup or pattern matching",
+            "2": "Single-step deduction in one area",
+            "3": "Multi-step reasoning across components",
+            "4": "Deep analysis across the whole system"
+          },
+          "probabilities": {
+            "0": 0.5424603913695402,
+            "1": 0.12588854053590168,
+            "2": 0.17890509434420193,
+            "3": 0.11844543132317006,
+            "4": 0.03430054242718622
+          },
+          "confidence": 0.21157797918007182
+        },
+        "agenticDemand": {
+          "type": "score",
+          "score": 2.9403713563592015,
+          "legend": {
+            "0": "A single direct answer suffices",
+            "1": "One tool call or file read",
+            "2": "A short sequence of tool calls",
+            "3": "Multi-step tool use with intermediate decisions",
+            "4": "Long-horizon autonomous work across many steps"
+          },
+          "probabilities": {
+            "0": 0.06149779940132087,
+            "1": 0.027135122914517716,
+            "2": 0.2299233635640701,
+            "3": 0.2723853501638217,
+            "4": 0.40905836395626965
+          },
+          "confidence": 0.17532099054425165
+        }
+      },
+      "usage": {
+        "inputTokens": 940,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-boilerplate",
+      "iteration": 0,
+      "inputSha256": "151b47158c7358609486e3ce241a71b92614332933c7b9c692ca3cbd5907c7c1",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1367.9102090000015,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.006335840917730343
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.045929565388063816
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.7867297329631324
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.23258732215118816
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.004444183549103165
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.00979541067519964
+        }
+      },
+      "usage": {
+        "inputTokens": 1245,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-borderline-routing",
+      "iteration": 0,
+      "inputSha256": "41d8f13c2db40f8c437947c293610082ea0af614b451fc3170a9611a96eba5ef",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1422.5079590000023,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.004463279392087289
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.005028129994981169
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.6141092825282061
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.9951445643729183
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.0019619555900103804
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.000024413761515229613
+        }
+      },
+      "usage": {
+        "inputTokens": 1270,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-command-log",
+      "iteration": 0,
+      "inputSha256": "f5a1691c74ad1e9ef7eec80d60bb8682c28a65be36c0fee64b1f64158648ad81",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1344.7461670000012,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.0715349957052963
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.11261267895478536
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.9025116406184559
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.09590155093428604
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.05209251771458253
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.010978425316862562
+        }
+      },
+      "usage": {
+        "inputTokens": 1270,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-convention-context",
+      "iteration": 0,
+      "inputSha256": "17a025927ba2ecfe1162182645c38623b75eb324f878aa8bfb6a02ec9d9e6b91",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1479.8601249999992,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8218922472982838
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.92790463921674
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.1323287339691095
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.29766330016782705
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.022479674672985298
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.6517014820664483
+        }
+      },
+      "usage": {
+        "inputTokens": 1325,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-decision-reason",
+      "iteration": 0,
+      "inputSha256": "90b67679495b30f05850849a5466022e0e0201a83f1d01e2dc9c46d467f574fc",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1422.44175,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9721311711388811
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.9606216896177514
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.25730736978112834
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.02453709912155572
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.003582753005624894
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.7134466493075043
+        }
+      },
+      "usage": {
+        "inputTokens": 1315,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-error-root-cause",
+      "iteration": 0,
+      "inputSha256": "34e53fbd518d42f7322dc1f0a273099a8fde21508bd676c72bcb23a634535b29",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1470.7844589999986,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8278990948219623
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.8201876182274114
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.44614615495218596
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.81739860527287
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.04716979600157104
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.14976740302624814
+        }
+      },
+      "usage": {
+        "inputTokens": 1345,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-failed-test",
+      "iteration": 0,
+      "inputSha256": "74d827a15c2c3992102a7bd802274a1410c0bc8de28ac83e50bef6f1af31880e",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1392.473750000001,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.034293094372163054
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.03998128983490934
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.9249028585545285
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.4926863165088719
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.03187235994075916
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.0030024805779045797
+        }
+      },
+      "usage": {
+        "inputTokens": 1295,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-false-authority",
+      "iteration": 0,
+      "inputSha256": "7b6e63a90521d970abfea6ca1ecbfe3f7c7e942d127b2ff9b7a9d2d554e0f07f",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1451.576666999994,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.025068219738586205
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.040160818254798974
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.3679850662992898
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.9918163021203243
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.0012139873618302306
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.0003286640031978377
+        }
+      },
+      "usage": {
+        "inputTokens": 1315,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-file-tree-output",
+      "iteration": 0,
+      "inputSha256": "55d3caaa4f8b8658a081fdb82cfdba257b56061fd915aace5373c7182bf11db7",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1496.4779579999959,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.43132451524059856
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.4833285642376773
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.46138031086800985
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.09453768694422159
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.9604809719830786
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.01910067507148717
+        }
+      },
+      "usage": {
+        "inputTokens": 1285,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-gotcha",
+      "iteration": 0,
+      "inputSha256": "7e72e8cd073cada123f06db93fd0cfba2fef8c3b490f2e4c624feb425c6b99c7",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1446.6749169999998,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.6539589126331827
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.8197327368157283
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.39961027331249926
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.9263334116224309
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.011726560625606905
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.06038691410262246
+        }
+      },
+      "usage": {
+        "inputTokens": 1345,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-injection-emotional",
+      "iteration": 0,
+      "inputSha256": "5f2e2de5ea1fb3652187e1e556d7cdf8329d538ce8832327a6ba8859bf046205",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1391.0187499999993,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.022891397238044814
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.07213243652557035
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.7382517010854709
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.9535228697631636
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.026085677073746455
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.003352508646699269
+        }
+      },
+      "usage": {
+        "inputTokens": 1305,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-injection-json",
+      "iteration": 0,
+      "inputSha256": "650f22395785be0262c93b0addc93f95df06485daa359cd2e47719150e9dca4c",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1393.539499999999,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.007340307106341153
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.057715325253213705
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.6619269307074278
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.986513858900873
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.0032782087326401928
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.0007783570199468505
+        }
+      },
+      "usage": {
+        "inputTokens": 1300,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-injection-token",
+      "iteration": 0,
+      "inputSha256": "8cf27ca520574f2df4a65eee9867fce2584847b715fdbfb3af5b60685996af91",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1490.586457999998,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.00494959901434843
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.09073092427001041
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.9090863008889314
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.9794451960332214
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.002500109892297936
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.0018649563620946948
+        }
+      },
+      "usage": {
+        "inputTokens": 1385,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-license-intent",
+      "iteration": 0,
+      "inputSha256": "4e18eb2fe61cbf7b0ab123e539d3ca503579707be8d573fb0bb79709c08c0664",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1439.5717919999988,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8259195945787624
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.9239837548870156
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.13925743254412232
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.028978187663975963
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.010913763951518794
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.7953121494689722
+        }
+      },
+      "usage": {
+        "inputTokens": 1310,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-long-buried",
+      "iteration": 0,
+      "inputSha256": "bd6ea98e4a7b67ba1ca9d73943dec18d934befc85d3254ba7cb9aa424ca0c548",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 30003.061,
+      "answers": {},
+      "usage": null,
+      "error": "timeout",
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-long-injection",
+      "iteration": 0,
+      "inputSha256": "1ac0292b9c04f8eef6390891be988c084366f41eb902bffb2cd1a6e5c1a389f9",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 26873.114917,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.0262366309462551
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.11954438579185987
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.8971759814715471
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.734733541224395
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.05872455700373431
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.012292034139634722
+        }
+      },
+      "usage": {
+        "inputTokens": 21240,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-long-lived-dispatch",
+      "iteration": 0,
+      "inputSha256": "e24203e2c692c937fe2a08029d98b0ecdcd34661a50e43060c7f13c3db87301a",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1454.2834160000002,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.1155594118729787
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.5077296297371686
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.40688499072508894
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.9988759280933981
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.006473495331251492
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.0005707246129369405
+        }
+      },
+      "usage": {
+        "inputTokens": 1330,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-negated-preference",
+      "iteration": 0,
+      "inputSha256": "f7cd97f93a39e7f986572a27e453b9e2723469638e6c87bf48e050108dcfc3e2",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1419.810125,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.22507444467447818
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.647191131692581
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.323793612686967
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.9259279248931248
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.004416664959677844
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.04793879011523641
+        }
+      },
+      "usage": {
+        "inputTokens": 1290,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-operational-rule",
+      "iteration": 0,
+      "inputSha256": "a7ca72942b23161e13974f5b865e9d8a219bdf59dab08244ea9c8b279d06f9fd",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1432.393,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.763383177580747
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.9304784313522865
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.18692735371192815
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.3653122770162558
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.02307760762878627
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.5905632368804689
+        }
+      },
+      "usage": {
+        "inputTokens": 1315,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-pid",
+      "iteration": 0,
+      "inputSha256": "f5763e5f19f3a5d1583b73f1b8404a5c1e12ad0ec416de772bdb5a1d4bc3e3c1",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1420.8262910000003,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.0052490921833897785
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.041609316122446546
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.8266285749885659
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.7217163918125697
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.0019685866665807676
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.007213866429899797
+        }
+      },
+      "usage": {
+        "inputTokens": 1310,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-preference",
+      "iteration": 0,
+      "inputSha256": "2d918fdf4bb92b1d302f7669dadbe9cadeaa78dec6978710dbecde8b74740297",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1390.317958,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.903908429816419
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.9150130061441545
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.10423424991335364
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.25261390473143436
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.005957176353155622
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.6838679977820317
+        }
+      },
+      "usage": {
+        "inputTokens": 1300,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-repo-export",
+      "iteration": 0,
+      "inputSha256": "50a9ad7d30229ae28e4d91d486c5ba3d2fbfcde460a3e62378e657bd83619001",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1333.5139579999995,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.740132543038093
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.9252781043653014
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.1460250383783913
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.06206075197450578
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.9694375659672629
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.028278751026600525
+        }
+      },
+      "usage": {
+        "inputTokens": 1260,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-repo-file",
+      "iteration": 0,
+      "inputSha256": "fd56d88d43a18bfbe01065c984f3bab7f80465642e5e3fb3cd6bb95b53e2ae2b",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1396.9931670000005,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.36237183255273414
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.7460979853866778
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.27506373125277045
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.029607507481157973
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.9612886537688544
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.02888245743466388
+        }
+      },
+      "usage": {
+        "inputTokens": 1295,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-repo-with-intent",
+      "iteration": 0,
+      "inputSha256": "a249f1c9de2da6a413c124ec00af07a03701feda7342112a0ff5ccaab6e2b57b",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1422.4415000000008,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.6307242367270578
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.9219500442509923
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.20579719536828905
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.1039228295067623
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.003261186086354508
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.732215310874468
+        }
+      },
+      "usage": {
+        "inputTokens": 1310,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-request",
+      "iteration": 0,
+      "inputSha256": "8a9ef32b5554ec7a994566f8d4ac67128abaec6f6b956ed5d726921d24f9deda",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1398.1104999999998,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.0313850098766685
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.03400130389008021
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.06432846263646909
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.9983712635033035
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.025643588153028373
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.00005537916458104168
+        }
+      },
+      "usage": {
+        "inputTokens": 1295,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-security-finding",
+      "iteration": 0,
+      "inputSha256": "f4f25e58913e24a0f847118a1086285ee9be15432bf0b8876b972d4ff32a8463",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1457.637999999999,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.5573124462881303
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.8639126904017046
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.41391155933074625
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.6482882838870964
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.012576182477317614
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.30384821491289915
+        }
+      },
+      "usage": {
+        "inputTokens": 1360,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-status-vs-lesson",
+      "iteration": 0,
+      "inputSha256": "962143a1f598a29d86baeae6e0645bf354f52f3b11f76c2282e24a213393c38f",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1484.1741249999977,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.539600465588155
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.6821553688107103
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.4707209249366545
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.01131229251384382
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.053741998745552744
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.36105056265362806
+        }
+      },
+      "usage": {
+        "inputTokens": 1345,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-system-prompt",
+      "iteration": 0,
+      "inputSha256": "5e084b04fe23cee84c24aaad41b2d02afc9e81d264c49ec9a013d32f1d93f1e6",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1408.8017500000005,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.011546399260702979
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.054469757837812674
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.4872359357288223
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.9982159432290421
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.0019057628042534922
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.00009717714028298916
+        }
+      },
+      "usage": {
+        "inputTokens": 1290,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-task-with-finding",
+      "iteration": 0,
+      "inputSha256": "61f166633e0ba0b27983445073857b715cc697574f854117d296637d378d2584",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1456.5957500000004,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.015394022511699345
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.10267683731717521
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.5639111051415013
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.9972286536051577
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.08749041523662411
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.0002845530829327663
+        }
+      },
+      "usage": {
+        "inputTokens": 1330,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-test-pass",
+      "iteration": 0,
+      "inputSha256": "8ce9019fbb49b0704fa47eda089d472bf9b8ac0f1f99d8c42c657b2620356c91",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1418.8479580000003,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.09046173703296899
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.10302848235017158
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.1147485041833437
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.030503829443038123
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.0564166042378421
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.09120611811220936
+        }
+      },
+      "usage": {
+        "inputTokens": 1315,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-uncertainty",
+      "iteration": 0,
+      "inputSha256": "3496978da0f682ffce35877f2db3654589bb9e34e2d2d8ca69efbfecb6f870e1",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1399.7327919999989,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.023258817841344245
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.06324910938064165
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.9195244741642468
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.11830628776623106
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.004063158205030088
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.00509000533605021
+        }
+      },
+      "usage": {
+        "inputTokens": 1305,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-version-observation",
+      "iteration": 0,
+      "inputSha256": "382f1467bbf582c8284f14d3903a6078a9e3ddc223c0babf4d67f94f043e9474",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1395.6638329999987,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.021996989127601386
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.22244749512287113
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.660626453851664
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.05607505074388283
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.18911594735199752
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.07549279525166346
+        }
+      },
+      "usage": {
+        "inputTokens": 1280,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    }
+  ]
+}

@@ -1,0 +1,2801 @@
+{
+  "schemaVersion": 1,
+  "status": "executed",
+  "config": {
+    "protocol": "systemone",
+    "promotionQuestionSet": "all",
+    "baseUrl": "http://127.0.0.1:18944",
+    "model": "d1-3b-eval",
+    "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+    "hardware": "Mac mini M4 16 GiB; shared control plane",
+    "runtime": "llama.cpp 2cbe0ec429b849a88664e0f62388fc92a5abd699; Metal; threads=2; ubatch=8192; slots=1; Granite temporarily stopped with user authorization",
+    "quantization": "Q4_K_M, text only, no mmproj",
+    "contextTokens": 8192,
+    "timeoutMs": 30000,
+    "maxRequestBytes": 100000,
+    "allowRemote": false
+  },
+  "concurrency": 1,
+  "repeats": 1,
+  "startedAt": "2026-11-11T21:06:01.997Z",
+  "elapsedMs": 169222.00562500002,
+  "fixtureSha256": "f2a08cc10309e6c5009d40674cf7a76fbc381bdbd74be710077dc72c6e524c54",
+  "rows": [
+    {
+      "caseId": "efficacy-0",
+      "iteration": 0,
+      "inputSha256": "0bfcf0da676bccef76cfd111048baf9845e2bdc851d8d1e2510f409b4912acd0",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 585.3010000000068,
+      "answers": {
+        "bucket": {
+          "type": "choice",
+          "choice": "missed_registration",
+          "probabilities": {
+            "missed_registration": 0.8554680234758175,
+            "recall_miss": 0.013187987991328042,
+            "memory_ignored": 0.005579328001917312,
+            "not_memory_related": 0.12576466053093696
+          },
+          "confidence": 0.8072906979677567
+        }
+      },
+      "usage": {
+        "inputTokens": 292,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "efficacy-1",
+      "iteration": 0,
+      "inputSha256": "21e5aeb1367ff909720d1ef0c6b76567b62cd9629b559df7d570c3b8b6c0b5cd",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 591.0335830000113,
+      "answers": {
+        "bucket": {
+          "type": "choice",
+          "choice": "recall_miss",
+          "probabilities": {
+            "missed_registration": 0.009200908274553367,
+            "recall_miss": 0.9241440331629789,
+            "memory_ignored": 0.009350241150697554,
+            "not_memory_related": 0.05730481741177013
+          },
+          "confidence": 0.8988587108839718
+        }
+      },
+      "usage": {
+        "inputTokens": 295,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "efficacy-2",
+      "iteration": 0,
+      "inputSha256": "d06ca2c580f48258cce8ebb93bb7bb3195b7452817f3f01cebb1ad61078d3188",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 597.2471669999941,
+      "answers": {
+        "bucket": {
+          "type": "choice",
+          "choice": "memory_ignored",
+          "probabilities": {
+            "missed_registration": 0.00613158956138751,
+            "recall_miss": 0.006346652090763088,
+            "memory_ignored": 0.9596273903576764,
+            "not_memory_related": 0.027894367990172923
+          },
+          "confidence": 0.9461698538102352
+        }
+      },
+      "usage": {
+        "inputTokens": 298,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "efficacy-3",
+      "iteration": 0,
+      "inputSha256": "e26a5d930830365a11c1047e3a96800767ec63559662be21d582ce1d4f2052d5",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 599.8581249999988,
+      "answers": {
+        "bucket": {
+          "type": "choice",
+          "choice": "not_memory_related",
+          "probabilities": {
+            "missed_registration": 0.009978155670149511,
+            "recall_miss": 0.00804598372618395,
+            "memory_ignored": 0.0052376989983811155,
+            "not_memory_related": 0.9767381616052855
+          },
+          "confidence": 0.9689842154737139
+        }
+      },
+      "usage": {
+        "inputTokens": 295,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "efficacy-4",
+      "iteration": 0,
+      "inputSha256": "f829807e81610dc0368c27363c50210f6f1c5e07800699cdfe4cc1d98c48ba71",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 596.1922909999848,
+      "answers": {
+        "bucket": {
+          "type": "choice",
+          "choice": "not_memory_related",
+          "probabilities": {
+            "missed_registration": 0.01286332096203411,
+            "recall_miss": 0.052964361308971,
+            "memory_ignored": 0.0061029284779803815,
+            "not_memory_related": 0.9280693892510146
+          },
+          "confidence": 0.9040925190013528
+        }
+      },
+      "usage": {
+        "inputTokens": 291,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "efficacy-5",
+      "iteration": 0,
+      "inputSha256": "046c4103ae66ee3477050c0be295a62434458c872f8ea68ef134a6deb27fed50",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 540.6771659999795,
+      "answers": {
+        "bucket": {
+          "type": "choice",
+          "choice": "not_memory_related",
+          "probabilities": {
+            "missed_registration": 0.026409587918342428,
+            "recall_miss": 0.009629159695522268,
+            "memory_ignored": 0.010293799472742098,
+            "not_memory_related": 0.9536674529133933
+          },
+          "confidence": 0.938223270551191
+        }
+      },
+      "usage": {
+        "inputTokens": 286,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "efficacy-6",
+      "iteration": 0,
+      "inputSha256": "c5e3a74b532af367818dd1b7ade0515dda7dcb57f80f2e0814897fa6cccf1209",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 591.2313339999819,
+      "answers": {
+        "bucket": {
+          "type": "choice",
+          "choice": "not_memory_related",
+          "probabilities": {
+            "missed_registration": 0.021854061872354672,
+            "recall_miss": 0.32413878584758377,
+            "memory_ignored": 0.026589632111781374,
+            "not_memory_related": 0.6274175201682802
+          },
+          "confidence": 0.5032233602243736
+        }
+      },
+      "usage": {
+        "inputTokens": 296,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "efficacy-7",
+      "iteration": 0,
+      "inputSha256": "2b0257e5e3b34f862e2207d6bdd67ce2bebb349ffe8733cd66ce756c69cf567f",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 593.1865419999813,
+      "answers": {
+        "bucket": {
+          "type": "choice",
+          "choice": "missed_registration",
+          "probabilities": {
+            "missed_registration": 0.9486568977026711,
+            "recall_miss": 0.014148027284727676,
+            "memory_ignored": 0.006033550184249779,
+            "not_memory_related": 0.0311615248283514
+          },
+          "confidence": 0.9315425302702282
+        }
+      },
+      "usage": {
+        "inputTokens": 299,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-100c8269-0ebf-4280-b96e-9754a7bc1f1d",
+      "iteration": 0,
+      "inputSha256": "c5d61cbdb38b04cb91d8df66b757d585316ad7b5633ccff513992ac13fdb2b86",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 2212.3552500000224,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.16846381975984637
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.14917443888701717
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.5412762419105185
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.6390258093291893
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.354485439961067
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.053848122346013334
+        }
+      },
+      "usage": {
+        "inputTokens": 1171,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-2003549c-74c8-4e05-96f0-ea08004179f9",
+      "iteration": 0,
+      "inputSha256": "98d094559b557f60270b37ce59c5928b6d27f91bbf128db8e9a35ec41b47d1d2",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 3451.533167000016,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8241044445268454
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.8720767481934838
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.24962440711150466
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.554109042702415
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.65008641993438
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.30515149705236616
+        }
+      },
+      "usage": {
+        "inputTokens": 1786,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-211aefd9-e5ed-499c-8baf-107a73c69855",
+      "iteration": 0,
+      "inputSha256": "60bf598632a614f14d9640bebf3cc42468ea4268e9244b637f1b611ed6595fef",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 2202.9665830000013,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8511994350175919
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.8704674270125747
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.10161939191259221
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.11072500166437094
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.7102021669825369
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.2522595740605309
+        }
+      },
+      "usage": {
+        "inputTokens": 1111,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-28a61336-c6b0-4795-a5f6-148f594a7dc9",
+      "iteration": 0,
+      "inputSha256": "da7d534867635f3e15370d73d8eb91420ce5b53e23fdb35879e1cb44cc80c885",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 3920.1625829999975,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9069548707992507
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.841606090570384
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.637483161638024
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.0881809961076248
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.6191600992622461
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.30509637909975845
+        }
+      },
+      "usage": {
+        "inputTokens": 2106,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-301383ca-d7f3-4cdc-b3ba-303efae33fbb",
+      "iteration": 0,
+      "inputSha256": "75ddc00265c46772e58c25c6bc6f52fa232612473c5400a0825f7406d231322d",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 2025.208958000003,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.7388980230280582
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.8129343296705718
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.07591623150672067
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.15847681568009933
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.6176833584574656
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.3107983227142845
+        }
+      },
+      "usage": {
+        "inputTokens": 1016,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-4a1e1b97-5533-49f6-b085-db87df4fa688",
+      "iteration": 0,
+      "inputSha256": "9fd1dbf8b1d0981c91dac829db4bbf16fc81e927f9ef7bd00035ad365be5cdae",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 2006.2326659999962,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8310005913309226
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.9017137959087892
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.09152299145088212
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.1448987535907306
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.6857057481524937
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.2834034628657279
+        }
+      },
+      "usage": {
+        "inputTokens": 1056,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-4bf2a9d7-9ba0-4de6-8b49-b257e98be584",
+      "iteration": 0,
+      "inputSha256": "192a05ae272c98f9e4d35c87e92687996853e05077d7b25746dc14f37c131bd6",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 2267.178958000004,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.20452647654546252
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.35252039396664614
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.49870634367646555
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.9301551527205105
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.5303628711869413
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.024621733079505864
+        }
+      },
+      "usage": {
+        "inputTokens": 1221,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-523f9389-386e-44ef-a6b4-826b0e12eb6c",
+      "iteration": 0,
+      "inputSha256": "f7e66c80bd8483b2daab9be66ef01771015390c3d87059b59ad0c874da3c4131",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 2217.48595799999,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.27179421100824536
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.2798373332259362
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.5971431714984596
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.7676844112884033
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.5975133982511899
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.06501057481186663
+        }
+      },
+      "usage": {
+        "inputTokens": 1166,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-52a9e34e-96f5-4f34-bfc3-5312803efe5e",
+      "iteration": 0,
+      "inputSha256": "89821e0cc3472583ea3977c1bce57f5f8a0e15bd99f7d062aa430b69dc0550ee",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 2287.6692500000063,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8575934904169668
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.7566456668289069
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.2773888640065193
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.7524558667412697
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.6448229196501238
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.18730319577913573
+        }
+      },
+      "usage": {
+        "inputTokens": 1221,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-550eaabe-51ff-41d1-91cf-35a8a6fa147b",
+      "iteration": 0,
+      "inputSha256": "1c2ed6c97fcec54defe422f62916c1eafd6bf8b874c8fc8f3ee729d3d4f67e73",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 6402.816749999998,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.303835880450137
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.2766699184479839
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.7943977333393913
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.8376505730100143
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.6577179352533331
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.044917202725396246
+        }
+      },
+      "usage": {
+        "inputTokens": 1181,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-95047116-ecf4-46f8-8b03-f5813becb361",
+      "iteration": 0,
+      "inputSha256": "4d910e0fe6f6ed565971f8335beaf804eef41c6d5f0489045d62ac82fcb6fadc",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 3909.678583000001,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8007446551188973
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.8796613650926184
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.711837579450768
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.6385553465028642
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.5373387095859591
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.25348534822873064
+        }
+      },
+      "usage": {
+        "inputTokens": 2101,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-cade7ea4-c596-4e6f-9bad-7fdad32086b9",
+      "iteration": 0,
+      "inputSha256": "df15358c421ebfe0dc98f127d8f251d473bfc9315783982df4bae6267120912c",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 2310.787000000011,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.17944094964543802
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.17106957612104257
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.540243171559042
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.8900346394610398
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.41755070434318853
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.018811727615397546
+        }
+      },
+      "usage": {
+        "inputTokens": 1201,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "profile-0",
+      "iteration": 0,
+      "inputSha256": "9abce2c0c085541cca317e26bfdf38e6c4afac2f4dbf26d5455a419750eb4302",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1338.0363329999964,
+      "answers": {
+        "primary_task_type": {
+          "type": "choice",
+          "choice": "debugging",
+          "probabilities": {
+            "coding": 0.07173198036106239,
+            "debugging": 0.6098869844813701,
+            "code_review": 0.015449495390484735,
+            "architecture": 0.006526243183866897,
+            "agentic": 0.10852267355249096,
+            "research": 0.0048885596370973556,
+            "analysis": 0.005235523769019793,
+            "writing": 0.005564699133187646,
+            "summarization": 0.0023498239503469635,
+            "multimodal": 0.0032354451949356574,
+            "tool_use": 0.0021955699262056626,
+            "other": 0.16441300141993198
+          },
+          "confidence": 0.5744221648887674
+        },
+        "codingDemand": {
+          "type": "score",
+          "score": 1.2221685045212372,
+          "legend": {
+            "0": "No code is read or written",
+            "1": "A trivial or one-line edit",
+            "2": "A contained change in one area",
+            "3": "A substantial multi-file change",
+            "4": "A deep or repository-wide change"
+          },
+          "probabilities": {
+            "0": 0.33534342176329235,
+            "1": 0.28177036126377847,
+            "2": 0.23429728775313996,
+            "3": 0.12255214912797877,
+            "4": 0.026036780091810575
+          },
+          "confidence": 0
+        },
+        "reasoningDemand": {
+          "type": "score",
+          "score": 0.8239260369379069,
+          "legend": {
+            "0": "No reasoning beyond reading is needed",
+            "1": "Simple lookup or pattern matching",
+            "2": "Single-step deduction in one area",
+            "3": "Multi-step reasoning across components",
+            "4": "Deep analysis across the whole system"
+          },
+          "probabilities": {
+            "0": 0.6352782316522448,
+            "1": 0.07849432007523298,
+            "2": 0.16954805496398326,
+            "3": 0.060381966299448454,
+            "4": 0.05629742700909053
+          },
+          "confidence": 0.31339496921841103
+        },
+        "agenticDemand": {
+          "type": "score",
+          "score": 1.3454487997588562,
+          "legend": {
+            "0": "A single direct answer suffices",
+            "1": "One tool call or file read",
+            "2": "A short sequence of tool calls",
+            "3": "Multi-step tool use with intermediate decisions",
+            "4": "Long-horizon autonomous work across many steps"
+          },
+          "probabilities": {
+            "0": 0.4006353760159513,
+            "1": 0.15772578240483992,
+            "2": 0.19672168781287264,
+            "3": 0.18538897333707402,
+            "4": 0.05952818042926222
+          },
+          "confidence": 0
+        }
+      },
+      "usage": {
+        "inputTokens": 662,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "profile-1",
+      "iteration": 0,
+      "inputSha256": "daf4088591f2dffe05ccacf317d01b43f00226a80010e825b3766c9cb3488aac",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1327.1046670000069,
+      "answers": {
+        "primary_task_type": {
+          "type": "choice",
+          "choice": "writing",
+          "probabilities": {
+            "coding": 0.003063996112342524,
+            "debugging": 0.0017602853764515172,
+            "code_review": 0.002461187178558233,
+            "architecture": 0.0016859478043821092,
+            "agentic": 0.0017721671217661968,
+            "research": 0.0020998093656449963,
+            "analysis": 0.002653845835571663,
+            "writing": 0.9268691326818173,
+            "summarization": 0.015470337863137553,
+            "multimodal": 0.0024530887087800737,
+            "tool_use": 0.0013070157034214289,
+            "other": 0.0384031862481262
+          },
+          "confidence": 0.9202208720165279
+        },
+        "codingDemand": {
+          "type": "score",
+          "score": 0.9225234925693097,
+          "legend": {
+            "0": "No code is read or written",
+            "1": "A trivial or one-line edit",
+            "2": "A contained change in one area",
+            "3": "A substantial multi-file change",
+            "4": "A deep or repository-wide change"
+          },
+          "probabilities": {
+            "0": 0.2914011474433802,
+            "1": 0.5411365783886172,
+            "2": 0.13185231762447236,
+            "3": 0.024757547242373272,
+            "4": 0.010852409301157002
+          },
+          "confidence": 0.5788951771199415
+        },
+        "reasoningDemand": {
+          "type": "score",
+          "score": 0.2800457819236,
+          "legend": {
+            "0": "No reasoning beyond reading is needed",
+            "1": "Simple lookup or pattern matching",
+            "2": "Single-step deduction in one area",
+            "3": "Multi-step reasoning across components",
+            "4": "Deep analysis across the whole system"
+          },
+          "probabilities": {
+            "0": 0.8637160733837704,
+            "1": 0.013233134760273711,
+            "2": 0.10786956697727862,
+            "3": 0.009651386305940457,
+            "4": 0.0055298385727369165
+          },
+          "confidence": 0.7666285150636667
+        },
+        "agenticDemand": {
+          "type": "score",
+          "score": 0.1969550330985141,
+          "legend": {
+            "0": "A single direct answer suffices",
+            "1": "One tool call or file read",
+            "2": "A short sequence of tool calls",
+            "3": "Multi-step tool use with intermediate decisions",
+            "4": "Long-horizon autonomous work across many steps"
+          },
+          "probabilities": {
+            "0": 0.9131666480180605,
+            "1": 0.02185295821088198,
+            "2": 0.027799391533153507,
+            "3": 0.029220717130291094,
+            "4": 0.007960285107612953
+          },
+          "confidence": 0.8358708057512383
+        }
+      },
+      "usage": {
+        "inputTokens": 646,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "profile-2",
+      "iteration": 0,
+      "inputSha256": "941b4adf63a7ff4da4d4406662641da6cc93724b76ed3a3f7b8ca351b115468d",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1311.4851249999774,
+      "answers": {
+        "primary_task_type": {
+          "type": "choice",
+          "choice": "summarization",
+          "probabilities": {
+            "coding": 0.002898693262642463,
+            "debugging": 0.0026082132317005887,
+            "code_review": 0.002030867867012354,
+            "architecture": 0.0014083827581610703,
+            "agentic": 0.0018842559685729825,
+            "research": 0.002445865863190445,
+            "analysis": 0.015953627813314202,
+            "writing": 0.007289913719913254,
+            "summarization": 0.9251938581831574,
+            "multimodal": 0.0029132372478429844,
+            "tool_use": 0.0010066505611555673,
+            "other": 0.034366433523336605
+          },
+          "confidence": 0.9183932998361717
+        },
+        "codingDemand": {
+          "type": "score",
+          "score": 0.6511896672283484,
+          "legend": {
+            "0": "No code is read or written",
+            "1": "A trivial or one-line edit",
+            "2": "A contained change in one area",
+            "3": "A substantial multi-file change",
+            "4": "A deep or repository-wide change"
+          },
+          "probabilities": {
+            "0": 0.516151409325363,
+            "1": 0.36409556948885424,
+            "2": 0.08202137079509833,
+            "3": 0.027875245413440077,
+            "4": 0.009856404977244285
+          },
+          "confidence": 0.4573419439763764
+        },
+        "reasoningDemand": {
+          "type": "score",
+          "score": 0.20556567605006004,
+          "legend": {
+            "0": "No reasoning beyond reading is needed",
+            "1": "Simple lookup or pattern matching",
+            "2": "Single-step deduction in one area",
+            "3": "Multi-step reasoning across components",
+            "4": "Deep analysis across the whole system"
+          },
+          "probabilities": {
+            "0": 0.9009875543238147,
+            "1": 0.0292068377623002,
+            "2": 0.041520551087611435,
+            "3": 0.019822491192557804,
+            "4": 0.00846256563371589
+          },
+          "confidence": 0.8286952699582834
+        },
+        "agenticDemand": {
+          "type": "score",
+          "score": 0.4672523186958713,
+          "legend": {
+            "0": "A single direct answer suffices",
+            "1": "One tool call or file read",
+            "2": "A short sequence of tool calls",
+            "3": "Multi-step tool use with intermediate decisions",
+            "4": "Long-horizon autonomous work across many steps"
+          },
+          "probabilities": {
+            "0": 0.6157934458451293,
+            "1": 0.33492180310418085,
+            "2": 0.021431161054574894,
+            "3": 0.02194616650191972,
+            "4": 0.00590742349419538
+          },
+          "confidence": 0.6106230677534407
+        }
+      },
+      "usage": {
+        "inputTokens": 650,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "profile-3",
+      "iteration": 0,
+      "inputSha256": "86140b8f562659548c2d8c93b9184f2f770e098801e7dece7fd03388669ae961",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1307.3657499999972,
+      "answers": {
+        "primary_task_type": {
+          "type": "choice",
+          "choice": "code_review",
+          "probabilities": {
+            "coding": 0.009479099611065495,
+            "debugging": 0.0040889651141160065,
+            "code_review": 0.9236083990907903,
+            "architecture": 0.002829603031532802,
+            "agentic": 0.0025677829163417566,
+            "research": 0.0026587567767806073,
+            "analysis": 0.027778483837054634,
+            "writing": 0.002570446173235008,
+            "summarization": 0.0014882419121570736,
+            "multimodal": 0.001972596994590892,
+            "tool_use": 0.000989449379647572,
+            "other": 0.019968175162687805
+          },
+          "confidence": 0.916663708099044
+        },
+        "codingDemand": {
+          "type": "score",
+          "score": 0.27047232221140854,
+          "legend": {
+            "0": "No code is read or written",
+            "1": "A trivial or one-line edit",
+            "2": "A contained change in one area",
+            "3": "A substantial multi-file change",
+            "4": "A deep or repository-wide change"
+          },
+          "probabilities": {
+            "0": 0.8605530077287799,
+            "1": 0.05816468467163342,
+            "2": 0.041981760452296034,
+            "3": 0.028858071953979214,
+            "4": 0.010442475193311354
+          },
+          "confidence": 0.7746063981571596
+        },
+        "reasoningDemand": {
+          "type": "score",
+          "score": 0.539029303746033,
+          "legend": {
+            "0": "No reasoning beyond reading is needed",
+            "1": "Simple lookup or pattern matching",
+            "2": "Single-step deduction in one area",
+            "3": "Multi-step reasoning across components",
+            "4": "Deep analysis across the whole system"
+          },
+          "probabilities": {
+            "0": 0.7617093364843279,
+            "1": 0.07252227933758952,
+            "2": 0.0822685284328725,
+            "3": 0.03202945543814251,
+            "4": 0.051470400307067725
+          },
+          "confidence": 0.5508089135449725
+        },
+        "agenticDemand": {
+          "type": "score",
+          "score": 0.9489701585826321,
+          "legend": {
+            "0": "A single direct answer suffices",
+            "1": "One tool call or file read",
+            "2": "A short sequence of tool calls",
+            "3": "Multi-step tool use with intermediate decisions",
+            "4": "Long-horizon autonomous work across many steps"
+          },
+          "probabilities": {
+            "0": 0.29259160051768485,
+            "1": 0.5412929656320371,
+            "2": 0.10069411296193205,
+            "3": 0.05539631652665319,
+            "4": 0.010025004361692843
+          },
+          "confidence": 0.554872200318332
+        }
+      },
+      "usage": {
+        "inputTokens": 642,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "profile-4",
+      "iteration": 0,
+      "inputSha256": "2c859f416cbed3aa9f91e5b7da3040b5bde8e24c48383fbd8efec89b7662f4c1",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1313.6702920000243,
+      "answers": {
+        "primary_task_type": {
+          "type": "choice",
+          "choice": "analysis",
+          "probabilities": {
+            "coding": 0.0035232317731312005,
+            "debugging": 0.0035407742630453997,
+            "code_review": 0.003213514913456987,
+            "architecture": 0.005178765919903648,
+            "agentic": 0.013667151530986204,
+            "research": 0.3951002699019559,
+            "analysis": 0.39767157382831136,
+            "writing": 0.008904052622140085,
+            "summarization": 0.00471234852849865,
+            "multimodal": 0.0029151875105817805,
+            "tool_use": 0.007658925948146032,
+            "other": 0.15391420325984256
+          },
+          "confidence": 0.3429144441763397
+        },
+        "codingDemand": {
+          "type": "score",
+          "score": 0.4738345362122723,
+          "legend": {
+            "0": "No code is read or written",
+            "1": "A trivial or one-line edit",
+            "2": "A contained change in one area",
+            "3": "A substantial multi-file change",
+            "4": "A deep or repository-wide change"
+          },
+          "probabilities": {
+            "0": 0.7661391500424959,
+            "1": 0.08091760196163252,
+            "2": 0.088018781712638,
+            "3": 0.04281849430757109,
+            "4": 0.022105971975662626
+          },
+          "confidence": 0.6051378864897732
+        },
+        "reasoningDemand": {
+          "type": "score",
+          "score": 1.5971568596334134,
+          "legend": {
+            "0": "No reasoning beyond reading is needed",
+            "1": "Simple lookup or pattern matching",
+            "2": "Single-step deduction in one area",
+            "3": "Multi-step reasoning across components",
+            "4": "Deep analysis across the whole system"
+          },
+          "probabilities": {
+            "0": 0.3374164672864883,
+            "1": 0.11557594234346835,
+            "2": 0.21670118151613996,
+            "3": 0.27304708115794873,
+            "4": 0.057259327695954744
+          },
+          "confidence": 0
+        },
+        "agenticDemand": {
+          "type": "score",
+          "score": 2.479068835811813,
+          "legend": {
+            "0": "A single direct answer suffices",
+            "1": "One tool call or file read",
+            "2": "A short sequence of tool calls",
+            "3": "Multi-step tool use with intermediate decisions",
+            "4": "Long-horizon autonomous work across many steps"
+          },
+          "probabilities": {
+            "0": 0.05137338919609203,
+            "1": 0.08207894195789468,
+            "2": 0.33469895767798863,
+            "3": 0.39980286617415794,
+            "4": 0.1320458449938668
+          },
+          "confidence": 0.34581428818673265
+        }
+      },
+      "usage": {
+        "inputTokens": 646,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "profile-5",
+      "iteration": 0,
+      "inputSha256": "aad746b28f9a4c7aa935f64eac2ed97b93ebf9c1e1e97dcead968939a6dd58ed",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1309.545207999996,
+      "answers": {
+        "primary_task_type": {
+          "type": "choice",
+          "choice": "architecture",
+          "probabilities": {
+            "coding": 0.005139223644996717,
+            "debugging": 0.003524804323179019,
+            "code_review": 0.004832123805584735,
+            "architecture": 0.9076985254348572,
+            "agentic": 0.004531228861701411,
+            "research": 0.003133032303995191,
+            "analysis": 0.006039193015322285,
+            "writing": 0.015435097302632102,
+            "summarization": 0.0025673546067508527,
+            "multimodal": 0.0025658663987983854,
+            "tool_use": 0.00097727686174281,
+            "other": 0.04355627344043956
+          },
+          "confidence": 0.8993074822925715
+        },
+        "codingDemand": {
+          "type": "score",
+          "score": 0.6656306539384922,
+          "legend": {
+            "0": "No code is read or written",
+            "1": "A trivial or one-line edit",
+            "2": "A contained change in one area",
+            "3": "A substantial multi-file change",
+            "4": "A deep or repository-wide change"
+          },
+          "probabilities": {
+            "0": 0.7238019975472145,
+            "1": 0.0557009937968993,
+            "2": 0.09187973999029345,
+            "3": 0.08829889450136501,
+            "4": 0.040318374164227726
+          },
+          "confidence": 0.44530778838458995
+        },
+        "reasoningDemand": {
+          "type": "score",
+          "score": 2.620707590278151,
+          "legend": {
+            "0": "No reasoning beyond reading is needed",
+            "1": "Simple lookup or pattern matching",
+            "2": "Single-step deduction in one area",
+            "3": "Multi-step reasoning across components",
+            "4": "Deep analysis across the whole system"
+          },
+          "probabilities": {
+            "0": 0.1623924193061601,
+            "1": 0.04839653624438088,
+            "2": 0.13088791511633843,
+            "3": 0.3227572935313885,
+            "4": 0.33556583580173205
+          },
+          "confidence": 0
+        },
+        "agenticDemand": {
+          "type": "score",
+          "score": 1.7248637352166147,
+          "legend": {
+            "0": "A single direct answer suffices",
+            "1": "One tool call or file read",
+            "2": "A short sequence of tool calls",
+            "3": "Multi-step tool use with intermediate decisions",
+            "4": "Long-horizon autonomous work across many steps"
+          },
+          "probabilities": {
+            "0": 0.40320756391321216,
+            "1": 0.06765447365874559,
+            "2": 0.0996626737144644,
+            "3": 0.26001724072537086,
+            "4": 0.16945804798820696
+          },
+          "confidence": 0
+        }
+      },
+      "usage": {
+        "inputTokens": 654,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "profile-6",
+      "iteration": 0,
+      "inputSha256": "c4d101a4d2afcf6b97468491ee2b3283773397318993931f4224714b8c7e235f",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1309.2708749999874,
+      "answers": {
+        "primary_task_type": {
+          "type": "choice",
+          "choice": "tool_use",
+          "probabilities": {
+            "coding": 0.0023621281316237087,
+            "debugging": 0.0039764607470576105,
+            "code_review": 0.0008440913637519514,
+            "architecture": 0.001315846198431077,
+            "agentic": 0.0026135904313012706,
+            "research": 0.0009421873399837531,
+            "analysis": 0.0014806482314354704,
+            "writing": 0.001466916513741476,
+            "summarization": 0.0009275553104759654,
+            "multimodal": 0.0012230006477012125,
+            "tool_use": 0.9650271471845729,
+            "other": 0.017820427899923538
+          },
+          "confidence": 0.961847796928625
+        },
+        "codingDemand": {
+          "type": "score",
+          "score": 0.1822293500406969,
+          "legend": {
+            "0": "No code is read or written",
+            "1": "A trivial or one-line edit",
+            "2": "A contained change in one area",
+            "3": "A substantial multi-file change",
+            "4": "A deep or repository-wide change"
+          },
+          "probabilities": {
+            "0": 0.8901708297081379,
+            "1": 0.06828395740862994,
+            "2": 0.01863878103441356,
+            "3": 0.014957896832034228,
+            "4": 0.007948535016784285
+          },
+          "confidence": 0.8481422082994192
+        },
+        "reasoningDemand": {
+          "type": "score",
+          "score": 0.5717711304812981,
+          "legend": {
+            "0": "No reasoning beyond reading is needed",
+            "1": "Simple lookup or pattern matching",
+            "2": "Single-step deduction in one area",
+            "3": "Multi-step reasoning across components",
+            "4": "Deep analysis across the whole system"
+          },
+          "probabilities": {
+            "0": 0.7179183272168107,
+            "1": 0.01644405196502772,
+            "2": 0.24796164348854602,
+            "3": 0.011300117779284696,
+            "4": 0.006375859550331073
+          },
+          "confidence": 0.5235240579322517
+        },
+        "agenticDemand": {
+          "type": "score",
+          "score": 1.2756427232124667,
+          "legend": {
+            "0": "A single direct answer suffices",
+            "1": "One tool call or file read",
+            "2": "A short sequence of tool calls",
+            "3": "Multi-step tool use with intermediate decisions",
+            "4": "Long-horizon autonomous work across many steps"
+          },
+          "probabilities": {
+            "0": 0.10172713460457933,
+            "1": 0.5590752393011283,
+            "2": 0.30671512195999023,
+            "3": 0.02679277654585043,
+            "4": 0.005689727588451671
+          },
+          "confidence": 0.6007525063153122
+        }
+      },
+      "usage": {
+        "inputTokens": 654,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "profile-7",
+      "iteration": 0,
+      "inputSha256": "1fa6a847223658e86b6aef5352059db21d036841534d26165d0567120494a3b7",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1365.557124999992,
+      "answers": {
+        "primary_task_type": {
+          "type": "choice",
+          "choice": "coding",
+          "probabilities": {
+            "coding": 0.8964736346014186,
+            "debugging": 0.007475352522576266,
+            "code_review": 0.004204184221220662,
+            "architecture": 0.003994648936999498,
+            "agentic": 0.004003771887704058,
+            "research": 0.0014278257434261093,
+            "analysis": 0.0018116527107140535,
+            "writing": 0.007837270602292971,
+            "summarization": 0.0014823835546277399,
+            "multimodal": 0.0015591142002765943,
+            "tool_use": 0.007235292742261858,
+            "other": 0.062494868276481465
+          },
+          "confidence": 0.8870621468379112
+        },
+        "codingDemand": {
+          "type": "score",
+          "score": 2.6427610904534244,
+          "legend": {
+            "0": "No code is read or written",
+            "1": "A trivial or one-line edit",
+            "2": "A contained change in one area",
+            "3": "A substantial multi-file change",
+            "4": "A deep or repository-wide change"
+          },
+          "probabilities": {
+            "0": 0.046124980279159344,
+            "1": 0.02011690979574228,
+            "2": 0.34881987224034083,
+            "3": 0.41474851456202966,
+            "4": 0.17018972312272784
+          },
+          "confidence": 0.41865137017330734
+        },
+        "reasoningDemand": {
+          "type": "score",
+          "score": 1.371339086674952,
+          "legend": {
+            "0": "No reasoning beyond reading is needed",
+            "1": "Simple lookup or pattern matching",
+            "2": "Single-step deduction in one area",
+            "3": "Multi-step reasoning across components",
+            "4": "Deep analysis across the whole system"
+          },
+          "probabilities": {
+            "0": 0.37205596322003265,
+            "1": 0.06390587913605718,
+            "2": 0.41531499760193047,
+            "3": 0.11808942783288495,
+            "4": 0.030633732209094783
+          },
+          "confidence": 0.17718775181066926
+        },
+        "agenticDemand": {
+          "type": "score",
+          "score": 2.734598392771903,
+          "legend": {
+            "0": "A single direct answer suffices",
+            "1": "One tool call or file read",
+            "2": "A short sequence of tool calls",
+            "3": "Multi-step tool use with intermediate decisions",
+            "4": "Long-horizon autonomous work across many steps"
+          },
+          "probabilities": {
+            "0": 0.09968371609965071,
+            "1": 0.06913230872927024,
+            "2": 0.145740124376555,
+            "3": 0.36778956788857353,
+            "4": 0.3176542829059505
+          },
+          "confidence": 0.24940818913333496
+        }
+      },
+      "usage": {
+        "inputTokens": 690,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-boilerplate",
+      "iteration": 0,
+      "inputSha256": "151b47158c7358609486e3ce241a71b92614332933c7b9c692ca3cbd5907c7c1",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1943.4014580000003,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.28184705558035883
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.05338800122788241
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.941424239343903
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.25214551251141587
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.6954196602045012
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.003127242781831855
+        }
+      },
+      "usage": {
+        "inputTokens": 971,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-borderline-routing",
+      "iteration": 0,
+      "inputSha256": "41d8f13c2db40f8c437947c293610082ea0af614b451fc3170a9611a96eba5ef",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1957.3350839999985,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.15172562201168988
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.062496001821404426
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.7102280753263869
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.7738538782457476
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.6245704154005487
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.014133228437057306
+        }
+      },
+      "usage": {
+        "inputTokens": 1001,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-command-log",
+      "iteration": 0,
+      "inputSha256": "f5a1691c74ad1e9ef7eec80d60bb8682c28a65be36c0fee64b1f64158648ad81",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1897.186625000002,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.42839312414260095
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.25983590888992436
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.9121995145369513
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.10051469473946442
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.6975087211372517
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.022813718941267862
+        }
+      },
+      "usage": {
+        "inputTokens": 996,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-convention-context",
+      "iteration": 0,
+      "inputSha256": "17a025927ba2ecfe1162182645c38623b75eb324f878aa8bfb6a02ec9d9e6b91",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 2112.0205419999984,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8670313619763509
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.8826556389174893
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.1197529266689457
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.09705374132336077
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.6076613509178092
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.3462999209776658
+        }
+      },
+      "usage": {
+        "inputTokens": 1076,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-decision-reason",
+      "iteration": 0,
+      "inputSha256": "90b67679495b30f05850849a5466022e0e0201a83f1d01e2dc9c46d467f574fc",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1893.013083,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.80891183571024
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.8923443064900048
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.21677157566392607
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.1463012792439838
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.4798578606768017
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.46414587659058687
+        }
+      },
+      "usage": {
+        "inputTokens": 1041,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-error-root-cause",
+      "iteration": 0,
+      "inputSha256": "34e53fbd518d42f7322dc1f0a273099a8fde21508bd676c72bcb23a634535b29",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1957.0058750000026,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9441670060615074
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.9154195656845838
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.6418201601743779
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.2292105427891098
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.5365619160822694
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.32788483341014474
+        }
+      },
+      "usage": {
+        "inputTokens": 1076,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-failed-test",
+      "iteration": 0,
+      "inputSha256": "74d827a15c2c3992102a7bd802274a1410c0bc8de28ac83e50bef6f1af31880e",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1888.1216249999998,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.7866087379338229
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.24467306647410855
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.92443706265873
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.425608493615113
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.5561043865829607
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.01848821559107944
+        }
+      },
+      "usage": {
+        "inputTokens": 1016,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-false-authority",
+      "iteration": 0,
+      "inputSha256": "7b6e63a90521d970abfea6ca1ecbfe3f7c7e942d127b2ff9b7a9d2d554e0f07f",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 2124.9929580000025,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.08893706087588302
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.09121357911101324
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.8282659367403801
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.7416718188091762
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.3021336366134879
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.015664478565187094
+        }
+      },
+      "usage": {
+        "inputTokens": 1056,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-file-tree-output",
+      "iteration": 0,
+      "inputSha256": "55d3caaa4f8b8658a081fdb82cfdba257b56061fd915aace5373c7182bf11db7",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 2061.029290999999,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.5013771022308064
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.5644450400949464
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.23594462917596865
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.3253480375426604
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.8211774714910272
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.10093548927412688
+        }
+      },
+      "usage": {
+        "inputTokens": 1021,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-gotcha",
+      "iteration": 0,
+      "inputSha256": "7e72e8cd073cada123f06db93fd0cfba2fef8c3b490f2e4c624feb425c6b99c7",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1898.1975409999995,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8549965223906403
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.8021244984949683
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.5866754861090582
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.4268385361235531
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.509581346487866
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.33153771842044827
+        }
+      },
+      "usage": {
+        "inputTokens": 1066,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-injection-emotional",
+      "iteration": 0,
+      "inputSha256": "5f2e2de5ea1fb3652187e1e556d7cdf8329d538ce8832327a6ba8859bf046205",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1954.2609169999996,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.15713205377819342
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.160062323279866
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.8785554026484754
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.735147270154
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.7046891156959911
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.019438704401872883
+        }
+      },
+      "usage": {
+        "inputTokens": 1031,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-injection-json",
+      "iteration": 0,
+      "inputSha256": "650f22395785be0262c93b0addc93f95df06485daa359cd2e47719150e9dca4c",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1959.047666999999,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.2340720489878202
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.084537321880214
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.6574787238711858
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.7187586704541962
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.37732195554714953
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.02377538880183296
+        }
+      },
+      "usage": {
+        "inputTokens": 1046,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-injection-token",
+      "iteration": 0,
+      "inputSha256": "8cf27ca520574f2df4a65eee9867fce2584847b715fdbfb3af5b60685996af91",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 2066.1461249999993,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.049587135259857175
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.07351016243905496
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.9605660599838289
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.7051985101983776
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.5744884901164383
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.0028987953362006845
+        }
+      },
+      "usage": {
+        "inputTokens": 1101,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-license-intent",
+      "iteration": 0,
+      "inputSha256": "4e18eb2fe61cbf7b0ab123e539d3ca503579707be8d573fb0bb79709c08c0664",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1961.4817909999983,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.3544871857631212
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.6513678588451017
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.07203796317980761
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.09052877004131106
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.7710296334268082
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.149143937413758
+        }
+      },
+      "usage": {
+        "inputTokens": 1046,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-long-buried",
+      "iteration": 0,
+      "inputSha256": "bd6ea98e4a7b67ba1ca9d73943dec18d934befc85d3254ba7cb9aa424ca0c548",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 30003.086791,
+      "answers": {},
+      "usage": null,
+      "error": "timeout",
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-long-injection",
+      "iteration": 0,
+      "inputSha256": "1ac0292b9c04f8eef6390891be988c084366f41eb902bffb2cd1a6e5c1a389f9",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 30002.802083000002,
+      "answers": {},
+      "usage": null,
+      "error": "timeout",
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-long-lived-dispatch",
+      "iteration": 0,
+      "inputSha256": "e24203e2c692c937fe2a08029d98b0ecdcd34661a50e43060c7f13c3db87301a",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1957.6995419999985,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.2253020739371007
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.17837091872833852
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.45329682587352105
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.8552529020063091
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.3891542669147011
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.025818672852395492
+        }
+      },
+      "usage": {
+        "inputTokens": 1061,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-negated-preference",
+      "iteration": 0,
+      "inputSha256": "f7cd97f93a39e7f986572a27e453b9e2723469638e6c87bf48e050108dcfc3e2",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1965.7562499999985,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.6278585250400449
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.8613745357795656
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.6107128780752692
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.7484244887034205
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.656466882924774
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.21670073925659802
+        }
+      },
+      "usage": {
+        "inputTokens": 1016,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-operational-rule",
+      "iteration": 0,
+      "inputSha256": "a7ca72942b23161e13974f5b865e9d8a219bdf59dab08244ea9c8b279d06f9fd",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1957.848584000003,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.7918899179519406
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.9381794600405952
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.1484081790669448
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.2760843836023389
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.4270191308593591
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.5375588824239573
+        }
+      },
+      "usage": {
+        "inputTokens": 1051,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-pid",
+      "iteration": 0,
+      "inputSha256": "f5763e5f19f3a5d1583b73f1b8404a5c1e12ad0ec416de772bdb5a1d4bc3e3c1",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1905.594333,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.13111041532028356
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.10151009209302726
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.9646827698392695
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.37626360720013485
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.5485015646972947
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.0035850552860863948
+        }
+      },
+      "usage": {
+        "inputTokens": 1016,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-preference",
+      "iteration": 0,
+      "inputSha256": "2d918fdf4bb92b1d302f7669dadbe9cadeaa78dec6978710dbecde8b74740297",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1896.4247500000001,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8166729595519651
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.8614307813257016
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.18470086610860814
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.16460037338402153
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.3758129466773946
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.5376939410370793
+        }
+      },
+      "usage": {
+        "inputTokens": 1031,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-repo-export",
+      "iteration": 0,
+      "inputSha256": "50a9ad7d30229ae28e4d91d486c5ba3d2fbfcde460a3e62378e657bd83619001",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1894.804,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.6137774603191507
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.6776319492177615
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.3038177258796418
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.16629162379266327
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.9310200336578824
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.0467430290493847
+        }
+      },
+      "usage": {
+        "inputTokens": 986,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-repo-file",
+      "iteration": 0,
+      "inputSha256": "fd56d88d43a18bfbe01065c984f3bab7f80465642e5e3fb3cd6bb95b53e2ae2b",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1943.2129999999997,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.42544064078108806
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.5186099828989857
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.10745961006518771
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.22315842217727586
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.8699273133949464
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.06745699377587196
+        }
+      },
+      "usage": {
+        "inputTokens": 1031,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-repo-with-intent",
+      "iteration": 0,
+      "inputSha256": "a249f1c9de2da6a413c124ec00af07a03701feda7342112a0ff5ccaab6e2b57b",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1944.9332499999982,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.6309918527874107
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.8177854612484217
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.47091148521940296
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.1927407789839929
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.5423856510629541
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.37423036141937827
+        }
+      },
+      "usage": {
+        "inputTokens": 1041,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-request",
+      "iteration": 0,
+      "inputSha256": "8a9ef32b5554ec7a994566f8d4ac67128abaec6f6b956ed5d726921d24f9deda",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1894.931666999999,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.16251082867714978
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.10313199589008203
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.13086876526330019
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.9753096374590826
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.6785316793088878
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.002546366368094527
+        }
+      },
+      "usage": {
+        "inputTokens": 1021,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-security-finding",
+      "iteration": 0,
+      "inputSha256": "f4f25e58913e24a0f847118a1086285ee9be15432bf0b8876b972d4ff32a8463",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1954.9922079999997,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.2260857107989717
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.634096913945143
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.6747402928144661
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.7888847962232752
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.5183552236110616
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.13386749920172117
+        }
+      },
+      "usage": {
+        "inputTokens": 1086,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-status-vs-lesson",
+      "iteration": 0,
+      "inputSha256": "962143a1f598a29d86baeae6e0645bf354f52f3b11f76c2282e24a213393c38f",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 2063.366249999999,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.7873946308901737
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.8683275321266671
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.6964504870347371
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.06212867861349578
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.5604095984634334
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.26358039947137846
+        }
+      },
+      "usage": {
+        "inputTokens": 1071,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-system-prompt",
+      "iteration": 0,
+      "inputSha256": "5e084b04fe23cee84c24aaad41b2d02afc9e81d264c49ec9a013d32f1d93f1e6",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1938.4907079999994,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.11166790716732485
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.10724411682702296
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.6987857155667226
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.9418016372986542
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.24564796282334436
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.006241432008684587
+        }
+      },
+      "usage": {
+        "inputTokens": 1021,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-task-with-finding",
+      "iteration": 0,
+      "inputSha256": "61f166633e0ba0b27983445073857b715cc697574f854117d296637d378d2584",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1960.6499590000021,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.4304942904237779
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.43727711924045665
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.30100837201911623
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.9672528183470919
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.5952476486350428
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.014319593256427603
+        }
+      },
+      "usage": {
+        "inputTokens": 1071,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-test-pass",
+      "iteration": 0,
+      "inputSha256": "8ce9019fbb49b0704fa47eda089d472bf9b8ac0f1f99d8c42c657b2620356c91",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1895.8872499999998,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.36901480887584825
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.19198426429557902
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.8609793672358885
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.0467823378222718
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.6590966636838346
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.02668977390312381
+        }
+      },
+      "usage": {
+        "inputTokens": 1026,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-uncertainty",
+      "iteration": 0,
+      "inputSha256": "3496978da0f682ffce35877f2db3654589bb9e34e2d2d8ca69efbfecb6f870e1",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1955.7748330000031,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.14996778498666757
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.24596195390589873
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.8595583286958617
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.16801408660476258
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.5666851251104544
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.034543307883775846
+        }
+      },
+      "usage": {
+        "inputTokens": 1031,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-version-observation",
+      "iteration": 0,
+      "inputSha256": "382f1467bbf582c8284f14d3903a6078a9e3ddc223c0babf4d67f94f043e9474",
+      "model": "d1-3b-eval",
+      "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1920.4801669999943,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.3081983733147551
+        },
+        "is_durable_fact_worth_keeping": {
+          "type": "noul",
+          "noul": 0.21432087336364142
+        },
+        "is_ephemeral_runtime_noise": {
+          "type": "noul",
+          "noul": 0.8088637745364613
+        },
+        "is_prompt_or_task_artifact": {
+          "type": "noul",
+          "noul": 0.1715024934458168
+        },
+        "is_mechanically_discoverable_from_the_repo": {
+          "type": "noul",
+          "noul": 0.6602117474543158
+        },
+        "filtered_promote": {
+          "type": "noul",
+          "noul": 0.04096448277277549
+        }
+      },
+      "usage": {
+        "inputTokens": 1006,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    }
+  ]
+}
