@@ -751,3 +751,51 @@ test("redact: the post-pass only turns clear text into placeholders, never the r
   expect(res.draft.root_cause).toBe("page [REDACTED:email]");
   expect(clearTextLength(res.draft.root_cause)).toBeLessThanOrEqual(clearTextLength(mainLeftover));
 });
+
+test("redact: the post-pass collapses every leftover in a string and counts each one", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "alice@example.com,alice@b.org" }), {
+    production_identifiers: ["alice"],
+  });
+  expect(res.draft.root_cause).toBe("[REDACTED:email],[REDACTED:email]");
+  expect(res.redactions).toEqual([
+    { rule_id: "email", count: 2 },
+    { rule_id: "production_identifier", count: 2 },
+  ]);
+});
+
+test("redact: the post-pass matches uppercase, hyphenated and subdomain domains", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "mail ALICE@Sub.Example-Corp.IO now" }), {
+    production_identifiers: ["alice"],
+  });
+  expect(res.draft.root_cause).toBe("mail [REDACTED:email] now");
+});
+
+test("redact: the post-pass requires a TLD, like the email rule on origin/main", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "ssh alice@localhost" }), {
+    production_identifiers: ["alice"],
+  });
+  expect(res.draft.root_cause).toBe("ssh [REDACTED:production_identifier]@localhost");
+});
+
+test("redact: the post-pass does not consume the token before the placeholder", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "bob-alice@example.com" }), {
+    production_identifiers: ["alice"],
+  });
+  expect(res.draft.root_cause).toBe("bob-[REDACTED:email]");
+});
