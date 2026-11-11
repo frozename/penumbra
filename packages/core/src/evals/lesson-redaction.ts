@@ -1,10 +1,6 @@
 import { z } from "zod";
 
-import {
-  type RedactStringResult,
-  ValuePatternRedactor,
-  type ValueRedactionHit,
-} from "../redaction/value-patterns.js";
+import { ValuePatternRedactor, type ValuePatternRule } from "../redaction/value-patterns.js";
 
 export const LessonRedactionOptionsSchema = z.strictObject({
   production_identifiers: z.array(z.string()).optional(),
@@ -37,19 +33,6 @@ const IPV4_PATTERN = new RegExp(
   "g",
 );
 
-type LessonRule = {
-  id: string;
-  pattern: RegExp;
-  replacement: string;
-};
-
-type CandidateSpan = {
-  rule: LessonRule;
-  ruleIndex: number;
-  start: number;
-  end: number;
-};
-
 function compareByIdentifierLength(a: string, b: string): number {
   if (b.length !== a.length) {
     return b.length - a.length;
@@ -81,10 +64,9 @@ function buildIdentifierPattern(identifiers: readonly string[]): RegExp | null {
   return new RegExp(alternation, "gi");
 }
 
-function buildRules(options?: LessonRedactionOptions): LessonRule[] {
-  const rules: LessonRule[] = [
-    { id: "email", pattern: EMAIL_PATTERN, replacement: "[REDACTED:email]" },
-  ];
+function buildRules(options?: LessonRedactionOptions): ValuePatternRule[] {
+  const rules: ValuePatternRule[] = [];
+  rules.push({ id: "home_path", pattern: HOME_PATH_PATTERN, replacement: "~" });
   const identifierPattern = buildIdentifierPattern(options?.production_identifiers ?? []);
   if (identifierPattern !== null) {
     rules.push({
@@ -93,89 +75,118 @@ function buildRules(options?: LessonRedactionOptions): LessonRule[] {
       replacement: "[REDACTED:production_identifier]",
     });
   }
-  rules.push({ id: "home_path", pattern: HOME_PATH_PATTERN, replacement: "~" });
+  rules.push({ id: "email", pattern: EMAIL_PATTERN, replacement: "[REDACTED:email]" });
   rules.push({ id: "ipv4", pattern: IPV4_PATTERN, replacement: "[REDACTED:ipv4]" });
   return rules;
 }
 
-function collectCandidateSpans(text: string, rules: readonly LessonRule[]): CandidateSpan[] {
-  const candidates: CandidateSpan[] = [];
-  for (const [ruleIndex, rule] of rules.entries()) {
-    for (const match of text.matchAll(rule.pattern)) {
-      candidates.push({ rule, ruleIndex, start: match.index, end: match.index + match[0].length });
+function redactEmailsInIdentifiers(
+  text: string,
+  identifiers: readonly string[],
+): { redacted: string; emailHitCount: number } {
+  const matches = text.match(EMAIL_PATTERN);
+  if (!matches || matches.length === 0) {
+    return { redacted: text, emailHitCount: 0 };
+  }
+  const cleanedIdentifiers = identifiers.map((id) => id.trim()).filter((id) => id.length > 0);
+  if (cleanedIdentifiers.length === 0) {
+    return { redacted: text, emailHitCount: 0 };
+  }
+  let out = text;
+  let emailHitCount = 0;
+  for (const emailMatch of matches) {
+    EMAIL_PATTERN.lastIndex = 0;
+    for (const identifier of cleanedIdentifiers) {
+      const lowerEmail = emailMatch.toLowerCase();
+      const lowerId = identifier.toLowerCase();
+      if (lowerEmail.includes(lowerId) && lowerEmail !== lowerId) {
+        out = out.replace(emailMatch, "[REDACTED:email]");
+        emailHitCount++;
+        break;
+      }
     }
   }
-  return candidates;
+  return { redacted: out, emailHitCount };
 }
 
-function compareCandidates(a: CandidateSpan, b: CandidateSpan): number {
-  if (a.start !== b.start) {
-    return a.start - b.start;
+function redactHomePathIdentifiers(
+  text: string,
+  identifiers: readonly string[],
+): { redacted: string; homePathIdHitCount: number } {
+  const cleanedIdentifiers = identifiers.map((id) => id.trim()).filter((id) => id.length > 0);
+  if (cleanedIdentifiers.length === 0) {
+    return { redacted: text, homePathIdHitCount: 0 };
   }
-  const lengthDelta = b.end - b.start - (a.end - a.start);
-  if (lengthDelta !== 0) {
-    return lengthDelta;
-  }
-  return a.ruleIndex - b.ruleIndex;
-}
-
-// Leftmost-first, longest candidate wins each position: span length, never
-// rule order, decides whether a listed identifier or a built-in is applied.
-function selectSpans(candidates: readonly CandidateSpan[]): CandidateSpan[] {
-  const selected: CandidateSpan[] = [];
-  let cursor = 0;
-  for (const candidate of candidates.toSorted(compareCandidates)) {
-    if (candidate.start < cursor) {
+  let out = text;
+  let homePathIdHitCount = 0;
+  for (const identifier of cleanedIdentifiers) {
+    HOME_PATH_PATTERN.lastIndex = 0;
+    const homeMatch = identifier.match(HOME_PATH_PATTERN);
+    if (homeMatch === null) {
       continue;
     }
-    selected.push(candidate);
-    cursor = candidate.end;
+    const segment = homeMatch[0];
+    if (segment.toLowerCase() === identifier.toLowerCase().slice(0, segment.length)) {
+      const replaced = replaceAndCountHomePathSegment(out, identifier, segment);
+      if (replaced.count > 0) {
+        out = replaced.text;
+        homePathIdHitCount++;
+      }
+    }
   }
-  return selected;
+  return { redacted: out, homePathIdHitCount };
 }
 
-function buildRedacted(text: string, selected: readonly CandidateSpan[]): string {
-  let out = "";
-  let previousEnd = 0;
-  for (const span of selected) {
-    out += text.slice(previousEnd, span.start);
-    out += span.rule.replacement;
-    previousEnd = span.end;
+function replaceAndCountHomePathSegment(
+  text: string,
+  identifier: string,
+  homeSegment: string,
+): { text: string; count: number } {
+  const identifierLower = identifier.toLowerCase();
+  const textLower = text.toLowerCase();
+  const idx = textLower.indexOf(homeSegment.toLowerCase());
+  if (idx === -1) {
+    return { text, count: 0 };
   }
-  return out + text.slice(previousEnd);
-}
-
-function countSelectedSpans(selected: readonly CandidateSpan[]): ValueRedactionHit[] {
-  const counts = new Map<string, number>();
-  for (const span of selected) {
-    counts.set(span.rule.id, (counts.get(span.rule.id) ?? 0) + 1);
+  const endOfSegment = idx + homeSegment.length;
+  let endOfIdentifier = text.length;
+  for (let i = endOfSegment; i < text.length; i++) {
+    if (identifierLower[i] === textLower[i]) {
+      endOfIdentifier = i + 1;
+    } else {
+      break;
+    }
   }
-  return [...counts.entries()].map(([rule_id, count]) => ({ rule_id, count }));
-}
-
-// Sequential per-rule passes (the base ValuePatternRedactor walk) let a
-// built-in claim the start of a longer listed identifier; this merges every
-// rule's matches and keeps the longest span at each position instead.
-class LongestMatchRedactor extends ValuePatternRedactor {
-  constructor(private readonly lessonRules: readonly LessonRule[]) {
-    super(lessonRules);
+  if (endOfIdentifier <= endOfSegment) {
+    return { text, count: 0 };
   }
-
-  public override redactString(text: string): RedactStringResult {
-    const selected = selectSpans(collectCandidateSpans(text, this.lessonRules));
-    return { redacted: buildRedacted(text, selected), hits: countSelectedSpans(selected) };
-  }
+  return {
+    text: text.slice(0, idx) + "[REDACTED:production_identifier]" + text.slice(endOfIdentifier),
+    count: 1,
+  };
 }
 
 export function redactLessonDraft<T extends LessonTextFields>(
   draft: T,
   opts?: LessonRedactionOptions,
 ): { draft: T; redactions: LessonRedactionHit[] } {
-  const redactor = new LongestMatchRedactor(buildRules(opts));
+  const identifiers = opts?.production_identifiers ?? [];
+  const redactor = new ValuePatternRedactor(buildRules(opts));
   const hitCounts = new Map<string, number>();
 
   const redact = (text: string): string => {
-    const result = redactor.redactString(text);
+    const emailPreRedacted = redactEmailsInIdentifiers(text, identifiers);
+    const homePathPreRedacted = redactHomePathIdentifiers(emailPreRedacted.redacted, identifiers);
+    const result = redactor.redactString(homePathPreRedacted.redacted);
+    if (emailPreRedacted.emailHitCount > 0) {
+      hitCounts.set("email", (hitCounts.get("email") ?? 0) + emailPreRedacted.emailHitCount);
+    }
+    if (homePathPreRedacted.homePathIdHitCount > 0) {
+      hitCounts.set(
+        "production_identifier",
+        (hitCounts.get("production_identifier") ?? 0) + homePathPreRedacted.homePathIdHitCount,
+      );
+    }
     for (const hit of result.hits) {
       hitCounts.set(hit.rule_id, (hitCounts.get(hit.rule_id) ?? 0) + hit.count);
     }
