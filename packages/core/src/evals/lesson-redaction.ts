@@ -64,35 +64,28 @@ function buildIdentifierPattern(identifiers: readonly string[]): RegExp | null {
   return new RegExp(alternation, "gi");
 }
 
-// An email-shaped match containing a listed identifier must redact whole as
-// email; run before production_identifier so it cannot split the address into
-// '[REDACTED:production_identifier]@corp.io'.
-function buildEmailIdentifierRule(identifiers: readonly string[]): ValuePatternRule | null {
-  const cleaned = identifiers
-    .map((identifier) => identifier.trim().toLowerCase())
-    .filter((identifier) => identifier.length > 0);
-  if (cleaned.length === 0) {
-    return null;
+// When a listed identifier was an email's local part, production_identifier
+// replaces just that local part and the email rule can no longer match, leaving
+// '[REDACTED:production_identifier]@<domain>' with the domain in clear text.
+// This post-pass collapses the placeholder plus the leftover domain fragment
+// into a single email placeholder. It is monotone: it only ever turns clear text
+// into a placeholder, never the reverse.
+const LEFTOVER_IDENTIFIER_EMAIL =
+  /\[REDACTED:production_identifier\]@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
+
+function collapseIdentifierEmailPlaceholder(text: string): { redacted: string; count: number } {
+  const leftovers = text.match(LEFTOVER_IDENTIFIER_EMAIL);
+  if (leftovers === null || leftovers.length === 0) {
+    return { redacted: text, count: 0 };
   }
   return {
-    id: "email",
-    pattern: EMAIL_PATTERN,
-    replacement: (match): string => {
-      const lowered = match.toLowerCase();
-      const containsIdentifier = cleaned.some(
-        (identifier) => lowered.includes(identifier) && lowered !== identifier,
-      );
-      return containsIdentifier ? "[REDACTED:email]" : match;
-    },
+    redacted: text.replaceAll(LEFTOVER_IDENTIFIER_EMAIL, "[REDACTED:email]"),
+    count: leftovers.length,
   };
 }
 
 function buildRules(options?: LessonRedactionOptions): ValuePatternRule[] {
   const rules: ValuePatternRule[] = [];
-  const emailIdentifierRule = buildEmailIdentifierRule(options?.production_identifiers ?? []);
-  if (emailIdentifierRule !== null) {
-    rules.push(emailIdentifierRule);
-  }
   const identifierPattern = buildIdentifierPattern(options?.production_identifiers ?? []);
   if (identifierPattern !== null) {
     rules.push({
@@ -119,7 +112,11 @@ export function redactLessonDraft<T extends LessonTextFields>(
     for (const hit of result.hits) {
       hitCounts.set(hit.rule_id, (hitCounts.get(hit.rule_id) ?? 0) + hit.count);
     }
-    return result.redacted;
+    const collapsed = collapseIdentifierEmailPlaceholder(result.redacted);
+    if (collapsed.count > 0) {
+      hitCounts.set("email", (hitCounts.get("email") ?? 0) + collapsed.count);
+    }
+    return collapsed.redacted;
   };
 
   const redactedDraft = {

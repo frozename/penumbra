@@ -56,6 +56,61 @@ function draft(overrides: Partial<LessonDraft> = {}): LessonDraft {
   };
 }
 
+const PLACEHOLDER_TOKEN = /\[REDACTED:[a-z0-9_]+\]/g;
+
+function clearTextLength(text: string): number {
+  return text.replaceAll(PLACEHOLDER_TOKEN, "").replaceAll("~", "").length;
+}
+
+// Each `main` value is origin/main's redaction of `text`; the fixed engine must
+// reproduce it exactly (and so leak no more clear text than main).
+const MAIN_PARITY_CASES: {
+  text: string;
+  identifiers: string[];
+  main: string;
+}[] = [
+  {
+    text: "alerts@acme.io:8443 paged",
+    identifiers: ["alerts@acme.io:8443", "acme"],
+    main: "[REDACTED:production_identifier] paged",
+  },
+  {
+    text: "acme prod.ops@corp.com",
+    identifiers: ["acme prod", "corp"],
+    main: "[REDACTED:production_identifier].ops@[REDACTED:production_identifier].com",
+  },
+  {
+    text: "prod ops@acme.io x",
+    identifiers: ["prod ops@acme.io", "acme"],
+    main: "[REDACTED:production_identifier] x",
+  },
+  {
+    text: "acme10.0.0.1",
+    identifiers: ["acme"],
+    main: "[REDACTED:production_identifier][REDACTED:ipv4]",
+  },
+  {
+    text: "10.0.0.1acme",
+    identifiers: ["acme"],
+    main: "[REDACTED:ipv4][REDACTED:production_identifier]",
+  },
+  {
+    text: "rack 10.20.30.40",
+    identifiers: ["rack 1"],
+    main: "[REDACTED:production_identifier][REDACTED:ipv4]",
+  },
+  {
+    text: "/Users/alice prod-cluster",
+    identifiers: ["alice prod-cluster"],
+    main: "~",
+  },
+  {
+    text: "v 8.8.8.8",
+    identifiers: [],
+    main: "v [REDACTED:ipv4]",
+  },
+];
+
 test("redact: production identifiers are replaced in every text field", () => {
   expect(typeof mod?.["redactLessonDraft"]).toBe("function");
   if (!mod) {
@@ -209,7 +264,7 @@ test("redact: redactions are sorted, omit zero-hit rules, and sum across fields"
   ]);
 });
 
-test("redact: an email is fully redacted even when its domain is a listed identifier", () => {
+test("redact: a listed identifier that is an email domain matches origin/main (local part stays)", () => {
   expect(typeof mod?.["redactLessonDraft"]).toBe("function");
   if (!mod) {
     return;
@@ -217,11 +272,14 @@ test("redact: an email is fully redacted even when its domain is a listed identi
   const res = redactLessonDraft()(draft({ root_cause: "page ops@acme.example" }), {
     production_identifiers: ["acme.example"],
   });
-  expect(res.draft.root_cause).toBe("page [REDACTED:email]");
-  expect(res.redactions).toEqual([{ rule_id: "email", count: 1 }]);
+  // Parity with origin/main's sequential engine: production_identifier claims the
+  // domain, the email rule can no longer match, and the post-pass only collapses a
+  // placeholder that precedes a domain, so main's 'ops@' leftover stays.
+  expect(res.draft.root_cause).toBe("page ops@[REDACTED:production_identifier]");
+  expect(res.redactions).toEqual([{ rule_id: "production_identifier", count: 1 }]);
 });
 
-test("redact: an email is fully redacted even when its local part is a listed identifier", () => {
+test("redact: a listed identifier that is an email local part collapses to one email placeholder", () => {
   expect(typeof mod?.["redactLessonDraft"]).toBe("function");
   if (!mod) {
     return;
@@ -229,8 +287,13 @@ test("redact: an email is fully redacted even when its local part is a listed id
   const res = redactLessonDraft()(draft({ root_cause: "mail alex@acme.example now" }), {
     production_identifiers: ["alex"],
   });
+  // The identifier pass claims 'alex', then the post-pass collapses the leftover
+  // '@acme.example' into an email placeholder, so both rules are recorded once.
   expect(res.draft.root_cause).toBe("mail [REDACTED:email] now");
-  expect(res.redactions).toEqual([{ rule_id: "email", count: 1 }]);
+  expect(res.redactions).toEqual([
+    { rule_id: "email", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
 });
 
 test("redact: a home path whose user segment is a listed identifier counts once as home_path", () => {
@@ -630,7 +693,7 @@ test("redact: identifiers next to an email or home path redact like the sequenti
   ]);
 });
 
-test("redact: an email containing a listed identifier redacts whole as email", () => {
+test("redact: an identifier that is an email local part redacts the whole address via the post-pass", () => {
   expect(typeof mod?.["redactLessonDraft"]).toBe("function");
   if (!mod) {
     return;
@@ -639,5 +702,52 @@ test("redact: an email containing a listed identifier redacts whole as email", (
     production_identifiers: ["acmebot"],
   });
   expect(res.draft.root_cause).toBe("page [REDACTED:email]");
-  expect(res.redactions).toEqual([{ rule_id: "email", count: 1 }]);
+  expect(res.redactions).toEqual([
+    { rule_id: "email", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
+});
+
+test("redact: reviewer email-overlap repros match origin/main exactly with no extra clear text", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const redact = redactLessonDraft();
+  for (const testCase of MAIN_PARITY_CASES) {
+    const res = redact(draft({ root_cause: testCase.text }), {
+      production_identifiers: testCase.identifiers,
+    });
+    expect(res.draft.root_cause).toBe(testCase.main);
+    expect(clearTextLength(res.draft.root_cause)).toBeLessThanOrEqual(
+      clearTextLength(testCase.main),
+    );
+  }
+});
+
+test("redact: an email exactly equal to a listed identifier stays a production_identifier", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "contact ops@acme.example today" }), {
+    production_identifiers: ["ops@acme.example"],
+  });
+  expect(res.draft.root_cause).toBe("contact [REDACTED:production_identifier] today");
+  expect(res.redactions).toEqual([{ rule_id: "production_identifier", count: 1 }]);
+});
+
+test("redact: the post-pass only turns clear text into placeholders, never the reverse", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  // origin/main leaves the domain of an identifier-local-part email in clear text;
+  // the post-pass must collapse it and never widen the clear-text region.
+  const mainLeftover = "page [REDACTED:production_identifier]@corp.io";
+  const res = redactLessonDraft()(draft({ root_cause: "page ACMEBOT@corp.io" }), {
+    production_identifiers: ["acmebot"],
+  });
+  expect(res.draft.root_cause).toBe("page [REDACTED:email]");
+  expect(clearTextLength(res.draft.root_cause)).toBeLessThanOrEqual(clearTextLength(mainLeftover));
 });
