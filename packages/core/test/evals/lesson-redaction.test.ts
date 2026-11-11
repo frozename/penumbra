@@ -928,7 +928,7 @@ test("redact: long tokens do not cause quadratic slowdown", () => {
   }
   const redact = redactLessonDraft();
   const longToken = "a".repeat(100000);
-  const longTokenWithOneId = "a".repeat(50000) + ".alice@corp.io";
+  const longTokenWithOneId = "a".repeat(100000) + ".alice@corp.io";
   const start = performance.now();
   redact(draft({ root_cause: longToken }), { production_identifiers: ["alice"] });
   const elapsed1 = performance.now() - start;
@@ -937,4 +937,22 @@ test("redact: long tokens do not cause quadratic slowdown", () => {
   redact(draft({ root_cause: longTokenWithOneId }), { production_identifiers: ["alice"] });
   const elapsed2 = performance.now() - start2;
   expect(elapsed2).toBeLessThan(200);
+});
+
+test("redact: long runs before a placeholder that cannot complete an email stay linear", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const redact = redactLessonDraft();
+  // Each input carries a production_identifier placeholder, so the email post-pass runs,
+  // but no '@' follows: an unbounded leading run would rescan the whole run per start position.
+  const inputs = ["a".repeat(100000) + "-alice", "alice " + "a".repeat(100000) + "alice"];
+  for (const input of inputs) {
+    const start = performance.now();
+    const result = redact(draft({ root_cause: input }), { production_identifiers: ["alice"] });
+    const elapsed = performance.now() - start;
+    expect(result.draft.root_cause).toContain("[REDACTED:production_identifier]");
+    expect(elapsed).toBeLessThan(200);
+  }
 });

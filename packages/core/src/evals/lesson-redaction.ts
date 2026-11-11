@@ -74,8 +74,15 @@ function buildIdentifierPattern(identifiers: readonly string[]): RegExp | null {
 // Three shapes are handled:
 //   1) Local-part suffix: the identifier appears as a suffix inside the email's
 //      local part (e.g. 'bob-[REDACTED:production_identifier]@corp.io').
-//      The pattern absorbs any run of email local-part characters directly before
-//      the placeholder: /[A-Za-z0-9._%+-]*\[REDACTED:production_identifier\]@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g
+//      The pattern absorbs a run of up to 64 email local-part characters directly
+//      before the placeholder: /[A-Za-z0-9._%+-]{0,64}\[REDACTED:production_identifier\]@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g
+//      The leading run is bounded ({0,64} here, {1,64} for the bare local part in
+//      the domain pattern) so the regexes stay linear: an unbounded run before a
+//      required literal rescans the whole run from every start position, which is
+//      quadratic on a long token with no '@'. 64 is the RFC 5321 local-part limit.
+//      A local part longer than 64 characters still leaks its leading characters
+//      (only the last 64 are absorbed), which is still monotone versus not
+//      collapsing at all.
 //      The character class excludes ']' and ':', so the run can never reach into
 //      a preceding placeholder.
 //   2) Whole domain: the identifier is the entire domain
@@ -84,12 +91,14 @@ function buildIdentifierPattern(identifiers: readonly string[]): RegExp | null {
 //      (for example followed by '.com' or '-2').
 //      A sentence-final '.' still collapses.
 //   3) Bare 'user@<placeholder>' with no visible TLD also collapses, which is
-//      acceptable because it is strictly more redacted.
+//      acceptable because it is strictly more redacted. A placeholder local part
+//      ('<placeholder>@<placeholder>') is covered by the first alternative of the
+//      domain pattern.
 
 const LEFTOVER_IDENTIFIER_EMAIL =
   /[A-Za-z0-9._%+-]{0,64}\[REDACTED:production_identifier\]@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
 const LEFTOVER_IDENTIFIER_DOMAIN =
-  /(?:[A-Za-z0-9._%+-]{0,64}\[REDACTED:production_identifier\][A-Za-z0-9._%+-]*|[A-Za-z0-9._%+-]{1,64})@\[REDACTED:production_identifier\](?![A-Za-z0-9-]|\.[A-Za-z0-9])|\[REDACTED:production_identifier\]@\[REDACTED:production_identifier\](?![A-Za-z0-9-]|\.[A-Za-z0-9])/g;
+  /(?:[A-Za-z0-9._%+-]{0,64}\[REDACTED:production_identifier\][A-Za-z0-9._%+-]*|[A-Za-z0-9._%+-]{1,64})@\[REDACTED:production_identifier\](?![A-Za-z0-9-]|\.[A-Za-z0-9])/g;
 
 function collapseIdentifierEmailPlaceholder(text: string): { redacted: string; count: number } {
   if (!text.includes("[REDACTED:production_identifier]")) {
