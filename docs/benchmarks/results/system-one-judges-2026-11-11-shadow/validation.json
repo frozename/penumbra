@@ -43,5 +43,7 @@
     "production-connected shadow deployment",
     "corrected full supervisor service run",
     "additional candidate inference after health guard failed"
-  ]
+  ],
+  "diffCheck": "Full branch diff checked after text-log normalization",
+  "artifactIntegrity": "Source pins, private review packet hash and tracked log hashes verified; no raw review text found in public artifact snapshots"
 }
