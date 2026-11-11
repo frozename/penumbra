@@ -46,6 +46,7 @@ import {
   type SerializedJudgeVote,
   StubJudgePool,
 } from "./judge-pool.js";
+import { p4MemoryCandidatesSql } from "./p4-memory-candidates.js";
 import {
   getRewriteForMemory,
   pruneExpiredRewriteCache,
@@ -302,7 +303,6 @@ export async function runDreamCycle(
   }
 }
 
-// eslint-disable-next-line max-lines-per-function -- Preserve cycle context construction while grandfathering its pre-existing size.
 function buildCycleCtx(
   db: Database,
   cycleId: string,
@@ -361,52 +361,7 @@ function buildCycleCtx(
   const p1QueuedPromoteExistsStmt = db.prepare(
     `SELECT 1 FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' AND status='queued' AND target_ids=? LIMIT 1`,
   );
-  const p4MemoryByProjectStmt = hasT2ProjectId
-    ? db.prepare(
-        `SELECT
-           memory_id,
-           title,
-           SUBSTR(body, 1, 200) AS body,
-           updated_at,
-           (
-             SELECT MAX(COALESCE(da.decided_at, ?2))
-             FROM dream_actions da
-             WHERE da.phase='P4'
-               AND da.action_type='research_query'
-               AND json_extract(da.payload_json, '$.source_memory_id') = t2_memories.memory_id
-               AND COALESCE(da.decided_at, ?2) > ?3
-           ) AS last_researched_at
-         FROM t2_memories
-         WHERE project_id = ?1
-           AND kind NOT IN ('brief')
-           AND retired_at IS NULL
-           AND title IS NOT NULL
-           AND title != ''
-         ORDER BY last_researched_at IS NOT NULL ASC, last_researched_at ASC, created_at DESC
-         LIMIT 2`,
-      )
-    : db.prepare(
-        `SELECT
-           memory_id,
-           title,
-           SUBSTR(body, 1, 200) AS body,
-           updated_at,
-           (
-             SELECT MAX(COALESCE(da.decided_at, ?1))
-             FROM dream_actions da
-             WHERE da.phase='P4'
-               AND da.action_type='research_query'
-               AND json_extract(da.payload_json, '$.source_memory_id') = t2_memories.memory_id
-               AND COALESCE(da.decided_at, ?1) > ?2
-           ) AS last_researched_at
-         FROM t2_memories
-         WHERE kind NOT IN ('brief')
-           AND retired_at IS NULL
-           AND title IS NOT NULL
-           AND title != ''
-         ORDER BY last_researched_at IS NOT NULL ASC, last_researched_at ASC, created_at DESC
-         LIMIT 2`,
-      );
+  const p4MemoryByProjectStmt = db.prepare(p4MemoryCandidatesSql(hasT2ProjectId));
 
   const dispatchEventLog = deps.dispatchEventLog;
   const emitDreamEvent = (
