@@ -380,3 +380,85 @@ test("redact: a --version flag does not suppress ipv4 redaction", () => {
   expect(res.draft.root_cause).toBe("--version=[REDACTED:ipv4]");
   expect(res.redactions).toEqual([{ rule_id: "ipv4", count: 1 }]);
 });
+
+test("redact: newline/tab after version does not suppress ipv4 redaction", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(
+    draft({
+      failure_signature: "version\n10.0.0.12",
+      root_cause: "version\t10.0.0.11",
+    }),
+  );
+  expect(res.draft.failure_signature).toBe("version\n[REDACTED:ipv4]");
+  expect(res.draft.root_cause).toBe("version\t[REDACTED:ipv4]");
+  expect(res.redactions).toEqual([{ rule_id: "ipv4", count: 2 }]);
+});
+
+test("redact: 'see v', 'V:', '/v' with space followed by IPv4 is redacted", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(
+    draft({
+      failure_signature: "see v 10.0.0.1",
+      root_cause: "V: 172.16.0.9",
+    }),
+  );
+  expect(res.draft.failure_signature).toBe("see v [REDACTED:ipv4]");
+  expect(res.draft.root_cause).toBe("V: [REDACTED:ipv4]");
+  expect(res.redactions).toEqual([{ rule_id: "ipv4", count: 2 }]);
+});
+
+test("redact: '/v 10.0.0.1' and 'version=10.1.2.3' are redacted", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(
+    draft({
+      failure_signature: "/v 10.0.0.1",
+      root_cause: "version=10.1.2.3",
+    }),
+  );
+  expect(res.draft.failure_signature).toBe("/v [REDACTED:ipv4]");
+  expect(res.draft.root_cause).toBe("version=[REDACTED:ipv4]");
+  expect(res.redactions).toEqual([{ rule_id: "ipv4", count: 2 }]);
+});
+
+test("redact: identifier containing a built-in match is redacted whole", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(
+    draft({
+      failure_signature: "/Users/alex/acme-secret-repo",
+      root_cause: "db.acme-prod.10.0.0.5.nip.io",
+    }),
+    { production_identifiers: ["acme-secret-repo", "db.acme-prod.10.0.0.5.nip.io"] },
+  );
+  expect(res.draft.failure_signature).toBe("~/[REDACTED:production_identifier]");
+  expect(res.draft.root_cause).toBe("[REDACTED:production_identifier]");
+  expect(res.redactions).toEqual([{ rule_id: "production_identifier", count: 2 }]);
+});
+
+test("redact: identifier containing an IPv4 and email is redacted whole", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(
+    draft({
+      failure_signature: "10.0.0.5:6443",
+      root_cause: "admin@10.0.0.5",
+    }),
+    { production_identifiers: ["10.0.0.5:6443", "admin@10.0.0.5"] },
+  );
+  expect(res.draft.failure_signature).toBe("[REDACTED:production_identifier]");
+  expect(res.draft.root_cause).toBe("[REDACTED:production_identifier]");
+  expect(res.redactions).toEqual([{ rule_id: "production_identifier", count: 2 }]);
+});

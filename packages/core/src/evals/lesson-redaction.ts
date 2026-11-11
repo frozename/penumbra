@@ -29,7 +29,7 @@ const HOME_PATH_PATTERN = /\/(?:Users|home)\/[^/\s]+/g;
 const EMAIL_PATTERN = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
 const IPV4_OCTET = "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)";
 const IPV4_PATTERN = new RegExp(
-  `(?<!(?<![\\w-])(?:v|version)[\\s:=]*)\\b${IPV4_OCTET}\\.${IPV4_OCTET}\\.${IPV4_OCTET}\\.${IPV4_OCTET}\\b`,
+  `(?<!(?<![\\w-])(?:v|version)[ :|=]?)\\b${IPV4_OCTET}\\.${IPV4_OCTET}\\.${IPV4_OCTET}\\.${IPV4_OCTET}\\b`,
   "gi",
 );
 
@@ -68,12 +68,10 @@ function buildIdentifierPattern(identifiers: readonly string[]): RegExp | null {
 
 function buildRules(options?: LessonRedactionOptions): ValuePatternRule[] {
   const rules: ValuePatternRule[] = [];
-  rules.push({ id: "email", pattern: EMAIL_PATTERN, replacement: "[REDACTED:email]" });
-  rules.push({ id: "home_path", pattern: HOME_PATH_PATTERN, replacement: "~" });
-  rules.push({ id: "ipv4", pattern: IPV4_PATTERN, replacement: "[REDACTED:ipv4]" });
   const identifierPattern = buildIdentifierPattern(options?.production_identifiers ?? []);
+  const identifierRules: ValuePatternRule[] = [];
   if (identifierPattern !== null) {
-    rules.push({
+    identifierRules.push({
       id: "production_identifier",
       pattern: identifierPattern,
       replacement: (match: string) =>
@@ -81,6 +79,14 @@ function buildRules(options?: LessonRedactionOptions): ValuePatternRule[] {
           ? match
           : "[REDACTED:production_identifier]",
     });
+  }
+  const builtInRules: ValuePatternRule[] = [];
+  builtInRules.push({ id: "email", pattern: EMAIL_PATTERN, replacement: "[REDACTED:email]" });
+  builtInRules.push({ id: "home_path", pattern: HOME_PATH_PATTERN, replacement: "~" });
+  builtInRules.push({ id: "ipv4", pattern: IPV4_PATTERN, replacement: "[REDACTED:ipv4]" });
+  const orderedRules = [...identifierRules, ...builtInRules];
+  for (const rule of orderedRules) {
+    rules.push(rule);
   }
   return rules;
 }
