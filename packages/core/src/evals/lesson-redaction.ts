@@ -66,7 +66,6 @@ function buildIdentifierPattern(identifiers: readonly string[]): RegExp | null {
 
 function buildRules(options?: LessonRedactionOptions): ValuePatternRule[] {
   const rules: ValuePatternRule[] = [];
-  rules.push({ id: "home_path", pattern: HOME_PATH_PATTERN, replacement: "~" });
   const identifierPattern = buildIdentifierPattern(options?.production_identifiers ?? []);
   if (identifierPattern !== null) {
     rules.push({
@@ -75,25 +74,26 @@ function buildRules(options?: LessonRedactionOptions): ValuePatternRule[] {
       replacement: "[REDACTED:production_identifier]",
     });
   }
+  rules.push({ id: "home_path", pattern: HOME_PATH_PATTERN, replacement: "~" });
   rules.push({ id: "email", pattern: EMAIL_PATTERN, replacement: "[REDACTED:email]" });
   rules.push({ id: "ipv4", pattern: IPV4_PATTERN, replacement: "[REDACTED:ipv4]" });
   return rules;
 }
 
-function redactEmailsInIdentifiers(
+function redactEmailsContainingIdentifiers(
   text: string,
   identifiers: readonly string[],
-): { redacted: string; emailHitCount: number } {
+): { text: string; emailCount: number } {
   const matches = text.match(EMAIL_PATTERN);
   if (!matches || matches.length === 0) {
-    return { redacted: text, emailHitCount: 0 };
+    return { text, emailCount: 0 };
   }
   const cleanedIdentifiers = identifiers.map((id) => id.trim()).filter((id) => id.length > 0);
   if (cleanedIdentifiers.length === 0) {
-    return { redacted: text, emailHitCount: 0 };
+    return { text, emailCount: 0 };
   }
   let out = text;
-  let emailHitCount = 0;
+  let emailCount = 0;
   for (const emailMatch of matches) {
     EMAIL_PATTERN.lastIndex = 0;
     for (const identifier of cleanedIdentifiers) {
@@ -101,69 +101,12 @@ function redactEmailsInIdentifiers(
       const lowerId = identifier.toLowerCase();
       if (lowerEmail.includes(lowerId) && lowerEmail !== lowerId) {
         out = out.replace(emailMatch, "[REDACTED:email]");
-        emailHitCount++;
+        emailCount++;
         break;
       }
     }
   }
-  return { redacted: out, emailHitCount };
-}
-
-function redactHomePathIdentifiers(
-  text: string,
-  identifiers: readonly string[],
-): { redacted: string; homePathIdHitCount: number } {
-  const cleanedIdentifiers = identifiers.map((id) => id.trim()).filter((id) => id.length > 0);
-  if (cleanedIdentifiers.length === 0) {
-    return { redacted: text, homePathIdHitCount: 0 };
-  }
-  let out = text;
-  let homePathIdHitCount = 0;
-  for (const identifier of cleanedIdentifiers) {
-    HOME_PATH_PATTERN.lastIndex = 0;
-    const homeMatch = identifier.match(HOME_PATH_PATTERN);
-    if (homeMatch === null) {
-      continue;
-    }
-    const segment = homeMatch[0];
-    if (segment.toLowerCase() === identifier.toLowerCase().slice(0, segment.length)) {
-      const replaced = replaceAndCountHomePathSegment(out, identifier, segment);
-      if (replaced.count > 0) {
-        out = replaced.text;
-        homePathIdHitCount++;
-      }
-    }
-  }
-  return { redacted: out, homePathIdHitCount };
-}
-
-function replaceAndCountHomePathSegment(
-  text: string,
-  identifier: string,
-  homeSegment: string,
-): { text: string; count: number } {
-  const identifierLower = identifier.toLowerCase();
-  const textLower = text.toLowerCase();
-  const idx = textLower.indexOf(homeSegment.toLowerCase());
-  if (idx === -1) {
-    return { text, count: 0 };
-  }
-  const endOfSegment = idx + homeSegment.length;
-  let endOfIdentifier = text.length;
-  for (let i = endOfSegment; i < text.length; i++) {
-    if (identifierLower[i] === textLower[i]) {
-      endOfIdentifier = i + 1;
-    } else {
-      break;
-    }
-  }
-  if (endOfIdentifier <= endOfSegment) {
-    return { text, count: 0 };
-  }
-  return {
-    text: text.slice(0, idx) + "[REDACTED:production_identifier]" + text.slice(endOfIdentifier),
-    count: 1,
-  };
+  return { text: out, emailCount };
 }
 
 export function redactLessonDraft<T extends LessonTextFields>(
@@ -175,18 +118,10 @@ export function redactLessonDraft<T extends LessonTextFields>(
   const hitCounts = new Map<string, number>();
 
   const redact = (text: string): string => {
-    const emailPreRedacted = redactEmailsInIdentifiers(text, identifiers);
-    const homePathPreRedacted = redactHomePathIdentifiers(emailPreRedacted.redacted, identifiers);
-    const result = redactor.redactString(homePathPreRedacted.redacted);
-    if (emailPreRedacted.emailHitCount > 0) {
-      hitCounts.set("email", (hitCounts.get("email") ?? 0) + emailPreRedacted.emailHitCount);
-    }
-    if (homePathPreRedacted.homePathIdHitCount > 0) {
-      hitCounts.set(
-        "production_identifier",
-        (hitCounts.get("production_identifier") ?? 0) + homePathPreRedacted.homePathIdHitCount,
-      );
-    }
+    const preRedacted = redactEmailsContainingIdentifiers(text, identifiers);
+    hitCounts.set("email", (hitCounts.get("email") ?? 0) + preRedacted.emailCount);
+    text = preRedacted.text;
+    const result = redactor.redactString(text);
     for (const hit of result.hits) {
       hitCounts.set(hit.rule_id, (hitCounts.get(hit.rule_id) ?? 0) + hit.count);
     }

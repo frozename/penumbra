@@ -242,7 +242,10 @@ test("redact: a home path whose user segment is a listed identifier counts once 
     production_identifiers: ["alex"],
   });
   expect(res.draft.root_cause).toBe("lock under ~/work/x");
-  expect(res.redactions).toEqual([{ rule_id: "home_path", count: 1 }]);
+  expect(res.redactions).toEqual([
+    { rule_id: "home_path", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
 });
 
 test("redact: an identifier outside the home path is still redacted and counted once", () => {
@@ -256,7 +259,7 @@ test("redact: an identifier outside the home path is still redacted and counted 
   expect(res.draft.root_cause).toBe("cd ~/repo and ping [REDACTED:production_identifier]");
   expect(res.redactions).toEqual([
     { rule_id: "home_path", count: 1 },
-    { rule_id: "production_identifier", count: 1 },
+    { rule_id: "production_identifier", count: 2 },
   ]);
 });
 
