@@ -64,8 +64,35 @@ function buildIdentifierPattern(identifiers: readonly string[]): RegExp | null {
   return new RegExp(alternation, "gi");
 }
 
+// An email-shaped match containing a listed identifier must redact whole as
+// email; run before production_identifier so it cannot split the address into
+// '[REDACTED:production_identifier]@corp.io'.
+function buildEmailIdentifierRule(identifiers: readonly string[]): ValuePatternRule | null {
+  const cleaned = identifiers
+    .map((identifier) => identifier.trim().toLowerCase())
+    .filter((identifier) => identifier.length > 0);
+  if (cleaned.length === 0) {
+    return null;
+  }
+  return {
+    id: "email",
+    pattern: EMAIL_PATTERN,
+    replacement: (match): string => {
+      const lowered = match.toLowerCase();
+      const containsIdentifier = cleaned.some(
+        (identifier) => lowered.includes(identifier) && lowered !== identifier,
+      );
+      return containsIdentifier ? "[REDACTED:email]" : match;
+    },
+  };
+}
+
 function buildRules(options?: LessonRedactionOptions): ValuePatternRule[] {
   const rules: ValuePatternRule[] = [];
+  const emailIdentifierRule = buildEmailIdentifierRule(options?.production_identifiers ?? []);
+  if (emailIdentifierRule !== null) {
+    rules.push(emailIdentifierRule);
+  }
   const identifierPattern = buildIdentifierPattern(options?.production_identifiers ?? []);
   if (identifierPattern !== null) {
     rules.push({
@@ -80,47 +107,14 @@ function buildRules(options?: LessonRedactionOptions): ValuePatternRule[] {
   return rules;
 }
 
-function redactEmailsContainingIdentifiers(
-  text: string,
-  identifiers: readonly string[],
-): { text: string; emailCount: number } {
-  const matches = text.match(EMAIL_PATTERN);
-  if (!matches || matches.length === 0) {
-    return { text, emailCount: 0 };
-  }
-  const cleanedIdentifiers = identifiers.map((id) => id.trim()).filter((id) => id.length > 0);
-  if (cleanedIdentifiers.length === 0) {
-    return { text, emailCount: 0 };
-  }
-  let out = text;
-  let emailCount = 0;
-  for (const emailMatch of matches) {
-    EMAIL_PATTERN.lastIndex = 0;
-    for (const identifier of cleanedIdentifiers) {
-      const lowerEmail = emailMatch.toLowerCase();
-      const lowerId = identifier.toLowerCase();
-      if (lowerEmail.includes(lowerId) && lowerEmail !== lowerId) {
-        out = out.replace(emailMatch, "[REDACTED:email]");
-        emailCount++;
-        break;
-      }
-    }
-  }
-  return { text: out, emailCount };
-}
-
 export function redactLessonDraft<T extends LessonTextFields>(
   draft: T,
   opts?: LessonRedactionOptions,
 ): { draft: T; redactions: LessonRedactionHit[] } {
-  const identifiers = opts?.production_identifiers ?? [];
   const redactor = new ValuePatternRedactor(buildRules(opts));
   const hitCounts = new Map<string, number>();
 
   const redact = (text: string): string => {
-    const preRedacted = redactEmailsContainingIdentifiers(text, identifiers);
-    hitCounts.set("email", (hitCounts.get("email") ?? 0) + preRedacted.emailCount);
-    text = preRedacted.text;
     const result = redactor.redactString(text);
     for (const hit of result.hits) {
       hitCounts.set(hit.rule_id, (hitCounts.get(hit.rule_id) ?? 0) + hit.count);

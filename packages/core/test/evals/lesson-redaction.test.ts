@@ -559,3 +559,85 @@ test("redact: identifier containing an IPv4 and email is redacted whole", () => 
   expect(res.draft.root_cause).toBe("[REDACTED:production_identifier]");
   expect(res.redactions).toEqual([{ rule_id: "production_identifier", count: 2 }]);
 });
+
+test("redact: identifiers adjacent to ipv4 addresses redact both, like the sequential engine", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const redact = redactLessonDraft();
+
+  let res = redact(draft({ root_cause: "acme10.0.0.1" }), {
+    production_identifiers: ["acme"],
+  });
+  expect(res.draft.root_cause).toBe("[REDACTED:production_identifier][REDACTED:ipv4]");
+  expect(res.redactions).toEqual([
+    { rule_id: "ipv4", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
+
+  res = redact(draft({ root_cause: "10.0.0.1acme" }), {
+    production_identifiers: ["acme"],
+  });
+  expect(res.draft.root_cause).toBe("[REDACTED:ipv4][REDACTED:production_identifier]");
+  expect(res.redactions).toEqual([
+    { rule_id: "ipv4", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
+
+  res = redact(draft({ root_cause: "rack 10.20.30.40" }), {
+    production_identifiers: ["rack 1"],
+  });
+  expect(res.draft.root_cause).toBe("[REDACTED:production_identifier][REDACTED:ipv4]");
+  expect(res.redactions).toEqual([
+    { rule_id: "ipv4", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
+
+  res = redact(draft({ root_cause: "10.0.0.1 rack-a" }), {
+    production_identifiers: ["1 rack-a"],
+  });
+  expect(res.draft.root_cause).toBe("10.0.0.[REDACTED:production_identifier]");
+  expect(res.redactions).toEqual([{ rule_id: "production_identifier", count: 1 }]);
+});
+
+test("redact: identifiers next to an email or home path redact like the sequential engine", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const redact = redactLessonDraft();
+
+  let res = redact(draft({ root_cause: "acme prod.ops@corp.com" }), {
+    production_identifiers: ["acme prod"],
+  });
+  expect(res.draft.root_cause).toBe("[REDACTED:production_identifier].[REDACTED:email]");
+  expect(res.redactions).toEqual([
+    { rule_id: "email", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
+
+  res = redact(draft({ root_cause: "/Users/alice prod-cluster" }), {
+    production_identifiers: ["alice prod-cluster"],
+  });
+  // Known: the identifier pass claims 'alice prod-cluster' first, then the
+  // home_path pass collapses '/Users/<placeholder>' to '~', so the path counts
+  // once under each rule.
+  expect(res.draft.root_cause).toBe("~");
+  expect(res.redactions).toEqual([
+    { rule_id: "home_path", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
+});
+
+test("redact: an email containing a listed identifier redacts whole as email", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "page ACMEBOT@corp.io" }), {
+    production_identifiers: ["acmebot"],
+  });
+  expect(res.draft.root_cause).toBe("page [REDACTED:email]");
+  expect(res.redactions).toEqual([{ rule_id: "email", count: 1 }]);
+});
