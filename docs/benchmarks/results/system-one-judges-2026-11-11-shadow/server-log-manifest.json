@@ -1,0 +1,30 @@
+{
+  "note": "Plain-text copies of local gitignored logs; only trailing whitespace and terminal blank lines normalized. No request body or API credential is present.",
+  "files": [
+    {
+      "originalLocalName": "granite-restoration.log",
+      "trackedCopy": "granite-restoration.txt",
+      "sha256": "c45b63735cb594e2ef55abed9b7ba7653d63795c815c40fd76c7fade64762ddc"
+    },
+    {
+      "originalLocalName": "nano-server-initial.log",
+      "trackedCopy": "nano-server-initial.txt",
+      "sha256": "eead892bfeb0cc4c2f9920e8846769ca4b21044d78c9dd5323846bb3b1fbad65"
+    },
+    {
+      "originalLocalName": "observer.log",
+      "trackedCopy": "observer.txt",
+      "sha256": "77829cf6ee2f8c3d72a807c309165c6482f6e2261bacd6189fe18bf62109d63b"
+    },
+    {
+      "originalLocalName": "recovery-sampler.log",
+      "trackedCopy": "recovery-sampler.txt",
+      "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "originalLocalName": "nano-server-recovery.log",
+      "trackedCopy": "nano-server-recovery.txt",
+      "sha256": "99138fa131972958cf2e572104f9bb2b447a2ec3baba7993f47ed92f36ce30fa"
+    }
+  ]
+}

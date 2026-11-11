@@ -1,0 +1,11 @@
+0.00.040.685 I srv  llama_server: initializing ...
+0.00.040.693 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.00.040.849 W srv  server_setup: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
+0.00.042.530 I srv    load_model: loading model '/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/models/vllm-d3-nano-Q8_0.gguf'
+0.00.419.494 I cmn          init: llama threadpool init, n_threads = 2
+0.00.450.878 I srv          init: decision model type: vllm-d3
+0.00.478.060 I srv    load_model: initializing, n_slots = 1, n_ctx_slot = 8192, kv_unified = 'false'
+0.00.478.090 I srv    load_model: decision model: prompt cache disabled by default, use `--cache-ram N` to enable it
+0.00.480.843 I srv  server_run_i: model loaded
+0.00.480.848 I srv  server_on_li: listening on http://127.0.0.1:18944
+0.04.575.856 I srv    operator(): operator(): cleaning up before exit...
