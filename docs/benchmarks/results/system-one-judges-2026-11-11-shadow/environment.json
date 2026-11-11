@@ -1,0 +1,16 @@
+{
+  "capturedAt": "2026-11-11T22:20:45.840997+00:00",
+  "repositoryCommittedBase": "f06065fa6",
+  "hardware": "Mac mini M4 16 GiB, shared control plane",
+  "runtimeCommit": "2cbe0ec429b849a88664e0f62388fc92a5abd699",
+  "artifactSha256": "a4d7563d9622a4c34cc7276a3381c3e27a25bbf8d4c0f5ee2f1404fc89ce2ab9",
+  "authority": "No running daemon activation, production DB writes, promotions or vetoes from this continuation; existing Jev setting preserved",
+  "trial": "Paced read-only historical replay, 20 selected / 5 attempted / 4 answers, aborted by health guard; no independent quality labels",
+  "review": "200 local blinded cases await independent reviewers; only manifest tracked",
+  "samplingNotes": "No-judge raw samples overlap startup; analysis cuts timestamps. Post-stop model sampler rows excluded. RSS includes mapped pages; GPU metrics system-wide. CPU ps counter is a decaying average. No thermal/energy measurements. Other host activity uncontrolled. No heavy validation ran during candidate sampling.",
+  "cleanup": "Original executed supervisor preserved separately; sampler cleanup delayed Granite restoration, completed directly. Corrected rollback-first helper unit-tested; full corrected driver not rerun.",
+  "textLogs": "Trailing whitespace and terminal blank lines normalized only; measurements retained",
+  "sourceNotes": "New source was uncommitted during the exploratory continuation; final source hashes are reproduction pins, not an exact code-at-launch snapshot. The post-run supervisor correction was not executed against services.",
+  "attemptedRequestsThisRun": 5,
+  "previousPilotAttemptedRequests": 768
+}

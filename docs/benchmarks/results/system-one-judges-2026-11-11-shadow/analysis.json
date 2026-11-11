@@ -1,0 +1,124 @@
+{
+  "status": "aborted_by_health_guard",
+  "accuracyMeasured": false,
+  "run": {
+    "status": "executed",
+    "mode": "shadow",
+    "applied": false,
+    "methodology": "Paced read-only historical replay; incumbent ballots are exact-body-hash matched historical observations, not contemporaneous inference or ground truth. No labels or accuracy are inferred.",
+    "config": {
+      "baseUrl": "http://127.0.0.1:18944",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf"
+    },
+    "startedAt": "2026-11-11T22:09:14.952Z",
+    "endedAt": "2026-11-11T22:11:40.710Z",
+    "selected": 20,
+    "attempted": 5,
+    "answered": 4,
+    "interrupted": true
+  },
+  "answeredLatencyP50Ms": 279.6509584999967,
+  "answeredLatencyP95Ms": 291.14624999999864,
+  "failures": {
+    "transport": 1
+  },
+  "incumbentHistoricalQuorum": [
+    {
+      "decisionId": "092e7d05-37de-42f6-bb7a-588b1e3bca90",
+      "counted": 1,
+      "incumbentVerdict": "insufficient",
+      "candidatePromote": false
+    },
+    {
+      "decisionId": "1a86551a-b56d-4a1f-be90-5bc9aff1ca60",
+      "counted": 1,
+      "incumbentVerdict": "insufficient",
+      "candidatePromote": false
+    },
+    {
+      "decisionId": "511df679-20a7-4bef-9721-51b58e941598",
+      "counted": 1,
+      "incumbentVerdict": "insufficient",
+      "candidatePromote": false
+    },
+    {
+      "decisionId": "bd16e57b-8849-40c0-922b-1a55e2e06a41",
+      "counted": 3,
+      "incumbentVerdict": "no_promote",
+      "candidatePromote": false
+    },
+    {
+      "decisionId": "48dbba88-00dd-4bfb-9da5-cfea464880a6",
+      "counted": 3,
+      "incumbentVerdict": "no_promote",
+      "candidatePromote": null
+    }
+  ],
+  "postRestartInferenceValidated": false,
+  "processStartMs": 2170.6957817077637,
+  "restartReadinessMs": 551.9280433654785,
+  "resources": {
+    "graniteBaseline": {
+      "samples": 25,
+      "sampleSpanSeconds": 24.219969034194946,
+      "rssMedianBytes": 3591946240,
+      "rssPeakBytes": 3591946240,
+      "cpuPeakPsPercent": 0.1,
+      "systemGpuPeakBytes": 11288576,
+      "healthP50Ms": 4.716249997727573,
+      "healthP95Ms": 4.898333619348705,
+      "healthFailures": 0,
+      "swapDeltaBytes": 0.0
+    },
+    "noJudgeControl": {
+      "samples": 55,
+      "sampleSpanSeconds": 54.49354314804077,
+      "rssMedianBytes": 297566208,
+      "rssPeakBytes": 297828352,
+      "cpuPeakPsPercent": 9.4,
+      "systemGpuPeakBytes": 94617600,
+      "healthP50Ms": 4.660000093281269,
+      "healthP95Ms": 5.035466828849167,
+      "healthFailures": 0,
+      "swapDeltaBytes": 0.0
+    },
+    "nanoBeforeStop": {
+      "samples": 101,
+      "sampleSpanSeconds": 100.84618401527405,
+      "rssMedianBytes": 2808545280,
+      "rssPeakBytes": 2808823808,
+      "cpuPeakPsPercent": 3.3,
+      "systemGpuPeakBytes": 3292446720,
+      "healthP50Ms": 4.497791989706457,
+      "healthP95Ms": 4.7778330044820905,
+      "healthFailures": 0,
+      "swapDeltaBytes": 0.0
+    },
+    "nanoRestartWindow": {
+      "samples": 3,
+      "sampleSpanSeconds": 4.06169319152832,
+      "rssMedianBytes": 2840412160,
+      "rssPeakBytes": 2840412160,
+      "cpuPeakPsPercent": 7.7,
+      "systemGpuPeakBytes": 3207315456,
+      "healthP50Ms": 2002.4777919752523,
+      "healthP95Ms": 2012.3585913912393,
+      "healthFailures": 3,
+      "swapDeltaBytes": 0.0
+    },
+    "restoredGranite": {
+      "samples": 59,
+      "sampleSpanSeconds": 59.47897696495056,
+      "rssMedianBytes": 4387225600,
+      "rssPeakBytes": 4387225600,
+      "cpuPeakPsPercent": 0.8,
+      "systemGpuPeakBytes": 4856135680,
+      "healthP50Ms": 4.616208956576884,
+      "healthP95Ms": 74.47195065906267,
+      "healthFailures": 1,
+      "swapDeltaBytes": 0.0
+    }
+  },
+  "interpretation": "Failed bounded operational window. Health failures overlapped candidate restart without swap growth; host activity is uncontrolled. Four answered short inputs and historical insufficient-quorum ballots do not establish quality, throughput capacity or successful post-restart inference. Fixed cleanup helper passed unit tests; the corrected full supervisor was not rerun."
+}

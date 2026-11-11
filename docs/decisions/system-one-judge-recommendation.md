@@ -1,8 +1,8 @@
 # System One judge recommendation
 
-Date: 2026-11-11. Status: experimental evidence and reviewable code; no new production authority or startup wiring.
+Date: 2026-11-11. Status: experimental evidence and reviewable opt-in wiring; no new production authority or deployed startup configuration.
 
-**Retain the incumbent authority path. Advance a small self-hosted decision judge only to a bounded, non-authoritative shadow trial.** The local pilot supports a workload-specific opportunity; it does not satisfy the production replacement criteria yet. See the [research inventory](../research/system-one-judge-evaluation.md) and [measurements/methodology](../benchmarks/system-one-judges.md).
+**Retain the incumbent authority path. d3 Nano leads the tested local candidates, but hold daemon-connected shadow activation until the control-plane baseline and recovery gates pass.** The [bounded continuation](../benchmarks/system-one-judge-shadow-trial.md) failed its health guard and found overlapping existing P4 SQLite/event-loop stalls. The local pilot supports a workload-specific opportunity; it does not satisfy production replacement criteria. See the [research inventory](../research/system-one-judge-evaluation.md) and [measurements/methodology](../benchmarks/system-one-judges.md).
 
 ## Ranked candidates and final decision matrix
 
@@ -10,7 +10,7 @@ Ranking is deployment/evaluation priority for Penumbra, not an aggregate of unre
 
 | Priority / candidate | Local held-out direct promotion F1; FP/FN | Warm direct p50 / p95 | Weight file | License / placement | Decision |
 | --- | --- | --- | --- | --- | --- |
-| 1: d3 Nano Q8 | 0.846; 0/4 | 251 / 478 ms | 2.552 GB | Apache-2.0; mini in a managed trial | Leading conditional shadow candidate |
+| 1: d3 Nano Q8 | 0.846; 0/4 | 251 / 478 ms | 2.552 GB | Apache-2.0; mini in a managed trial | Leading quality candidate; operational hold |
 | 2: d1-3B Q4_K_M | 0.828; 2/3 | 306 / 697 ms | 1.674 GB | LFM Open License revenue condition; mini | Alternate only; extra false promotions |
 | 3 among tested variants: d1-3B Q8 | 0.692; 2/6 | 294 / 660 ms | 2.875 GB | Same restricted license; higher observed residency | No promotion gain; routing comparison reserve |
 | Rollback / authority baseline: Granite incumbent | 0.690; 4/5 | 1717 / 2371 ms | 3.620 GB | Apache-2.0; restored original service | Retain authority pending validation |
@@ -41,7 +41,7 @@ Prefer the mini, with concurrency one, for the next bounded trial. The explicit 
 
 The initial co-resident run was stopped after memory pressure, swap growth and control-plane timeouts. Build/validation activity also overlapped it, so causality is unresolved. Candidate-only experiments after Granite's stop provide the relevant replacement-residency evidence. Their RSS, GPU counters, health timings and cold process starts are recorded, with measurement limits, in the benchmark report. The trial is too short to certify steady-state thermals, power consumption or day-long memory behavior. Even without swap growth, some full-bundle and d1 Q8 windows had control-plane health timeouts; other daemon activity is uncontrolled. Scope any next Nano trial to direct bounded decisions and establish a reproducible health envelope before unattended residency.
 
-For frequent short requests, persistent Nano avoids its roughly 12.5-second observed process-start cost. For infrequent work, on-demand loading avoids idle residency but must include startup and cancellation/recovery time in the SLA. d1's shorter observed startup makes that mode worth further investigation if its license is acceptable. These are tradeoff hypotheses informed by startup measurements, not a tested long-term residency policy.
+For frequent short requests, persistent Nano avoids process startup. The first pilot observed approximately 12.5 seconds; the later warm-cache continuation observed 2.17 seconds and a 0.55-second restart. Cache state matters, and no cold-machine guarantee is established. For infrequent work, on-demand loading avoids idle residency but must include startup and cancellation/recovery time in the SLA. d1's shorter original observed startup makes that mode worth investigating if its license is acceptable. These remain hypotheses, not a tested long-term residency policy.
 
 Do not move judging to the MacBook or Z13 now. No measured advantage justifies competing with their dedicated workers. The Z13 capacity snapshot was only about 0.45 GiB above the configured 20 GiB admission floor. MacBook capacity access was unavailable. No fleet worker service or model was restarted, reconfigured or displaced.
 
@@ -51,7 +51,7 @@ Do not move judging to the MacBook or Z13 now. No measured advantage justifies c
 
 `createLocalPromotionShadowSeat` composes through the existing detached shadow mechanism. Candidate errors, deadlines or sink failures leave the incumbent vote objects and timing path intact. Its single-question sink records a hashed input, native probability, direct decision answers, model/revision, threshold, latency and original ballots, always with `mode=shadow, applied=false`. Resource telemetry is correlated externally rather than adding expensive per-request system probes.
 
-A sink/observer and explicit lifecycle/configuration wiring are still required for a production-connected shadow trial. This change intentionally adds no startup registration, environment activation, veto or promotion authority. A model pin is an artifact/operator assertion; verify the file hash and runtime before serving that alias.
+The continuation adds a persistent diagnostics sink, paced read-only observer and explicit off-by-default environment/configuration wiring. It does not activate the running daemon, start a permanent model service, or add veto/promotion authority. The shared observer admits at most one attempt every 30 seconds and 50 per process/configuration, with no retries and a five-second budget. A model pin remains an artifact/operator assertion; verify the file hash and runtime before serving that alias.
 
 Rollback is to remove the shadow composition/stop its dedicated runtime while continuing incumbent authority. A later replacement-residency trial must preserve Granite's binary, model file and full launch configuration, and rehearse stop-candidate/start-Granite recovery. Keep ordinary Granite available for generative responsibilities even if its bounded decisions are eventually replaced.
 
@@ -60,14 +60,14 @@ The existing deployment already configured Jev promotion veto before this task. 
 ## Go/no-go and rollout conditions
 
 - **Research/offline phase:** useful pilot completed; larger candidates, additional general-purpose controls and sustained reliability remain unexecuted. Preserve the initial interrupted run as evidence, not a passing benchmark.
-- **Bounded shadow trial:** conditional GO for d3 direct decisions in an explicitly capacity-managed window on the mini, after review of the adapter and a diagnostics sink. Concurrency one. NO-GO for unattended permanent co-residency on the evidence from the original Granite process. No shadow deployment was automatically activated.
-- **Quality validation:** adjudicate disagreements using source evidence, not model votes. Separate content durability from factual correctness and downstream utility. Use fresh hidden labels after treating this published pilot as development data.
+- **Bounded shadow trial:** the paced replay aborted after five attempts/four answers when the health guard failed during candidate restart. Existing P4 database stalls and a later health failure with Nano absent confound attribution. Hold daemon-connected activation until a healthy matched baseline and corrected recovery rehearsal pass. The cleanup helper has three passing tests; the corrected full supervisor was not rerun. NO-GO for unattended permanent co-residency. No shadow deployment was automatically activated.
+- **Quality validation:** a fresh 200-case blinded historical packet is prepared locally; two independent reviews and adjudication remain pending. Use source evidence, not model votes. Separate durability from factual correctness and downstream utility. Use hidden labels after treating the published pilot as development data.
 - **Production replacement:** NO-GO today. The pilot is small, single-annotator, purposively sampled, uses a single Granite seat rather than the whole production gate, and shows substantial false-veto risk. No model meets all acceptance conditions yet.
 
 Before authority can change, require:
 
 1. Independent adjudication and a frozen, representative historical test set, including unpromoted records, source-family grouping, prompt injection, factual falsehoods, near-threshold cases and tokenizer-verified long contexts.
-2. Matched incumbent-versus-candidate evaluation on the actual workload/pool; the executed constrained Granite control plus additional general-purpose controls as needed; paired uncertainty estimates; separate reporting per workload and policy.
+2. Matched incumbent-versus-candidate evaluation on the actual workload/pool; resolve recorded HTTP-404 seat abstentions before treating the configured pool as available; the executed constrained Granite control plus additional general-purpose controls as needed; paired uncertainty estimates; separate reporting per workload and policy.
 3. Thresholds fitted only on calibration data, then accepted on untouched data. As an initial proposal, require false promotions ≤2%, false vetoes ≤5%, and relevant decision quality at least non-inferior to the incumbent. These bounds need adequate sample sizes: even zero observed false promotions needs at least 149 independent negatives for a one-sided 95% upper bound of 2%; correlated sources require more evidence. No pilot threshold is installed.
 4. Demonstrated downstream improvement: reduced bad retained memories without losing useful ones, independently checked over time. A classifier's probability is not proof that a fact is true.
 5. Sustained mini testing under representative control-plane load: no health timeouts, no sustained post-warmup swap growth, acceptable p95 against a paired baseline, thermal/power observations, bounded queuing, repeated cold loads and runtime crash/recovery. Confirm model/candidate admission independently from generic job memory limits.

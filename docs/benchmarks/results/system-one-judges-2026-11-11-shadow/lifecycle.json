@@ -1,0 +1,37 @@
+[
+  {
+    "ts": 1794435008.35123,
+    "kind": "supervisor_started",
+    "candidatePid": 42653,
+    "observerPid": 43175
+  },
+  {
+    "ts": 1794435055.812425,
+    "kind": "injected_candidate_stop",
+    "pid": 42653
+  },
+  {
+    "ts": 1794435096.678551,
+    "kind": "candidate_recovered",
+    "pid": 44469,
+    "processStartMs": 551.9280433654785
+  },
+  {
+    "ts": 1794435100.709931,
+    "kind": "trial_aborted",
+    "reason": "two consecutive daemon health failures"
+  },
+  {
+    "ts": 1794435100.805181,
+    "kind": "candidate_stopped",
+    "pid": 44469
+  },
+  {
+    "ts": 1794435236.7480042,
+    "kind": "granite_restored_manually",
+    "pid": 47355,
+    "sameBinaryModelFlags": true,
+    "healthStatus": 200,
+    "reason": "supervisor sampler-cleanup timeout interrupted automatic restoration"
+  }
+]

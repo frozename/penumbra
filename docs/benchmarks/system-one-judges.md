@@ -2,6 +2,8 @@
 
 2026-11-11. This is an exploratory content-classification and deployment experiment. It does not authorize replacement, establish factual correctness of memories, or demonstrate downstream memory benefit. All new outputs have `mode=shadow, applied=false`.
 
+The subsequent [bounded shadow continuation](system-one-judge-shadow-trial.md) adds disabled-by-default wiring and a fresh 200-case review packet. Its operational replay failed the health guard with existing P4 database/event-loop stalls as a material confound. It does not change the pilot quality results below or establish production readiness.
+
 ## Test design
 
 The frozen [fixtures](fixtures/system-one-judges.jsonl) contain 60 cases: 44 promotion, eight task-profile and eight memory-efficacy cases. Promotion has 10 calibration and 34 held-out cases. Twelve promotion texts come from historical Penumbra T1/T2 records; synthetic cases include borderline content, prompt injection/control tokens, misleading authority claims, code-only facts, mixed status/learned lessons and two long states. Historical prompt excerpts were already truncated by ingestion; this benchmark does not silently shorten them again.
