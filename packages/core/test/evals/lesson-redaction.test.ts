@@ -264,7 +264,7 @@ test("redact: redactions are sorted, omit zero-hit rules, and sum across fields"
   ]);
 });
 
-test("redact: a listed identifier that is an email domain matches origin/main (local part stays)", () => {
+test("redact: a listed identifier that is an email's whole domain collapses to one email placeholder", () => {
   expect(typeof mod?.["redactLessonDraft"]).toBe("function");
   if (!mod) {
     return;
@@ -272,11 +272,14 @@ test("redact: a listed identifier that is an email domain matches origin/main (l
   const res = redactLessonDraft()(draft({ root_cause: "page ops@acme.example" }), {
     production_identifiers: ["acme.example"],
   });
-  // Parity with origin/main's sequential engine: production_identifier claims the
-  // domain, the email rule can no longer match, and the post-pass only collapses a
-  // placeholder that precedes a domain, so main's 'ops@' leftover stays.
-  expect(res.draft.root_cause).toBe("page ops@[REDACTED:production_identifier]");
-  expect(res.redactions).toEqual([{ rule_id: "production_identifier", count: 1 }]);
+  // The identifier pass claims the domain, then the post-pass collapses
+  // '<local>@<placeholder>' into one email placeholder because the placeholder
+  // is the entire domain.
+  expect(res.draft.root_cause).toBe("page [REDACTED:email]");
+  expect(res.redactions).toEqual([
+    { rule_id: "email", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
 });
 
 test("redact: a listed identifier that is an email local part collapses to one email placeholder", () => {
@@ -789,7 +792,7 @@ test("redact: the post-pass requires a TLD, like the email rule on origin/main",
   expect(res.draft.root_cause).toBe("ssh [REDACTED:production_identifier]@localhost");
 });
 
-test("redact: the post-pass does not consume the token before the placeholder", () => {
+test("redact: an identifier that is a local-part suffix redacts the whole address", () => {
   expect(typeof mod?.["redactLessonDraft"]).toBe("function");
   if (!mod) {
     return;
@@ -797,5 +800,123 @@ test("redact: the post-pass does not consume the token before the placeholder", 
   const res = redactLessonDraft()(draft({ root_cause: "bob-alice@example.com" }), {
     production_identifiers: ["alice"],
   });
-  expect(res.draft.root_cause).toBe("bob-[REDACTED:email]");
+  expect(res.draft.root_cause).toBe("[REDACTED:email]");
+  expect(res.redactions).toEqual([
+    { rule_id: "email", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
+});
+
+test("redact: a domain identifier before a sentence period still collapses the whole email", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "mail ops@acme.example." }), {
+    production_identifiers: ["acme.example"],
+  });
+  expect(res.draft.root_cause).toBe("mail [REDACTED:email].");
+  expect(res.redactions).toEqual([
+    { rule_id: "email", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
+});
+
+test("redact: a domain identifier and a local-part identifier collapse to one email placeholder", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "alice@acme.example" }), {
+    production_identifiers: ["alice", "acme.example"],
+  });
+  expect(res.draft.root_cause).toBe("[REDACTED:email]");
+  expect(res.redactions).toEqual([
+    { rule_id: "email", count: 1 },
+    { rule_id: "production_identifier", count: 2 },
+  ]);
+});
+
+test("redact: dot and plus separated local-part suffixes redact the whole addresses", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(
+    draft({ root_cause: "page ops.alice@corp.io and x+alice@corp.io" }),
+    { production_identifiers: ["alice"] },
+  );
+  expect(res.draft.root_cause).toBe("page [REDACTED:email] and [REDACTED:email]");
+  expect(res.redactions).toEqual([
+    { rule_id: "email", count: 2 },
+    { rule_id: "production_identifier", count: 2 },
+  ]);
+});
+
+test("redact: whole-email collapses never widen the clear-text region", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const redact = redactLessonDraft();
+  // `base` is what origin/main's sequential engine leaves behind; the fixed
+  // engine must collapse at least as much clear text, never less.
+  const cases = [
+    {
+      text: "page ops@acme.example",
+      identifiers: ["acme.example"],
+      expected: "page [REDACTED:email]",
+      base: "page ops@[REDACTED:production_identifier]",
+    },
+    {
+      text: "bob-alice@example.com",
+      identifiers: ["alice"],
+      expected: "[REDACTED:email]",
+      base: "bob-[REDACTED:email]",
+    },
+    {
+      text: "alice@acme.example",
+      identifiers: ["alice", "acme.example"],
+      expected: "[REDACTED:email]",
+      base: "[REDACTED:production_identifier]@[REDACTED:production_identifier]",
+    },
+  ];
+  for (const testCase of cases) {
+    const res = redact(draft({ root_cause: testCase.text }), {
+      production_identifiers: testCase.identifiers,
+    });
+    expect(res.draft.root_cause).toBe(testCase.expected);
+    expect(clearTextLength(res.draft.root_cause)).toBeLessThanOrEqual(
+      clearTextLength(testCase.base),
+    );
+  }
+});
+
+test("redact: a domain identifier that is only a prefix of the domain is left as today", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "ops@acme.example.com" }), {
+    production_identifiers: ["acme.example"],
+  });
+  // Same shape as the 'corp' parity case: the placeholder covers only a prefix
+  // of the domain, so '.com' stays in clear text.
+  expect(res.draft.root_cause).toBe("ops@[REDACTED:production_identifier].com");
+  expect(res.redactions).toEqual([{ rule_id: "production_identifier", count: 1 }]);
+});
+
+test("redact: a placeholder that is not directly before '@' does not absorb its neighbours", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "alice-bob@example.com" }), {
+    production_identifiers: ["alice"],
+  });
+  expect(res.draft.root_cause).toBe("[REDACTED:production_identifier]-[REDACTED:email]");
+  expect(res.redactions).toEqual([
+    { rule_id: "email", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
 });

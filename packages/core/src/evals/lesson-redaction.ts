@@ -70,18 +70,34 @@ function buildIdentifierPattern(identifiers: readonly string[]): RegExp | null {
 // This post-pass collapses the placeholder plus the leftover domain fragment
 // into a single email placeholder. It is monotone: it only ever turns clear text
 // into a placeholder, never the reverse.
+//
+// Three shapes are handled:
+//   1) Local-part suffix: the identifier appears as a suffix inside the email's
+//      local part (e.g. 'bob-[REDACTED:production_identifier]@corp.io').
+//      The pattern absorbs any run of email local-part characters directly before
+//      the placeholder: /[A-Za-z0-9._%+-]*\[REDACTED:production_identifier\]@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g
+//      The character class excludes ']' and ':', so the run can never reach into
+//      a preceding placeholder.
+//   2) Whole domain: the identifier is the entire domain
+//      (e.g. 'user@[REDACTED:production_identifier]'). The negative lookahead
+//      stops the collapse when the placeholder is only part of the domain
+//      (for example followed by '.com' or '-2').
+//      A sentence-final '.' still collapses.
+//   3) Bare 'user@<placeholder>' with no visible TLD also collapses, which is
+//      acceptable because it is strictly more redacted.
+
 const LEFTOVER_IDENTIFIER_EMAIL =
-  /\[REDACTED:production_identifier\]@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
+  /[A-Za-z0-9._%+-]*\[REDACTED:production_identifier\]@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
+const LEFTOVER_IDENTIFIER_DOMAIN =
+  /(?:[A-Za-z0-9._%+-]*\[REDACTED:production_identifier\][A-Za-z0-9._%+-]*|[A-Za-z0-9._%+-]+)@\[REDACTED:production_identifier\](?![A-Za-z0-9-]|\.[A-Za-z0-9])/g;
 
 function collapseIdentifierEmailPlaceholder(text: string): { redacted: string; count: number } {
-  const leftovers = text.match(LEFTOVER_IDENTIFIER_EMAIL);
-  if (leftovers === null || leftovers.length === 0) {
-    return { redacted: text, count: 0 };
-  }
-  return {
-    redacted: text.replaceAll(LEFTOVER_IDENTIFIER_EMAIL, "[REDACTED:email]"),
-    count: leftovers.length,
-  };
+  const step1 = text.replaceAll(LEFTOVER_IDENTIFIER_EMAIL, "[REDACTED:email]");
+  const step1Match = text.match(LEFTOVER_IDENTIFIER_EMAIL);
+  const step2 = step1.replaceAll(LEFTOVER_IDENTIFIER_DOMAIN, "[REDACTED:email]");
+  const step2Match = step1.match(LEFTOVER_IDENTIFIER_DOMAIN);
+  const count = (step1Match?.length ?? 0) + (step2Match?.length ?? 0);
+  return { redacted: step2, count };
 }
 
 function buildRules(options?: LessonRedactionOptions): ValuePatternRule[] {
