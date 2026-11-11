@@ -273,12 +273,15 @@ test("local observer wiring preserves existing Jev veto configuration", async ()
     const deps = buildDreamCycleDeps(
       {
         loadTypesafeModule: () => Promise.resolve(enabledTypesafeModule()),
-        judgeFetch: () =>
-          Promise.resolve(
-            Response.json({
-              choices: [{ message: { content: '{"promote":true,"confidence":0.9}' } }],
-            }),
-          ),
+        judgeFetch: Object.assign(
+          () =>
+            Promise.resolve(
+              Response.json({
+                choices: [{ message: { content: '{"promote":true,"confidence":0.9}' } }],
+              }),
+            ),
+          { preconnect: fetch.preconnect },
+        ),
         localJudgeFetch: () =>
           Promise.resolve(
             Response.json({
