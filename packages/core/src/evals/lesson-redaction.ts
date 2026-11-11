@@ -87,16 +87,23 @@ function buildIdentifierPattern(identifiers: readonly string[]): RegExp | null {
 //      acceptable because it is strictly more redacted.
 
 const LEFTOVER_IDENTIFIER_EMAIL =
-  /[A-Za-z0-9._%+-]*\[REDACTED:production_identifier\]@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
+  /[A-Za-z0-9._%+-]{0,64}\[REDACTED:production_identifier\]@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
 const LEFTOVER_IDENTIFIER_DOMAIN =
-  /(?:[A-Za-z0-9._%+-]*\[REDACTED:production_identifier\][A-Za-z0-9._%+-]*|[A-Za-z0-9._%+-]+)@\[REDACTED:production_identifier\](?![A-Za-z0-9-]|\.[A-Za-z0-9])/g;
+  /(?:[A-Za-z0-9._%+-]{0,64}\[REDACTED:production_identifier\][A-Za-z0-9._%+-]*|[A-Za-z0-9._%+-]{1,64})@\[REDACTED:production_identifier\](?![A-Za-z0-9-]|\.[A-Za-z0-9])|\[REDACTED:production_identifier\]@\[REDACTED:production_identifier\](?![A-Za-z0-9-]|\.[A-Za-z0-9])/g;
 
 function collapseIdentifierEmailPlaceholder(text: string): { redacted: string; count: number } {
-  const step1 = text.replaceAll(LEFTOVER_IDENTIFIER_EMAIL, "[REDACTED:email]");
-  const step1Match = text.match(LEFTOVER_IDENTIFIER_EMAIL);
-  const step2 = step1.replaceAll(LEFTOVER_IDENTIFIER_DOMAIN, "[REDACTED:email]");
-  const step2Match = step1.match(LEFTOVER_IDENTIFIER_DOMAIN);
-  const count = (step1Match?.length ?? 0) + (step2Match?.length ?? 0);
+  if (!text.includes("[REDACTED:production_identifier]")) {
+    return { redacted: text, count: 0 };
+  }
+  let count = 0;
+  const step1 = text.replaceAll(LEFTOVER_IDENTIFIER_EMAIL, () => {
+    count++;
+    return "[REDACTED:email]";
+  });
+  const step2 = step1.replaceAll(LEFTOVER_IDENTIFIER_DOMAIN, () => {
+    count++;
+    return "[REDACTED:email]";
+  });
   return { redacted: step2, count };
 }
 
