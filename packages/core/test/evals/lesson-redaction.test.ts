@@ -260,7 +260,7 @@ test("redact: an identifier outside the home path is still redacted and counted 
   ]);
 });
 
-test("redact: four-part versions after 'version' or 'v' are not treated as ipv4", () => {
+test("redact: four-part versions after 'version' or 'v' are redacted as ipv4", () => {
   expect(typeof mod?.["redactLessonDraft"]).toBe("function");
   if (!mod) {
     return;
@@ -273,11 +273,87 @@ test("redact: four-part versions after 'version' or 'v' are not treated as ipv4"
       applicability: ["v 1.2.3.4 only"],
     }),
   );
-  expect(res.draft.failure_signature).toBe("bump to version 1.2.3.4");
-  expect(res.draft.root_cause).toBe("Version: 1.2.3.4 ships");
-  expect(res.draft.procedure[0]).toBe("pin version=1.2.3.4");
-  expect(res.draft.applicability[0]).toBe("v 1.2.3.4 only");
-  expect(res.redactions).toEqual([]);
+  expect(res.draft.failure_signature).toBe("bump to version [REDACTED:ipv4]");
+  expect(res.draft.root_cause).toBe("Version: [REDACTED:ipv4] ships");
+  expect(res.draft.procedure[0]).toBe("pin version=[REDACTED:ipv4]");
+  expect(res.draft.applicability[0]).toBe("v [REDACTED:ipv4] only");
+  expect(res.redactions).toEqual([{ rule_id: "ipv4", count: 4 }]);
+});
+
+test("redact: 'v 8.8.8.8', 'version\\n8.8.8.8', 'v=1.0.0.1' and CIDR are redacted as ipv4", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(
+    draft({
+      failure_signature: "v 8.8.8.8",
+      root_cause: "version\n8.8.8.8",
+      procedure: ["v=1.0.0.1"],
+      applicability: ["route v 1.2.3.4/24 down"],
+    }),
+  );
+  expect(res.draft.failure_signature).toBe("v [REDACTED:ipv4]");
+  expect(res.draft.root_cause).toBe("version\n[REDACTED:ipv4]");
+  expect(res.draft.procedure[0]).toBe("v=[REDACTED:ipv4]");
+  expect(res.draft.applicability[0]).toBe("route v [REDACTED:ipv4]/24 down");
+  expect(res.redactions).toEqual([{ rule_id: "ipv4", count: 4 }]);
+});
+
+test("redact: a version-prefixed email is redacted whole as email", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "v1.2.3.4@acme.example" }));
+  expect(res.draft.root_cause).toBe("[REDACTED:email]");
+  expect(res.redactions).toEqual([{ rule_id: "email", count: 1 }]);
+});
+
+test("redact: an identifier that starts with an email is redacted whole, not just its email prefix", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(
+    draft({
+      failure_signature: "ops@acme.example-prod flapped",
+      root_cause: "alerts@acme.io:8443 paged",
+    }),
+    { production_identifiers: ["ops@acme.example-prod", "alerts@acme.io:8443"] },
+  );
+  expect(res.draft.failure_signature).toBe("[REDACTED:production_identifier] flapped");
+  expect(res.draft.root_cause).toBe("[REDACTED:production_identifier] paged");
+  expect(res.redactions).toEqual([{ rule_id: "production_identifier", count: 2 }]);
+});
+
+test("redact: an identifier containing a home path is redacted whole as identifier", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "lock under /Users/alex/keys/staging" }), {
+    production_identifiers: ["/Users/alex/keys/staging"],
+  });
+  expect(res.draft.root_cause).toBe("lock under [REDACTED:production_identifier]");
+  expect(res.redactions).toEqual([{ rule_id: "production_identifier", count: 1 }]);
+});
+
+test("redact: a listed identifier inside a placeholder-shaped string is still redacted", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(
+    draft({
+      failure_signature: "[REDACTED:acme_prod]",
+      root_cause: "[redacted:acme_prod] x",
+    }),
+    { production_identifiers: ["acme_prod"] },
+  );
+  expect(res.draft.failure_signature).toBe("[REDACTED:[REDACTED:production_identifier]]");
+  expect(res.draft.root_cause).toBe("[redacted:[REDACTED:production_identifier]] x");
+  expect(res.redactions).toEqual([{ rule_id: "production_identifier", count: 2 }]);
 });
 
 test("redact: a glued v-prefix is not an ipv4 match", () => {
@@ -443,7 +519,25 @@ test("redact: identifier containing a built-in match is redacted whole", () => {
   );
   expect(res.draft.failure_signature).toBe("~/[REDACTED:production_identifier]");
   expect(res.draft.root_cause).toBe("[REDACTED:production_identifier]");
-  expect(res.redactions).toEqual([{ rule_id: "production_identifier", count: 2 }]);
+  expect(res.redactions).toEqual([
+    { rule_id: "home_path", count: 1 },
+    { rule_id: "production_identifier", count: 2 },
+  ]);
+});
+
+test("redact: a home path prefixing a listed identifier reports both rules", () => {
+  expect(typeof mod?.["redactLessonDraft"]).toBe("function");
+  if (!mod) {
+    return;
+  }
+  const res = redactLessonDraft()(draft({ root_cause: "/Users/alex/acme-secret-repo" }), {
+    production_identifiers: ["acme-secret-repo"],
+  });
+  expect(res.draft.root_cause).toBe("~/[REDACTED:production_identifier]");
+  expect(res.redactions).toEqual([
+    { rule_id: "home_path", count: 1 },
+    { rule_id: "production_identifier", count: 1 },
+  ]);
 });
 
 test("redact: identifier containing an IPv4 and email is redacted whole", () => {
