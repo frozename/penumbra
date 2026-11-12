@@ -2,6 +2,8 @@
 
 Date: 2026-11-11. This continuation adds opt-in daemon wiring, a read-only historical observer and a fresh blinded review packet. It does not activate the candidate in the running daemon or change promotion/veto authority. The original [offline pilot](system-one-judges.md) and its provisional labels remain development evidence.
 
+The later [validation continuation](system-one-judge-production-readiness.md) records the completed independent AI source reviews, distinct adjudication, further model comparisons and P4 query correction. Historical failures below remain unchanged evidence; a later recovery result must not turn this interrupted run into a pass.
+
 ## Opt-in integration
 
 `packages/daemon/src/dreaming/local-promotion-shadow-runtime.ts` composes the existing detached shadow mechanism after the existing Jev setup. It reuses `writeJudgeDecision` and the existing `judge_decisions` table. No schema migration, package dependency, model auto-loading or new production service is needed.

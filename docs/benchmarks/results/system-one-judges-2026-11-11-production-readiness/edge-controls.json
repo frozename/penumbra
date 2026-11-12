@@ -1,0 +1,74 @@
+[
+  {
+    "state": "The customer has a receipt.",
+    "question": "Does the customer have a receipt?",
+    "result": {
+      "model": "d3-edge-eval",
+      "answers": {
+        "answer": {
+          "type": "noul",
+          "noul": 0.9990632366220844
+        }
+      },
+      "usage": {
+        "input_tokens": 97,
+        "output_tokens": 0
+      }
+    },
+    "latencyMs": 49.9679590575397
+  },
+  {
+    "state": "The customer does not have a receipt.",
+    "question": "Does the customer have a receipt?",
+    "result": {
+      "model": "d3-edge-eval",
+      "answers": {
+        "answer": {
+          "type": "noul",
+          "noul": 0.0004235287989233564
+        }
+      },
+      "usage": {
+        "input_tokens": 99,
+        "output_tokens": 0
+      }
+    },
+    "latencyMs": 28.180125053040683
+  },
+  {
+    "state": "Two plus two equals four.",
+    "question": "Is the arithmetic statement correct?",
+    "result": {
+      "model": "d3-edge-eval",
+      "answers": {
+        "answer": {
+          "type": "noul",
+          "noul": 0.9242065197130697
+        }
+      },
+      "usage": {
+        "input_tokens": 96,
+        "output_tokens": 0
+      }
+    },
+    "latencyMs": 23.030041018500924
+  },
+  {
+    "state": "Penumbra stores durable memories in SQLite.",
+    "question": "Does this state a durable project fact?",
+    "result": {
+      "model": "d3-edge-eval",
+      "answers": {
+        "answer": {
+          "type": "noul",
+          "noul": 0.4458080772086505
+        }
+      },
+      "usage": {
+        "input_tokens": 101,
+        "output_tokens": 0
+      }
+    },
+    "latencyMs": 27.712416951544583
+  }
+]

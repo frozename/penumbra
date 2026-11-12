@@ -1,0 +1,14 @@
+{
+  "protocol": "systemone",
+  "promotionQuestionSet": "direct",
+  "baseUrl": "http://127.0.0.1:18944",
+  "hardware": "Mac mini M4 16 GiB; shared control plane; Granite paused with user authorization",
+  "runtime": "llama.cpp 2cbe0ec429b849a88664e0f62388fc92a5abd699; Metal; threads=2; slots=1; batch/ubatch=8192; offline text only; old production P4 SQL remains a measured health confound; http-only versioned installation, OpenSSL disabled",
+  "quantization": "Q8_0, no mmproj",
+  "contextTokens": 8192,
+  "timeoutMs": 5000,
+  "maxRequestBytes": 65536,
+  "allowRemote": false,
+  "model": "d3-edge-eval",
+  "revision": "ggml-org/vllm-d3-edge-GGUF@e59a4bd76e00c243e08f01182f55fd1893142d95/vllm-d3-edge-Q8_0.gguf"
+}

@@ -1,0 +1,110 @@
+{
+  "startedAt": "2026-11-11T22:54:02.897Z",
+  "completedAt": "2026-11-11T22:54:23.743Z",
+  "dbMode": "read-only snapshot",
+  "nowMs": 1794437642897,
+  "cutoffMs": 1794351242897,
+  "methodology": "Three largest project scopes; alternating query order by repetition; local warm filesystem caches; no production DB/index/service mutation; hashes compare ordered full query outputs without publishing memory text. This is query latency, not model latency or a production-daemon activation test.",
+  "sqliteVersion": {
+    "version": "3.51.0"
+  },
+  "counts": {
+    "memories": {
+      "n": 2952
+    },
+    "actions": {
+      "n": 67554
+    }
+  },
+  "legacyP50Ms": 3246.569374999999,
+  "groupedP50Ms": 4.781125000001339,
+  "allOutputsIdentical": true,
+  "groupedPlan": [
+    "MATERIALIZE recent_research",
+    "SCAN dream_actions",
+    "USE TEMP B-TREE FOR GROUP BY",
+    "SEARCH m USING INDEX t2_by_project (project_id=?)",
+    "SCAN r LEFT-JOIN",
+    "USE TEMP B-TREE FOR ORDER BY"
+  ],
+  "runs": [
+    {
+      "projectHash": "a35f944cf183283092319c2561a191e43ad7f3593b0941e96c54125e5b2c6e2f",
+      "iteration": 0,
+      "order": [
+        "legacy",
+        "grouped"
+      ],
+      "legacyMs": 6533.215042,
+      "groupedMs": 5.018624999999702,
+      "identical": true,
+      "outputSha256": "ac8bbe92e9d4effb84c88c68e67e8e1f167ba86d718abcfc3b1672bd10632129",
+      "rows": 2
+    },
+    {
+      "projectHash": "e6a7661a7bd7cb725d78483b0abace79793f5c08dd07ec267544378cd9a974e6",
+      "iteration": 0,
+      "order": [
+        "legacy",
+        "grouped"
+      ],
+      "legacyMs": 3931.1841669999994,
+      "groupedMs": 5.7126659999994445,
+      "identical": true,
+      "outputSha256": "f5878caca593aa54646bd90b0aa80b2c04ac157bd08fa96f29e014549223482f",
+      "rows": 2
+    },
+    {
+      "projectHash": "3d45d73d2bacbafcef02cd51be8473d125530783676a9b4e844eb7094157c94c",
+      "iteration": 0,
+      "order": [
+        "legacy",
+        "grouped"
+      ],
+      "legacyMs": 0.1593330000014248,
+      "groupedMs": 0.04516700000021956,
+      "identical": true,
+      "outputSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "rows": 0
+    },
+    {
+      "projectHash": "a35f944cf183283092319c2561a191e43ad7f3593b0941e96c54125e5b2c6e2f",
+      "iteration": 1,
+      "order": [
+        "grouped",
+        "legacy"
+      ],
+      "legacyMs": 7111.0781670000015,
+      "groupedMs": 5.6585830000003625,
+      "identical": true,
+      "outputSha256": "ac8bbe92e9d4effb84c88c68e67e8e1f167ba86d718abcfc3b1672bd10632129",
+      "rows": 2
+    },
+    {
+      "projectHash": "e6a7661a7bd7cb725d78483b0abace79793f5c08dd07ec267544378cd9a974e6",
+      "iteration": 1,
+      "order": [
+        "grouped",
+        "legacy"
+      ],
+      "legacyMs": 3246.569374999999,
+      "groupedMs": 4.781125000001339,
+      "identical": true,
+      "outputSha256": "f5878caca593aa54646bd90b0aa80b2c04ac157bd08fa96f29e014549223482f",
+      "rows": 2
+    },
+    {
+      "projectHash": "3d45d73d2bacbafcef02cd51be8473d125530783676a9b4e844eb7094157c94c",
+      "iteration": 1,
+      "order": [
+        "grouped",
+        "legacy"
+      ],
+      "legacyMs": 0.0488340000010794,
+      "groupedMs": 0.16741600000023027,
+      "identical": true,
+      "outputSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "rows": 0
+    }
+  ]
+}

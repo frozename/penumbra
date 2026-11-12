@@ -1,0 +1,54 @@
+{
+  "status": "labels frozen before candidate inference",
+  "seed": "penumbra-real-t2-confirmatory-20261111-v1",
+  "source": "complete unmodified Penumbra T2 bodies from consistent read-only snapshot",
+  "eligibleRowsBeforeDedupe": 680,
+  "eligibleFamilies": 604,
+  "selected": 120,
+  "bodyChars": {
+    "min": 155,
+    "max": 3789
+  },
+  "sampling": "One body/source-session; seeded month/length/retention round-robin, shuffled; retention and source IDs withheld from reviewers. No prevalence claim.",
+  "packetSha256": "5c775a50554110c22ae9be737825453280acfdc5b7ff90a6e1e0b91f7d23a918",
+  "lockedRecipes": [
+    {
+      "name": "incumbent",
+      "rule": "Granite incumbent prompt unchanged"
+    },
+    {
+      "name": "nano-direct",
+      "rule": "Native probability >=0.5"
+    },
+    {
+      "name": "nano-accept-first",
+      "rule": "If native p>=0.5 accept; otherwise use unchanged Granite verdict; native failure falls back. No native negative veto."
+    }
+  ],
+  "developmentData": "Previous T1/source reviewed cohort was used for recipe design and is not confirmatory cascade evidence",
+  "notMeasured": "Actual downstream memory use over time; this corpus supports source-based offline utility review only.",
+  "labelCounts": {
+    "True": 102,
+    "False": 14,
+    "None": 4
+  },
+  "factualSupportCounts": {
+    "contradicted": 38,
+    "insufficient": 74,
+    "verified": 8
+  },
+  "adjudications": 39,
+  "embeddedHistoricalEvaluationClaims": 16,
+  "reviewMethod": "Two fresh blind AI source-check reviews, distinct AI adjudication of durability/factualSupport disputes; common model family, no human adjudication.",
+  "privateFixturePath": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/review-200/t2-confirmatory-fixtures.jsonl",
+  "privateFixtureRawSha256": "c20fa7eedb57e909a2b0691b9fc9388f87f9458e2bcb323610ead84be31e0171",
+  "provenanceHashes": {
+    "t2-reviewer-a.jsonl": "5c775a50554110c22ae9be737825453280acfdc5b7ff90a6e1e0b91f7d23a918",
+    "t2-ai-review-a.jsonl": "3693549e4ea15a53d00f159aa34d03aa92d55724eec2fe0a471aaebdeb9faca4",
+    "t2-ai-review-b.jsonl": "f5212eabcc6b27c897a7df273b01fddcd434d7b105f0e75e146059572daf386c",
+    "t2-ai-adjudicated.jsonl": "fe41033675d0bf70aa9f3278e70dafdb58a32a41861842e51c165b9bf9affebc",
+    "t2-ai-merged.jsonl": "b70f41f3d2eb09d71f3f6a4b096e1629e437c4fac27b48e73115e078ac6f7550"
+  },
+  "blindingCaveat": "Current study predictions withheld. Some input bodies themselves contained older benchmark/model numbers; reviewers flagged those as unverified content. Report that slice separately.",
+  "negativeSampleLimit": "Only14 independently AI-labeled negatives; cannot certify a2% false-promotion upper bound. Stratified source-family sample, not population prevalence."
+}

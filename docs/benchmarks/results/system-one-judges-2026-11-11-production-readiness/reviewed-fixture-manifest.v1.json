@@ -1,0 +1,240 @@
+{
+  "status": "frozen-before-inference",
+  "splitSeed": "penumbra-ai-reviewed-source-families-v1",
+  "reviewMethod": "Two blind fresh-context AI reviewers with local source checks; six historical disagreements independently AI-adjudicated. Common base model; no human adjudication or independent-training-model claim.",
+  "historicalLimit": "No historical positive was adjudicable. Historical negatives are truncated excerpts, with correlated wrapper templates. This is not a prevalence-representative quality estimate.",
+  "rows": 278,
+  "counts": {
+    "synthetic:calibration:True": 14,
+    "synthetic:test:False": 35,
+    "historical:test:False": 158,
+    "synthetic:test:True": 66,
+    "synthetic:calibration:False": 5
+  },
+  "uncertainExcluded": [
+    {
+      "caseId": "5b53c5cbab2cf69ccad219ec",
+      "bodySha256": "1310cd9c85ff5741713d7ab3f5e3e47aff730763d6940f6bb93f50f51f8492bb",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "460cd2155d6bdff40533425d",
+      "bodySha256": "e69a35a7328d399c5c77951e8c1dc6d86880e4766cc13be750db07ff56ebf2d2",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "f3d06bfda67f2bc2ee5a12cb",
+      "bodySha256": "1b8ccdfea23ad7e4c56e48d7e4f9664cee2b562a994eae7d4e545ea4ef2d535b",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "cefbb3fd829a3c49692af31c",
+      "bodySha256": "cc1068adf06b1c37850c077d21ab633f3da77755d89dcd5428783550785f869a",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "892c7904e57df01f37ba722d",
+      "bodySha256": "81eee4fea5211a11e21ed4cc330b9d25703e620b524979e86dea6ecc342d3917",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "ce85cd02d9b93db4f0113422",
+      "bodySha256": "9cd69d39973dd521cede5c22c97779cd7f6a2708814de7d058896bb02580c72e",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "0b60e8080d3bd9494b2509cd",
+      "bodySha256": "5f69cf24625f6539f9ef805b10fd2c1957d056531c812bddbe616cce93163802",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "c23985cfe25f506c45c7f477",
+      "bodySha256": "40d2810854207d3e71bf23a91f29aced478504fad86d2f517f5b2d37e63cdd9a",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "f4632c0928dc799ace2631d8",
+      "bodySha256": "d81e4186be3ab77838f1e910addb8c930356135e1004ce29d4b4e826fbbf256d",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "f9a97e04a2797eabb3b5a875",
+      "bodySha256": "0046b80a3b5049c163cc0b1cc36c35873de6ddf0a77e08ac6c2e675e92c930d4",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "bbd0fd9f8bd7e547da3c7619",
+      "bodySha256": "c5ab0e46a29dd23e4a7da207b52f285d6ca54c1d5ea998bed799cecbddf5c5cb",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "3d965c213068396dc926ebb5",
+      "bodySha256": "b860e9504a01ef0b4d2024038ddc3849444435238c32419b5c70bbc8056d3a29",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "60c9954f376f8da030989578",
+      "bodySha256": "cc4b49176c9b90e6233901f831743cba9dad0877c14215bec64b1a272c5689c6",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "d153284967760acc4245c749",
+      "bodySha256": "c18f5109e17adc5b3cc3737a3b993d2788a230b700982f7a4dd14a70a4e70222",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "f6bfefdc05a06fad5327a1db",
+      "bodySha256": "d42a45f7960457116e8767e9f8cf9559f9bafe9c3236f119e099b6ca9ac70631",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "a8290a26fb1ea922f9361340",
+      "bodySha256": "1572b5dfeb05908eae3f501a971a27b65b7bb4f9cade6f998c51d9c3f2295deb",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "f314544c17b88d719e04ddb8",
+      "bodySha256": "f8c342c8a1c1d807fd962c1e692b5f718db176477ba1a5029f4c0a0e761482f8",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "4e90b7778eba06720847456c",
+      "bodySha256": "fd6d1a89485e65d75a152b503c3f6081523052353d45a219972c62a343fa24eb",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "9287f7aeba8256e22a3923f0",
+      "bodySha256": "4d99f0b630b63a963547c043476477a838a856307c97b32530e3ca1e8ac34bc5",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "eb5d3af43e8111c8a3bc2af0",
+      "bodySha256": "7a8758a7f1efec7934228280a608b5437dea97df442fe4621102b53877494254",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "0af22ea9916cb0de6c95d553",
+      "bodySha256": "afb777b7ea7b3d15ad0cf522a1545b392ab56ed1bf8cf1cc2cbf8c8f6858154e",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "c899cdb2cc56c9a8e62a5ac9",
+      "bodySha256": "a3f56eb638bb5bb71bcf7810a38bc3ba0cfd366c77381f617328d87f3216e075",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "14cb35af4f5cfcc3162c1f5d",
+      "bodySha256": "2bd8fcb0b5687f70dae78721caedfb1fd794ebe50621bdec11159a7e81361eb8",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "2b2732e0182468f274687edb",
+      "bodySha256": "d2cfd42442f93afd3aec0c8e9f6cdb38948fc7ba8515b407b8e141c6236cb9d3",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "851f7696b47885fbd7e1be7b",
+      "bodySha256": "1d8ac55926e9a16194b293bfd034c71114feb215f8805e7f670c92f7261cfbc6",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "f4e163894f40c144d8a419c6",
+      "bodySha256": "4ad7fd6bcd962cf4b5fa2ada61d442ff9bacf9e6746fbfbafb2f61e1cfa32098",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "f301d1bac63005826437d730",
+      "bodySha256": "c0f9f779cfe6ac2d2f96553f94c2930af34efa4b699719155d5e1b0c921d25bd",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "cc99569992bff51cff8966f8",
+      "bodySha256": "b4e3e5ab343cd5cf0df58d4bb3e054c64c180f7e7f3176b7b612b9089f49a19f",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "75a7a4464bbbe9a669b3f33b",
+      "bodySha256": "5174b913954983d89ab3831a49d893358227decf53bbefe6effc38112d019099",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "2ac743583c1a66b2cc76b648",
+      "bodySha256": "7da0d74a13d74b9f8b8051f77f37df3f7b815419f9a2fe6e8b9ea9d6a3d25bb0",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "1eacbe500f82f3a72acc933f",
+      "bodySha256": "1429b6603178079233b2644d64fa8fe2087c1f374dc06003b7dcf8589cc5ff7d",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "8689743776dfdeb34b92d473",
+      "bodySha256": "09cca19fd7e3c37421c81b60f80f6152bc6098d8dfd4dd1c4d2faafae924226d",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "cd4120002bf95ce6719a11c2",
+      "bodySha256": "f95ceefc5269335a2bf941d79eda82fe7407ee94ab3b5eb422e7b911e1b3945e",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "690066748280c8d3c02f2592",
+      "bodySha256": "e2a12c2ee4a77ef7b33de0dc30a937317d6cd7a745b9aa84d19ca7a9c0e0e4eb",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "e08cea409eff3e251992c3fd",
+      "bodySha256": "4d4f446c0157f07d72204073eacb5d2eb170a2f5d26d682c7fa2e8da6bbad4ab",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "a36d5aea0fe30329ac47ce31",
+      "bodySha256": "f75bda7ac1858e835207d6557df1ad4bcc4b8fe946ed5f081a36c7fb5cb5f037",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "4f8c61345fec4b532b07929f",
+      "bodySha256": "eb610f283d9941fddf5c4a70cc6f14da008a90b063c4efb1123681b1f8f437c6",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "ffc5d2124d19ea40b3551b6f",
+      "bodySha256": "2a8f83791e9fbdd4553dd656f9c3e73151603192c272882fd52e4dd6cc7a7c96",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "94834b6dfb5c80f0a8aec0be",
+      "bodySha256": "0b5bb60a29f42520d5323ceb31f6f782778771f9dcf6abe01c0fffcaff2cf99c",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "1bac0e64880b781713e001ac",
+      "bodySha256": "db1d491c40030de675b8a49da2cad5d0b17055c031e9448874f755abece4daf2",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "9b192bfe2b4e757c54ad0443",
+      "bodySha256": "e520365d51265689773cc9b94b21dc66208c889c53a512432f3b7e714417313a",
+      "reason": "truncated-or-ambiguous-visible-input"
+    },
+    {
+      "caseId": "af8cc8ba54fd142df3773823",
+      "bodySha256": "f87d1e43ae6fa0500355a8e00b12bf02e8694c66f294a19908b947b6c6065c18",
+      "reason": "truncated-or-ambiguous-visible-input"
+    }
+  ],
+  "privateFixturePath": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/review-200/ai-reviewed-judges.jsonl",
+  "privateRawSha256": "678b0fe60be81320fbe3980ba8d4ed7479b524ee261bc78026040c9a8458ab47",
+  "publicSyntheticFixturePath": "docs/benchmarks/fixtures/system-one-source-reviewed.jsonl",
+  "publicRawSha256": "2fcaeb975c091ebe16eaa823878581fecdb4992faa4a8b50b805a166a4e0aee0",
+  "provenanceHashes": {
+    "reviewer-a.jsonl": "bb27af52f5f97f9bdb8cecdc8de368bfbacac12149e8d503bd3293bf26f4ad6f",
+    "ai-review-a.jsonl": "e85feeede4a1edcf0a77571d7bef6f5ffc54e463857745a1c3265c3eaeb45177",
+    "ai-review-b.jsonl": "5780736823d718b4a40f3e6bcb718afe5d4524b1a364100ac991a43ee779a2a9",
+    "ai-adjudicated-disagreements.jsonl": "729f5c1c9788fe010a339d80afbc0cfe62989ee41f8f7b29a5645812025cc971",
+    "source-reviewer-a.jsonl": "06d1d2e8f8711ef8283249dda1546e297469802c7fc469a9b63bd7717634f462",
+    "source-ai-review-a.jsonl": "990a97da7eb352e3fb4bd2ccf07a58a9679a030ea394248fc93b41661b3a13d7",
+    "source-ai-review-b.jsonl": "58a9ef3b6e3d51f7c56d13c09c984a590ef36e0528fee3b1570021cbe46c4bb6",
+    "source-grounded-cases.jsonl": "b79b640cf1ef137e0039b67577c138790dfde7ae75eac05d5a51daa29c1e1a3c"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "status": "prepared-not-applied",
+  "label": "dev.penumbra.daemon",
+  "originalPlistSha256": "0bda8eb092ae9fa9112979722b7e48c86924729f7b8edfac637f432144f806c3",
+  "proposedPlistSha256": "67011208af338f9fefcfd9626eae7fc92bdca1fae49512421e5573a8b095f285",
+  "originalEntry": "/Volumes/AI-DATA/maestro/bench/m4pro-qualification-20261029/Mini-rollout-preflight/ae513e5ac/source/packages/cli/bin/penumbra.ts",
+  "proposedEntry": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/production-readiness/deployment/4fe01decbb52/source/packages/cli/bin/penumbra.ts",
+  "onlyChangedKey": "ProgramArguments[1]",
+  "environmentUnchanged": true,
+  "newJudgeFlag": "off by default; no authority change",
+  "backupPath": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/production-readiness/daemon-original.plist",
+  "proposedPath": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/production-readiness/daemon-proposed.plist",
+  "rollback": "restore original plist and bootstrap original daemon if new health/startup verification fails"
+}

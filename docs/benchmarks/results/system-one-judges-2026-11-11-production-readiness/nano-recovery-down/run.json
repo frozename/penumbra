@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "status": "executed",
+  "config": {
+    "protocol": "systemone",
+    "promotionQuestionSet": "direct",
+    "baseUrl": "http://127.0.0.1:18944",
+    "model": "d3-nano-eval",
+    "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+    "hardware": "Mac mini M4 16 GiB; shared control plane; Granite paused with user authorization",
+    "runtime": "llama.cpp 2cbe0ec429b849a88664e0f62388fc92a5abd699; Metal; threads=2; slots=1; batch/ubatch=8192; offline text only; old production P4 SQL remains a measured health confound; http-only versioned installation, OpenSSL disabled",
+    "quantization": "Q8_0, no mmproj",
+    "contextTokens": 8192,
+    "timeoutMs": 5000,
+    "maxRequestBytes": 65536,
+    "allowRemote": false
+  },
+  "concurrency": 1,
+  "repeats": 1,
+  "startedAt": "2026-11-12T00:32:49.496Z",
+  "elapsedMs": 6.304249999999996,
+  "fixtureSha256": "640b733c37436ba5f30d183ea93d06d301b5f6401ae74f21c8582fa008b946a9",
+  "rows": [
+    {
+      "caseId": "t2:9e200f8a4cc075a9cd5f45cc",
+      "iteration": 0,
+      "inputSha256": "7645abeed019da812c3797ec8ecde490db8eb33e4d3298d406ea99103e7163cd",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 5.850791999999998,
+      "startedOffsetMs": 0.4488330000000076,
+      "answers": {},
+      "usage": null,
+      "error": "transport",
+      "probabilitySource": "native"
+    }
+  ]
+}

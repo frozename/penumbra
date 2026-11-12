@@ -1,0 +1,25 @@
+{
+  "kind": "Two blinded fresh-context AI reviews; common base model, not human adjudication or statistically independent training sources",
+  "records": 200,
+  "agreements": {
+    "None": 39,
+    "False": 155
+  },
+  "disagreements": 6,
+  "anyReviewerUncertain": 45,
+  "adjudicationStatus": "six disagreements frozen by a distinct AI adjudicator; source checks performed",
+  "rawOutputs": "private local files, no corpus text published",
+  "finalHistorical": {
+    "positive": 0,
+    "negative": 158,
+    "uncertain": 42
+  },
+  "sourceSupplement": {
+    "positive": 80,
+    "negative": 40,
+    "uncertain": 0,
+    "twoReviewersAgreed": 120,
+    "positiveSourceChecks": "Both AI reviewers independently verified all 80; 30\u201331 source files"
+  },
+  "commonBaseModelCaveat": "Fresh blinded contexts reduce information leakage; common model family may correlate label errors. No human adjudication claimed."
+}

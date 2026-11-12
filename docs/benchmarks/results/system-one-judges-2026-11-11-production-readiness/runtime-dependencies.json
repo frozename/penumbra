@@ -1,0 +1,189 @@
+{
+  "files": {
+    "bin/llama-server": [
+      "@rpath/libllama-server-impl.dylib",
+      "@rpath/libllama-common.0.dylib",
+      "@rpath/libmtmd.0.dylib",
+      "@rpath/libllama.0.dylib",
+      "@rpath/libggml.0.dylib",
+      "@rpath/libggml-cpu.0.dylib",
+      "@rpath/libggml-blas.0.dylib",
+      "@rpath/libggml-metal.0.dylib",
+      "@rpath/libggml-base.0.dylib",
+      "/usr/lib/libc++.1.dylib",
+      "/usr/lib/libSystem.B.dylib"
+    ],
+    "lib/libggml-base.0.29.0.dylib": [
+      "@rpath/libggml-base.0.dylib",
+      "/usr/lib/libSystem.B.dylib",
+      "/usr/lib/libc++.1.dylib"
+    ],
+    "lib/libllama.0.9.0.dylib": [
+      "@rpath/libllama.0.dylib",
+      "@rpath/libggml.0.dylib",
+      "@rpath/libggml-cpu.0.dylib",
+      "@rpath/libggml-blas.0.dylib",
+      "@rpath/libggml-metal.0.dylib",
+      "@rpath/libggml-base.0.dylib",
+      "/usr/lib/libc++.1.dylib",
+      "/usr/lib/libSystem.B.dylib"
+    ],
+    "lib/libmtmd.0.9.0.dylib": [
+      "@rpath/libmtmd.0.dylib",
+      "@rpath/libllama.0.dylib",
+      "@rpath/libggml.0.dylib",
+      "@rpath/libggml-cpu.0.dylib",
+      "@rpath/libggml-blas.0.dylib",
+      "@rpath/libggml-metal.0.dylib",
+      "@rpath/libggml-base.0.dylib",
+      "/usr/lib/libc++.1.dylib",
+      "/usr/lib/libSystem.B.dylib"
+    ],
+    "lib/libggml.0.29.0.dylib": [
+      "@rpath/libggml.0.dylib",
+      "@rpath/libggml-cpu.0.dylib",
+      "@rpath/libggml-blas.0.dylib",
+      "@rpath/libggml-metal.0.dylib",
+      "@rpath/libggml-base.0.dylib",
+      "/usr/lib/libc++.1.dylib",
+      "/usr/lib/libSystem.B.dylib"
+    ],
+    "lib/libllama-server-impl.dylib": [
+      "@rpath/libllama-server-impl.dylib",
+      "@rpath/libllama-common.0.dylib",
+      "@rpath/libmtmd.0.dylib",
+      "@rpath/libllama.0.dylib",
+      "@rpath/libggml.0.dylib",
+      "@rpath/libggml-cpu.0.dylib",
+      "@rpath/libggml-blas.0.dylib",
+      "@rpath/libggml-metal.0.dylib",
+      "@rpath/libggml-base.0.dylib",
+      "/usr/lib/libc++.1.dylib",
+      "/usr/lib/libSystem.B.dylib"
+    ],
+    "lib/libggml-blas.0.29.0.dylib": [
+      "@rpath/libggml-blas.0.dylib",
+      "@rpath/libggml-base.0.dylib",
+      "/System/Library/Frameworks/Accelerate.framework/Versions/A/Accelerate",
+      "/usr/lib/libc++.1.dylib",
+      "/usr/lib/libSystem.B.dylib"
+    ],
+    "lib/libggml-metal.0.29.0.dylib": [
+      "@rpath/libggml-metal.0.dylib",
+      "@rpath/libggml-base.0.dylib",
+      "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
+      "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
+      "/System/Library/Frameworks/MetalKit.framework/Versions/A/MetalKit",
+      "/usr/lib/libc++.1.dylib",
+      "/usr/lib/libSystem.B.dylib",
+      "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
+      "/usr/lib/libobjc.A.dylib"
+    ],
+    "lib/libllama-completion-impl.dylib": [
+      "@rpath/libllama-completion-impl.dylib",
+      "@rpath/libllama-common.0.dylib",
+      "@rpath/libllama.0.dylib",
+      "@rpath/libggml.0.dylib",
+      "@rpath/libggml-cpu.0.dylib",
+      "@rpath/libggml-blas.0.dylib",
+      "@rpath/libggml-metal.0.dylib",
+      "@rpath/libggml-base.0.dylib",
+      "/usr/lib/libc++.1.dylib",
+      "/usr/lib/libSystem.B.dylib"
+    ],
+    "lib/libllama-bench-impl.dylib": [
+      "@rpath/libllama-bench-impl.dylib",
+      "@rpath/libllama-common.0.dylib",
+      "@rpath/libllama.0.dylib",
+      "@rpath/libggml.0.dylib",
+      "@rpath/libggml-cpu.0.dylib",
+      "@rpath/libggml-blas.0.dylib",
+      "@rpath/libggml-metal.0.dylib",
+      "@rpath/libggml-base.0.dylib",
+      "/usr/lib/libc++.1.dylib",
+      "/usr/lib/libSystem.B.dylib"
+    ],
+    "lib/libllama-common.0.9.0.dylib": [
+      "@rpath/libllama-common.0.dylib",
+      "@rpath/libllama.0.dylib",
+      "@rpath/libggml.0.dylib",
+      "@rpath/libggml-cpu.0.dylib",
+      "@rpath/libggml-blas.0.dylib",
+      "@rpath/libggml-metal.0.dylib",
+      "@rpath/libggml-base.0.dylib",
+      "/usr/lib/libc++.1.dylib",
+      "/usr/lib/libSystem.B.dylib"
+    ],
+    "lib/libllama-perplexity-impl.dylib": [
+      "@rpath/libllama-perplexity-impl.dylib",
+      "@rpath/libllama-common.0.dylib",
+      "@rpath/libllama.0.dylib",
+      "@rpath/libggml.0.dylib",
+      "@rpath/libggml-cpu.0.dylib",
+      "@rpath/libggml-blas.0.dylib",
+      "@rpath/libggml-metal.0.dylib",
+      "@rpath/libggml-base.0.dylib",
+      "/usr/lib/libc++.1.dylib",
+      "/usr/lib/libSystem.B.dylib"
+    ],
+    "lib/libggml-cpu.0.29.0.dylib": [
+      "@rpath/libggml-cpu.0.dylib",
+      "@rpath/libggml-base.0.dylib",
+      "/System/Library/Frameworks/Accelerate.framework/Versions/A/Accelerate",
+      "/usr/lib/libc++.1.dylib",
+      "/usr/lib/libSystem.B.dylib"
+    ],
+    "lib/libllama-quantize-impl.dylib": [
+      "@rpath/libllama-quantize-impl.dylib",
+      "@rpath/libllama-common.0.dylib",
+      "@rpath/libllama.0.dylib",
+      "@rpath/libggml.0.dylib",
+      "@rpath/libggml-cpu.0.dylib",
+      "@rpath/libggml-blas.0.dylib",
+      "@rpath/libggml-metal.0.dylib",
+      "@rpath/libggml-base.0.dylib",
+      "/usr/lib/libc++.1.dylib",
+      "/usr/lib/libSystem.B.dylib"
+    ],
+    "lib/libllama-cli-impl.dylib": [
+      "@rpath/libllama-cli-impl.dylib",
+      "@rpath/libllama-server-impl.dylib",
+      "@rpath/libllama-common.0.dylib",
+      "@rpath/libmtmd.0.dylib",
+      "@rpath/libllama.0.dylib",
+      "@rpath/libggml.0.dylib",
+      "@rpath/libggml-cpu.0.dylib",
+      "@rpath/libggml-blas.0.dylib",
+      "@rpath/libggml-metal.0.dylib",
+      "@rpath/libggml-base.0.dylib",
+      "/usr/lib/libc++.1.dylib",
+      "/usr/lib/libSystem.B.dylib"
+    ],
+    "lib/libllama-batched-bench-impl.dylib": [
+      "@rpath/libllama-batched-bench-impl.dylib",
+      "@rpath/libllama-common.0.dylib",
+      "@rpath/libllama.0.dylib",
+      "@rpath/libggml.0.dylib",
+      "@rpath/libggml-cpu.0.dylib",
+      "@rpath/libggml-blas.0.dylib",
+      "@rpath/libggml-metal.0.dylib",
+      "@rpath/libggml-base.0.dylib",
+      "/usr/lib/libc++.1.dylib",
+      "/usr/lib/libSystem.B.dylib"
+    ],
+    "lib/libllama-fit-params-impl.dylib": [
+      "@rpath/libllama-fit-params-impl.dylib",
+      "@rpath/libllama-common.0.dylib",
+      "@rpath/libllama.0.dylib",
+      "@rpath/libggml.0.dylib",
+      "@rpath/libggml-cpu.0.dylib",
+      "@rpath/libggml-blas.0.dylib",
+      "@rpath/libggml-metal.0.dylib",
+      "@rpath/libggml-base.0.dylib",
+      "/usr/lib/libc++.1.dylib",
+      "/usr/lib/libSystem.B.dylib"
+    ]
+  },
+  "unexpectedAbsoluteRuntimeDependencies": [],
+  "method": "otool -L on executable and every installed unique dylib; static inspection, not dlopen trace"
+}
