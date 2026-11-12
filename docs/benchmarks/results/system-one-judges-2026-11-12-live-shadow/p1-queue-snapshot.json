@@ -1,0 +1,41 @@
+{
+  "at": "2026-11-12T12:20:34.764Z",
+  "scope": "Read-only aggregate, all projects; broad due count omits claimed_at, prompt-pattern/long-lived-user exclusions, queued actions and other claim policy",
+  "counts": {
+    "total": 71367,
+    "unprocessed_unfiltered": 10733,
+    "retry_exhausted": 685,
+    "unusable_excerpt": 286,
+    "broadly_due_before_all_claim_filters": 10044
+  },
+  "health": [
+    {
+      "subsystem": "dream.shadow.typesafe-jev",
+      "last_success_ts": "2026-11-12T11:50:58.042Z",
+      "last_failure_ts": "2026-10-30T19:07:13.281Z",
+      "last_failure_reason": "transport",
+      "consecutive_failures": 0
+    },
+    {
+      "subsystem": "dream.judge.local-granite-3b-q8-http",
+      "last_success_ts": "2026-11-12T11:50:58.042Z",
+      "last_failure_ts": "2026-11-12T10:46:51.942Z",
+      "last_failure_reason": "http_502",
+      "consecutive_failures": 0
+    },
+    {
+      "subsystem": "dream.judge.local-gemma-e4b-judge-http",
+      "last_success_ts": "2026-11-12T03:21:48.939Z",
+      "last_failure_ts": "2026-11-12T11:50:58.042Z",
+      "last_failure_reason": "http_404",
+      "consecutive_failures": 162
+    },
+    {
+      "subsystem": "dream.judge.local-qwen35-4b-judge-http",
+      "last_success_ts": "2026-11-12T03:21:48.939Z",
+      "last_failure_ts": "2026-11-12T11:50:58.043Z",
+      "last_failure_reason": "http_404",
+      "consecutive_failures": 162
+    }
+  ]
+}

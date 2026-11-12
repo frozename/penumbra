@@ -1,0 +1,10 @@
+{
+  "method": "Compare critical HTTP probe intervals with admittedAt + recorded candidate latency; timestamps are not atomic and this is not a causal attribution",
+  "probes": [
+    {
+      "probeAt": 1794486343.1929548,
+      "healthWallMs": 1002.5644999695942,
+      "overlappingCandidateRequests": []
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "productionSourceChange": {
+    "commit": "5b0aa54b71a1152af50370bc93822293e3df9d22",
+    "effect": "Start incumbent ballot deadline race alongside candidate evaluation; preserve already available ballots on candidate timeout. Authority, thresholds, latency deadline and model outputs unchanged.",
+    "regressionRed": {
+      "command": "bun test packages/daemon/test/local-promotion-shadow.test.ts",
+      "exitCode": 1,
+      "pass": 6,
+      "fail": 1,
+      "reason": "Expected resolved incumbent ballots, received null after candidate deadline"
+    },
+    "focusedGreen": {
+      "command": "bun test packages/daemon/test/local-promotion-shadow.test.ts packages/daemon/test/dreaming/local-shadow-runtime.test.ts packages/daemon/test/dreaming/p1-typesafe-shadow.test.ts packages/integrations/typesafe/test/local-decision.test.ts",
+      "pass": 47,
+      "fail": 0,
+      "assertions": 212
+    },
+    "deployment": "Not activated in production; daemon remains on its prior source with native local shadow off"
+  },
+  "experimentGuard": {
+    "initialRed": "New guard tests could not import the absent helper",
+    "green": {
+      "command": "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s docs/benchmarks/results/system-one-judges-2026-11-12-guarded-replay -p guard_test.py",
+      "pass": 13,
+      "fail": 0
+    },
+    "scope": "Experiment-only supervisor guard; not a new permanent inference service"
+  }
+}

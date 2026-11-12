@@ -870,5 +870,66 @@
   ],
   "report": "docs/benchmarks/system-one-judge-memory-placement.md",
   "previousOperationalState": "NOT COMPLETE: endpoint cutover rolled back after explicit macOS TCC Full Disk Access denial. Daemon/worker manually recovered, original configs. Native runtime supervised with internal serving copies; no weights at startup. User OS action required for control-plane supervision. Existing hosted Jev remains enabled.",
-  "latestOperationalEvidence": "docs/benchmarks/results/system-one-judges-2026-11-12-resume/os-access-retry/current-runtime-status.json"
+  "latestOperationalEvidence": "docs/benchmarks/results/system-one-judges-2026-11-12-guarded-replay/final-runtime-status.json",
+  "latestCodeValidation": {
+    "sourceCommit": "5b0aa54b71a1152af50370bc93822293e3df9d22",
+    "command": "bun run check:ci",
+    "ciExitCode": 0,
+    "runtimePlistUnchanged": true,
+    "postRestoreInferenceExitCode": 0,
+    "rawLogPath": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/resume-20261112/check-ci-shadow-timeout-fix.log",
+    "rawLogSha256": "2780c0fbb38d4d0dc2f06b1426febc916ba7399447ea78a5ebd60de56c306628",
+    "heavyJobLock": "/Users/aimastermind/.penumbra/locks/heavy-job.lock",
+    "status": "passed",
+    "gates": {
+      "passed": 7,
+      "failed": 0,
+      "skipped": 4
+    },
+    "testShardPassCounts": [
+      632,
+      2619,
+      58,
+      267,
+      980,
+      387,
+      632,
+      4154,
+      3305,
+      70,
+      43,
+      218,
+      852,
+      676,
+      1784
+    ],
+    "passingTestExecutions": 16677,
+    "testCountCaveat": "Some coverage repeats across shards; not independent tests.",
+    "sourceScope": "Production package fix and regression are committed at sourceCommit. Later edits are docs/results; the deployed daemon source remains4fe with native local shadow off."
+  },
+  "guardedOperationalReplay": {
+    "status": "partial_runtime_replay",
+    "resourceGuardAborted": false,
+    "attempts": 18,
+    "answered": 17,
+    "failures": [
+      "timeout"
+    ],
+    "latencyP50Ms": 559.4279999999562,
+    "latencyP95Ms": 1570.3279579999798,
+    "candidatePromotions": 0,
+    "allShadowUnapplied": true,
+    "actualQualityLabels": 0,
+    "quorumComparableCases": 11,
+    "criticalSensor": {
+      "samples": 960,
+      "healthFailures": 1,
+      "minAvailableFreeInactiveBytes": 3791912960,
+      "maxSwapGrowthBytes": 0,
+      "maxSwapoutBytes": 0,
+      "admissionWaitSamples": 797,
+      "maxCriticalIntervalMs": 1023.3948230743408
+    }
+  },
+  "contemporaryShadowGate": "Unexercised: no new eligible records arrived before observer interrupted; historical replay partial18attempted17answered1timeout, not a passing live window"
 }

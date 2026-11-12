@@ -1,0 +1,36 @@
+{
+  "sourceCommit": "5b0aa54b71a1152af50370bc93822293e3df9d22",
+  "command": "bun run check:ci",
+  "ciExitCode": 0,
+  "runtimePlistUnchanged": true,
+  "postRestoreInferenceExitCode": 0,
+  "rawLogPath": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/resume-20261112/check-ci-shadow-timeout-fix.log",
+  "rawLogSha256": "2780c0fbb38d4d0dc2f06b1426febc916ba7399447ea78a5ebd60de56c306628",
+  "heavyJobLock": "/Users/aimastermind/.penumbra/locks/heavy-job.lock",
+  "status": "passed",
+  "gates": {
+    "passed": 7,
+    "failed": 0,
+    "skipped": 4
+  },
+  "testShardPassCounts": [
+    632,
+    2619,
+    58,
+    267,
+    980,
+    387,
+    632,
+    4154,
+    3305,
+    70,
+    43,
+    218,
+    852,
+    676,
+    1784
+  ],
+  "passingTestExecutions": 16677,
+  "testCountCaveat": "Some coverage repeats across shards; not independent tests.",
+  "sourceScope": "Production package fix and regression are committed at sourceCommit. Later edits are docs/results; the deployed daemon source remains4fe with native local shadow off."
+}

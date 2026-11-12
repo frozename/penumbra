@@ -1,0 +1,32 @@
+{
+  "method": "Lookup exact body hashes in the already frozen independently AI-reviewed development corpus. No new labels inferred; reused cases do not add independent evidence.",
+  "disagreements": [
+    {
+      "subjectId": "043e023b-aeda-449a-9bdc-1938171cf729",
+      "inputSha256": "64756e36776a1628550573762897bb350993c2de9b7d00bde8c4f8a5bc1c5aad",
+      "candidate": false,
+      "recordedQuorum": true,
+      "existingIndependentReview": {
+        "fixtureId": "historical:079241412fbe62a0c08dfbbf",
+        "labelStatus": "independently-ai-reviewed",
+        "labels": {
+          "promote": false
+        }
+      }
+    },
+    {
+      "subjectId": "d5ae8b35-0d38-4e75-8b32-6e1ae5ef2491",
+      "inputSha256": "e81651a94fc8603a5f63ba182c64daa7edf1f353be4a578b69876585cd183f48",
+      "candidate": false,
+      "recordedQuorum": true,
+      "existingIndependentReview": {
+        "fixtureId": "historical:7e923a8f5be4801752da438c",
+        "labelStatus": "independently-ai-reviewed",
+        "labels": {
+          "promote": false
+        }
+      }
+    }
+  ],
+  "privacy": "Original review rationales stay private; only frozen fixture IDs, review status and labels published."
+}
