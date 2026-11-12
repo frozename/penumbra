@@ -6,6 +6,7 @@ import {
   runJudgeBench,
   summarizeBench,
 } from "./system-one-judge-bench.js";
+import { comparePromotion } from "./system-one-judge-compare.js";
 
 const fixture = fixtureSchema.parse({
   id: "x",
@@ -63,6 +64,34 @@ test("independent AI labels require distinct reviewers and explicit provenance",
       reviewProvenance: { ...provenance, reviewers: ["reviewer-a", "reviewer-a"] },
     }).success,
   ).toBe(false);
+});
+
+test("paired comparisons exclude uncertain unlabeled cases rather than counting them as negatives", async () => {
+  const pending = {
+    ...fixture,
+    id: "pending",
+    family: "pending",
+    state: { body: "incomplete claim", kind: "promote_t1" },
+    labels: {},
+  };
+  const fixtures = [fixture, pending];
+  const run = await runJudgeBench(config, fixtures, {
+    live: true,
+    fetch: () =>
+      Promise.resolve(
+        Response.json({
+          model: "local",
+          answers: Object.fromEntries(
+            Object.keys(questionsFor(fixture)).map((id) => [id, { type: "noul", noul: 0.9 }]),
+          ),
+          usage: { input_tokens: 1, output_tokens: 0 },
+        }),
+      ),
+  });
+  const paired = comparePromotion(run, run, fixtures);
+  expect(paired.selected).toBe(1);
+  expect(paired.commonAnswered).toBe(1);
+  expect(paired.candidate).toMatchObject({ tp: 1, fp: 0, fn: 0 });
 });
 
 test("responses, failures and repeated requests remain non-authoritative and coverage is honest", async () => {

@@ -31,7 +31,10 @@ export function comparePromotion(
   const next = new Map(
     candidate.rows.filter((row) => row.iteration === 0).map((row) => [row.caseId, row]),
   );
-  const selected = fixtures.filter((f) => f.workload === "promotion" && f.split === "test");
+  const selected = fixtures.filter(
+    (f) =>
+      f.workload === "promotion" && f.split === "test" && typeof f.labels.promote === "boolean",
+  );
   const common = selected.filter(
     (f) =>
       base.get(f.id)?.answers.promote?.type === "noul" &&
