@@ -1,5 +1,7 @@
 # System One judges: reproducible local pilot
 
+The [November 12 memory/confirmation report](system-one-judge-memory-placement.md) and [current recommendation](../decisions/system-one-judge-recommendation.md) supersede initial candidate/placement conclusions; preserve this pilot as dated development evidence.
+
 2026-11-11. This is an exploratory content-classification and deployment experiment. It does not authorize replacement, establish factual correctness of memories, or demonstrate downstream memory benefit. All new outputs have `mode=shadow, applied=false`.
 
 The subsequent [bounded shadow continuation](system-one-judge-shadow-trial.md) adds disabled-by-default wiring and a fresh 200-case review packet. Its operational replay failed the health guard with existing P4 database/event-loop stalls as a material confound. It does not change the pilot quality results below or establish production readiness.

@@ -1,0 +1,11 @@
+{
+  "source": "macOS unified log, tccd, captured2026-11-12; raw log private",
+  "rawLogSha256": "b60accc747c506d476ac26b027ed14ecda7bf4a6d35fcbca28355f2d424dd82e",
+  "matchingDenials": [
+    "2026-11-12 02:42:13.678 I  tccd[58948:32acd07] [com.apple.TCC:access] Handling access request to kTCCServiceSystemPolicyAllFiles, from Sub:{/Users/aimastermind/.bun/bin/bun}Resp:{TCCDProcess: identifier=bun, pid=52240, auid=501, euid=501, binary_path=/Users/aimastermind/.bun/bin/bun}, ReqResult(Auth Right: Denied (Service Policy), promptType: 1,DB Action:None)",
+    "2026-11-12 02:44:42.011 I  tccd[58948:32acd07] [com.apple.TCC:access] Handling access request to kTCCServiceSystemPolicyAllFiles, from Sub:{/Users/aimastermind/.bun/bin/bun}Resp:{TCCDProcess: identifier=bun, pid=52399, auid=501, euid=501, binary_path=/Users/aimastermind/.bun/bin/bun}, ReqResult(Auth Right: Denied (Service Policy), promptType: 1,DB Action:None)",
+    "2026-11-12 02:44:42.020 I  tccd[58948:32af232] [com.apple.TCC:access] Handling access request to kTCCServiceSystemPolicyAllFiles, from Sub:{/Users/aimastermind/.bun/bin/bun}Resp:{TCCDProcess: identifier=bun, pid=52401, auid=501, euid=501, binary_path=/Users/aimastermind/.bun/bin/bun}, ReqResult(Auth Right: Denied (Service Policy), promptType: 1,DB Action:None)",
+    "2026-11-12 02:46:30.973 I  tccd[58948:32afb35] [com.apple.TCC:access] Handling access request to kTCCServiceSystemPolicyAllFiles, from Sub:{/Users/aimastermind/.bun/bin/bun}Resp:{TCCDProcess: identifier=bun, pid=52816, auid=501, euid=501, binary_path=/Users/aimastermind/.bun/bin/bun}, ReqResult(Auth Right: Denied (Service Policy), promptType: 1,DB Action:None)"
+  ],
+  "permissionChangedByAgent": false
+}

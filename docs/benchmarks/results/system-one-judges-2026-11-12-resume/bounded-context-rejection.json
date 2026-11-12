@@ -1,0 +1,15 @@
+{
+  "method": "Explicit oversized synthetic input at managed2048 context; assert abstention rather than silent truncation",
+  "latencyMs": 286.592958,
+  "result": {
+    "ok": false,
+    "kind": "server",
+    "status": 500,
+    "attempts": 1
+  },
+  "serverObservedInputTokens": 6495,
+  "serverPhysicalBatchTokens": 2048,
+  "serverReason": "input too large to process; increase physical batch size",
+  "truncated": false,
+  "reasonSource": "dedicated runtime stdout; synthetic input only"
+}

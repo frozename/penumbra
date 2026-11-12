@@ -2,6 +2,8 @@
 
 Date: 2026-11-11. This report extends the [initial pilot](system-one-judges.md) and the [interrupted shadow trial](system-one-judge-shadow-trial.md). Keep these cohorts separate. New classifier authority remains disabled.
 
+The [November12 continuation](system-one-judge-memory-placement.md) adds Mini confirmation, bounded/on-demand placement, live P4 activation evidence and the current macOS supervision blocker. Its deployment observations supersede the November11 snapshot below.
+
 ## Independently AI-reviewed development cohort
 
 The user selected independent AI reviewers with source checks. Two fresh contexts reviewed each input without current study predictions or the other review. A distinct AI adjudicator resolved six historical disagreements. All reviewers share a base model family; these are AI labels, with potentially correlated errors, rather than human adjudication. Source checks establish only the claims actually supported by source.

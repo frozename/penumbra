@@ -1,0 +1,8 @@
+{
+  "path": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/models/vllm-d3-nano-Q8_0.gguf",
+  "bytes": 2552358496,
+  "sha256": "a4d7563d9622a4c34cc7276a3381c3e27a25bbf8d4c0f5ee2f1404fc89ce2ab9",
+  "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79",
+  "managedPath": "/Volumes/AI-MODELS/llama.cpp/models/vllm-d3-nano-GGUF/vllm-d3-nano-Q8_0.gguf",
+  "license": "Apache-2.0; LICENSE and NOTICE retained with artifact"
+}

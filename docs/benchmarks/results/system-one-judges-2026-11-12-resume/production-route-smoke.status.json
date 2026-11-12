@@ -1,0 +1,5 @@
+{
+  "status": "not_run",
+  "reason": "Endpoint-only cutover failed startup and was rolled back; proposed existing-Granite route still staged, not active",
+  "newAuthorityActivated": false
+}

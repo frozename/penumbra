@@ -1,0 +1,75 @@
+{
+  "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+  "base": "http://127.0.0.1:18086",
+  "method": "Synthetic output-semantic regression, existing prompt/parser/schemas; no production database writes or independent quality-acceptance claim",
+  "rows": [
+    {
+      "id": "decision",
+      "workload": "extraction",
+      "passed": false,
+      "latencyMs": 2030.150083,
+      "memories": [],
+      "raw": "{\"memories\": []}"
+    },
+    {
+      "id": "preference",
+      "workload": "extraction",
+      "passed": false,
+      "latencyMs": 340.1713329999998,
+      "memories": [],
+      "raw": "{\"memories\":[]}"
+    },
+    {
+      "id": "ephemeral",
+      "workload": "extraction",
+      "passed": true,
+      "latencyMs": 337.2736249999998,
+      "memories": [],
+      "raw": "{\"memories\":[]}"
+    },
+    {
+      "id": "long-mixed",
+      "workload": "extraction",
+      "passed": false,
+      "latencyMs": 7304.017167000001,
+      "memories": [],
+      "raw": "{\"memories\": []}"
+    },
+    {
+      "id": "public-sqlite",
+      "workload": "rewriter",
+      "passed": true,
+      "expected": "query",
+      "answer": {
+        "kind": "query",
+        "query": "SQLite WAL checkpoint starvation handling"
+      },
+      "raw": "{\"kind\":\"query\",\"query\":\"SQLite WAL checkpoint starvation handling\"}",
+      "latencyMs": 2064.5661249999994
+    },
+    {
+      "id": "public-backpressure",
+      "workload": "rewriter",
+      "passed": true,
+      "expected": "query",
+      "answer": {
+        "kind": "query",
+        "query": "bounded queues backpressure design pattern"
+      },
+      "raw": "{\"kind\":\"query\",\"query\":\"bounded queues backpressure design pattern\"}",
+      "latencyMs": 668.616250000001
+    },
+    {
+      "id": "internal",
+      "workload": "rewriter",
+      "passed": true,
+      "expected": "skip",
+      "answer": {
+        "kind": "skip",
+        "reason": "internal helper name and task ID are not publicly searchable"
+      },
+      "raw": "{\"kind\":\"skip\",\"reason\":\"internal helper name and task ID are not publicly searchable\"}",
+      "latencyMs": 814.9992500000008
+    }
+  ]
+}

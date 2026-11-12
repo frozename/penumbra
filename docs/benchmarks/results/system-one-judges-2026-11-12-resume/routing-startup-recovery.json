@@ -1,0 +1,5 @@
+{
+  "ts": 1794480281.981529,
+  "action": "Stopped failed route transaction and restored exact original agent/plist bytes; observing original supervised startup",
+  "reason": "new daemon blocked in getcwd opening external working directory; no new native authority"
+}
