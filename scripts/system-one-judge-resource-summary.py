@@ -27,6 +27,10 @@ def main():
     cpu = [row["cpuPercent"] for row in samples if row.get("cpuPercent") is not None]
     output = {
         "run": args.run, "samples": len(samples), "intervalStart": start, "intervalEnd": end,
+        "firstSampleTs": samples[0]["ts"], "lastSampleTs": samples[-1]["ts"],
+        "sampledSpanFraction": min(1, (samples[-1]["ts"] - samples[0]["ts"]) / (end - start)),
+        "unsampledPrefixMs": (samples[0]["ts"] - start) * 1000,
+        "unsampledSuffixMs": (end - samples[-1]["ts"]) * 1000,
         "peakSampledRssBytes": max(rss), "medianSampledRssBytes": statistics.median(rss),
         "psCpuPercentMedian": statistics.median(cpu), "psCpuPercentPeak": max(cpu),
         "swapStartBytes": samples[0]["swapUsedBytes"], "swapEndBytes": samples[-1]["swapUsedBytes"],
