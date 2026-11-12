@@ -19,7 +19,7 @@ PACKET = PRIVATE / 'review-200'
 EVENTS = []
 SAMPLERS = []
 ACTIVE = None
-ORIGINAL = Path('/tmp/penumbra-systemone-granite-original-command.txt').read_text().strip()
+ORIGINAL = json.loads((ROOT / 'granite-original-launch.json').read_text())['commandText']
 ORIGINAL_ARGS = shlex.split(ORIGINAL)
 
 

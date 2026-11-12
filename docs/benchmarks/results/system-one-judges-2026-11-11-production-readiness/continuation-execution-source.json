@@ -1,0 +1,9 @@
+{
+  "executedDriver": "continue-model-bench.executed.py",
+  "executedSha256": "01de222b011396557f4babe3891af63233ad5e4ab219264fb5cb60440b240259",
+  "results": "continuation-lifecycle.json",
+  "updatedDriver": "continue-model-bench.py",
+  "updatedSha256": "7dd8fa379a7b5c18d5de69c79307dad6f6bbd75df4b9c81a39a5d91c5573fb2a",
+  "difference": "Updated driver loads identical original command from durable pinned JSON rather than an ephemeral /tmp text file. Preserved original executed bytes; updated driver syntax-checked, not rerun.",
+  "originalCommand": "granite-original-launch.json"
+}
