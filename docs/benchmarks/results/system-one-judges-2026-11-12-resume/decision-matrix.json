@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-12T10:56:57.583132+00:00",
+  "generatedAt": "2026-11-12T11:19:41.488160+00:00",
   "authority": "unchanged; local daemon shadow off, no new vote or veto authority",
   "productionReplacement": "NO-GO: every tested specialist fails a relevant quality gate",
   "selfHostedEvaluationPriority": [
@@ -9,7 +9,7 @@
   ],
   "rankingMeaning": "Deployment/evaluation priority only. No pooled cross-domain or public-benchmark ranking.",
   "preferredHardware": "Mac mini16GiB, one model loaded, concurrency1; short native context2048; development-plane priority. No larger-worker occupancy justified.",
-  "productionReadiness": "NOT COMPLETE: endpoint cutover rolled back after explicit macOS TCC Full Disk Access denial. Daemon/worker manually recovered, original configs. Native runtime supervised with internal serving copies; no weights at startup. User OS action required for control-plane supervision. Existing hosted Jev remains enabled.",
+  "productionReadiness": "OS-access and control-plane supervision gates resolved after user grant, verified launchd external-read probe, new supervised daemon/worker and actual configured T2-factory inference. Existing Granite route active at18944; one-model on-demand router observed Granite sleeping/Nano unloaded at157.3MiB aggregate idleRSS. Extraction quality, other unavailable incumbent seats, admitted contemporary shadow and release review remain gates. No new native authority.",
   "models": [
     {
       "modelKey": "nano",
@@ -862,13 +862,13 @@
   "qualityEvidence": "Independent blind fresh-context AI source reviews plus distinct AI adjudication. Common model family; no human adjudication. Separate corpora, no pooled leaderboard.",
   "uncertainty": "42 uncertain excerpt inputs and4 uncertain complete-body inputs excluded from accuracy; fourteen complete-body negatives cannot certify2% false promotion. Source support is separate.",
   "remainingGates": [
-    "Bun external-volume OS permission and supervised recovery",
-    "Available distinct incumbent seats and corrected caller routes",
-    "Generative extraction semantic validation",
-    "Guarded contemporary shadow with hard admission envelope",
-    "Representative independently labeled acceptance cohort and calibrated bounds",
-    "Observed downstream utility",
+    "Other distinct incumbent seats still unavailable",
+    "Durable-positive extraction semantic validation",
+    "Hard admission and contemporary bounded daemon shadow",
+    "Independent quality bounds/calibration/downstream utility",
     "Release review and dispatch_land, no automatic authority activation"
   ],
-  "report": "docs/benchmarks/system-one-judge-memory-placement.md"
+  "report": "docs/benchmarks/system-one-judge-memory-placement.md",
+  "previousOperationalState": "NOT COMPLETE: endpoint cutover rolled back after explicit macOS TCC Full Disk Access denial. Daemon/worker manually recovered, original configs. Native runtime supervised with internal serving copies; no weights at startup. User OS action required for control-plane supervision. Existing hosted Jev remains enabled.",
+  "latestOperationalEvidence": "docs/benchmarks/results/system-one-judges-2026-11-12-resume/os-access-retry/current-runtime-status.json"
 }

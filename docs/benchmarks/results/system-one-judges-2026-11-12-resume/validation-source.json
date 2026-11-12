@@ -11,5 +11,5 @@
   "changedImplementationPaths": [],
   "fullCi": "Existing recorded7pass0fail4skip,16676 passing test executions; no rerun for documentation/results-only continuation",
   "newValidation": "Executed model replays, strict native controls, bounded-context abstention, lifecycle/concurrency/recovery rehearsals, TypeSafe package typecheck",
-  "experimentalDriverScope": "New docs/results scripts are not included in the prior fullCI attestation; production-route smoke remains not_run because cutover rolled back."
+  "experimentalDriverScope": "New docs/results scripts are outside the prior fullCI attestation. The earlier production-route smoke was not_run after rollback; os-access-retry/production-route-smoke.ts subsequently executed successfully against the actual configured T2 factory after user OS grant. Only the synthetic ephemeral control is validated."
 }
