@@ -588,5 +588,11 @@
     "targetAMDStrix performance",
     "managedllamactl restart/proxy parity"
   ],
-  "privacy": "Raw historical text/reviews remain private local files. Published fixtures are source-grounded synthetic and prior synthetic long cases."
+  "privacy": "Raw historical text/reviews remain private local files. Published fixtures are source-grounded synthetic and prior synthetic long cases.",
+  "validation": {
+    "fullCi": "ci-validation.final.json",
+    "passingTestExecutions": 16676,
+    "latestProductionStatus": "production-status.json",
+    "postCiGraniteInference": "granite-post-ci-inference.json"
+  }
 }
