@@ -166,3 +166,25 @@ test("a hung incumbent cannot retain the detached shadow indefinitely", async ()
   expect(recorded).toHaveLength(1);
   expect(recorded[0]).toMatchObject({ incumbentVotes: null, failure: "timeout", applied: false });
 });
+
+test("candidate deadline preserves incumbent ballots that already resolved", async () => {
+  const votes = [{ promote: true, confidence: 0.9, seat: "incumbent" }];
+  const recorded: unknown[] = [];
+  const seat = createLocalPromotionShadowSeat({
+    client: { evaluate: () => new Promise(() => undefined) },
+    budgetMs: 20,
+    revision: "sha",
+    writeDecision: (row) => recorded.push(row),
+  });
+  await seat.shadow({ body: "input", kind: "promote_t1", subjectId: "x" }, Promise.resolve(votes));
+  expect(recorded).toHaveLength(1);
+  expect(recorded[0]).toMatchObject({
+    incumbentVotes: votes,
+    failure: "timeout",
+    candidatePromote: null,
+    probability: null,
+    mode: "shadow",
+    applied: false,
+  });
+  expect(votes).toEqual([{ promote: true, confidence: 0.9, seat: "incumbent" }]);
+});

@@ -69,6 +69,7 @@ export function createLocalPromotionShadowSeat(options: {
             resolve(null);
           }, budgetMs);
         });
+        const incumbentVotes = Promise.race([incumbent.catch(() => null), deadline]);
         const result = await Promise.race([
           options.client.evaluate({
             state: { kind: args.kind, body: args.body },
@@ -80,7 +81,7 @@ export function createLocalPromotionShadowSeat(options: {
         const answer = result?.ok ? result.answers.promote : null;
         const probability = readProbability(answer);
         const latencyMs = performance.now() - started;
-        const votes = await Promise.race([incumbent.catch(() => null), deadline]);
+        const votes = await incumbentVotes;
         options.writeDecision({
           mode: "shadow",
           applied: false,
