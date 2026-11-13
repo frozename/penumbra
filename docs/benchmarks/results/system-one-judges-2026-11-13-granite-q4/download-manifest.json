@@ -1,0 +1,29 @@
+{
+  "officialRepo": "ibm-granite/granite-4.1-3b-GGUF",
+  "revision": "ab4701481089b58a082ef63cc1cee738887293ff",
+  "url": "https://huggingface.co/ibm-granite/granite-4.1-3b-GGUF/resolve/ab4701481089b58a082ef63cc1cee738887293ff/granite-4.1-3b-Q4_K_M.gguf",
+  "path": "/Users/aimastermind/.local/share/penumbra/inference/models/granite-q4-eval/granite-4.1-3b-Q4_K_M.gguf",
+  "bytes": 2099501664,
+  "sha256": "662b0626cd58f443baea23559b469df6576a81d349649c59413b36a9fb32eb29",
+  "downloadSeconds": 71.43242645799182,
+  "license": "Apache-2.0 per official GGUF and base repository metadata; preserve attribution/license and applicable notices, patent/trademark terms apply. No LICENSE/NOTICE file listed by either official repo API; canonical Apache text and both pinned cards retained.",
+  "retainedNotices": [
+    {
+      "file": "/Users/aimastermind/.local/share/penumbra/inference/models/granite-q4-eval/GGUF-README.md",
+      "url": "https://huggingface.co/ibm-granite/granite-4.1-3b-GGUF/raw/ab4701481089b58a082ef63cc1cee738887293ff/README.md",
+      "sha256": "2c2c51c0bd6f0884c7363b304b2fd7ac89a2db65fa07ff0e1da2b1eb82e613bb"
+    },
+    {
+      "file": "/Users/aimastermind/.local/share/penumbra/inference/models/granite-q4-eval/BASE-README.md",
+      "url": "https://huggingface.co/ibm-granite/granite-4.1-3b/raw/c0650403e44e78ec0262dab1c90914c65b196c4e/README.md",
+      "sha256": "7868b8ead19d157ad23ec827f252f6709a380d1b2cedc35c0e7a533b91550f1f"
+    },
+    {
+      "file": "/Users/aimastermind/.local/share/penumbra/inference/models/granite-q4-eval/LICENSE",
+      "url": "https://www.apache.org/licenses/LICENSE-2.0.txt",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    }
+  ],
+  "redistributionPlanned": false,
+  "productionServiceActivated": false
+}

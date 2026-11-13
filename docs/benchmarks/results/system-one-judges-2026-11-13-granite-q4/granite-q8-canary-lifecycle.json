@@ -1,0 +1,12 @@
+[
+  {
+    "at": "2026-11-13T17:09:45.188833+00:00",
+    "kind": "waiting_for_existing_heavy_job_lock",
+    "target": "granite"
+  },
+  {
+    "at": "2026-11-13T17:12:59.272177+00:00",
+    "kind": "aborted",
+    "reason": "timed out"
+  }
+]

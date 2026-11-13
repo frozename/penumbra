@@ -1,6 +1,8 @@
 # Self-hosted System One judge evaluation
 
-November 13 continuation: the [source-preserving extraction study](../benchmarks/system-one-source-grounded-extraction.md) tests richer inputs and quote/completeness checks on a fresh cohort. No completed profile recovers the expected facts; the MacBook attempt is resource-aborted, not a quality measurement. Exact quotes do not establish semantic support or durability. Binary specialist findings below remain separate.
+November 13 continuation: the [source-preserving extraction study](../benchmarks/system-one-source-grounded-extraction.md) tests richer inputs and quote/completeness checks on a fresh cohort. No completed profile recovers the expected facts; the MacBook attempt is resource-aborted, not a quality measurement. The subsequent [source-span experiment](../benchmarks/system-one-span-selection.md) freezes an independently labeled 14-case historical and 24-case controlled test before comparing Granite, Gufo and Qwen3.5-2B. Source-role boundaries and exact copying constrain provenance but cannot establish semantic support or durability. Binary specialist findings below remain separate.
+
+The later [official Granite Q4 comparison](../benchmarks/system-one-granite-q4-canary.md) verifies public IBM Q4_K_M weights and Apache-2.0 metadata, tests the existing llama.cpp Metal runtime and measures 2.73 GiB active peak versus 4.18 GiB for Q8 at matched 16k context. It is an exposed contract/resource canary, not new hidden quality evidence or a native System One model. Retain the exact artifact and licensing records linked in that report; do not conflate its memory saving with extraction acceptance.
 
 Date: 2026-11-11. Repository inspected at `ae513e5acea5160ab9aa36a80fe32b05c23e39b5`. Experiments and proposed code are in an isolated worktree. No new promotion or veto authority is enabled.
 

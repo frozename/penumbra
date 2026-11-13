@@ -1,0 +1,16 @@
+{
+  "at": "2026-11-13T17:09:43.605859+00:00",
+  "kind": "Exploratory paired serving-profile canary, exposed controlled cases and existing controls; no new quality acceptance claim.",
+  "driverSha256": "331832e249a823a52886d8560a90dff1dbef741d33212a30a1629fe2828fa3f1",
+  "runnerSha256": "aa54473dfdf4b908dde23a436198bae4fcfbcc18e2c7f95374ce3b976b5444c2",
+  "cases": 31,
+  "context": 16384,
+  "concurrency": 1,
+  "outputs": 2048,
+  "deadlineMs": 30000,
+  "workloadTemperatures": "Actual factory defaults; captured per call, brief=0.3. No statistically controlled repeated sampling claim.",
+  "fullRewriterBenchBlocker": "Both docs/notes/rewriter-eval-2026-05-25.jsonl and rewriter-eval-prod-2026-05-25.jsonl absent in worktree/main checkout, untracked. Existing two rewriter controls used.",
+  "controlsSourceSha256": "35e168aa041e93f48f096393a15a8a16d8fa84bec2f9fabce327d4c4de27885a",
+  "fixturesSha256": "7c96c83b55a01c1bb807821ec46bfad5e2d4da54bff261983ab9d21597bcfe06",
+  "productionChanged": false
+}

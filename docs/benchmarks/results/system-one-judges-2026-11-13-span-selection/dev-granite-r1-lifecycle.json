@@ -1,0 +1,25 @@
+[
+  {
+    "at": "2026-11-13T16:24:17.351088+00:00",
+    "kind": "waiting_for_existing_heavy_job_lock",
+    "target": "granite",
+    "split": "dev"
+  },
+  {
+    "at": "2026-11-13T16:24:18.238897+00:00",
+    "kind": "admitted",
+    "modelPid": 5989,
+    "routerPid": 590,
+    "samplerSha256": "48bbc866002bb89d8dc2134479db0ddecb170858d4a174f87b3ac11d9eb18a72"
+  },
+  {
+    "at": "2026-11-13T16:26:43.367693+00:00",
+    "kind": "replay_finished",
+    "exitCode": 0
+  },
+  {
+    "at": "2026-11-13T16:26:43.369065+00:00",
+    "kind": "finished_without_service_mutation",
+    "samePlistSha256": "b52d90c7f32eead8d1ddc233ba7059621fad866f9e5403ad8454387da731999d"
+  }
+]

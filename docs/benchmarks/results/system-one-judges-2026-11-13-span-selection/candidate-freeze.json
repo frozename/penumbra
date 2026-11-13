@@ -1,0 +1,55 @@
+{
+  "frozenAt": "2026-11-13T16:49:23.409052+00:00",
+  "selectorSha256": "0cc57534a1a9fa94bab399680f9c449040f2b60765ea12d448779730c6e61cdf",
+  "driverSha256": "4712177c53f57a8f390525313a3d52a3464306bbd8bfe9fa5a1e3e1c0ee184ec",
+  "testInputSha256": "96dbd5b33190a15441490834d6687f306f556c5175324fa2fcbc9380d37eda50",
+  "provenanceSha256": "5a205ea190072857c20f5b22f80f895e2444d6b1479b9fab5822e7b8ccff1398",
+  "labelsSha256": "61f457f41c7896b377d270bb34bfc3676be98b345a0bdad87a942a73a5a8b2fe",
+  "adjudicationSha256": "f558e192abb321b57d62c3cf7e95ebe03aa32719699e419ccdf7258cc0746ee8",
+  "runners": {
+    "run-guarded.py": "a8ebfe670ee045706c8b4cb4f859a47720a65fdd1605c4a5951acb0aa54af869",
+    "run-qwen2b.py": "909e28f71316d7a3dbaa62d94adc59f9d6dfc423476f346c54c5e515d6ad3546"
+  },
+  "models": [
+    "Granite4.1-3B Q8_0",
+    "Gufo Qwen3.8 Flash-Next UD-Q4_K_XL",
+    "Qwen3.5-2B Q4_K_M"
+  ],
+  "variants": [
+    "legacy-full",
+    "selection"
+  ],
+  "selectionVersion": "v3; unchanged after exposed development runs",
+  "testCases": 38,
+  "protocol": {
+    "legacyOutputTokens": 2048,
+    "selectionOutputTokens": 256,
+    "temperature": 0,
+    "deadlineMs": 30000,
+    "concurrency": 1,
+    "retries": 0,
+    "sourceCharsMaximum": 30000,
+    "sourceUnitsMaximum": 512,
+    "selectionRangesMaximum": 3,
+    "bodyChars": [
+      80,
+      4096
+    ],
+    "completeContextOnly": true,
+    "noClippingOrChunking": true,
+    "modelProbabilities": false,
+    "historicalProvenance": "agent-response only; agent-prompt context only",
+    "controlledProvenance": "declared synthetic dialogue premise",
+    "baselineCaveat": "Incumbent extraction policy on same complete source input; not current production summarized input. Selector changes prompt, input features and output contract; no model-only causal claim."
+  },
+  "advanceToGenerationShadowOnlyIf": {
+    "historicalFactRecallMinimum": 0.8,
+    "negativeCasePromotions": 0,
+    "unsupportedPromotions": 0,
+    "contractControlFailures": 0,
+    "resourceGuardViolations": 0,
+    "latencyDeadlineMs": 30000,
+    "productionReplacement": "Still prohibited; broader representative downstream validation and runtime isolation required."
+  },
+  "independence": "Candidate frozen before root inspects substantive TEST bodies, labels or outputs. Reviewers used source checks and no candidate access. AI labels, not human-adjudicated; no population error-bound claim."
+}

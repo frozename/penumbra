@@ -8,6 +8,10 @@ The November 13 [configured generation validation](system-one-generation-validat
 
 The subsequent [source-preserving extraction study](system-one-source-grounded-extraction.md) adds an opt-in input/grounding repair, fresh independently reviewed cases, guarded fleet replays and full CI. It finds no extraction-quality improvement and preserves a MacBook memory-guard abort. Production source mode and authority remain unchanged.
 
+The [source-span selection experiment](system-one-span-selection.md) then tests a frozen, deterministic copying contract against the incumbent extraction policy on 14 historical and 24 controlled inputs. It compares Granite, existing Z13 Gufo and ephemeral Qwen3.5-2B, with independently source-checked labels, anonymous proposal review, explicit abstentions and measured resources. These generation-contract results remain separate from the bounded classification and calibration scores below.
+
+The [matched Granite Q4 canary](system-one-granite-q4-canary.md) measures a 34.8% reduction in sampled peak active RSS at the same 16k context. Q4/Q8 each pass 6/7 coarse controls with different failures and miss every positive controlled extraction. It preserves a post-CI health timeout and a preflight abort; neither profile is activated.
+
 2026-11-11. This is an exploratory content-classification and deployment experiment. It does not authorize replacement, establish factual correctness of memories, or demonstrate downstream memory benefit. All new outputs have `mode=shadow, applied=false`.
 
 The subsequent [bounded shadow continuation](system-one-judge-shadow-trial.md) adds disabled-by-default wiring and a fresh 200-case review packet. Its operational replay failed the health guard with existing P4 database/event-loop stalls as a material confound. It does not change the pilot quality results below or establish production readiness.
