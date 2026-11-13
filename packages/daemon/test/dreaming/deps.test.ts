@@ -105,7 +105,7 @@ function enabledTypesafeModule(): TypesafeModuleLike {
   };
 }
 
-test("falls back to the legacy dreaming rewriter environment candidate plus local secondary when no seat has its role", () => {
+test("uses only the configured legacy rewriter when no seat has its role", () => {
   mkdirSync(configDir, { recursive: true });
   writeFileSync(
     join(configDir, "agents.yaml"),
@@ -126,13 +126,6 @@ test("falls back to the legacy dreaming rewriter environment candidate plus loca
       name: "legacy-rewriter",
       baseUrl: "http://127.0.0.1:7944/v1",
       model: "legacy-rewriter",
-      provider: "local",
-      auth: { source: "none" },
-    },
-    {
-      name: "lfm2-generator",
-      baseUrl: "http://127.0.0.1:7944/v1",
-      model: "lfm2-generator",
       provider: "local",
       auth: { source: "none" },
     },

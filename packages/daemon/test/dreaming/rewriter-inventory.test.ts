@@ -184,3 +184,27 @@ it("does not authorize memory research through an experimental model", async () 
     [],
   );
 });
+
+it("binds a registered loopback catalog to its configured endpoint", async () => {
+  const direct = candidate({
+    name: "mini",
+    baseUrl: "http://127.0.0.1:18944/v1",
+    model: "granite",
+  });
+  const other = candidate({
+    name: "other",
+    baseUrl: "http://127.0.0.1:18999/v1",
+    model: "granite",
+  });
+  const proxy = candidate({ name: "proxy", baseUrl: "http://127.0.0.1:7944/v1", model: "granite" });
+  const selected = await resolveAgainstInventory(
+    [direct, other, proxy],
+    [
+      {
+        id: "granite",
+        node: { name: "mini", kind: "gateway", endpoint: "http://127.0.0.1:18944", healthy: true },
+      },
+    ],
+  );
+  expect(selected).toEqual([direct]);
+});
