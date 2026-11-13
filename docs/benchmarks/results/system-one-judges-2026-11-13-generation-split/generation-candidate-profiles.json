@@ -1,0 +1,92 @@
+{
+  "agents": [
+    {
+      "name": "system-one-kapitsa-generator-eval",
+      "adapter": "openai-compat-http",
+      "pricing_mode": "api",
+      "api_provider": "local",
+      "roles": [],
+      "description": "Inactive generation evaluation profile. No authority; quality and shared coding-priority gates remain open.",
+      "options": {
+        "baseUrl": "http://127.0.0.1:7944/v1",
+        "model": "kapitsa-q36-35b-a3b-4bit",
+        "apiKey": "<existing local proxy credential>",
+        "maxTokens": 2048,
+        "requestTimeoutMs": 30000,
+        "candidateSelection": "ordered",
+        "requestExtras": {
+          "max_tokens": 2048,
+          "chat_template_kwargs": {
+            "enable_thinking": false
+          }
+        }
+      }
+    },
+    {
+      "name": "system-one-kapitsa-rewriter-eval",
+      "adapter": "openai-compat-http",
+      "pricing_mode": "api",
+      "api_provider": "local",
+      "roles": [],
+      "description": "Inactive generation evaluation profile. No authority; quality and shared coding-priority gates remain open.",
+      "options": {
+        "baseUrl": "http://127.0.0.1:7944/v1",
+        "model": "kapitsa-q36-35b-a3b-4bit",
+        "apiKey": "<existing local proxy credential>",
+        "maxTokens": 512,
+        "requestTimeoutMs": 30000,
+        "candidateSelection": "ordered",
+        "requestExtras": {
+          "max_tokens": 512,
+          "chat_template_kwargs": {
+            "enable_thinking": false
+          }
+        }
+      }
+    },
+    {
+      "name": "system-one-gufo-generator-eval",
+      "adapter": "openai-compat-http",
+      "pricing_mode": "api",
+      "api_provider": "local",
+      "roles": [],
+      "description": "Inactive generation evaluation profile. No authority; quality and shared coding-priority gates remain open.",
+      "options": {
+        "baseUrl": "http://127.0.0.1:7944/v1",
+        "model": "Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
+        "apiKey": "<existing local proxy credential>",
+        "maxTokens": 2048,
+        "requestTimeoutMs": 30000,
+        "candidateSelection": "ordered",
+        "requestExtras": {
+          "max_tokens": 2048,
+          "chat_template_kwargs": {
+            "enable_thinking": false
+          }
+        }
+      }
+    },
+    {
+      "name": "system-one-gufo-rewriter-eval",
+      "adapter": "openai-compat-http",
+      "pricing_mode": "api",
+      "api_provider": "local",
+      "roles": [],
+      "description": "Inactive generation evaluation profile. No authority; quality and shared coding-priority gates remain open.",
+      "options": {
+        "baseUrl": "http://127.0.0.1:7944/v1",
+        "model": "Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
+        "apiKey": "<existing local proxy credential>",
+        "maxTokens": 512,
+        "requestTimeoutMs": 30000,
+        "candidateSelection": "ordered",
+        "requestExtras": {
+          "max_tokens": 512,
+          "chat_template_kwargs": {
+            "enable_thinking": false
+          }
+        }
+      }
+    }
+  ]
+}

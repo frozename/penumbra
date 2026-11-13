@@ -1,0 +1,135 @@
+[
+  {
+    "ts": 1794574950.1475441,
+    "kind": "waiting_for_heavy_job_lock"
+  },
+  {
+    "ts": 1794574990.869976,
+    "kind": "authorized_mini_runtime_paused",
+    "availableBytes": 11281711104,
+    "command": [
+      "nice",
+      "-n",
+      "10",
+      "/Users/aimastermind/.local/share/penumbra/inference/system-one-llama/2cbe0ec-http-only/bin/llama-server",
+      "--model",
+      "/Users/aimastermind/.local/share/penumbra/inference/models/qwen35-2b-eval/Qwen_Qwen3.5-2B-Q4_K_M.gguf",
+      "--alias",
+      "qwen35-2b-eval",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "18945",
+      "--ctx-size",
+      "8192",
+      "--batch-size",
+      "512",
+      "--ubatch-size",
+      "256",
+      "--parallel",
+      "1",
+      "--threads",
+      "2",
+      "--threads-batch",
+      "2",
+      "--n-gpu-layers",
+      "99",
+      "--flash-attn",
+      "on",
+      "--cache-type-k",
+      "q8_0",
+      "--cache-type-v",
+      "q8_0",
+      "--cache-ram",
+      "0",
+      "--no-cache-idle-slots",
+      "--no-mmproj-auto",
+      "--offline",
+      "--no-webui",
+      "--jinja",
+      "--fit",
+      "off"
+    ],
+    "artifactSha256": "57a1085840f497d764a7fc5d346922dbde961efb54cc792ea81d694fd846a1d8",
+    "runtimeSha256": "a9990314838bafcbaa2601c41a375eb764489084ff2469b0770a7d47a33da104"
+  },
+  {
+    "ts": 1794574992.4253812,
+    "kind": "candidate_ready",
+    "pid": 96998,
+    "startupMs": 1554.2605419177562,
+    "metadata": {
+      "models": [
+        {
+          "name": "qwen35-2b-eval",
+          "model": "qwen35-2b-eval",
+          "modified_at": "",
+          "size": "",
+          "digest": "",
+          "type": "model",
+          "description": "",
+          "tags": [
+            ""
+          ],
+          "capabilities": [
+            "completion"
+          ],
+          "parameters": "",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "",
+            "families": [
+              ""
+            ],
+            "parameter_size": "",
+            "quantization_level": ""
+          }
+        }
+      ],
+      "object": "list",
+      "data": [
+        {
+          "id": "qwen35-2b-eval",
+          "aliases": [
+            "qwen35-2b-eval"
+          ],
+          "tags": [],
+          "object": "model",
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "created": 1794574992,
+          "owned_by": "llamacpp",
+          "meta": {
+            "vocab_type": 2,
+            "n_vocab": 248320,
+            "n_ctx": 8192,
+            "n_ctx_train": 262144,
+            "n_embd": 2048,
+            "n_params": 1942653248,
+            "size": 1385235712,
+            "ftype": "Q4_K - Medium"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "ts": 1794575077.837576,
+    "kind": "evaluation_finished",
+    "exitCode": 0,
+    "swapGrowthBytes": 0.0
+  },
+  {
+    "ts": 1794575078.20193,
+    "kind": "mini_runtime_restored",
+    "samePlistSha256": "b52d90c7f32eead8d1ddc233ba7059621fad866f9e5403ad8454387da731999d",
+    "health": "ok"
+  }
+]

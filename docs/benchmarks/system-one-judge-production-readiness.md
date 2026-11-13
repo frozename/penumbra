@@ -2,6 +2,8 @@
 
 Date: 2026-11-11. This report extends the [initial pilot](system-one-judges.md) and the [interrupted shadow trial](system-one-judge-shadow-trial.md). Keep these cohorts separate. New classifier authority remains disabled.
 
+The later [configured generation study](system-one-generation-validation.md) adds independent historical output-fidelity review, a measured small local generator and full CI on implementation commit 39f1fe56157f41e363aba83d7f72e51361c656b3. It supersedes earlier statements that all subsequent package changes are documentation-only; no new production authority is activated.
+
 The [November12 continuation](system-one-judge-memory-placement.md) adds Mini confirmation, bounded/on-demand placement, live P4 activation evidence and the current macOS supervision blocker. Its deployment observations supersede the November11 snapshot below.
 
 ## Independently AI-reviewed development cohort

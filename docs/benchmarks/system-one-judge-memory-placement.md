@@ -2,7 +2,7 @@
 
 Date: 2026-11-12. Companion to the [independent quality study](system-one-judge-production-readiness.md). **No tested candidate qualifies for promotion or veto authority.** Development/control-plane capacity takes priority over resident inference. Granite's original large process is stopped under user authorization.
 
-November 13 continuation: [separate generation placement](system-one-generation-placement.md) tested the existing MacBook and Z13 generators through the mini proxy. Both passed seven synthetic extraction/rewriter controls with non-thinking requests. Prioritize a bounded Kapitsa generator shadow comparison; no production generation route or specialist authority changed. These controls do not close the independent quality or coding-contention gates.
+November 13 continuation: the [configured generation validation](system-one-generation-validation.md) extends the [initial placement canary](system-one-generation-placement.md) to 24 historical inputs with independent AI source grades and a small local Qwen3.5-2B. All four generators fail extraction acceptance; the small profile's 1.58 GiB sampled RSS does not offset missing all expected facts. The opt-in routing implementation passes full CI and inactive profiles are prepared. No production generation route or specialist authority changed.
 
 ## Complete-memory confirmation of d3 Mini
 

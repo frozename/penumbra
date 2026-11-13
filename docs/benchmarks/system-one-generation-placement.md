@@ -1,6 +1,6 @@
 # Separating decision inference from generation
 
-Date: 2026-11-13. **Recommend a mini decision observer plus idle-capacity fleet generation as the next experiment. Production routes remain unchanged.** The generator canary below supports testing Kapitsa first and Z13 Qwen second; it does not authorize a replacement. Specialist decision quality remains subject to the [existing gates](system-one-judge-production-readiness.md).
+Date: 2026-11-13. This is the initial synthetic canary. The subsequent [configured historical validation](system-one-generation-validation.md) supersedes its readiness assessment: **no tested generator qualifies for production extraction replacement**, including the smaller local Qwen3.5-2B. The opt-in routing implementation passes full CI and inactive profiles are prepared; production routes remain unchanged. Specialist decision quality remains subject to the [existing gates](system-one-judge-production-readiness.md).
 
 ## Current implementation and placement
 
@@ -59,7 +59,7 @@ For a smaller local generator, [Qwen3.5-2B](https://huggingface.co/Qwen/Qwen3.5-
 4. Measure warmed and cold requests, coding latency under realistic load, host memory/swap and recovery. Decide between MacBook and Z13 using spare capacity as well as latency. SSH/headroom visibility on MacBook and cache/slot impact on both workers remain open.
 5. Shadow the new generator outputs without storage/promotion side effects, review disagreements and rerun required implementation checks before review/land and an explicit staged route activation. Keep Granite rollback and specialist promotion/veto authority unchanged.
 
-**GO for a bounded generator shadow comparison; NO-GO for an automatic production route switch.** The best current hypothesis is separate decision and generation placement, with Kapitsa as the first generator candidate. A smaller local generator remains a testable fallback option, not a selected replacement.
+**The bounded comparison was subsequently executed; production replacement remains NO-GO.** See the later validation for 24 historical inputs, independent source grades, the local 1.58 GiB Qwen profile, contract failures and passing full CI. Separate decision/generation placement remains an architectural option; no tested extractor has passed the required quality gate.
 
 ## Reproduce
 

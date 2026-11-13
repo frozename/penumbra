@@ -4,6 +4,8 @@ The [November 12 memory/confirmation report](system-one-judge-memory-placement.m
 
 The later [Z13 NPU comparison](system-one-z13-npu-results.md) tests a complementary Nano/Lite placement alongside Gufo, using the same frozen reviewed cohorts. Nano's excerpt gain does not carry to complete-memory quality; the report preserves resource, transport and possible Gufo-contention findings separately.
 
+The November 13 [configured generation validation](system-one-generation-validation.md) compares Granite, MacBook Kapitsa, Z13 Gufo and a smaller local Qwen3.5-2B on 24 historical extraction inputs plus seven contract controls. Independent AI source review rejects all four as replacement extractors. The smaller model's measured footprint and opt-in routing support remain useful evidence; production generation roles are unchanged.
+
 2026-11-11. This is an exploratory content-classification and deployment experiment. It does not authorize replacement, establish factual correctness of memories, or demonstrate downstream memory benefit. All new outputs have `mode=shadow, applied=false`.
 
 The subsequent [bounded shadow continuation](system-one-judge-shadow-trial.md) adds disabled-by-default wiring and a fresh 200-case review packet. Its operational replay failed the health guard with existing P4 database/event-loop stalls as a material confound. It does not change the pilot quality results below or establish production readiness.
