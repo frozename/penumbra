@@ -1,0 +1,151 @@
+[
+  {
+    "at": "2026-11-13T20:24:57.782197+00:00",
+    "kind": "waiting_for_existing_heavy_job_lock",
+    "target": "nano"
+  },
+  {
+    "at": "2026-11-13T20:25:58.802114+00:00",
+    "kind": "matched_control_plane_baseline_passed",
+    "consecutiveSamples": 60,
+    "latestLagMs": 3.1027919948101044
+  },
+  {
+    "at": "2026-11-13T20:25:58.817461+00:00",
+    "kind": "authorized_mini_runtime_paused",
+    "routerPid": 88925,
+    "command": [
+      "nice",
+      "-n",
+      "10",
+      "/Users/aimastermind/.local/share/penumbra/inference/system-one-llama/2cbe0ec-http-only/bin/llama-server",
+      "--model",
+      "/Users/aimastermind/.local/share/penumbra/inference/models/vllm-d3-nano-GGUF/vllm-d3-nano-Q8_0.gguf",
+      "--alias",
+      "d3-nano-eval",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "18945",
+      "--ctx-size",
+      "2048",
+      "--batch-size",
+      "2048",
+      "--ubatch-size",
+      "2048",
+      "--parallel",
+      "1",
+      "--threads",
+      "2",
+      "--threads-batch",
+      "2",
+      "--n-gpu-layers",
+      "99",
+      "--cache-ram",
+      "0",
+      "--no-cache-idle-slots",
+      "--no-mmproj-auto",
+      "--offline",
+      "--no-webui",
+      "--jinja",
+      "--fit",
+      "off"
+    ],
+    "artifactSha256": "a4d7563d9622a4c34cc7276a3381c3e27a25bbf8d4c0f5ee2f1404fc89ce2ab9",
+    "runtimeSha256": "a9990314838bafcbaa2601c41a375eb764489084ff2469b0770a7d47a33da104"
+  },
+  {
+    "at": "2026-11-13T20:25:59.224392+00:00",
+    "kind": "candidate_ready",
+    "pid": 89435,
+    "startupMs": 405.5094171781093,
+    "metadata": {
+      "models": [
+        {
+          "name": "d3-nano-eval",
+          "model": "d3-nano-eval",
+          "modified_at": "",
+          "size": "",
+          "digest": "",
+          "type": "model",
+          "description": "",
+          "tags": [
+            ""
+          ],
+          "capabilities": [
+            "completion"
+          ],
+          "parameters": "",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "",
+            "families": [
+              ""
+            ],
+            "parameter_size": "",
+            "quantization_level": ""
+          }
+        }
+      ],
+      "object": "list",
+      "data": [
+        {
+          "id": "d3-nano-eval",
+          "aliases": [
+            "d3-nano-eval"
+          ],
+          "tags": [],
+          "object": "model",
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "decisions"
+            ]
+          },
+          "created": 1794601559,
+          "owned_by": "llamacpp",
+          "meta": {
+            "vocab_type": 2,
+            "n_vocab": 248320,
+            "n_ctx": 2048,
+            "n_ctx_train": 262144,
+            "n_embd": 2048,
+            "n_params": 2390384448,
+            "size": 2541395200,
+            "ftype": "Q8_0"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "at": "2026-11-13T20:28:39.452102+00:00",
+    "kind": "replay_finished",
+    "exitCode": 0
+  },
+  {
+    "at": "2026-11-13T20:28:39.493029+00:00",
+    "kind": "owned_runtime_failure_simulated",
+    "signal": "SIGKILL",
+    "productionServicesChanged": false
+  },
+  {
+    "at": "2026-11-13T20:28:40.836338+00:00",
+    "kind": "owned_runtime_recovered",
+    "pid": 90558,
+    "recoveryHealthAndRequestMs": 1342.737999977544
+  },
+  {
+    "at": "2026-11-13T20:28:41.147994+00:00",
+    "kind": "mini_router_restored",
+    "samePlistSha256": "b52d90c7f32eead8d1ddc233ba7059621fad866f9e5403ad8454387da731999d"
+  },
+  {
+    "at": "2026-11-13T20:28:41.153403+00:00",
+    "kind": "control_plane_postflight",
+    "daemonHealth": "ok"
+  }
+]

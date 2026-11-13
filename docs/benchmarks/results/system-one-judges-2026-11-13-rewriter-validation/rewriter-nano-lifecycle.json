@@ -1,0 +1,12 @@
+[
+  {
+    "at": "2026-11-13T18:56:42.746476+00:00",
+    "kind": "waiting_for_existing_heavy_job_lock",
+    "target": "nano"
+  },
+  {
+    "at": "2026-11-13T19:06:04.551835+00:00",
+    "kind": "aborted",
+    "reason": "No stable60second control-plane admission window"
+  }
+]

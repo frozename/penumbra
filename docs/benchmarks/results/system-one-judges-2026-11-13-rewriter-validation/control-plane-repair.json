@@ -1,0 +1,305 @@
+{
+  "status": "three verified covering indexes applied; activity index deferred after two guarded stops",
+  "sourceCommit": "26dec40f0474f606f50c7d7c428fda5809ddba0e",
+  "liveSchemaVersion": {
+    "value": "47"
+  },
+  "rowChangesByMaintenance": 0,
+  "daemonRestarted": false,
+  "modelRoutingChanged": false,
+  "before": {
+    "at": "2026-11-13T20:09:20.383Z",
+    "mode": "read-only-inspection",
+    "sqlite": {
+      "version": "3.54.1"
+    },
+    "originalMeta": {
+      "value": "47"
+    },
+    "sourceSha256": "47e7c5487166b636b49c33488c92e1ac5977e17c1e34988cf6a5faa141862cc3",
+    "before": [],
+    "queries": [
+      {
+        "name": "eligibility",
+        "sqlSha256": "42927ab7bb62d83b9f9eca35104e0e10de1ebe1bb020bb6b3af5389ed150ae0c",
+        "plan": [
+          {
+            "id": 3,
+            "parent": 0,
+            "notused": 213,
+            "detail": "SCAN t1_rollups USING INDEX t1_unpromoted_idx"
+          }
+        ],
+        "ms": [
+          864.413416,
+          10.751375000000053,
+          9.792666999999938
+        ],
+        "rowCount": 0,
+        "resultSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "claim-candidates-select-only",
+        "sqlSha256": "4960e0719981b7174376faffaf9e3db2312644edf83feac004c59a2fc40f291a",
+        "plan": [
+          {
+            "id": 5,
+            "parent": 0,
+            "notused": 213,
+            "detail": "SCAN t1_rollups USING INDEX t1_unpromoted_idx"
+          },
+          {
+            "id": 44,
+            "parent": 0,
+            "notused": 0,
+            "detail": "CORRELATED SCALAR SUBQUERY 1"
+          },
+          {
+            "id": 48,
+            "parent": 44,
+            "notused": 50,
+            "detail": "SEARCH da USING COVERING INDEX idx_dream_actions_queued_promote_target (target_ids=?)"
+          },
+          {
+            "id": 72,
+            "parent": 0,
+            "notused": 0,
+            "detail": "USE TEMP B-TREE FOR ORDER BY"
+          }
+        ],
+        "ms": [
+          34.575874999999996,
+          11.01320899999996,
+          10.932332999999971
+        ],
+        "rowCount": 0,
+        "resultSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "queued-p4-count",
+        "sqlSha256": "206141dee5a43cbfdb43eefd772dc7057858687962a633c0a9c5f468c85ba7f2",
+        "plan": [
+          {
+            "id": 4,
+            "parent": 0,
+            "notused": 142,
+            "detail": "SEARCH dream_actions USING INDEX idx_dream_actions_status (status=?)"
+          }
+        ],
+        "ms": [
+          314.31266700000003,
+          5.604041999999936,
+          4.429750000000013
+        ],
+        "rowCount": 1,
+        "resultSha256": "36273a43b0daef05b1b22504aaa7a5eb7a24c8e93ab0bfe2f98d8136f08180b6"
+      },
+      {
+        "name": "activity-max",
+        "sqlSha256": "7e9a875c668ace1cbea6d4dfbc91afced5166d8327287315894ceed6ab9c2930",
+        "plan": [
+          {
+            "id": 4,
+            "parent": 0,
+            "notused": 224,
+            "detail": "SEARCH dispatch_events USING INDEX idx_dispatch_events_ts"
+          }
+        ],
+        "ms": [
+          12.852375000000166,
+          12.508665999999948,
+          12.401834000000008
+        ],
+        "rowCount": 1,
+        "resultSha256": "bd9df6c57a4668a0ef8693acc409ad61463cd8fd282099685f520faba6b4f748"
+      }
+    ],
+    "after": [],
+    "indexFootprints": [
+      {
+        "name": "t1_promotion_eligible_lookup",
+        "pages": 0,
+        "bytes": 0
+      },
+      {
+        "name": "t1_promotion_claim_lookup",
+        "pages": 0,
+        "bytes": 0
+      },
+      {
+        "name": "idx_dream_actions_phase_status",
+        "pages": 0,
+        "bytes": 0
+      },
+      {
+        "name": "idx_dispatch_events_activity_end_ts",
+        "pages": 0,
+        "bytes": 0
+      }
+    ],
+    "metadataUnchanged": true,
+    "rowChanges": 0
+  },
+  "after": {
+    "at": "2026-11-13T20:13:32.158Z",
+    "mode": "read-only-inspection",
+    "sqlite": {
+      "version": "3.54.1"
+    },
+    "originalMeta": {
+      "value": "47"
+    },
+    "sourceSha256": "47e7c5487166b636b49c33488c92e1ac5977e17c1e34988cf6a5faa141862cc3",
+    "before": [
+      {
+        "name": "t1_promotion_eligible_lookup",
+        "sql": "CREATE INDEX t1_promotion_eligible_lookup\n     ON t1_rollups(t2_promoted_at,promotion_filtered_at,n_events,failed_promotion_attempts,ended_at,started_at,rollup_id)\n     WHERE t2_promoted_at IS NULL AND promotion_filtered_at IS NULL"
+      },
+      {
+        "name": "t1_promotion_claim_lookup",
+        "sql": "CREATE INDEX t1_promotion_claim_lookup\n     ON t1_rollups(t2_promoted_at,promotion_filtered_at,claimed_at,promotion_unusable_excerpt_at,promotion_retry_exhausted_at,started_at,promotion_retry_after,first_prompt_excerpt,user_id,rollup_id,project_id,promotion_retry_count)\n     WHERE t2_promoted_at IS NULL AND claimed_at IS NULL AND promotion_filtered_at IS NULL\n       AND promotion_unusable_excerpt_at IS NULL AND promotion_retry_exhausted_at IS NULL"
+      },
+      {
+        "name": "idx_dream_actions_phase_status",
+        "sql": "CREATE INDEX idx_dream_actions_phase_status ON dream_actions(phase,status)"
+      }
+    ],
+    "queries": [
+      {
+        "name": "eligibility",
+        "sqlSha256": "42927ab7bb62d83b9f9eca35104e0e10de1ebe1bb020bb6b3af5389ed150ae0c",
+        "plan": [
+          {
+            "id": 2,
+            "parent": 0,
+            "notused": 53,
+            "detail": "SEARCH t1_rollups USING COVERING INDEX t1_promotion_eligible_lookup (t2_promoted_at=? AND promotion_filtered_at=? AND n_events>?)"
+          }
+        ],
+        "ms": [
+          0.07637500000000053,
+          0.039666999999999675,
+          0.03766699999999901
+        ],
+        "rowCount": 0,
+        "resultSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "claim-candidates-select-only",
+        "sqlSha256": "4960e0719981b7174376faffaf9e3db2312644edf83feac004c59a2fc40f291a",
+        "plan": [
+          {
+            "id": 4,
+            "parent": 0,
+            "notused": 61,
+            "detail": "SEARCH t1_rollups USING COVERING INDEX t1_promotion_claim_lookup (t2_promoted_at=? AND promotion_filtered_at=? AND claimed_at=? AND promotion_unusable_excerpt_at=? AND promotion_retry_exhausted_at=?)"
+          },
+          {
+            "id": 41,
+            "parent": 0,
+            "notused": 0,
+            "detail": "CORRELATED SCALAR SUBQUERY 1"
+          },
+          {
+            "id": 45,
+            "parent": 41,
+            "notused": 50,
+            "detail": "SEARCH da USING COVERING INDEX idx_dream_actions_queued_promote_target (target_ids=?)"
+          }
+        ],
+        "ms": [
+          3.3788750000000007,
+          3.055166,
+          2.8930420000000012
+        ],
+        "rowCount": 0,
+        "resultSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "queued-p4-count",
+        "sqlSha256": "206141dee5a43cbfdb43eefd772dc7057858687962a633c0a9c5f468c85ba7f2",
+        "plan": [
+          {
+            "id": 3,
+            "parent": 0,
+            "notused": 50,
+            "detail": "SEARCH dream_actions USING COVERING INDEX idx_dream_actions_phase_status (phase=? AND status=?)"
+          }
+        ],
+        "ms": [
+          0.007457999999999743,
+          0.0016670000000011953,
+          0.001333000000002471
+        ],
+        "rowCount": 1,
+        "resultSha256": "36273a43b0daef05b1b22504aaa7a5eb7a24c8e93ab0bfe2f98d8136f08180b6"
+      },
+      {
+        "name": "activity-max",
+        "sqlSha256": "7e9a875c668ace1cbea6d4dfbc91afced5166d8327287315894ceed6ab9c2930",
+        "plan": [
+          {
+            "id": 4,
+            "parent": 0,
+            "notused": 224,
+            "detail": "SEARCH dispatch_events USING INDEX idx_dispatch_events_ts"
+          }
+        ],
+        "ms": [
+          12.816000000000003,
+          12.419666999999997,
+          12.365457999999997
+        ],
+        "rowCount": 1,
+        "resultSha256": "bd9df6c57a4668a0ef8693acc409ad61463cd8fd282099685f520faba6b4f748"
+      }
+    ],
+    "after": [
+      {
+        "name": "t1_promotion_eligible_lookup",
+        "sql": "CREATE INDEX t1_promotion_eligible_lookup\n     ON t1_rollups(t2_promoted_at,promotion_filtered_at,n_events,failed_promotion_attempts,ended_at,started_at,rollup_id)\n     WHERE t2_promoted_at IS NULL AND promotion_filtered_at IS NULL"
+      },
+      {
+        "name": "t1_promotion_claim_lookup",
+        "sql": "CREATE INDEX t1_promotion_claim_lookup\n     ON t1_rollups(t2_promoted_at,promotion_filtered_at,claimed_at,promotion_unusable_excerpt_at,promotion_retry_exhausted_at,started_at,promotion_retry_after,first_prompt_excerpt,user_id,rollup_id,project_id,promotion_retry_count)\n     WHERE t2_promoted_at IS NULL AND claimed_at IS NULL AND promotion_filtered_at IS NULL\n       AND promotion_unusable_excerpt_at IS NULL AND promotion_retry_exhausted_at IS NULL"
+      },
+      {
+        "name": "idx_dream_actions_phase_status",
+        "sql": "CREATE INDEX idx_dream_actions_phase_status ON dream_actions(phase,status)"
+      }
+    ],
+    "indexFootprints": [
+      {
+        "name": "t1_promotion_eligible_lookup",
+        "pages": 265,
+        "bytes": 1085440
+      },
+      {
+        "name": "t1_promotion_claim_lookup",
+        "pages": 848,
+        "bytes": 3473408
+      },
+      {
+        "name": "idx_dream_actions_phase_status",
+        "pages": 348,
+        "bytes": 1425408
+      },
+      {
+        "name": "idx_dispatch_events_activity_end_ts",
+        "pages": 0,
+        "bytes": 0
+      }
+    ],
+    "metadataUnchanged": true,
+    "rowChanges": 0
+  },
+  "rawHashes": {
+    "control-index-maintenance.before.json": "6a5ce08464e934a30ac70abf1b7ca31d5d82eb159bf9ff70c5f6a7146b0ce285",
+    "control-index-maintenance.final-live-state.json": "d444cd8344de9084663844eaf285228dee2d739fd50f2211807d0ad4555dd7d7"
+  },
+  "limits": [
+    "Read-only measurements from a separate connection, including cache effects and empty eligibility/candidate results; not general production speedup claims.",
+    "Final index needs a planned maintenance/boot window. It exceeded initial five-second deadline; next attempt stopped on health wall guard, with owned child killed and index absent on verification. No guard relaxed.",
+    "Model comparisons use the three-index state with unchanged frozen inference/admission protocol. No further DDL overlaps inference."
+  ]
+}

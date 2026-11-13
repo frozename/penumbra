@@ -1,0 +1,13 @@
+{
+  "uniquePairs": 35,
+  "safeQuery": {
+    "True": 15,
+    "False": 18,
+    "uncertain": 2
+  },
+  "privateLeak": 12,
+  "injectionFollowed": 0,
+  "labelsSha256": "a9f8575f62af601f570ea7583c6ca611a5ec02f105adb14b47f8390cb0e329a2",
+  "auditSha256": "24713a7618a4019789a782028b6a32782e1c1c58527402f8986f69ccbfc427cd",
+  "scope": "Exact-pair preliminary model-blind AI labels, not completed model scores or production search observations."
+}

@@ -1,0 +1,114 @@
+{
+  "at": "2026-11-13T19:47:39.801652+00:00",
+  "status": "incomplete; no quality ranking or passing operational result inferred",
+  "method": "Existing frozen control-plane guard. No global admission floor change. Raw private text remains on local volume. Separate retries are not pooled.",
+  "attempts": [
+    {
+      "run": "rewriter-q8",
+      "complete": false,
+      "abort": {
+        "at": "2026-11-13T18:59:00.180723+00:00",
+        "kind": "aborted",
+        "reason": "mini startup/inference guard refused continuation"
+      },
+      "rows": 75,
+      "transportErrors": 0,
+      "peakRssBytes": 4476993536,
+      "swapGrowthBytes": 0.0,
+      "lastHealth": [
+        {
+          "healthWallMs": 1660.1989171467721,
+          "daemonLagMs": 993.606208011508,
+          "healthStatus": 200
+        },
+        {
+          "healthWallMs": 17.799624940380454,
+          "daemonLagMs": 993.606208011508,
+          "healthStatus": 200
+        }
+      ],
+      "rawSha256": {
+        "rewriter-q8/serial/run.json": "8dfe8b6f9d56b8782516464ed1ab5fb1b04dad13fdb27a9225173bb7ae3d57c0",
+        "rewriter-q8-resources.jsonl": "61393d712b0649ef6f9736ec127a15e7104fd87d7675cbbcd0968ba4619ee601",
+        "rewriter-q8-baseline.jsonl": "3ffd82efc261054d7f68c59761b449ee3468bfecc10eb6e9e33e4ddf379a8404"
+      }
+    },
+    {
+      "run": "rewriter-q4",
+      "complete": false,
+      "abort": {
+        "at": "2026-11-13T19:03:03.180168+00:00",
+        "kind": "aborted",
+        "reason": "mini startup/inference guard refused continuation"
+      },
+      "rows": 161,
+      "transportErrors": 0,
+      "peakRssBytes": 2936225792,
+      "swapGrowthBytes": 0.0,
+      "lastHealth": [
+        {
+          "healthWallMs": 823.1130000203848,
+          "daemonLagMs": 701.0190410017967,
+          "healthStatus": 200
+        },
+        {
+          "healthWallMs": 3.1891250982880592,
+          "daemonLagMs": 701.0190410017967,
+          "healthStatus": 200
+        }
+      ],
+      "rawSha256": {
+        "rewriter-q4/serial/run.json": "a7037b81d7cbbdee80bb5d68e1fe88feb856893a8ff78fac2cf40e6d12c9767c",
+        "rewriter-q4-resources.jsonl": "8926400df74dcb68b820e92b1f052f0870048e6cbef435fb0126dd007e939547",
+        "rewriter-q4-baseline.jsonl": "9bf56d08ab76a8e7a4e371249b61e9dfc327ea7d46f10fdc52301fa75baeaba8"
+      }
+    },
+    {
+      "run": "rewriter-q8-retry",
+      "complete": false,
+      "abort": {
+        "at": "2026-11-13T19:08:03.149547+00:00",
+        "kind": "aborted",
+        "reason": "mini startup/inference guard refused continuation"
+      },
+      "rows": 55,
+      "transportErrors": 0,
+      "peakRssBytes": 4476731392,
+      "swapGrowthBytes": 0.0,
+      "lastHealth": [
+        {
+          "healthWallMs": 851.4202497899532,
+          "daemonLagMs": 933.1749579906464,
+          "healthStatus": 200
+        },
+        {
+          "healthWallMs": 2.2496660239994526,
+          "daemonLagMs": 933.1749579906464,
+          "healthStatus": 200
+        }
+      ],
+      "rawSha256": {
+        "rewriter-q8-retry/serial/run.json": "218c29ca7d057752da791b447b9bd020b05f51207747113c30007ec3e7441f87",
+        "rewriter-q8-retry-resources.jsonl": "509d309f670c2cc3f0d58aa26314eaf0434f12d4f7c20edc94020e4690f1a65a",
+        "rewriter-q8-retry-baseline.jsonl": "06ffb5ab176f2bb2d39a8b80f6a0fd0726800a907bd1b461320b32a07a6beea3"
+      }
+    },
+    {
+      "run": "rewriter-nano",
+      "complete": false,
+      "abort": {
+        "at": "2026-11-13T19:06:04.551835+00:00",
+        "kind": "aborted",
+        "reason": "No stable60second control-plane admission window"
+      },
+      "rows": 0,
+      "transportErrors": 0,
+      "peakRssBytes": null,
+      "swapGrowthBytes": 0,
+      "lastHealth": [],
+      "rawSha256": {
+        "rewriter-nano-baseline.jsonl": "a52ecefc64182f9a9f2800735e1722be28a3b7a41a56a63dc2ae8a1a00a97150"
+      }
+    }
+  ]
+}

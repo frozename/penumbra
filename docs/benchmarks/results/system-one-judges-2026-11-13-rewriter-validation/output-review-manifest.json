@@ -1,0 +1,12 @@
+{
+  "runs": [
+    "rewriter-q8-indexed",
+    "rewriter-q4-indexed-v2"
+  ],
+  "incompleteSourcesAllowed": false,
+  "uniqueReviewUnits": 47,
+  "mappedRows": 106,
+  "packetSha256": "657c1b4c036da0603ab6b4d969a8ba4794f0e1b619791251dbb78421dbd79cea",
+  "mappingSha256": "5f9f54966e7672e69d3f83d1f441187b4a8a3a145a25b5c55f8e81f58f7a6b2b",
+  "method": "Exact input and gate-eligible text deduplication. No model identity or operational data in reviewer packet. Semantic labels attach only to exact input/query pairs. Incomplete source packets support preliminary blind review only, never a completed model score. First repetition primary, repeats not independent quality samples."
+}

@@ -1,0 +1,13 @@
+{
+  "models": [
+    {
+      "id": "granite-q4",
+      "baseUrl": "http://127.0.0.1:18945/v1",
+      "model": "granite-q4-rewriter-eval",
+      "maxTokens": 512,
+      "timeoutMs": 30000
+    }
+  ],
+  "repetitions": 2,
+  "concurrency": 1
+}

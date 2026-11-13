@@ -1,5 +1,7 @@
 # System One judges: reproducible local pilot
 
+The latest [frozen real-query comparison](system-one-rewriter-validation.md) completes 698 final requests after three verified control-plane indexes: Q4 has 33.9% lower active RSS, but fails source-safe public yield and privacy criteria; Nano reduces false queries with worse recall. This workload remains separate from promotion scores below. Full CI passes seven gates with zero failures; final mini idle RSS is 248 MiB, with existing authority and larger workers unchanged.
+
 The [November 12 memory/confirmation report](system-one-judge-memory-placement.md) and [current recommendation](../decisions/system-one-judge-recommendation.md) supersede initial candidate/placement conclusions; preserve this pilot as dated development evidence.
 
 The later [Z13 NPU comparison](system-one-z13-npu-results.md) tests a complementary Nano/Lite placement alongside Gufo, using the same frozen reviewed cohorts. Nano's excerpt gain does not carry to complete-memory quality; the report preserves resource, transport and possible Gufo-contention findings separately.

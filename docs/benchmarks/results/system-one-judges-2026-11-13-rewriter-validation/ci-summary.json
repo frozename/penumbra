@@ -1,0 +1,14 @@
+{
+  "sourceCommit": "26dec40f0474f606f50c7d7c428fda5809ddba0e",
+  "command": "bun run check:ci",
+  "gates": {
+    "passed": 7,
+    "failed": 0,
+    "skipped": 4
+  },
+  "passingTestExecutionsIncludingRepeats": 16739,
+  "testSummaryCount": 15,
+  "failingTestExecutions": 0,
+  "rawLogSha256": "46c5a699a017cb966a44a3ec6442e622cf2c8aaab10128b657e8503a686ba91d",
+  "method": "Sum explicit Bun test summary counts, including repeated shards/coverage runs; not unique test count. Standard strict-lint/typecheck does not include docs experiment helpers. Initial failing runs retained separately."
+}
