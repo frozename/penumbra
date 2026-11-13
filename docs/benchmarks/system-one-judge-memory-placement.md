@@ -2,6 +2,8 @@
 
 Date: 2026-11-12. Companion to the [independent quality study](system-one-judge-production-readiness.md). **No tested candidate qualifies for promotion or veto authority.** Development/control-plane capacity takes priority over resident inference. Granite's original large process is stopped under user authorization.
 
+November 13 continuation: [separate generation placement](system-one-generation-placement.md) tested the existing MacBook and Z13 generators through the mini proxy. Both passed seven synthetic extraction/rewriter controls with non-thinking requests. Prioritize a bounded Kapitsa generator shadow comparison; no production generation route or specialist authority changed. These controls do not close the independent quality or coding-contention gates.
+
 ## Complete-memory confirmation of d3 Mini
 
 Mini Q4 used the same frozen 120 complete-memory inputs and direct 0.5 rubric as the earlier confirmation. Independent blind AI source reviews/adjudication produced 102 positives, 14 negatives and 4 uncertain cases; uncertainty remains excluded from quality. These are AI labels with a shared model family, not human labels. Durability and factual support remain separate. Published cases are no longer hidden acceptance data.

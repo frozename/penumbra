@@ -1,0 +1,59 @@
+{
+  "target": "macbook",
+  "base": "http://127.0.0.1:7944/v1",
+  "model": "kapitsa-q36-35b-a3b-4bit",
+  "config": "opencode-macbook-kapitsa",
+  "provider": "llamactl-macbook",
+  "startedAt": "2026-11-13T11:41:59.717Z",
+  "updatedAt": "2026-11-13T11:42:11.511Z",
+  "timeoutMs": 30000,
+  "concurrency": 1,
+  "temperature": 0,
+  "responseFormat": "json_object",
+  "method": "Synthetic output-semantic canary using existing production prompts/parser/schemas. Sequential, no retries, no production writes. Published controls are not independent quality acceptance. Extraction output cap 2048 (earlier Granite canary 16384); rewrite cap 512. Reasoning/template options unchanged.",
+  "promptSha256": "f5b8eb570e7ed3f836e66cbf069e57b2f3e635f39febb26b0d10e4feaccb6e49",
+  "rows": [
+    {
+      "id": "decision",
+      "workload": "extraction",
+      "maxTokens": 2048,
+      "inputSha256": "b7f1978fc1dbff331261970463f6df6bfa6907fc2ce8d24df342422de4aaf498",
+      "raw": "{\"memories\":[{\"title\":\"Public API backward compatibility window\",\"body\":\"The public API must remain backward compatible for the next two releases. This is required because deployed clients update on a quarterly schedule, and breaking changes before that window would strand them.\",\"kind\":\"decision\",\"metadata\":{},\"obs_type\":\"decision\",\"why\":\"Client update schedules are outside our control; breaking changes early would strand quarterly-updating clients.\",\"source_quote\":\"Keep the public API backward compatible for the next two releases. Our deployed clients update quarterly, so breaking the API early would strand those clients.\",\"depth\":2,\"is_episodic\":false,\"promote\":true}]}",
+      "reasoningChars": 7117,
+      "finishReason": "stop",
+      "returnedModel": "kapitsa-q36-35b-a3b-4bit",
+      "usage": {
+        "prompt_tokens": 849,
+        "completion_tokens": 1767,
+        "total_tokens": 2616,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "kapitsa": {
+          "prefill_ms": 2857.1,
+          "kflash": {
+            "source": "DFlash2",
+            "cycles": 346
+          }
+        }
+      },
+      "timings": null,
+      "latencyMs": 11789.343375,
+      "passed": true,
+      "memories": [
+        {
+          "title": "Public API backward compatibility window",
+          "body": "The public API must remain backward compatible for the next two releases. This is required because deployed clients update on a quarterly schedule, and breaking changes before that window would strand them.",
+          "kind": "decision",
+          "metadata": {},
+          "obs_type": "decision",
+          "why": "Client update schedules are outside our control; breaking changes early would strand quarterly-updating clients.",
+          "source_quote": "Keep the public API backward compatible for the next two releases. Our deployed clients update quarterly, so breaking the API early would strand those clients.",
+          "depth": 2,
+          "is_episodic": false,
+          "promote": true
+        }
+      ]
+    }
+  ]
+}

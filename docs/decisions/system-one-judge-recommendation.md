@@ -1,6 +1,6 @@
 # System One judge recommendation
 
-Date: 2026-11-12. Status: reviewed evaluation and opt-in adapter; no new promotion/veto authority. The [memory and deployment continuation](../benchmarks/system-one-judge-memory-placement.md) supersedes older activation observations below.
+Date: 2026-11-13. Status: reviewed evaluation and opt-in adapter; no new promotion/veto authority. The [memory and deployment continuation](../benchmarks/system-one-judge-memory-placement.md) supersedes older activation observations below. The [generation-placement canary](../benchmarks/system-one-generation-placement.md) adds a tested path toward moving generative work off the mini without adding another resident model.
 
 **Select Nano's pinned NPU variant for the next bounded complementary shadow experiment on Z13; keep Nano Q8 as the quality reference and Granite on demand on the mini. Do not replace production judge authority with any tested specialist.** The [executed NPU comparison](../benchmarks/system-one-z13-npu-results.md) demonstrates technical viability alongside unchanged Gufo, but lower complete-body quality than Mac Nano and possible Gufo contention. Earlier independent AI source reviews and confirmation remain in the [validation report](../benchmarks/system-one-judge-production-readiness.md). No new authority or permanent NPU service is activated.
 
@@ -44,6 +44,8 @@ Nano and Granite each accepted37/38 source-contradicted bodies; d1 accepted all 
 | Task profiling/routing | Keep deterministic fallback and optional configured judge | Native typed categorical/score transport works, but task-specific acceptance and correct provider provenance remain necessary. Eight provisional task types are insufficient. |
 | Binary quality/requirement gates | Retain existing deterministic/evidence controls | Validate a separately defined bounded gate; no blanket judge substitution. |
 | Transcript extraction, memory/brief synthesis, refinement, query rewriting | Keep suitable generative models and existing fallback semantics | A System One decision model cannot produce required memory arrays, prose, rationale or rewritten queries. |
+
+For the next generator shadow comparison, prioritize **MacBook Kapitsa with non-thinking requests**, with Z13 Gufo Qwen as a secondary candidate when capacity is available. Both passed all seven published extraction/rewriter controls; Granite returned empty arrays on all three durable positives. Kapitsa's four extraction latencies ranged 0.84–4.22 s and its three rewrite latencies 0.72–1.21 s. This is a synthetic semantic canary, not independent historical acceptance or coding-contention validation. Brief synthesis/refinement remain untested. Keep current production routes until source-grounded quality, shared coding-priority admission and worker-resource evidence pass. A Qwen3.5-2B local generator is an unmeasured fallback comparison, not a selected replacement. The linked report preserves raw results, cache caveats and reproduction commands.
 
 The T2 extraction `JudgePool` and dreaming ballot pool have different semantics. The implementation reuses the existing TypeSafe client interface rather than inventing a universal judge abstraction.
 
