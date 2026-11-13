@@ -9,6 +9,8 @@ export interface JudgeEntry {
   model: string;
   caPath?: string;
   requestExtras?: Record<string, unknown>;
+  maxTokens?: number;
+  timeoutMs?: number;
 }
 
 type JudgeLogFn = (...a: unknown[]) => void;
@@ -235,6 +237,7 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
   }
 
   async function invokeJudge(judge: JudgeState, prompt: string): Promise<T2MemoryExtraction[]> {
+    const effectiveTimeoutMs = Math.min(timeoutMs, judge.timeoutMs ?? timeoutMs);
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (judge.apiKey) headers.Authorization = `Bearer ${judge.apiKey}`;
     const url = buildJudgeUrl(judge.baseUrl);
@@ -246,10 +249,13 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
         max_tokens: maxTokens,
         temperature: 0,
         ...(judge.requestExtras ?? {}),
+        ...(judge.maxTokens !== undefined
+          ? { max_tokens: Math.min(maxTokens, judge.maxTokens) }
+          : {}),
         model: judge.model,
         messages: [{ role: "user", content: prompt }],
       }),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: AbortSignal.timeout(effectiveTimeoutMs),
     };
     if (judge.caPem) init.tls = { ca: judge.caPem };
     let res: Response;
@@ -257,7 +263,7 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
       res = await fetchImpl(url, init);
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "TimeoutError") {
-        throw new Error(`judge ${judge.name} timed out after ${String(timeoutMs)}ms`);
+        throw new Error(`judge ${judge.name} timed out after ${String(effectiveTimeoutMs)}ms`);
       }
       throw err;
     }

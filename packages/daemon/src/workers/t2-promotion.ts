@@ -6,6 +6,7 @@ import type { Embedder, Services, T2MemoryExtraction } from "@penumbra/core";
 import {
   buildT2EmbedText,
   resolveLlmCandidateSelection,
+  resolveLlmHttpOptions,
   resolveRoleLlmCandidates,
   T2MemoryExtractionSchema,
   T2Promotion,
@@ -855,12 +856,18 @@ function createJudgePoolFromAgentchat(
   const candidates = resolveRoleLlmCandidates({ roleTag, agentchatConfig: cfg });
   const judges: JudgeEntry[] = candidates.map((candidate) => {
     const requestExtras = extractT2JudgeRequestExtras(candidate.options);
+    const transport = resolveLlmHttpOptions(candidate.options, {
+      maxTokens: 16_384,
+      timeoutMs: getJudgeTimeoutMs(),
+    });
     return {
       name: candidate.name,
       baseUrl: candidate.baseUrl,
       apiKey: candidate.auth.source === "bearer" ? candidate.auth.token : "",
       model: candidate.model,
       caPath: candidate.caPath,
+      timeoutMs: transport.timeoutMs,
+      ...(candidate.options?.["maxTokens"] !== undefined ? { maxTokens: transport.maxTokens } : {}),
       ...(requestExtras ? { requestExtras } : {}),
     };
   });

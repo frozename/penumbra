@@ -18,6 +18,60 @@ function requestBody(init: RequestInit | undefined): Record<string, unknown> {
 }
 
 describe("configured generation requests", () => {
+  test("extraction enforces seat budgets before ordered fallback", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    let timedOut = false;
+    const pool = createJudgePool({
+      candidateSelection: "ordered",
+      timeoutMs: 1000,
+      judges: [
+        {
+          name: "primary",
+          model: "primary",
+          baseUrl: "http://127.0.0.1:7944",
+          apiKey: "",
+          maxTokens: 512,
+          timeoutMs: 10,
+          requestExtras: { max_tokens: 999999 },
+        },
+        {
+          name: "secondary",
+          model: "secondary",
+          baseUrl: "http://127.0.0.1:7944",
+          apiKey: "",
+          maxTokens: 256,
+        },
+      ],
+      log: { info: () => undefined, warn: () => undefined },
+      promptBuilder: (value) => value,
+      parseResponse: parseJudgeResponse,
+      fetch: asFetch((_url, init) => {
+        const body = requestBody(init);
+        bodies.push(body);
+        if (body.model === "secondary")
+          return Promise.resolve(
+            Response.json({ choices: [{ message: { content: '{"memories":[]}' } }] }),
+          );
+        return new Promise((_resolve, reject) => {
+          const watchdog = setTimeout(() => {
+            reject(new Error("seat timeout was ignored"));
+          }, 100);
+          init?.signal?.addEventListener(
+            "abort",
+            () => {
+              timedOut = true;
+              clearTimeout(watchdog);
+              reject(new DOMException("deadline", "TimeoutError"));
+            },
+            { once: true },
+          );
+        });
+      }),
+    });
+    expect(await pool.invoke("transcript")).toEqual([]);
+    expect(bodies.map((body) => body.max_tokens)).toEqual([512, 256]);
+    expect(timedOut).toBe(true);
+  });
   test("schema-invalid extraction fails over before a rollup can consume it", async () => {
     const seen: string[] = [];
     const pool = createJudgePool({

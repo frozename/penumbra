@@ -19,6 +19,7 @@ test("extraction role override does not reassign the shared classifier role", as
   const saved = keys.map((key) => [key, process.env[key]] as const);
   const nativeFetch = globalThis.fetch;
   const seen: string[] = [];
+  const tokenLimits: number[] = [];
   try {
     process.env.PENUMBRA_CONFIG_DIR = directory;
     process.env.PENUMBRA_JUDGE_ROLE = "memory-refiner";
@@ -39,7 +40,13 @@ test("extraction role override does not reassign the shared classifier role", as
             adapter: "openai-compat-http",
             api_provider: "local",
             roles: ["memory-extractor"],
-            options: { baseUrl: "http://127.0.0.1:1", model: "candidate" },
+            options: {
+              baseUrl: "http://127.0.0.1:1",
+              model: "candidate",
+              maxTokens: 256,
+              requestTimeoutMs: 1000,
+              requestExtras: { max_tokens: 999999 },
+            },
           },
         ],
       }),
@@ -53,8 +60,9 @@ test("extraction role override does not reassign the shared classifier role", as
         init?: Parameters<typeof fetch>[1],
       ): Promise<Response> => {
         if (typeof init?.body !== "string") throw new Error("expected JSON body");
-        const body = JSON.parse(init.body) as { model: string };
+        const body = JSON.parse(init.body) as { model: string; max_tokens: number };
         seen.push(body.model);
+        tokenLimits.push(body.max_tokens);
         return Promise.resolve(
           Response.json({ choices: [{ message: { content: '{"memories":[]}' } }] }),
         );
@@ -67,6 +75,7 @@ test("extraction role override does not reassign the shared classifier role", as
     if (!judge) throw new Error("missing extraction factory");
     await judge("transcript");
     expect(seen).toEqual(["candidate"]);
+    expect(tokenLimits).toEqual([256]);
     const floors = buildRequiredLlmRoleFloors({
       env: {
         PENUMBRA_T2_EXTRACTION_ROLE: "memory-extractor",
