@@ -4,6 +4,7 @@ import { z } from "zod";
 import { createBriefSynthesizer } from "@src/dreaming/brief-synthesizer.js";
 import { llmInvoke } from "@src/services/llm-invoke.js";
 import { createJudgePool } from "@src/workers/t2-judge-pool.js";
+import { parseJudgeResponse } from "@src/workers/t2-promotion.js";
 
 function asFetch(
   fn: (url: string | URL | Request, init?: RequestInit) => Promise<Response>,
@@ -17,6 +18,32 @@ function requestBody(init: RequestInit | undefined): Record<string, unknown> {
 }
 
 describe("configured generation requests", () => {
+  test("schema-invalid extraction fails over before a rollup can consume it", async () => {
+    const seen: string[] = [];
+    const pool = createJudgePool({
+      candidateSelection: "ordered",
+      judges: ["primary", "secondary"].map((name) => ({
+        name,
+        model: name,
+        baseUrl: "http://127.0.0.1:7944",
+        apiKey: "",
+      })),
+      log: { info: () => undefined, warn: () => undefined },
+      promptBuilder: (value) => value,
+      parseResponse: parseJudgeResponse,
+      fetch: asFetch((_url, init) => {
+        const model = String(requestBody(init).model);
+        seen.push(model);
+        const memories =
+          model === "primary" ? [{ title: "Incomplete", body: "Missing required kind" }] : [];
+        return Promise.resolve(
+          Response.json({ choices: [{ message: { content: JSON.stringify({ memories }) } }] }),
+        );
+      }),
+    });
+    expect(await pool.invoke("transcript")).toEqual([]);
+    expect(seen).toEqual(["primary", "secondary"]);
+  });
   test("ordered extraction keeps the primary and falls back only after failure", async () => {
     const seen: string[] = [];
     let calls = 0;

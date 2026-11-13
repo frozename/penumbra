@@ -7,6 +7,7 @@ import {
   buildT2EmbedText,
   resolveLlmCandidateSelection,
   resolveRoleLlmCandidates,
+  T2MemoryExtractionSchema,
   T2Promotion,
 } from "@penumbra/core";
 
@@ -740,7 +741,13 @@ export function parseJudgeResponse(content: string): T2MemoryExtraction[] {
       isContextOverflow: false,
     });
   }
-  return extractions as T2MemoryExtraction[];
+  const validated = T2MemoryExtractionSchema.array().safeParse(extractions);
+  if (!validated.success) {
+    throw new JudgeError("t2 judge memories failed schema validation", {
+      isContextOverflow: false,
+    });
+  }
+  return validated.data;
 }
 
 export function createDefaultLLMJudge(
