@@ -1,6 +1,6 @@
 # Strix Halo NPU as a complementary judge
 
-Checked 2026-11-12. **Technically supported and worth a guarded comparison; not admitted for a model run under the observed capacity.** This changes the earlier assumption that moving a judge to the Z13 necessarily occupies its Gufo GPU compute. It does not establish spare RAM, independent accelerator scheduling or decision quality.
+Checked 2026-11-12. **Technically supported; a pinned bounded trial is now prepared under the user's explicit admission-floor override.** This changes the earlier assumption that moving a judge to the Z13 necessarily occupies its Gufo GPU compute. It does not establish spare RAM, independent accelerator scheduling or decision quality. See the [prepared test and executed setup checks](../benchmarks/system-one-z13-npu-test.md); no NPU inference has run yet.
 
 ## Verified serving path
 
@@ -26,7 +26,7 @@ Quantized output parity is imperfect: the vendor reports Nano top-choice agreeme
 
 The [reproducible inventory](../benchmarks/results/system-one-judges-2026-11-12-z13-npu-feasibility/host-inventory.json) records a Ryzen AI MAX+395, Ubuntu24.04.5, kernel7.0.0-42, loaded `amdxdna`, readable/writable `/dev/accel/accel0`, firmware1.1.2.65 and unlimited SSH-session memlock. These satisfy the basic documented prerequisites, not an executed runtime validation. No FastFlowLM/XRT executable, standard installation path or matching dpkg package was found in the searched locations. A custom installation elsewhere is not excluded.
 
-The initial23:38:54UTC sample had20.39GiB MemAvailable, only0.39GiB above Penumbra's20GiB admission floor. The saved follow-up inventory has its own timestamp and exact capacity; neither sample certifies sustained headroom. No model was loaded, no NPU context initialized, and no production service changed. Admission must cover a measured serving envelope plus reserve; do not reduce the floor merely to make a pilot run.
+The initial23:38:54UTC sample had20.39GiB MemAvailable, only0.39GiB above Penumbra's20GiB admission floor. The saved follow-up inventory has its own timestamp and exact capacity; neither sample certifies sustained headroom. No model was loaded, no NPU context initialized, and no production service changed in that inspection. The user subsequently directed ignoring the20GiB floor for this experiment. The prepared launcher therefore omits that admission check, retaining process caps and actual pressure/emergency aborts; global worker admission settings are unchanged.
 
 Gufo PID791917 (`gufo-78d74185`, the Qwen3.8 service) already holds an NPU device descriptor. Its fdinfo exposes no utilization/context counters in this inspection; the NPU's runtime power state was `suspended` in the saved snapshot. A descriptor alone does not establish ongoing NPU computation, and this sample does not establish utilization during Gufo requests. Inspect the actual execution path and measure coexistence before promising isolation. NPU and GPU still share system memory, bandwidth and the package power/thermal envelope.
 

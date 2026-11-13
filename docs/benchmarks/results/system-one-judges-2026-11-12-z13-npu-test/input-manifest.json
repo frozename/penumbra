@@ -1,0 +1,35 @@
+{
+  "source": "docs/benchmarks/fixtures/system-one-judges.jsonl",
+  "sourceSha256": "d90426d423952ed8b8057e78a9c24eb734b452b68e9a19e792585b12161b1e7b",
+  "selectedFixtureSha256": "4fd538e6f1c41f2e29e351f463542d71818d5e7bda5cc416c62a94576a5234c4",
+  "caseIds": [
+    "syn-decision-reason",
+    "syn-preference",
+    "syn-gotcha",
+    "syn-test-pass",
+    "syn-repo-file",
+    "syn-repo-with-intent",
+    "syn-security-finding",
+    "syn-injection-json",
+    "syn-injection-token",
+    "syn-uncertainty",
+    "syn-task-with-finding",
+    "syn-false-authority",
+    "hist-550eaabe-51ff-41d1-91cf-35a8a6fa147b",
+    "hist-523f9389-386e-44ef-a6b4-826b0e12eb6c",
+    "hist-4bf2a9d7-9ba0-4de6-8b49-b257e98be584",
+    "hist-cade7ea4-c596-4e6f-9bad-7fdad32086b9",
+    "profile-0",
+    "profile-7",
+    "efficacy-0",
+    "efficacy-6"
+  ],
+  "method": "Pre-existing frozen pilot subset, copied without changing state/labels. Functional regression coverage only; labels remain provisional and already published. No candidate predictions used for selection.",
+  "counts": {
+    "promotion": 16,
+    "task-profile": 2,
+    "efficacy": 2
+  },
+  "stage2Fixtures": "docs/benchmarks/fixtures/system-one-source-reviewed.jsonl",
+  "stage2Caveat": "Reused independently AI-reviewed development cases, not a fresh hidden acceptance set."
+}
