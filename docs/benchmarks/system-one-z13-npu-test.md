@@ -2,6 +2,8 @@
 
 Prepared2026-11-12 under the user's instruction: **ignore the20GiB admission floor for this test**. The trial has no20GiB admission check and does not modify Penumbra's global worker admission configuration. It preserves pressure-based aborts and limits only its own process tree. Gufo and Granite remain running/configured as before; no candidate authority is enabled.
 
+Subsequent execution is complete: see the [measured results and retained failures](system-one-z13-npu-results.md). The preparation snapshot below predates inference. Its original description of the public reviewed file as320 cases was wrong: that file has120 synthetic cases; the corrected `reviewed` suite checks the private full320 corpus, `public` checks the120 subset, and `t2` checks120 complete bodies. Fresh HTTP connections are now the launcher default.
+
 ## Preparation actually completed
 
 - Downloaded the FastFlowLM1.0.12 portable archive into `/home/alex/DevStorage/penumbra-system-one-npu-test-20261112`, verified SHA256 `626fbee5e5206a215a8c2c4d3d961055cbf7289d257d36599e9fef38f2f555a8`, and extracted its bundled XRT/libraries. No system package, kernel, driver, firmware, service configuration or reboot was needed.
@@ -19,10 +21,10 @@ Evidence: [setup proof](results/system-one-judges-2026-11-12-z13-npu-test/setup-
 From the repository root:
 
 ```sh
-bash docs/benchmarks/results/system-one-judges-2026-11-12-z13-npu-test/run.sh lite canary execute
+bash docs/benchmarks/results/system-one-judges-2026-11-12-z13-npu-test/run.sh nano canary execute close
 ```
 
-Then run `nano canary execute` with the same script after reviewing the first run. `dry-run` is the default third argument and makes no inference requests. Once the canary is understood, `lite reviewed execute` or `nano reviewed execute` reuses the existing320-case independently AI-reviewed development corpus. Run these sequentially, not concurrently. `bash run.sh` must be invoked by its full path as above or from its own directory.
+`dry-run` is the default third argument and makes no inference requests. The fourth argument is `close` by default; `default` retains the original connection behavior for reproducing transport failures. `nano reviewed execute close` reuses the private320-case independently AI-reviewed development corpus. `nano public execute close` uses its public120-case synthetic subset; `nano t2 execute close` uses the separate complete-memory120. Run these sequentially, not concurrently. `bash run.sh` must be invoked by its full path as above or from its own directory. The executed Lite promotion configuration is now rejected on quality.
 
 The launcher creates a uniquely named transient `penumbra-npu-trial-*` unit, with4GiB memory.high,6GiB memory.max, no process swap,200% CPU quota,128 tasks and a600-second lifetime. The supervisor stops at570 seconds to leave time for cleanup. These caps affect measured performance and must accompany results. They are not proof that every NPU-driver allocation is cgroup-accounted.
 

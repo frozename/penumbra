@@ -30,6 +30,10 @@
     "task-profile": 2,
     "efficacy": 2
   },
-  "stage2Fixtures": "docs/benchmarks/fixtures/system-one-source-reviewed.jsonl",
-  "stage2Caveat": "Reused independently AI-reviewed development cases, not a fresh hidden acceptance set."
+  "stage2Caveat": "Reused independently AI-reviewed development cases, not a fresh hidden acceptance set.",
+  "initialPublicSubsetFixtures": "docs/benchmarks/fixtures/system-one-source-reviewed.jsonl",
+  "initialPublicSubsetRows": 120,
+  "fullReviewedFixturePath": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/review-200/ai-reviewed-judges-v2.jsonl",
+  "fullReviewedFixtureRows": 320,
+  "correction": "Preparation incorrectly described the public120 synthetic subset as the full320 corpus. The first nano-reviewed-named run actually used120. Later reviewed runs validate the private320 corpus count/raw hash before inference; original artifacts retained."
 }

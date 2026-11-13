@@ -1,0 +1,106 @@
+{
+  "status": "executed",
+  "config": {
+    "protocol": "systemone",
+    "promotionQuestionSet": "direct",
+    "baseUrl": "http://127.0.0.1:18945",
+    "model": "d3-nano",
+    "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+    "hardware": "Z13 Ryzen AI MAX+395,128GB; Gufo remains active; trial bypasses20GiB admission floor by explicit user instruction",
+    "runtime": "FastFlowLM1.0.12 cce7e5bb7d56af182b5051c12253175a86957b73 portable XRT; NPU-accelerated with CPU short attention; CPUQuota200%, MemoryHigh4GiB/Max6GiB, swap0; loopback via SSH; actual runtime context32768, frozen short inputs; vision not invoked",
+    "quantization": "Q4_K/GPTQ NPU q4nx package; exact pinned package, not Mac Q8 parity",
+    "contextTokens": 32768,
+    "timeoutMs": 5000,
+    "maxRequestBytes": 16384,
+    "allowRemote": false
+  },
+  "fixtureSha256": "9c55208df52d0048138d8a85c6e05133552ea6c4fbe2ce35b185710adbbbf127",
+  "firstRequestMs": 387.090416,
+  "requests": 120,
+  "answered": 120,
+  "failures": {},
+  "p50LatencyMs": 298.99604200000067,
+  "p95LatencyMs": 371.0541659999999,
+  "requestsPerSecond": 3.240915145687922,
+  "quality": {
+    "calibration": {
+      "promote": {
+        "selected": 19,
+        "answered": 19,
+        "abstained": 0,
+        "coverage": 1,
+        "threshold": 0.5,
+        "tp": 9,
+        "fp": 0,
+        "tn": 5,
+        "fn": 5,
+        "precision": 1,
+        "recall": 0.6428571428571429,
+        "f1": 0.782608695652174,
+        "falsePromotionRate": 0,
+        "falseVetoRate": 0.35714285714285715,
+        "falseDiscoveryRate": 0,
+        "brier": 0.17839519318869498,
+        "calibrationError": 0.2909168325977977,
+        "falseVetoRateWithRejectFallback": 0.35714285714285715
+      }
+    },
+    "test": {
+      "promote": {
+        "selected": 101,
+        "answered": 101,
+        "abstained": 0,
+        "coverage": 1,
+        "threshold": 0.5,
+        "tp": 58,
+        "fp": 0,
+        "tn": 35,
+        "fn": 8,
+        "precision": 1,
+        "recall": 0.8787878787878788,
+        "f1": 0.9354838709677419,
+        "falsePromotionRate": 0,
+        "falseVetoRate": 0.12121212121212122,
+        "falseDiscoveryRate": 0,
+        "brier": 0.08340835359160738,
+        "calibrationError": 0.21087403279480268,
+        "falseVetoRateWithRejectFallback": 0.12121212121212122
+      }
+    }
+  },
+  "thresholdFit": {
+    "method": "calibration-only grid, max observed false-promotion rate 0.02; provisional labels",
+    "threshold": null,
+    "heldOut": null
+  },
+  "directThresholdFit": {
+    "threshold": 0.28,
+    "heldOut": {
+      "selected": 101,
+      "answered": 101,
+      "abstained": 0,
+      "coverage": 1,
+      "threshold": 0.28,
+      "tp": 64,
+      "fp": 0,
+      "tn": 35,
+      "fn": 2,
+      "precision": 1,
+      "recall": 0.9696969696969697,
+      "f1": 0.9846153846153847,
+      "falsePromotionRate": 0,
+      "falseVetoRate": 0.030303030303030304,
+      "falseDiscoveryRate": 0,
+      "brier": 0.08340835359160738,
+      "calibrationError": 0.21087403279480268,
+      "falseVetoRateWithRejectFallback": 0.030303030303030304
+    }
+  },
+  "authority": "none; mode=shadow, applied=false; no production database opened",
+  "qualityUses": "first iteration only; repeats are performance samples, not independent labels",
+  "transport": {
+    "connectionClose": true,
+    "retries": 0,
+    "diagnostics": "hashes/status/error codes only"
+  }
+}

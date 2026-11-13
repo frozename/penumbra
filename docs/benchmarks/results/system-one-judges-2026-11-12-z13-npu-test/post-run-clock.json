@@ -1,0 +1,40 @@
+{
+  "method": "Post-run clock-offset bounds via5 SSH date probes; not a contemporaneous clock trace for earlier intervals",
+  "samples": [
+    {
+      "localBefore": 1794533244.562019,
+      "localAfter": 1794533244.704737,
+      "remoteTime": 1794533244.7012827,
+      "offsetLowerSeconds": -0.0034542083740234375,
+      "offsetUpperSeconds": 0.13926362991333008
+    },
+    {
+      "localBefore": 1794533244.704771,
+      "localAfter": 1794533244.716959,
+      "remoteTime": 1794533244.7136664,
+      "offsetLowerSeconds": -0.003292560577392578,
+      "offsetUpperSeconds": 0.008895397186279297
+    },
+    {
+      "localBefore": 1794533244.716971,
+      "localAfter": 1794533244.726799,
+      "remoteTime": 1794533244.7238178,
+      "offsetLowerSeconds": -0.0029811859130859375,
+      "offsetUpperSeconds": 0.006846904754638672
+    },
+    {
+      "localBefore": 1794533244.72682,
+      "localAfter": 1794533244.7334762,
+      "remoteTime": 1794533244.7305744,
+      "offsetLowerSeconds": -0.002901792526245117,
+      "offsetUpperSeconds": 0.0037543773651123047
+    },
+    {
+      "localBefore": 1794533244.733485,
+      "localAfter": 1794533244.739667,
+      "remoteTime": 1794533244.7365983,
+      "offsetLowerSeconds": -0.003068685531616211,
+      "offsetUpperSeconds": 0.003113269805908203
+    }
+  ]
+}

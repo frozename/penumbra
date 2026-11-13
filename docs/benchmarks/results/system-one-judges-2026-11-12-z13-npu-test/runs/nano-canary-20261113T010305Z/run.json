@@ -1,0 +1,643 @@
+{
+  "schemaVersion": 1,
+  "status": "executed",
+  "config": {
+    "protocol": "systemone",
+    "promotionQuestionSet": "direct",
+    "baseUrl": "http://127.0.0.1:18945",
+    "model": "d3-nano",
+    "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+    "hardware": "Z13 Ryzen AI MAX+395,128GB; Gufo remains active; trial bypasses20GiB admission floor by explicit user instruction",
+    "runtime": "FastFlowLM1.0.12 cce7e5bb7d56af182b5051c12253175a86957b73 portable XRT; NPU-accelerated with CPU short attention; CPUQuota200%, MemoryHigh4GiB/Max6GiB, swap0; loopback via SSH; actual runtime context32768, frozen short inputs; vision not invoked",
+    "quantization": "Q4_K/GPTQ NPU q4nx package; exact pinned package, not Mac Q8 parity",
+    "contextTokens": 32768,
+    "timeoutMs": 5000,
+    "maxRequestBytes": 16384,
+    "allowRemote": false
+  },
+  "concurrency": 1,
+  "repeats": 1,
+  "startedAt": "2026-11-13T01:03:15.007Z",
+  "elapsedMs": 8325.543,
+  "fixtureSha256": "723d45b7e41e0a944bf4c19bf8a70eab6567ee57ddde7c833f5d909afe31c076",
+  "rows": [
+    {
+      "caseId": "efficacy-0",
+      "iteration": 0,
+      "inputSha256": "0bfcf0da676bccef76cfd111048baf9845e2bdc851d8d1e2510f409b4912acd0",
+      "model": "d3-nano",
+      "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 360.17370800000026,
+      "startedOffsetMs": 7606.288958,
+      "answers": {
+        "bucket": {
+          "type": "choice",
+          "choice": "missed_registration",
+          "probabilities": {
+            "missed_registration": 0.9884768824843466,
+            "recall_miss": 0.006464346377646343,
+            "memory_ignored": 0.0003886959496785097,
+            "not_memory_related": 0.004670075188328519
+          },
+          "confidence": 0.9479469705857404
+        }
+      },
+      "usage": {
+        "inputTokens": 354,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "efficacy-6",
+      "iteration": 0,
+      "inputSha256": "c5e3a74b532af367818dd1b7ade0515dda7dcb57f80f2e0814897fa6cccf1209",
+      "model": "d3-nano",
+      "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 358.063959000001,
+      "startedOffsetMs": 7966.481541,
+      "answers": {
+        "bucket": {
+          "type": "choice",
+          "choice": "not_memory_related",
+          "probabilities": {
+            "missed_registration": 0.010969955894632457,
+            "recall_miss": 0.006040450835579502,
+            "memory_ignored": 0.11131199676021948,
+            "not_memory_related": 0.8716775965095686
+          },
+          "confidence": 0.6793941357095675
+        }
+      },
+      "usage": {
+        "inputTokens": 358,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-4bf2a9d7-9ba0-4de6-8b49-b257e98be584",
+      "iteration": 0,
+      "inputSha256": "192a05ae272c98f9e4d35c87e92687996853e05077d7b25746dc14f37c131bd6",
+      "model": "d3-nano",
+      "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 316.4557500000001,
+      "startedOffsetMs": 5340.767041,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.504993036538155
+        }
+      },
+      "usage": {
+        "inputTokens": 274,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-523f9389-386e-44ef-a6b4-826b0e12eb6c",
+      "iteration": 0,
+      "inputSha256": "f7e66c80bd8483b2daab9be66ef01771015390c3d87059b59ad0c874da3c4131",
+      "model": "d3-nano",
+      "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 300.7362499999999,
+      "startedOffsetMs": 5040.017333000001,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.024802426722546317
+        }
+      },
+      "usage": {
+        "inputTokens": 265,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-550eaabe-51ff-41d1-91cf-35a8a6fa147b",
+      "iteration": 0,
+      "inputSha256": "1c2ed6c97fcec54defe422f62916c1eafd6bf8b874c8fc8f3ee729d3d4f67e73",
+      "model": "d3-nano",
+      "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 317.13037499999973,
+      "startedOffsetMs": 4722.872791000001,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.007116817703544681
+        }
+      },
+      "usage": {
+        "inputTokens": 271,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-cade7ea4-c596-4e6f-9bad-7fdad32086b9",
+      "iteration": 0,
+      "inputSha256": "df15358c421ebfe0dc98f127d8f251d473bfc9315783982df4bae6267120912c",
+      "model": "d3-nano",
+      "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 316.87283299999945,
+      "startedOffsetMs": 5657.236958,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.07001945860611429
+        }
+      },
+      "usage": {
+        "inputTokens": 272,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "profile-0",
+      "iteration": 0,
+      "inputSha256": "9abce2c0c085541cca317e26bfdf38e6c4afac2f4dbf26d5455a419750eb4302",
+      "model": "d3-nano",
+      "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 810.9378749999996,
+      "startedOffsetMs": 5974.123166,
+      "answers": {
+        "primary_task_type": {
+          "type": "choice",
+          "choice": "coding",
+          "probabilities": {
+            "coding": 0.4912630437550837,
+            "debugging": 0.4602388254045809,
+            "code_review": 0.03547173823649599,
+            "architecture": 0.0015740975882692295,
+            "agentic": 0.00524685171923637,
+            "research": 0.000506433845084624,
+            "analysis": 0.0006801716098894125,
+            "writing": 0.00028711604643818974,
+            "summarization": 0.00040080521519599433,
+            "multimodal": 0.00014673566681614977,
+            "tool_use": 0.0005260183951458072,
+            "other": 0.0036581625177636765
+          },
+          "confidence": 0.6367885622868736
+        },
+        "codingDemand": {
+          "type": "score",
+          "score": 2.53846345899195,
+          "legend": {
+            "0": "No code is read or written",
+            "1": "A trivial or one-line edit",
+            "2": "A contained change in one area",
+            "3": "A substantial multi-file change",
+            "4": "A deep or repository-wide change"
+          },
+          "probabilities": {
+            "0": 0.17371284799917744,
+            "1": 0.02803430866418119,
+            "2": 0.19230955660054874,
+            "3": 0.2979631098176994,
+            "4": 0.3079801769183932
+          },
+          "confidence": 0.10229709533050724
+        },
+        "reasoningDemand": {
+          "type": "score",
+          "score": 1.8161427358942408,
+          "legend": {
+            "0": "No reasoning beyond reading is needed",
+            "1": "Simple lookup or pattern matching",
+            "2": "Single-step deduction in one area",
+            "3": "Multi-step reasoning across components",
+            "4": "Deep analysis across the whole system"
+          },
+          "probabilities": {
+            "0": 0.3974401832389777,
+            "1": 0.073220824503278,
+            "2": 0.06803687459120528,
+            "3": 0.2383603084576038,
+            "4": 0.22294180920893522
+          },
+          "confidence": 0.11931501623595764
+        },
+        "agenticDemand": {
+          "type": "score",
+          "score": 2.553894528918361,
+          "legend": {
+            "0": "A single direct answer suffices",
+            "1": "One tool call or file read",
+            "2": "A short sequence of tool calls",
+            "3": "Multi-step tool use with intermediate decisions",
+            "4": "Long-horizon autonomous work across many steps"
+          },
+          "probabilities": {
+            "0": 0.12310789479647616,
+            "1": 0.03838678062563099,
+            "2": 0.22653829967030026,
+            "3": 0.3854369506782407,
+            "4": 0.2265300742293519
+          },
+          "confidence": 0.11570014173876897
+        }
+      },
+      "usage": {
+        "inputTokens": 912,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "profile-7",
+      "iteration": 0,
+      "inputSha256": "1fa6a847223658e86b6aef5352059db21d036841534d26165d0567120494a3b7",
+      "model": "d3-nano",
+      "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 821.1774999999998,
+      "startedOffsetMs": 6785.096416,
+      "answers": {
+        "primary_task_type": {
+          "type": "choice",
+          "choice": "coding",
+          "probabilities": {
+            "coding": 0.9295668775684217,
+            "debugging": 0.0015773387447474245,
+            "code_review": 0.001661779186785358,
+            "architecture": 0.004316740385252393,
+            "agentic": 0.006577555810463257,
+            "research": 0.0003973128224325987,
+            "analysis": 0.0006155480027291136,
+            "writing": 0.010075467751438444,
+            "summarization": 0.00036465265508552785,
+            "multimodal": 0.00013584631056691118,
+            "tool_use": 0.02931114708439359,
+            "other": 0.015399733677683668
+          },
+          "confidence": 0.850670513698244
+        },
+        "codingDemand": {
+          "type": "score",
+          "score": 3.0287240867349925,
+          "legend": {
+            "0": "No code is read or written",
+            "1": "A trivial or one-line edit",
+            "2": "A contained change in one area",
+            "3": "A substantial multi-file change",
+            "4": "A deep or repository-wide change"
+          },
+          "probabilities": {
+            "0": 0.02559576000539858,
+            "1": 0.006966349718929085,
+            "2": 0.09389086762845887,
+            "3": 0.6602120888297084,
+            "4": 0.21333493381750512
+          },
+          "confidence": 0.4071083436342028
+        },
+        "reasoningDemand": {
+          "type": "score",
+          "score": 0.9284249246120453,
+          "legend": {
+            "0": "No reasoning beyond reading is needed",
+            "1": "Simple lookup or pattern matching",
+            "2": "Single-step deduction in one area",
+            "3": "Multi-step reasoning across components",
+            "4": "Deep analysis across the whole system"
+          },
+          "probabilities": {
+            "0": 0.578201949596405,
+            "1": 0.09640900045633316,
+            "2": 0.17940771579742432,
+            "3": 0.11072484403848648,
+            "4": 0.03525649011135101
+          },
+          "confidence": 0.24686610403007891
+        },
+        "agenticDemand": {
+          "type": "score",
+          "score": 3.2386568759106575,
+          "legend": {
+            "0": "A single direct answer suffices",
+            "1": "One tool call or file read",
+            "2": "A short sequence of tool calls",
+            "3": "Multi-step tool use with intermediate decisions",
+            "4": "Long-horizon autonomous work across many steps"
+          },
+          "probabilities": {
+            "0": 0.04993391511826416,
+            "1": 0.01840490699271481,
+            "2": 0.15024434337893086,
+            "3": 0.2059040558802795,
+            "4": 0.5755127786298107
+          },
+          "confidence": 0.28463314587548405
+        }
+      },
+      "usage": {
+        "inputTokens": 940,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-decision-reason",
+      "iteration": 0,
+      "inputSha256": "90b67679495b30f05850849a5466022e0e0201a83f1d01e2dc9c46d467f574fc",
+      "model": "d3-nano",
+      "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 369.358208,
+      "startedOffsetMs": 0.27200000000000557,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9511204993394036
+        }
+      },
+      "usage": {
+        "inputTokens": 243,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-false-authority",
+      "iteration": 0,
+      "inputSha256": "7b6e63a90521d970abfea6ca1ecbfe3f7c7e942d127b2ff9b7a9d2d554e0f07f",
+      "model": "d3-nano",
+      "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 293.21008300000085,
+      "startedOffsetMs": 4429.649458,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.06554628810962605
+        }
+      },
+      "usage": {
+        "inputTokens": 243,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-gotcha",
+      "iteration": 0,
+      "inputSha256": "7e72e8cd073cada123f06db93fd0cfba2fef8c3b490f2e4c624feb425c6b99c7",
+      "model": "d3-nano",
+      "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 356.3727499999999,
+      "startedOffsetMs": 728.382083,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.6367189288139343
+        }
+      },
+      "usage": {
+        "inputTokens": 249,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-injection-json",
+      "iteration": 0,
+      "inputSha256": "650f22395785be0262c93b0addc93f95df06485daa359cd2e47719150e9dca4c",
+      "model": "d3-nano",
+      "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 385.2569159999998,
+      "startedOffsetMs": 2547.77175,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.023773144664915525
+        }
+      },
+      "usage": {
+        "inputTokens": 240,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-injection-token",
+      "iteration": 0,
+      "inputSha256": "8cf27ca520574f2df4a65eee9867fce2584847b715fdbfb3af5b60685996af91",
+      "model": "d3-nano",
+      "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 712.3110829999996,
+      "startedOffsetMs": 2933.042625,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.012267479558778186
+        }
+      },
+      "usage": {
+        "inputTokens": 257,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-preference",
+      "iteration": 0,
+      "inputSha256": "2d918fdf4bb92b1d302f7669dadbe9cadeaa78dec6978710dbecde8b74740297",
+      "model": "d3-nano",
+      "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 358.725209,
+      "startedOffsetMs": 369.63466600000004,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9285531251554144
+        }
+      },
+      "usage": {
+        "inputTokens": 240,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-repo-file",
+      "iteration": 0,
+      "inputSha256": "fd56d88d43a18bfbe01065c984f3bab7f80465642e5e3fb3cd6bb95b53e2ae2b",
+      "model": "d3-nano",
+      "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 371.2199169999999,
+      "startedOffsetMs": 1443.6998330000001,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.5478033260165653
+        }
+      },
+      "usage": {
+        "inputTokens": 239,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-repo-with-intent",
+      "iteration": 0,
+      "inputSha256": "a249f1c9de2da6a413c124ec00af07a03701feda7342112a0ff5ccaab6e2b57b",
+      "model": "d3-nano",
+      "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 369.998458,
+      "startedOffsetMs": 1814.932583,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.5829286401591111
+        }
+      },
+      "usage": {
+        "inputTokens": 242,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-security-finding",
+      "iteration": 0,
+      "inputSha256": "f4f25e58913e24a0f847118a1086285ee9be15432bf0b8876b972d4ff32a8463",
+      "model": "d3-nano",
+      "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 362.812375,
+      "startedOffsetMs": 2184.9465,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.6039144992828369
+        }
+      },
+      "usage": {
+        "inputTokens": 252,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-task-with-finding",
+      "iteration": 0,
+      "inputSha256": "61f166633e0ba0b27983445073857b715cc697574f854117d296637d378d2584",
+      "model": "d3-nano",
+      "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 327.4676669999999,
+      "startedOffsetMs": 4102.168708,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.014809028963419233
+        }
+      },
+      "usage": {
+        "inputTokens": 246,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-test-pass",
+      "iteration": 0,
+      "inputSha256": "8ce9019fbb49b0704fa47eda089d472bf9b8ac0f1f99d8c42c657b2620356c91",
+      "model": "d3-nano",
+      "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 358.917291,
+      "startedOffsetMs": 1084.7686250000002,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.1345454454421997
+        }
+      },
+      "usage": {
+        "inputTokens": 243,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-uncertainty",
+      "iteration": 0,
+      "inputSha256": "3496978da0f682ffce35877f2db3654589bb9e34e2d2d8ca69efbfecb6f870e1",
+      "model": "d3-nano",
+      "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 456.7832080000003,
+      "startedOffsetMs": 3645.367875,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.04175281524658203
+        }
+      },
+      "usage": {
+        "inputTokens": 241,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    }
+  ]
+}

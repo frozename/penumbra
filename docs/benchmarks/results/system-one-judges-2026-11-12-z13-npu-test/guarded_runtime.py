@@ -7,12 +7,11 @@ import os
 from pathlib import Path
 import re
 import signal
-import socket
 import subprocess
 import time
 import urllib.request
 
-from trial_guard import assess_sample
+from trial_guard import assess_sample, assert_port_available
 
 
 def read(path):
@@ -122,22 +121,24 @@ def main():
                FLM_XCLBIN_PATH=str(root / 'runtime/xclbins'),
                OMP_NUM_THREADS='2', OPENBLAS_NUM_THREADS='2')
     command = [str(root / 'runtime/flm'), 'serve', '--decision', 'd3:' + args.model,
-               '--host', '127.0.0.1', '--port', '52625', '--pmode', 'default']
+               '--host', '127.0.0.1', '--port', '52625', '--pmode', 'default', '--quiet']
     result = dict(status='starting', model=args.model, admissionFloorIgnored=True,
                   authority='none', startedAt=time.time(), command=command, gufoPid=gufo,
+                  runtimeOutput='suppressed: FLM --quiet still prints request bodies; use typed client errors and resource/exit diagnostics',
                   npuUtilization='not available from inspected unprivileged counters')
     child = None
     started = time.monotonic()
     reason = None
     try:
-        with socket.socket() as port_probe:
-            port_probe.bind(('127.0.0.1', 52625))
+        assert_port_available(52625)
         first = sample(baseline, gufo, 0, os.getpid())
         reason = assess_sample(first, time.time(), gufo)
         if reason:
             raise RuntimeError(reason)
         with (args.out / 'runtime.log').open('w') as log, (args.out / 'resources.jsonl').open('w') as samples:
-            child = subprocess.Popen(command, cwd=root, env=env, stdout=log, stderr=subprocess.STDOUT)
+            log.write('Native stdout/stderr suppressed to avoid logging request bodies. See guard.json and typed benchmark errors.\n')
+            log.flush()
+            child = subprocess.Popen(command, cwd=root, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             result['runtimePid'] = child.pid
             failures = 0
             while not stopping:

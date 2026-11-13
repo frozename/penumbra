@@ -931,5 +931,31 @@
       "maxCriticalIntervalMs": 1023.3948230743408
     }
   },
-  "contemporaryShadowGate": "Unexercised: no new eligible records arrived before observer interrupted; historical replay partial18attempted17answered1timeout, not a passing live window"
+  "contemporaryShadowGate": "Unexercised: no new eligible records arrived before observer interrupted; historical replay partial18attempted17answered1timeout, not a passing live window",
+  "z13NpuTrial": {
+    "status": "measured; non-authoritative; no persistent deployment",
+    "report": "docs/benchmarks/system-one-z13-npu-results.md",
+    "results": "docs/benchmarks/results/system-one-judges-2026-11-12-z13-npu-test/execution-summary.json",
+    "validation": "docs/benchmarks/results/system-one-judges-2026-11-12-z13-npu-test/execution-validation.json",
+    "preferredComplementaryCandidate": "d3 Nano NPU Q4_K/GPTQ pinned package; operator-bounded paced shadow only",
+    "rejectedPromotionConfiguration": "d3 Lite NPU at locked0.5, all66 positives vetoed",
+    "excerpt259Test": {
+      "graniteHistoricalF1": 0.8188976377952756,
+      "macNanoQ8HistoricalF1": 0.9090909090909091,
+      "nanoNpuF1": 0.9354838709677419,
+      "nanoNpuFalsePromotions": 0,
+      "nanoNpuFalseVetoes": 8
+    },
+    "completeBody116Test": {
+      "graniteHistoricalF1": 0.9252336448598131,
+      "macNanoQ8HistoricalF1": 0.9359605911330049,
+      "nanoNpuF1": 0.9154228855721394,
+      "nanoNpuFalsePromotions": 7,
+      "nanoNpuFalseVetoes": 10
+    },
+    "resourceAccounting": "Nano sampled cgroup peak2.443GiB; not total physical NPU footprint. No swap growth. Gufo short-probe completion time approximately9-12% higher during Nano, three samples per phase; causality/SLA unproven.",
+    "authorityChanged": false,
+    "admissionFloorIgnoredForTrial": true,
+    "globalAdmissionChanged": false
+  }
 }

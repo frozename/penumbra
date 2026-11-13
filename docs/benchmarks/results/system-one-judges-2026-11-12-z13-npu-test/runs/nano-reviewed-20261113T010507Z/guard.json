@@ -1,0 +1,29 @@
+{
+  "status": "stopped",
+  "model": "nano",
+  "admissionFloorIgnored": true,
+  "authority": "none",
+  "startedAt": 1794531911.5807831,
+  "command": [
+    "/home/alex/DevStorage/penumbra-system-one-npu-test-20261112/runtime/flm",
+    "serve",
+    "--decision",
+    "d3:nano",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "52625",
+    "--pmode",
+    "default",
+    "--quiet"
+  ],
+  "gufoPid": 791917,
+  "runtimeOutput": "suppressed: FLM --quiet still prints request bodies; use typed client errors and resource/exit diagnostics",
+  "npuUtilization": "not available from inspected unprivileged counters",
+  "runtimePid": 1021807,
+  "reason": null,
+  "elapsedSeconds": 40.035250707005616,
+  "endedAt": 1794531951.6160383,
+  "gufoPidAfter": 791917,
+  "runtimeExitCode": -15
+}

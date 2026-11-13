@@ -1,6 +1,6 @@
 import unittest
 
-from trial_guard import assess_sample, classify_run, coexistence_status
+from trial_guard import assess_sample, classify_run, coexistence_status, validate_fixture_bytes, assert_port_available
 
 
 class GuardTests(unittest.TestCase):
@@ -66,6 +66,27 @@ class GuardTests(unittest.TestCase):
         good = {'rows': [{'index': 0, 'startedAt': 10, 'endedAt': 11, 'ttftMs': 20, 'error': None}]}
         self.assertEqual(coexistence_status([good]*3, [(12, 13)]), ('unexercised', []))
         self.assertEqual(coexistence_status([good]*3, [(10.5, 12)]), ('observed_overlap_not_acceptance', [0]))
+
+    def test_fixture_subset_cannot_be_reported_as_full_corpus(self):
+        import hashlib
+        raw = b'{"id":"one"}\n'
+        sha = hashlib.sha256(raw).hexdigest()
+        self.assertEqual(validate_fixture_bytes(raw, 1, sha)['rows'], 1)
+        with self.assertRaises(ValueError):
+            validate_fixture_bytes(raw, 320, sha)
+        with self.assertRaises(ValueError):
+            validate_fixture_bytes(raw, 1, '0'*64)
+
+    def test_port_probe_rejects_live_listener_but_allows_released_port(self):
+        import socket
+        with socket.socket() as listener:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind(('127.0.0.1', 0))
+            port = listener.getsockname()[1]
+            listener.listen()
+            with self.assertRaises(OSError):
+                assert_port_available(port)
+        assert_port_available(port)
 
 
 if __name__ == '__main__':

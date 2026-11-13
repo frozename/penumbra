@@ -1,4 +1,7 @@
 import math
+import hashlib
+import json
+import socket
 
 GIB = 1024**3
 
@@ -58,3 +61,17 @@ def coexistence_status(phases, candidate_intervals):
                    if any(row['startedAt'] < end and row['endedAt'] > start
                           for start, end in candidate_intervals)]
     return ('observed_overlap_not_acceptance' if overlapping else 'unexercised'), overlapping
+
+
+def validate_fixture_bytes(raw, expected_count, expected_sha):
+    rows = [json.loads(line) for line in raw.splitlines() if line]
+    digest = hashlib.sha256(raw).hexdigest()
+    if len(rows) != expected_count or digest != expected_sha:
+        raise ValueError('Fixture count/hash mismatch; refuse mislabeled or changed corpus')
+    return dict(rows=len(rows), rawSha256=digest)
+
+
+def assert_port_available(port):
+    with socket.socket() as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        probe.bind(('127.0.0.1', port))

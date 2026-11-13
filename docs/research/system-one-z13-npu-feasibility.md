@@ -1,6 +1,6 @@
 # Strix Halo NPU as a complementary judge
 
-Checked 2026-11-12. **Technically supported; a pinned bounded trial is now prepared under the user's explicit admission-floor override.** This changes the earlier assumption that moving a judge to the Z13 necessarily occupies its Gufo GPU compute. It does not establish spare RAM, independent accelerator scheduling or decision quality. See the [prepared test and executed setup checks](../benchmarks/system-one-z13-npu-test.md); no NPU inference has run yet.
+Checked 2026-11-12. **The bounded trial has now executed successfully under the user's admission-floor override.** Nano/Lite each answered the full320-case excerpt corpus, and Nano answered120 complete bodies. See the [measured results](../benchmarks/system-one-z13-npu-results.md). Nano's NPU variant is useful for further shadow work but loses complete-body quality relative to Mac Q8; Gufo timings show possible contention. This is technical feasibility, not production authority or performance isolation. The research and initial setup history below remain distinct from the later measurements.
 
 ## Verified serving path
 
