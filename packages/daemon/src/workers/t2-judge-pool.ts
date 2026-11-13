@@ -30,7 +30,7 @@ export interface JudgePoolOpts {
   maxTokens?: number;
   unhealthyAfter?: number;
   promptBuilder: (transcript: string) => string;
-  parseResponse: (rawContent: string) => T2MemoryExtraction[];
+  parseResponse: (rawContent: string, transcript: string) => T2MemoryExtraction[];
 }
 
 export interface JudgePool {
@@ -236,7 +236,11 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
     }
   }
 
-  async function invokeJudge(judge: JudgeState, prompt: string): Promise<T2MemoryExtraction[]> {
+  async function invokeJudge(
+    judge: JudgeState,
+    prompt: string,
+    transcript: string,
+  ): Promise<T2MemoryExtraction[]> {
     const effectiveTimeoutMs = Math.min(timeoutMs, judge.timeoutMs ?? timeoutMs);
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (judge.apiKey) headers.Authorization = `Bearer ${judge.apiKey}`;
@@ -278,11 +282,11 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
       });
     }
     const json = (await res.json()) as JudgeResponse;
-    return opts.parseResponse(extractJudgeContent(judge, json));
+    return opts.parseResponse(extractJudgeContent(judge, json), transcript);
   }
 
   // eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing retry and health policy while changing only cursor advancement.
-  async function tryEachJudge(prompt: string): Promise<T2MemoryExtraction[]> {
+  async function tryEachJudge(prompt: string, transcript: string): Promise<T2MemoryExtraction[]> {
     let lastError: unknown;
     const attempted = new Set<number>();
     let result: T2MemoryExtraction[] | undefined;
@@ -305,7 +309,7 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
       const judge = judges[idx];
       if (!judge || judge.unhealthy) continue;
       try {
-        result = await invokeJudge(judge, prompt);
+        result = await invokeJudge(judge, prompt, transcript);
         break;
       } catch (err) {
         lastError = err;
@@ -327,7 +331,7 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
     async invoke(transcript: string): Promise<T2MemoryExtraction[]> {
       if (judges.length === 0) throw new Error("all judges unhealthy this tick");
       const prompt = opts.promptBuilder(transcript);
-      return await tryEachJudge(prompt);
+      return await tryEachJudge(prompt, transcript);
     },
     resetTickHealth(): void {
       for (const judge of judges) {

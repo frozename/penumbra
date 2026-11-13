@@ -784,6 +784,12 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     description:
       "Optional T2 transcript extractor role; defaults to PENUMBRA_JUDGE_ROLE. Does not reassign memory-efficacy classifiers or promotion ballots.",
   },
+  PENUMBRA_T2_SOURCE_TRANSCRIPT: {
+    schema: z.enum(["0", "1"]),
+    default: "0",
+    description:
+      "Opt-in source-text extraction with quote checks, complete bounded chunks and no silent evidence truncation. Requires independent quality validation before activation.",
+  },
   PENUMBRA_JUDGE_TOKEN: {
     schema: OptStr,
     description: "Bearer token for the judge LLM.",
