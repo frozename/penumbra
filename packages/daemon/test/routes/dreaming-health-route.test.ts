@@ -500,6 +500,15 @@ describe("dreamingHealthRoute", () => {
     await runDreamCycle(services.db, rewriterCycleConfig(), {
       projectRegistry,
       dispatchEventLog: services.dispatchEventLog,
+      rewriterInventory: {
+        collect: () =>
+          Promise.resolve({
+            status: "ok",
+            nodes: [],
+            messages: [],
+            models: [{ id: "rewriter-a" }],
+          }),
+      },
       llmInvoke: makeSkipRewriteInvoker(),
     });
 
@@ -511,6 +520,15 @@ describe("dreamingHealthRoute", () => {
     await runDreamCycle(services.db, rewriterCycleConfig(), {
       projectRegistry,
       dispatchEventLog: services.dispatchEventLog,
+      rewriterInventory: {
+        collect: () =>
+          Promise.resolve({
+            status: "ok",
+            nodes: [],
+            messages: [],
+            models: [{ id: "rewriter-a" }],
+          }),
+      },
       llmInvoke: () =>
         Promise.resolve({
           ok: false as const,
@@ -522,7 +540,17 @@ describe("dreamingHealthRoute", () => {
     const body = await routeBody(services);
 
     expect(body.query_rewrite_failed_recent).toBe(1);
-    expect(body.query_skipped_recent).toBe(1);
+    expect(body.query_skipped_recent).toBe(2);
+    expect(
+      services.db
+        .query(
+          `SELECT COUNT(*) AS n FROM dispatch_events
+        WHERE kind='dream_p4_query_skipped'
+          AND json_extract(meta_json, '$.decision_source')='policy'
+          AND json_extract(meta_json, '$.reason')='timeout'`,
+        )
+        .get(),
+    ).toEqual({ n: 1 });
     expect(body.subsystem_health?.last_success_ts).toBeNull();
     expect(body.alerts).toContain("dream.health.rewrite_no_recent_success");
   });
