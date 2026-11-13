@@ -1,448 +1,390 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { z } from "zod";
 
 import {
-  FEW_SHOT_EXAMPLES,
   REWRITE_RESPONSE_SCHEMA,
   type RewriteResponse,
-  SYSTEM_PROMPT,
 } from "../packages/daemon/src/dreaming/dream-rewriter-prompt-content.js";
 import { buildDreamQueryRewritePrompt } from "../packages/daemon/src/dreaming/dream-rewriter-prompt.js";
+import { isWebSearchable } from "../packages/daemon/src/dreaming/query-rewriting.js";
+import { sanitizeTitleForQuery } from "../packages/daemon/src/dreaming/query-sanitize.js";
+import { invokeRewriter } from "../packages/daemon/src/dreaming/rewrite-invoke.js";
 import { llmInvoke } from "../packages/daemon/src/services/llm-invoke.js";
 
-interface EvalCase {
-  id: string;
-  title: string;
-  body_first_200: string;
-  expected_verdict: RewriteResponse["kind"];
-}
-
-interface ModelConfig {
-  id: string;
-  baseUrl: string;
-  model: string;
-}
-
-type PromptVariant = "current" | "revised";
-
-interface PromptMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
-}
-
-interface CellResult {
+const ModelSchema = z
+  .object({
+    id: z.string().regex(/^[a-z\d][a-z\d._-]{0,63}$/),
+    baseUrl: z.string().refine((value) => {
+      try {
+        const url = new URL(value);
+        return (
+          url.protocol === "http:" &&
+          ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) &&
+          !url.username &&
+          !url.password &&
+          !url.search &&
+          !url.hash &&
+          url.pathname.replace(/\/$/, "") === "/v1"
+        );
+      } catch {
+        return false;
+      }
+    }, "benchmark requires a credential-free loopback /v1 origin"),
+    model: z.string().min(1).max(256),
+    maxTokens: z.number().int().min(1).max(2048).default(512),
+    timeoutMs: z.number().int().min(1).max(30000).default(30000),
+  })
+  .strict();
+const ConfigSchema = z
+  .object({
+    models: z.array(ModelSchema).min(1).max(4),
+    repetitions: z.number().int().min(1).max(3).default(1),
+    concurrency: z.number().int().min(1).max(2).default(1),
+  })
+  .strict();
+const CaseSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  body_first_200: z.string().refine((value) => Array.from(value).length <= 200),
+  expected_verdict: z.enum(["query", "skip", "uncertain"]),
+  inputSha256: z
+    .string()
+    .regex(/^[a-f\d]{64}$/)
+    .optional(),
+  stratum: z.string().optional(),
+});
+export type ModelConfig = z.infer<typeof ModelSchema>;
+export type BenchConfig = z.infer<typeof ConfigSchema>;
+export type EvalCase = z.infer<typeof CaseSchema>;
+export interface CellResult {
   model_id: string;
   model_name: string;
-  variant: PromptVariant;
   case_id: string;
-  expected_verdict: RewriteResponse["kind"];
+  expected_verdict: EvalCase["expected_verdict"];
   verdict: RewriteResponse["kind"] | null;
   query_or_reason: string;
   raw: string;
   latency_ms: number;
   error: string | null;
-  correct: boolean;
+  correct: boolean | null;
+  contract_issues: string[];
+  production_gate_pass: boolean;
+  gate_eligible_text: string | null;
+}
+const sha = (value: string): string => createHash("sha256").update(value).digest("hex");
+
+export function parseBenchArgs(args: string[]): {
+  configPath: string;
+  fixturesPath: string;
+  outDir: string;
+} {
+  if (!args.includes("--live")) throw new Error("Explicit --live required");
+  const found = new Map<string, string>();
+  for (let index = 0; index < args.length; index++) {
+    const key = args[index];
+    if (key === "--live") continue;
+    if (!key || !["--config", "--fixtures", "--out"].includes(key) || found.has(key))
+      throw new Error("Unknown or repeated benchmark argument");
+    const value = args[++index];
+    if (!value || value.startsWith("--")) throw new Error("Missing benchmark argument value");
+    found.set(key, value);
+  }
+  const configPath = found.get("--config"),
+    fixturesPath = found.get("--fixtures"),
+    outDir = found.get("--out");
+  if (!configPath || !fixturesPath || !outDir)
+    throw new Error("--config, --fixtures and fresh --out required");
+  return { configPath, fixturesPath, outDir };
 }
 
-const LLAMACTL_PROXY = "http://127.0.0.1:7944";
-const MODELS: ModelConfig[] = [
-  {
-    id: "granite-4.1-3b",
-    baseUrl: LLAMACTL_PROXY,
-    model: "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
-  },
-  { id: "qwen3.6-35b-a3b", baseUrl: LLAMACTL_PROXY, model: "Qwen3.6-35B-A3B-4bit" },
-];
-
-const PROMPT_VARIANTS: readonly PromptVariant[] = ["current", "revised"];
-
-const REVISED_FIRST_SHOT = {
-  input: {
-    title: "Test-driven development workflow for engine registry",
-    body_first_200:
-      "Postmortem notes described how we added new registries and kept behavior stable by writing tests first. Team was coordinating API shape, validation order, and migration safety before merge.",
-  },
-  output: {
-    kind: "skip",
-    reason:
-      "engine registry is internal codebase nomenclature; generic methodology paired with internal-object noun has no public corpus",
-  },
-} satisfies (typeof FEW_SHOT_EXAMPLES)[number];
-
-const PROJECT_ROOT = process.cwd();
-const EVAL_KIND = process.env.REWRITER_BENCH_EVAL ?? "synthetic";
-const EVAL_FILENAME =
-  EVAL_KIND === "prod" ? "rewriter-eval-prod-2026-05-25.jsonl" : "rewriter-eval-2026-05-25.jsonl";
-const OUTPUT_SUFFIX = EVAL_KIND === "prod" ? "-prod" : "";
-const EVAL_PATH = join(PROJECT_ROOT, "docs/notes", EVAL_FILENAME);
-const MARKDOWN_OUTPUT_PATH = join(
-  PROJECT_ROOT,
-  `docs/notes/rewriter-bench-2026-05-25${OUTPUT_SUFFIX}.md`,
-);
-const RAW_OUTPUT_PATH = join(
-  PROJECT_ROOT,
-  `docs/notes/rewriter-bench-2026-05-25${OUTPUT_SUFFIX}-raw.json`,
-);
-
-function buildRevisedPrompt(input: { title: string; bodyFirst200: string }): PromptMessage[] {
-  const examples = [REVISED_FIRST_SHOT, ...FEW_SHOT_EXAMPLES.slice(1)];
-  return [
-    { role: "system", content: SYSTEM_PROMPT },
-    ...examples.flatMap((example): PromptMessage[] => [
-      {
-        role: "user",
-        content: JSON.stringify({
-          title: example.input.title,
-          body_first_200: example.input.body_first_200,
-        }),
-      },
-      {
-        role: "assistant",
-        content: JSON.stringify(example.output),
-      },
-    ]),
-    {
-      role: "user",
-      content: JSON.stringify({ title: input.title, body_first_200: input.bodyFirst200 }),
-    },
-  ];
+export function parseBenchConfig(raw: unknown): BenchConfig {
+  const config = ConfigSchema.parse(raw);
+  if (new Set(config.models.map((model) => model.id)).size !== config.models.length)
+    throw new Error("Repeated model ID");
+  return config;
 }
 
-function buildPrompt(variant: PromptVariant, caseItem: EvalCase): PromptMessage[] {
-  if (variant === "current") {
-    return buildDreamQueryRewritePrompt({
-      title: caseItem.title,
-      bodyFirst200: caseItem.body_first_200,
-    });
+export function parseBenchCases(text: string): EvalCase[] {
+  const cases = text
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => CaseSchema.parse(JSON.parse(line) as unknown));
+  const ids = new Set<string>(),
+    hashes = new Set<string>();
+  for (const row of cases) {
+    const digest = sha(JSON.stringify({ title: row.title, body_first_200: row.body_first_200 }));
+    if (ids.has(row.id) || hashes.has(digest))
+      throw new Error("Repeated fixture identity or input");
+    if (row.inputSha256 && row.inputSha256 !== digest)
+      throw new Error("Fixture input hash mismatch");
+    ids.add(row.id);
+    hashes.add(digest);
   }
-
-  return buildRevisedPrompt({
-    title: caseItem.title,
-    bodyFirst200: caseItem.body_first_200,
-  });
-}
-
-function parseEvalLine(line: string, lineNumber: number): EvalCase {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(line);
-  } catch (error) {
-    throw new Error(
-      `Invalid JSON in ${EVAL_PATH} line ${String(lineNumber)}: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  if (typeof parsed !== "object" || parsed === null) {
-    throw new Error(`Malformed eval row at ${EVAL_PATH} line ${String(lineNumber)}`);
-  }
-  const obj = parsed as Record<string, unknown>;
-  if (
-    typeof obj.id !== "string" ||
-    typeof obj.title !== "string" ||
-    typeof obj.body_first_200 !== "string" ||
-    typeof obj.expected_verdict !== "string"
-  ) {
-    throw new Error(`Malformed eval row at ${EVAL_PATH} line ${String(lineNumber)}`);
-  }
-  const expected = obj.expected_verdict;
-  if (expected !== "skip" && expected !== "query") {
-    throw new Error(
-      `Invalid expected_verdict "${expected}" at ${EVAL_PATH} line ${String(lineNumber)}`,
-    );
-  }
-  return {
-    id: obj.id,
-    title: obj.title,
-    body_first_200: obj.body_first_200,
-    expected_verdict: expected,
-  };
-}
-
-function loadEvalCases(): EvalCase[] {
-  if (!existsSync(EVAL_PATH)) {
-    throw new Error(`Eval file not found: ${EVAL_PATH}`);
-  }
-
-  const raw = readFileSync(EVAL_PATH, "utf8");
-  const cases: EvalCase[] = [];
-
-  for (const [index, line] of raw.split(/\r?\n/).entries()) {
-    if (!line.trim()) {
-      continue;
-    }
-    cases.push(parseEvalLine(line, index + 1));
-  }
-
   return cases;
 }
 
-async function runCase(
+export function assessRewrite(
+  value: RewriteResponse,
+  raw: string,
+): { issues: string[]; productionGatePass: boolean; sanitizedQuery: string | null } {
+  const issues: string[] = [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    const allowed = value.kind === "query" ? ["kind", "query"] : ["kind", "reason"];
+    if (typeof parsed !== "object" || !parsed || Array.isArray(parsed))
+      issues.push("not_strict_object");
+    else if (Object.keys(parsed).some((key) => !allowed.includes(key))) issues.push("extra_fields");
+  } catch {
+    issues.push("not_strict_json");
+  }
+  if (value.kind === "skip") {
+    if (/[\r\n]/.test(value.reason)) issues.push("multiline_reason");
+    return { issues, productionGatePass: false, sanitizedQuery: null };
+  }
+  const words = value.query.trim().split(/\s+/).length;
+  if (words < 4 || words > 12) issues.push("word_count");
+  if (/["'`#*]|[\r\n]/.test(value.query)) issues.push("quotes_or_markdown");
+  const passes = isWebSearchable(value.query).ok;
+  return {
+    issues,
+    productionGatePass: passes,
+    sanitizedQuery: passes ? sanitizeTitleForQuery(value.query) : null,
+  };
+}
+
+function titleFallback(title: string): string | null {
+  return isWebSearchable(title).ok ? sanitizeTitleForQuery(title) : null;
+}
+
+export async function runCase(
   model: ModelConfig,
-  variant: PromptVariant,
-  caseItem: EvalCase,
+  input: EvalCase,
+  fetchFn?: typeof fetch,
 ): Promise<CellResult> {
-  const messages = buildPrompt(variant, caseItem);
-  const start = performance.now();
-  const result = await llmInvoke({
+  const started = performance.now();
+  const result = await invokeRewriter(llmInvoke, {
     baseUrl: model.baseUrl,
     model: model.model,
-    messages,
+    auth: { source: "none" },
+    options: { maxTokens: model.maxTokens, requestTimeoutMs: model.timeoutMs },
+    messages: buildDreamQueryRewritePrompt({
+      title: input.title,
+      bodyFirst200: input.body_first_200,
+    }),
     schema: REWRITE_RESPONSE_SCHEMA,
+    timeoutMs: model.timeoutMs,
     temperature: 0,
-    timeoutMs: 30_000,
+    ...(fetchFn ? { fetchFn } : {}),
   });
-  const latency_ms = Math.round(performance.now() - start);
-
-  if (!result.ok) {
+  const base = {
+    model_id: model.id,
+    model_name: model.model,
+    case_id: input.id,
+    expected_verdict: input.expected_verdict,
+    latency_ms: performance.now() - started,
+  };
+  if (!result.ok)
     return {
-      model_id: model.id,
-      model_name: model.id,
-      variant,
-      case_id: caseItem.id,
-      expected_verdict: caseItem.expected_verdict,
+      ...base,
       verdict: null,
       query_or_reason: "",
       raw: "",
-      latency_ms,
       error: result.reason,
-      correct: false,
+      correct: input.expected_verdict === "uncertain" ? null : false,
+      contract_issues: [],
+      production_gate_pass: false,
+      gate_eligible_text: titleFallback(input.title),
     };
-  }
-
-  const verdict = result.value.kind;
-  const queryOrReason = verdict === "query" ? result.value.query : result.value.reason;
-
+  const audit = assessRewrite(result.value, result.raw);
   return {
-    model_id: model.id,
-    model_name: model.id,
-    variant,
-    case_id: caseItem.id,
-    expected_verdict: caseItem.expected_verdict,
-    verdict,
-    query_or_reason: queryOrReason,
+    ...base,
+    verdict: result.value.kind,
+    query_or_reason: result.value.kind === "query" ? result.value.query : result.value.reason,
     raw: result.raw,
-    latency_ms,
     error: null,
-    correct: verdict === caseItem.expected_verdict,
+    correct:
+      input.expected_verdict === "uncertain" ? null : result.value.kind === input.expected_verdict,
+    contract_issues: audit.issues,
+    production_gate_pass: audit.productionGatePass,
+    gate_eligible_text:
+      result.value.kind === "skip" ? null : (audit.sanitizedQuery ?? titleFallback(input.title)),
   };
 }
 
-function bucketFor(caseItem: EvalCase): "skip" | "query" | "borderline" {
-  if (caseItem.id.startsWith("borderline-")) {
-    return "borderline";
+const MetadataSchema = z.object({
+  model: z.string().optional(),
+  usage: z.record(z.string(), z.unknown()).optional(),
+  choices: z.array(z.object({ finish_reason: z.string().nullable().optional() })).optional(),
+});
+export async function readResponseMetadata(
+  response: Response,
+): Promise<z.infer<typeof MetadataSchema> | null> {
+  const reader = response.body?.getReader() as ReadableStreamDefaultReader<Uint8Array> | undefined;
+  if (!reader) return null;
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      size += chunk.value.byteLength;
+      if (size > 131072) return null;
+      chunks.push(chunk.value);
+    }
+    const parsed = MetadataSchema.safeParse(
+      JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown,
+    );
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  } finally {
+    void reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
-  if (caseItem.expected_verdict === "query") {
-    return "query";
-  }
-  return "skip";
 }
 
-function renderCellResult(expected: RewriteResponse["kind"], result: CellResult): string {
-  if (result.error !== null || result.verdict === null) {
-    return "⚠️ error";
-  }
-  return `${result.verdict === expected ? "✅" : "❌"} ${result.verdict}`;
-}
-
-function formatPercent(n: number, d: number): string {
-  if (d === 0) {
-    return "0/0";
-  }
-  return `${String(n)}/${String(d)}`;
-}
-
-function average(values: number[]): number {
-  if (values.length === 0) {
-    return 0;
-  }
-  return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
-}
-
-function buildSummaryRow(
-  model: ModelConfig,
-  variant: PromptVariant,
-  results: CellResult[],
+export async function runBenchmark(
+  config: BenchConfig,
   cases: EvalCase[],
-): string {
-  const scoped = results.filter((r) => r.model_id === model.id && r.variant === variant);
-  const errors = scoped.filter((item) => item.error !== null).length;
-  const skipCases = cases.filter((item) => bucketFor(item) === "skip");
-  const queryCases = cases.filter((item) => bucketFor(item) === "query");
-  const borderlineCases = cases.filter((item) => bucketFor(item) === "borderline");
-  const correctForBucket = (bucket: "skip" | "query" | "borderline"): number =>
-    scoped.filter(
-      (item) =>
-        cases.find((c) => c.id === item.case_id && bucketFor(c) === bucket) !== undefined &&
-        item.correct,
-    ).length;
-  const correct = scoped.filter((item) => item.correct).length;
-  const latency = average(scoped.map((item) => item.latency_ms));
-
-  return `| ${model.id} | ${variant} | ${formatPercent(correct, cases.length)} | ${String(errors)} | ${formatPercent(
-    correctForBucket("skip"),
-    skipCases.length,
-  )} | ${formatPercent(correctForBucket("query"), queryCases.length)} | ${formatPercent(
-    correctForBucket("borderline"),
-    borderlineCases.length,
-  )} | ${String(latency)} |`;
-}
-
-function buildPerCaseSection(
-  variant: PromptVariant,
-  results: CellResult[],
-  cases: EvalCase[],
-): string {
-  const lines = [
-    `## Per-case results (${variant} prompt)`,
-    "",
-    "| Case ID | Expected | granite-4.1-3b | qwen3.6-35b-a3b |",
-    "|---|---|---|---|",
-  ];
-  for (const caseItem of cases) {
-    const byModel = (modelId: string): CellResult | undefined =>
-      results.find(
-        (r) => r.case_id === caseItem.id && r.model_id === modelId && r.variant === variant,
+  outDir: string,
+  fixtureSha256: string,
+): Promise<void> {
+  mkdirSync(outDir, { mode: 0o700 });
+  const path = join(outDir, "run.json"),
+    startedAt = new Date().toISOString();
+  const rows: (CellResult & { repetition: number })[] = [],
+    calls: Record<string, unknown>[] = [];
+  let complete = false;
+  const save = (): void => {
+    writeFileSync(
+      path,
+      JSON.stringify(
+        {
+          startedAt,
+          updatedAt: new Date().toISOString(),
+          complete,
+          config,
+          fixtureSha256,
+          method:
+            "Existing production rewriter prompt/schema/invoke path; no cache writes, research queue or downstream web search. Strict output and deterministic gate audited separately. Gate-eligible fallback text is an observation before research budgets/cooldowns, not a dispatched query.",
+          rows,
+          calls,
+          applied: false,
+        },
+        null,
+        2,
+      ) + "\n",
+      { mode: 0o600 },
+    );
+  };
+  writeFileSync(path, "{}\n", { flag: "wx", mode: 0o600 });
+  try {
+    for (const model of config.models) {
+      const queue = Array.from({ length: config.repetitions }, (_, index) =>
+        cases.map((input) => ({ input, repetition: index + 1 })),
+      ).flat();
+      let next = 0;
+      await Promise.all(
+        Array.from({ length: config.concurrency }, async () => {
+          while (next < queue.length) {
+            const work = queue[next++];
+            if (!work) break;
+            const transport: typeof fetch = Object.assign(
+              async (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+                if (
+                  typeof url !== "string" ||
+                  url !== model.baseUrl.replace(/\/$/, "") + "/chat/completions"
+                )
+                  throw new Error("Unexpected benchmark network request refused");
+                const requestBody = init?.body;
+                if (typeof requestBody !== "string")
+                  throw new Error("Unexpected benchmark request body");
+                const at = performance.now();
+                try {
+                  const response = await fetch(url, init),
+                    meta = await readResponseMetadata(response.clone());
+                  calls.push({
+                    modelId: model.id,
+                    caseId: work.input.id,
+                    repetition: work.repetition,
+                    at: new Date().toISOString(),
+                    status: response.status,
+                    latencyMs: performance.now() - at,
+                    requestSha256: sha(requestBody),
+                    returnedModel: meta?.model,
+                    usage: meta?.usage,
+                    finishReason: meta?.choices?.[0]?.finish_reason,
+                  });
+                  return response;
+                } catch (error) {
+                  calls.push({
+                    modelId: model.id,
+                    caseId: work.input.id,
+                    repetition: work.repetition,
+                    error: String(error),
+                    latencyMs: performance.now() - at,
+                  });
+                  throw error;
+                }
+              },
+              { preconnect: fetch.preconnect },
+            );
+            const row = {
+              ...(await runCase(model, work.input, transport)),
+              repetition: work.repetition,
+            };
+            rows.push(row);
+            save();
+            process.stdout.write(
+              JSON.stringify({
+                model: model.id,
+                caseId: row.case_id,
+                repetition: row.repetition,
+                latencyMs: row.latency_ms,
+                error: row.error,
+              }) + "\n",
+            );
+          }
+        }),
       );
-
-    const granite = byModel("granite-4.1-3b");
-    const qwen = byModel("qwen3.6-35b-a3b");
-
-    lines.push(
-      `| ${caseItem.id} | ${caseItem.expected_verdict} | ${
-        granite ? renderCellResult(caseItem.expected_verdict, granite) : "n/a"
-      } | ${qwen ? renderCellResult(caseItem.expected_verdict, qwen) : "n/a"} |`,
-    );
-  }
-  return lines.join("\n");
-}
-
-function renderDisagreementRow(out: string[], row: CellResult): void {
-  out.push(`- ${row.model_id} (${row.variant}):`);
-  out.push(`  - verdict: ${row.verdict ?? "error"}`);
-  out.push(`  - query_or_reason: ${row.query_or_reason || "(empty)"}`);
-  if (row.error !== null) {
-    out.push(`  - error: ${row.error}`);
-  }
-  out.push("  - raw:");
-  out.push("    ```text");
-  out.push(row.raw ? row.raw : "(no raw output)");
-  out.push("    ```");
-}
-
-function buildDisagreementSection(results: CellResult[], cases: EvalCase[]): string[] {
-  const disagreementRows = results.filter(
-    (r) => r.error !== null || r.verdict !== r.expected_verdict,
-  );
-  const out = ["## Disagreements with expected", ""];
-  if (disagreementRows.length === 0) {
-    out.push("No disagreements against expected.");
-    return out;
-  }
-  const byCase = new Map<string, CellResult[]>();
-  for (const row of disagreementRows) {
-    const existing = byCase.get(row.case_id);
-    if (existing) {
-      existing.push(row);
-    } else {
-      byCase.set(row.case_id, [row]);
     }
+    complete = true;
+  } finally {
+    save();
   }
-
-  for (const [caseId, rows] of byCase) {
-    const expected = cases.find((item) => item.id === caseId)?.expected_verdict ?? "unknown";
-    out.push(`### ${caseId}`);
-    out.push(`- expected: ${expected}`);
-    for (const row of rows) {
-      renderDisagreementRow(out, row);
-    }
-    out.push("");
-  }
-  return out;
+  writeFileSync(join(outDir, "report.md"), renderSummary(rows, config.models), {
+    flag: "wx",
+    mode: 0o600,
+  });
 }
 
-function buildMarkdownOutput(results: CellResult[], cases: EvalCase[]): string {
-  const now = new Date().toISOString();
-  const caseCounts = {
-    skip: cases.filter((item) => bucketFor(item) === "skip").length,
-    query: cases.filter((item) => bucketFor(item) === "query").length,
-    borderline: cases.filter((item) => bucketFor(item) === "borderline").length,
-  };
-
-  const summaryRows: string[] = [];
-  for (const model of MODELS) {
-    for (const variant of PROMPT_VARIANTS) {
-      summaryRows.push(buildSummaryRow(model, variant, results, cases));
-    }
-  }
-
-  const perCaseSections = PROMPT_VARIANTS.map((variant) =>
-    buildPerCaseSection(variant, results, cases),
-  );
-
-  const disagreementsBlock = buildDisagreementSection(results, cases);
-
-  return [
-    "# Rewriter A/B benchmark — 2026-05-25",
+function renderSummary(rows: CellResult[], models: ModelConfig[]): string {
+  const lines = [
+    "# Rewriter benchmark",
     "",
-    `Run: ${now}`,
-    `Eval cases: ${String(cases.length)} (${String(caseCounts.skip)} skip / ${String(caseCounts.query)} query / ${String(caseCounts.borderline)} borderline)`,
+    "Decision agreement is not semantic query quality. Uncertain labels and abstentions remain explicit.",
     "",
-    "## Summary",
-    "",
-    "| Model | Prompt | Correct | Errors | Skip accuracy | Query accuracy | Borderline correct | Avg latency (ms) |",
-    "|---|---|---|---|---|---|---|---|",
-    ...summaryRows,
-    "",
-    perCaseSections[0] ?? "",
-    "",
-    perCaseSections[1] ?? "",
-    "",
-    ...disagreementsBlock,
-    "",
-  ].join("\n");
-}
-
-async function runSmokeCheck(cases: EvalCase[]): Promise<void> {
-  const smokeCase =
-    cases.find((item) => item.id === "skip-code-identifier") ??
-    cases.find((item) => item.expected_verdict === "skip");
-  if (!smokeCase) {
-    throw new Error("No skip-class case available for smoke test");
-  }
-  const firstModel = MODELS[0];
-  if (!firstModel) {
-    throw new Error("No model configured for smoke test");
-  }
-  const result = await runCase(firstModel, "current", smokeCase);
-  if (result.error !== null || result.verdict !== "skip") {
-    throw new Error(
-      `Smoke test failed for ${smokeCase.id} on ${firstModel.id}: verdict=${result.verdict ?? "error"}, error=${
-        result.error ?? "none"
-      }`,
-    );
-  }
+    "| Model | Correct labeled decisions | Errors | Strict contract issues |",
+    "| --- | --- | --- | --- |",
+    ...models.map((model) => {
+      const scoped = rows.filter((row) => row.model_id === model.id),
+        labeled = scoped.filter((row) => row.expected_verdict !== "uncertain");
+      return `| ${model.id} | ${String(labeled.filter((row) => row.correct).length)}/${String(labeled.length)} | ${String(scoped.filter((row) => row.error).length)} | ${String(scoped.filter((row) => row.contract_issues.length).length)} |`;
+    }),
+  ];
+  return lines.join("\n") + "\n";
 }
 
 async function main(): Promise<void> {
-  const cases = loadEvalCases();
-  await runSmokeCheck(cases);
-
-  const allResults: CellResult[] = [];
-
-  for (const model of MODELS) {
-    for (const variant of PROMPT_VARIANTS) {
-      process.stdout.write(`model=${model.id} variant=${variant} start\n`);
-      for (const caseItem of cases) {
-        allResults.push(await runCase(model, variant, caseItem));
-      }
-    }
-  }
-
-  const markdown = buildMarkdownOutput(allResults, cases);
-  writeFileSync(MARKDOWN_OUTPUT_PATH, markdown);
-  writeFileSync(RAW_OUTPUT_PATH, JSON.stringify(allResults, null, 2));
+  const args = parseBenchArgs(process.argv.slice(2));
+  const config = parseBenchConfig(JSON.parse(readFileSync(args.configPath, "utf8")) as unknown),
+    text = readFileSync(args.fixturesPath, "utf8");
+  await runBenchmark(config, parseBenchCases(text), args.outDir, sha(text));
 }
-
-main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
-});
+if (import.meta.main)
+  main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
