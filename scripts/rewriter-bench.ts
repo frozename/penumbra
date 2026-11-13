@@ -219,7 +219,7 @@ const MetadataSchema = z.object({
   choices: z.array(z.object({ finish_reason: z.string().nullable().optional() })).optional(),
 });
 export async function readResponseMetadata(
-  response: Response,
+  response: Pick<Response, "body">,
 ): Promise<z.infer<typeof MetadataSchema> | null> {
   const reader = response.body?.getReader() as ReadableStreamDefaultReader<Uint8Array> | undefined;
   if (!reader) return null;
