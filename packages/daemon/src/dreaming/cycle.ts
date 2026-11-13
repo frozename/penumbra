@@ -1575,6 +1575,7 @@ async function fetchRewriteFromLlm(
     provider: primaryCandidate.provider,
     auth: primaryCandidate.auth,
     candidateName: primaryCandidate.name,
+    options: primaryCandidate.options,
     fallbackCandidates,
     activeBiases: readRoutingBiases(db),
     messages: prompt,

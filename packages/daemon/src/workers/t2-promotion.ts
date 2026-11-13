@@ -3,7 +3,12 @@
 import type { AgentChatConfig } from "@penumbra/config";
 import type { Embedder, Services, T2MemoryExtraction } from "@penumbra/core";
 
-import { buildT2EmbedText, resolveRoleLlmCandidates, T2Promotion } from "@penumbra/core";
+import {
+  buildT2EmbedText,
+  resolveLlmCandidateSelection,
+  resolveRoleLlmCandidates,
+  T2Promotion,
+} from "@penumbra/core";
 
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
 import {
@@ -839,23 +844,25 @@ function createJudgePoolFromAgentchat(
   if (!cfg) return null;
 
   const roleTag = process.env.PENUMBRA_JUDGE_ROLE ?? "memory-refiner";
-  const judges: JudgeEntry[] = resolveRoleLlmCandidates({ roleTag, agentchatConfig: cfg }).map(
-    (candidate) => {
-      const requestExtras = extractT2JudgeRequestExtras(candidate.options);
-      return {
-        name: candidate.name,
-        baseUrl: candidate.baseUrl,
-        apiKey: candidate.auth.source === "bearer" ? candidate.auth.token : "",
-        model: candidate.model,
-        caPath: candidate.caPath,
-        ...(requestExtras ? { requestExtras } : {}),
-      };
-    },
-  );
+  const candidates = resolveRoleLlmCandidates({ roleTag, agentchatConfig: cfg });
+  const judges: JudgeEntry[] = candidates.map((candidate) => {
+    const requestExtras = extractT2JudgeRequestExtras(candidate.options);
+    return {
+      name: candidate.name,
+      baseUrl: candidate.baseUrl,
+      apiKey: candidate.auth.source === "bearer" ? candidate.auth.token : "",
+      model: candidate.model,
+      caPath: candidate.caPath,
+      ...(requestExtras ? { requestExtras } : {}),
+    };
+  });
   if (judges.length === 0) return null;
 
   const pool = createJudgePool({
     judges,
+    candidateSelection: resolveLlmCandidateSelection(
+      candidates[0]?.options?.["candidateSelection"],
+    ),
     log: services.log,
     promptBuilder: (transcript) => T2_PROMOTION_PROMPT.replace("{{TRANSCRIPT}}", transcript),
     parseResponse: parseJudgeResponse,

@@ -9,6 +9,95 @@ import {
 
 type FetchArgs = Parameters<typeof fetch>;
 
+test("judge chat deadline covers a stalled response body", async () => {
+  const chat = createJudgeChat({
+    baseUrl: "http://127.0.0.1:7944",
+    timeoutMs: 10,
+    fetchFn: asFetch((_url, init) =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream({
+            start(controller): void {
+              const watchdog = setTimeout(() => {
+                controller.error(new Error("body stalled"));
+              }, 100);
+              init?.signal?.addEventListener(
+                "abort",
+                () => {
+                  clearTimeout(watchdog);
+                  controller.error(new DOMException("deadline", "AbortError"));
+                },
+                { once: true },
+              );
+            },
+          }),
+        ),
+      ),
+    ),
+  });
+  let failure: unknown;
+  try {
+    await chat({ model: "local", messages: [{ role: "user", content: "draft" }] });
+  } catch (error) {
+    failure = error;
+  }
+  expect(failure).toBeInstanceOf(Error);
+  expect(String(failure)).toContain("timed out");
+});
+
+test("judge chat retains configured generation options through a failed primary", async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const chat = createJudgeChat({
+    baseUrl: "http://127.0.0.1:7944/v1",
+    candidateName: "primary",
+    options: {
+      maxTokens: 512,
+      requestExtras: {
+        chat_template_kwargs: { enable_thinking: false },
+        model: "wrong",
+        messages: [],
+        stream: true,
+        max_tokens: 999999,
+      },
+    },
+    fallbackCandidates: [
+      {
+        name: "secondary",
+        baseUrl: "http://127.0.0.1:7944/v1",
+        model: "secondary",
+        provider: "local",
+        auth: { source: "none" },
+        options: { maxTokens: 256 },
+      },
+    ],
+    fetchFn: asFetch((_url, init) => {
+      if (typeof init?.body !== "string") throw new Error("expected JSON request body");
+      bodies.push(JSON.parse(init.body) as Record<string, unknown>);
+      return Promise.resolve(
+        Response.json({
+          choices: [
+            {
+              finish_reason: bodies.length === 1 ? "length" : "stop",
+              message: { content: "Implement the task." },
+            },
+          ],
+        }),
+      );
+    }),
+  });
+  expect(await chat({ model: "primary", messages: [{ role: "user", content: "draft" }] })).toBe(
+    "Implement the task.",
+  );
+  expect(bodies.map((body) => body.model)).toEqual(["primary", "secondary"]);
+  expect(bodies[0]).toMatchObject({
+    max_tokens: 512,
+    stream: false,
+    messages: [{ role: "user", content: "draft" }],
+    chat_template_kwargs: { enable_thinking: false },
+  });
+  expect(bodies[1]?.max_tokens).toBe(256);
+});
+
 // `typeof fetch` requires `preconnect`; bare mock functions don't satisfy it.
 function asFetch(fn: (...args: FetchArgs) => Promise<Response>): typeof fetch {
   return Object.assign(fn, {

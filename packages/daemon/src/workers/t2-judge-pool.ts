@@ -20,6 +20,7 @@ export interface JudgePoolLogger {
 }
 
 export interface JudgePoolOpts {
+  candidateSelection?: "ordered" | "round-robin";
   judges: JudgeEntry[];
   log: JudgePoolLogger;
   fetch?: typeof fetch;
@@ -283,8 +284,8 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
       let idx: number | undefined;
       if (attempts === 0) {
         // Advance the shared cursor exactly once per invocation; retries use attempted only.
-        idx = nextIndex;
-        nextIndex = (nextIndex + 1) % judges.length;
+        idx = opts.candidateSelection === "ordered" ? 0 : nextIndex;
+        if (opts.candidateSelection !== "ordered") nextIndex = (nextIndex + 1) % judges.length;
       } else {
         for (let i = 0; i < judges.length; i++) {
           if (!attempted.has(i)) {

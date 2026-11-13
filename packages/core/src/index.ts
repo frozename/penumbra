@@ -477,6 +477,7 @@ export {
   type RoleLlmCandidate,
   tryResolveLlmProvider,
 } from "./services/llm-candidates.js";
+export * from "./services/llm-http-options.js";
 export {
   type Classification,
   classifyFindings,
