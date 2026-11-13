@@ -1,0 +1,7 @@
+{
+  "at": "2026-11-13T21:44:39.856780+00:00",
+  "ownedWrapperPid": 4671,
+  "sourceCommit": "431409e3e54f93818076074d4269f14f04204e4c",
+  "reason": "Intentional stop to complete current-format registered local gateway discovery before full CI. No source mutated during the canceled run. Existing partial CI log/lifecycle retained; a complete fresh retry is owed.",
+  "signal": "SIGTERM"
+}

@@ -1,0 +1,13 @@
+{
+  "sourceCommit": "ccccb49f8bb1a646c802f3da54a1d6cd5c7a168a",
+  "command": "bun run check:ci",
+  "ciExitCode": 0,
+  "rawLogSha256": "1eb949be38805e51e1f3aa9fd623140bcbbec77322271f387d1692ca5299a440",
+  "rawLogPath": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261113-routing-repair/check-ci.verification.log",
+  "runtimePlistUnchanged": true,
+  "heavyJobLock": "/Users/aimastermind/.penumbra/locks/heavy-job.lock",
+  "status": "passed",
+  "packageTree": "b39f97312b6387afcbb889c2ed0c3444278f36f1",
+  "postflightError": null,
+  "scope": "Fresh full CI on committed routing/privacy/cache repair and current configurable benchmark. Experimental docs helpers have separate validation."
+}

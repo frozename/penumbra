@@ -1,0 +1,38 @@
+{
+  "scope": "Retrospective DEV-only deterministic gate check on prior-study Q8 critical pairs. Not a fresh test, not new-prompt inference, and not evidence of semantic completeness.",
+  "uniquePriorCriticalPairs": 5,
+  "blocked": 0,
+  "remainingEligible": 5,
+  "units": [
+    {
+      "reviewId": "dbc4bd0e2d9d3a5b8db3aeac",
+      "validation": {
+        "ok": true
+      }
+    },
+    {
+      "reviewId": "66dacc9728706dfe5037e9be",
+      "validation": {
+        "ok": true
+      }
+    },
+    {
+      "reviewId": "84a67515cde094f22f50bdf1",
+      "validation": {
+        "ok": true
+      }
+    },
+    {
+      "reviewId": "fdf7d6a84800640a2311e95d",
+      "validation": {
+        "ok": true
+      }
+    },
+    {
+      "reviewId": "50f75fe4f1821bfcc8a782c9",
+      "validation": {
+        "ok": true
+      }
+    }
+  ]
+}

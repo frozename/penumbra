@@ -1,0 +1,9 @@
+{
+  "ciProofSha256": "114423e83a2144072b2678b6b5a13bbf9f2cbb5bb142e94c27e0212f9aa87d8f",
+  "ciStatus": "failed",
+  "knownFailure": "unrelated console harness authenticated status request returned401; new repair tests and six other CI gates passed",
+  "advancementRequiresCleanFullCI": true,
+  "stagedRoutingProofSha256": "a1c3310f01c70263c099d022e15c3bf1be2ad5fbee641394cbdf939a48fd33bd",
+  "run": "paired-q8",
+  "method": "Offline measurement after completed CI/restoration; independently verified exactly one unrelated test failure. No deployment, live registry/source/config/authority changes. Frozen fresh inputs, prompts and safety/resource guards unchanged. Failed auto-gate counted duplicated CI summary lines; no model request ran through it. Run the original frozen owned-server runner directly."
+}

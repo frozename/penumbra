@@ -1,0 +1,265 @@
+{
+  "method": "First repetition primary; distinct cohorts; answered-only confusion/F1 plus all-definite accuracy and explicit errors. Quantiles use linear interpolation. Gate-eligible text is before search dispatch. Process-cold startup follows artifact hashing and is not disk-cold. No query-JSON probabilities invented. Semantic labels are exact-pair model-blind AI reviews, not human evidence.",
+  "models": [
+    {
+      "run": "paired-q8",
+      "policy": "r1",
+      "model": {
+        "id": "r1",
+        "baseUrl": "http://127.0.0.1:18945/v1",
+        "model": "granite-q8-rewriter-eval",
+        "maxTokens": 512,
+        "timeoutMs": 5000
+      },
+      "cohorts": {
+        "controlled": {
+          "n": 16,
+          "definiteLabels": 16,
+          "uncertainLabels": 0,
+          "answeredDefinite": 16,
+          "errors": 0,
+          "tp": 7,
+          "fp": 1,
+          "fn": 1,
+          "tn": 7,
+          "precision": 0.875,
+          "recall": 0.875,
+          "f1": 0.875,
+          "allDefiniteAccuracy": 0.875,
+          "strictContractViolations": 0,
+          "rejectedQueryAbstentions": 0,
+          "errorAbstentions": 0
+        },
+        "enriched-public": {
+          "n": 16,
+          "definiteLabels": 16,
+          "uncertainLabels": 0,
+          "answeredDefinite": 16,
+          "errors": 0,
+          "tp": 9,
+          "fp": 0,
+          "fn": 7,
+          "tn": 0,
+          "precision": 1.0,
+          "recall": 0.5625,
+          "f1": 0.72,
+          "allDefiniteAccuracy": 0.5625,
+          "strictContractViolations": 0,
+          "rejectedQueryAbstentions": 3,
+          "errorAbstentions": 0
+        },
+        "sampled-current": {
+          "n": 64,
+          "definiteLabels": 59,
+          "uncertainLabels": 5,
+          "answeredDefinite": 59,
+          "errors": 0,
+          "tp": 4,
+          "fp": 3,
+          "fn": 3,
+          "tn": 49,
+          "precision": 0.5714285714285714,
+          "recall": 0.5714285714285714,
+          "f1": 0.5714285714285714,
+          "allDefiniteAccuracy": 0.8983050847457628,
+          "strictContractViolations": 0,
+          "rejectedQueryAbstentions": 0,
+          "errorAbstentions": 0
+        }
+      },
+      "serial": {
+        "requests": 192,
+        "p50Ms": 1002.5506040000109,
+        "p95Ms": 1376.799112199999,
+        "wallSeconds": 196.327,
+        "requestsPerSecond": 0.9779602398040005,
+        "observedOverActualFiveSecondDeadline": 0,
+        "errors": 0,
+        "finishReasons": {
+          "stop": 192
+        }
+      },
+      "burst": {
+        "requests": 16,
+        "p50Ms": 1855.3591460000025,
+        "p95Ms": 2304.197385499996,
+        "wallSeconds": 15.462,
+        "requestsPerSecond": 1.0347949812443409,
+        "observedOverActualFiveSecondDeadline": 0,
+        "errors": 0,
+        "finishReasons": {
+          "stop": 16
+        }
+      },
+      "resources": {
+        "samples": 445,
+        "peakRssBytes": 4477976576,
+        "medianRssBytes": 4477485056,
+        "maxHealthWallMs": 132.86979193799198,
+        "maxDaemonTrailingMinuteLagMs": 6.751000002026558,
+        "healthFailures": 0,
+        "swapGrowthBytes": 0.0,
+        "minimumFreePlusInactiveBytes": 4872929280,
+        "rawSha256": "ec6ed90d79cba5f0d466f494d5c68c6ffa4d4819fc30ca2f84f703b6cc6ad37c",
+        "segments": {
+          "serial": {
+            "samples": 194,
+            "medianRssBytes": 4477288448.0,
+            "peakRssBytes": 4477468672
+          },
+          "burst": {
+            "samples": 15,
+            "medianRssBytes": 4477485056.0,
+            "peakRssBytes": 4477485056
+          },
+          "residentIdle": {
+            "seconds": 10.006999969482422,
+            "samples": 10,
+            "medianRssBytes": 4477321216.0
+          }
+        },
+        "cpuPercent": {
+          "median": 32.0,
+          "max": 56.1
+        },
+        "systemGpuUtilizationPercent": {
+          "median": 97.0,
+          "max": 100
+        }
+      },
+      "stableValidDecisions": 96,
+      "stabilityDenominator": 96,
+      "rawSha256": "d3728c3e602b61aa1c81cf4d3a1860d83d74349b259ecf8454c59cd91502596c"
+    },
+    {
+      "run": "paired-q8",
+      "policy": "r2",
+      "model": {
+        "id": "r2",
+        "baseUrl": "http://127.0.0.1:18945/v1",
+        "model": "granite-q8-rewriter-eval",
+        "maxTokens": 512,
+        "timeoutMs": 5000
+      },
+      "cohorts": {
+        "controlled": {
+          "n": 16,
+          "definiteLabels": 16,
+          "uncertainLabels": 0,
+          "answeredDefinite": 16,
+          "errors": 0,
+          "tp": 6,
+          "fp": 1,
+          "fn": 2,
+          "tn": 7,
+          "precision": 0.8571428571428571,
+          "recall": 0.75,
+          "f1": 0.8,
+          "allDefiniteAccuracy": 0.8125,
+          "strictContractViolations": 0,
+          "rejectedQueryAbstentions": 0,
+          "errorAbstentions": 0
+        },
+        "enriched-public": {
+          "n": 16,
+          "definiteLabels": 16,
+          "uncertainLabels": 0,
+          "answeredDefinite": 16,
+          "errors": 0,
+          "tp": 8,
+          "fp": 0,
+          "fn": 8,
+          "tn": 0,
+          "precision": 1.0,
+          "recall": 0.5,
+          "f1": 0.6666666666666666,
+          "allDefiniteAccuracy": 0.5,
+          "strictContractViolations": 0,
+          "rejectedQueryAbstentions": 3,
+          "errorAbstentions": 0
+        },
+        "sampled-current": {
+          "n": 64,
+          "definiteLabels": 59,
+          "uncertainLabels": 5,
+          "answeredDefinite": 59,
+          "errors": 0,
+          "tp": 4,
+          "fp": 3,
+          "fn": 3,
+          "tn": 49,
+          "precision": 0.5714285714285714,
+          "recall": 0.5714285714285714,
+          "f1": 0.5714285714285714,
+          "allDefiniteAccuracy": 0.8983050847457628,
+          "strictContractViolations": 0,
+          "rejectedQueryAbstentions": 1,
+          "errorAbstentions": 0
+        }
+      },
+      "serial": {
+        "requests": 192,
+        "p50Ms": 1003.1139369999873,
+        "p95Ms": 1296.6180498499975,
+        "wallSeconds": 194.261,
+        "requestsPerSecond": 0.9883610194532099,
+        "observedOverActualFiveSecondDeadline": 0,
+        "errors": 0,
+        "finishReasons": {
+          "stop": 192
+        }
+      },
+      "burst": {
+        "requests": 16,
+        "p50Ms": 1905.9729999999981,
+        "p95Ms": 2416.025125499975,
+        "wallSeconds": 16.059,
+        "requestsPerSecond": 0.9963260476991095,
+        "observedOverActualFiveSecondDeadline": 0,
+        "errors": 0,
+        "finishReasons": {
+          "stop": 16
+        }
+      },
+      "resources": {
+        "samples": 445,
+        "peakRssBytes": 4477976576,
+        "medianRssBytes": 4477485056,
+        "maxHealthWallMs": 132.86979193799198,
+        "maxDaemonTrailingMinuteLagMs": 6.751000002026558,
+        "healthFailures": 0,
+        "swapGrowthBytes": 0.0,
+        "minimumFreePlusInactiveBytes": 4872929280,
+        "rawSha256": "ec6ed90d79cba5f0d466f494d5c68c6ffa4d4819fc30ca2f84f703b6cc6ad37c",
+        "segments": {
+          "serial": {
+            "samples": 193,
+            "medianRssBytes": 4477845504.0,
+            "peakRssBytes": 4477845504
+          },
+          "burst": {
+            "samples": 16,
+            "medianRssBytes": 4477960192.0,
+            "peakRssBytes": 4477976576
+          },
+          "residentIdle": {
+            "seconds": 10.003999948501587,
+            "samples": 10,
+            "medianRssBytes": 4477845504.0
+          }
+        },
+        "cpuPercent": {
+          "median": 32.0,
+          "max": 56.1
+        },
+        "systemGpuUtilizationPercent": {
+          "median": 97.0,
+          "max": 100
+        }
+      },
+      "stableValidDecisions": 96,
+      "stabilityDenominator": 96,
+      "rawSha256": "68d672a35b50f7d0f12279f8ff3764803125617382a21ad984ff195ff14e0562"
+    }
+  ]
+}

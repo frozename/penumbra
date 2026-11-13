@@ -1,0 +1,26 @@
+{
+  "scope": "Frozen same-Q8 routing/privacy repair; exact-set comparisons, not statistical population equivalence or a specialist model selection.",
+  "gates": {
+    "sampledSafeCorrectNoninferiorOnThisSet": true,
+    "sampledSafePositiveYieldNoninferiorOnThisSet": true,
+    "enrichedSafePositiveYieldNoninferiorOnThisSet": false,
+    "zeroObservedCriticalGateEligibleFailures": false,
+    "validRepeatVerdictStabilityAtLeast95Percent": true,
+    "completePairedReplayAndOwnedRecovery": true,
+    "existingHostGuardsRespected": true,
+    "fullCI": true,
+    "stagedRouting": true
+  },
+  "eligibleForPlannedBoundedNonAuthoritativeShadow": false,
+  "productionReplacement": "no-go",
+  "applied": false,
+  "liveRegistrationActivated": false,
+  "remainingProductionConditions": [
+    "Source-safe quality with adequately powered independent error bounds",
+    "Zero critical privacy/injection failures across broader holdouts",
+    "Managed model switching, cancellation and realistic control-plane/coding isolation",
+    "Observed downstream retrieval/memory benefit",
+    "Idle schema49 deployment/index window and compatible rollback"
+  ],
+  "noProbabilityClaim": "Query/skip JSON provides no calibrated probability; Brier/ECE unavailable."
+}

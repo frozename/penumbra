@@ -1,0 +1,95 @@
+{
+  "method": "First-pass only, definite independent input labels, paired by identical input hash. Safe-correct query requires blind semantic safeQuery=true; skip requires successful model skip, not error/rejected-query abstention. 10,000 paired bootstrap resamples with fixed seed, descriptive interval only. Wilson95 intervals on safe-positive yield; small positive samples and same-family AI labels preclude production equivalence claims. No correction or model tuning on TEST.",
+  "cohorts": {
+    "controlled": {
+      "n": 16,
+      "bothCorrect": 13,
+      "r1OnlyCorrect": 1,
+      "r2OnlyCorrect": 0,
+      "neitherCorrect": 2,
+      "r2MinusR1SafeCorrectRate": -0.0625,
+      "descriptivePairedBootstrap95": [
+        -0.1875,
+        0.0
+      ],
+      "safePositiveYield": {
+        "r1": {
+          "k": 7,
+          "n": 8,
+          "wilson95": [
+            0.5291118177871464,
+            0.9775825085499433
+          ]
+        },
+        "r2": {
+          "k": 6,
+          "n": 8,
+          "wilson95": [
+            0.40927543031016883,
+            0.9285207872478909
+          ]
+        }
+      }
+    },
+    "enriched-public": {
+      "n": 16,
+      "bothCorrect": 2,
+      "r1OnlyCorrect": 1,
+      "r2OnlyCorrect": 0,
+      "neitherCorrect": 13,
+      "r2MinusR1SafeCorrectRate": -0.0625,
+      "descriptivePairedBootstrap95": [
+        -0.1875,
+        0.0
+      ],
+      "safePositiveYield": {
+        "r1": {
+          "k": 3,
+          "n": 16,
+          "wilson95": [
+            0.06591599071428142,
+            0.4300888096197414
+          ]
+        },
+        "r2": {
+          "k": 2,
+          "n": 16,
+          "wilson95": [
+            0.03497748774324047,
+            0.36022827265758695
+          ]
+        }
+      }
+    },
+    "sampled-current": {
+      "n": 59,
+      "bothCorrect": 49,
+      "r1OnlyCorrect": 1,
+      "r2OnlyCorrect": 1,
+      "neitherCorrect": 8,
+      "r2MinusR1SafeCorrectRate": 0.0,
+      "descriptivePairedBootstrap95": [
+        -0.05084745762711865,
+        0.05084745762711865
+      ],
+      "safePositiveYield": {
+        "r1": {
+          "k": 1,
+          "n": 7,
+          "wilson95": [
+            0.02567962434474355,
+            0.5131278292743189
+          ]
+        },
+        "r2": {
+          "k": 1,
+          "n": 7,
+          "wilson95": [
+            0.02567962434474355,
+            0.5131278292743189
+          ]
+        }
+      }
+    }
+  }
+}

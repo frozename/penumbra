@@ -1,0 +1,26 @@
+{
+  "sourceCommit": "ccccb49f8bb1a646c802f3da54a1d6cd5c7a168a",
+  "passGates": 7,
+  "failedGates": 0,
+  "skippedSteps": 4,
+  "passingTestExecutionsIncludingRepeatedShards": 16789,
+  "testReports": 15,
+  "perReportPassCounts": [
+    632,
+    2619,
+    58,
+    267,
+    980,
+    388,
+    632,
+    4180,
+    3361,
+    70,
+    43,
+    218,
+    852,
+    676,
+    1813
+  ],
+  "scope": "One clean full check:ci run. Repeated console/coverage shards are executions, not independent tests. Earlier incomplete/failed attempts retained separately; isolated console reruns excluded here."
+}

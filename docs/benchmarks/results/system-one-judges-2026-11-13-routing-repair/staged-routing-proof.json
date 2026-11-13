@@ -1,0 +1,47 @@
+{
+  "liveRegistryUnchanged": true,
+  "liveRegistrySha256": "23e3eb4682f5e6e8e717f495252b02d04ad580f3834d1cbbdcfcf76a8a113c02",
+  "stagedRegistrySha256": "a20bd208b37eaadc86dc62175fde1552da00230c7d991ab4873443cedabcd736",
+  "entry": {
+    "name": "mini-on-demand",
+    "kind": "gateway",
+    "endpoint": "",
+    "cloud": {
+      "provider": "openai-compatible",
+      "baseUrl": "http://127.0.0.1:18944/v1",
+      "displayName": "Mini on-demand judges"
+    }
+  },
+  "inventoryStatus": "ok",
+  "modelCatalog": [
+    {
+      "id": "d3-nano-eval",
+      "node": "mini-on-demand",
+      "endpoint": "http://127.0.0.1:18944/v1",
+      "healthy": true
+    },
+    {
+      "id": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+      "node": "mini-on-demand",
+      "endpoint": "http://127.0.0.1:18944/v1",
+      "healthy": true
+    }
+  ],
+  "configuredCandidates": [
+    {
+      "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+      "baseUrl": "http://127.0.0.1:18944/v1"
+    },
+    {
+      "model": "fugu",
+      "baseUrl": "https://api.sakana.ai/v1"
+    }
+  ],
+  "selected": [
+    {
+      "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+      "baseUrl": "http://127.0.0.1:18944/v1"
+    }
+  ],
+  "method": "Current llamactl schema/load/upsert against a private clone; actual loopback GET /v1/models and actual role resolver/filter. No weight loading, credentials published, live registry writes, inference calls or production source cutover. Activate registration only after the safe source/cache migration is deployed."
+}

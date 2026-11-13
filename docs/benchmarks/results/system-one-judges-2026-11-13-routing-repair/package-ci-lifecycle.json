@@ -1,0 +1,23 @@
+[
+  {
+    "ts": 1794606042.7203572,
+    "kind": "lock_and_idle_preflight_passed",
+    "sourceCommit": "431409e3e54f93818076074d4269f14f04204e4c",
+    "pid": 90577
+  },
+  {
+    "ts": 1794606042.7234812,
+    "kind": "authorized_mini_runtime_paused",
+    "otherInferenceServicesChanged": false
+  },
+  {
+    "ts": 1794606280.1273432,
+    "kind": "runtime_router_restored",
+    "samePlistSha256": "b52d90c7f32eead8d1ddc233ba7059621fad866f9e5403ad8454387da731999d"
+  },
+  {
+    "ts": 1794606280.132782,
+    "kind": "control_plane_postflight",
+    "status": "ok"
+  }
+]
