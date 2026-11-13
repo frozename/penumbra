@@ -136,6 +136,15 @@ async function runWithRealInvoker(
     projectRegistry,
     dispatchEventLog: services.dispatchEventLog,
     rewriterCandidates,
+    rewriterInventory: {
+      collect: () =>
+        Promise.resolve({
+          status: "ok",
+          messages: [],
+          nodes: [],
+          models: rewriterCandidates.map((candidate) => ({ id: candidate.model })),
+        }),
+    },
   });
 }
 
@@ -205,7 +214,7 @@ describe("dream cycle rewriter fail-closed paths", () => {
       model: "rewriter-a",
       failure_message: expect.stringMatching(/after routing biases/) as unknown,
     });
-    expect(queuedResearchQueries(services)).toEqual([MEMORY_TITLE]);
+    expect(queuedResearchQueries(services)).toEqual([]);
 
     const health = await healthBody(services);
     expect(health.current_running_cycle).toBeNull();
@@ -217,7 +226,7 @@ describe("dream cycle rewriter fail-closed paths", () => {
     });
   });
 
-  test("records a rewrite failure when a rewriter seat's provider is outside the allowlist", async () => {
+  test("does not invoke a hosted rewriter or research its title", async () => {
     const services = makeServices();
     seedMemory(services);
 
@@ -233,17 +242,9 @@ describe("dream cycle rewriter fail-closed paths", () => {
 
     expect(onlyCycle(services).outcome).toBe("completed");
     const failures = rewriteFailureMeta(services, cycleId);
-    expect(failures).toHaveLength(1);
-    expect(failures[0]).toMatchObject({
-      reason: "no_eligible_candidate",
-      model: "claude-haiku",
-      failure_message: expect.stringMatching(/provider 'anthropic' is not allowed/) as unknown,
-    });
-    expect(queuedResearchQueries(services)).toEqual([MEMORY_TITLE]);
-    expect((await healthBody(services)).subsystem_health).toMatchObject({
-      seat: "claude-rewriter",
-      last_failure_reason: "no_eligible_candidate",
-    });
+    expect(failures).toHaveLength(0);
+    expect(queuedResearchQueries(services)).toEqual([]);
+    expect((await healthBody(services)).subsystem_health).toBeNull();
   });
 
   test("marks the cycle crashed when a phase throws, so health stops reporting it as running", async () => {

@@ -1,0 +1,12 @@
+{
+  "status": "interrupted",
+  "expected": 20,
+  "attempted": 0,
+  "answered": 0,
+  "admissionFloorIgnored": true,
+  "authority": "none",
+  "gufoDuringProbesOverlappingCandidate": [],
+  "coexistenceStatus": "incomplete",
+  "qualityAcceptance": false,
+  "guard": null
+}

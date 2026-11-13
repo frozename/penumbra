@@ -1,0 +1,207 @@
+ggml_metal_device_init: tensor API disabled for pre-M5 and pre-A19 devices
+ggml_metal_library_init: using embedded metal library
+ggml_metal_library_init: loaded in 0.008 sec
+ggml_metal_rsets_init: creating a residency set collection (keep_alive = 180 s)
+ggml_metal_device_init: GPU name:   MTL0 (Apple M4)
+ggml_metal_device_init: GPU family: MTLGPUFamilyApple9  (1009)
+ggml_metal_device_init: GPU family: MTLGPUFamilyCommon3 (3003)
+ggml_metal_device_init: GPU family: MTLGPUFamilyMetal4  (5002)
+ggml_metal_device_init: simdgroup reduction   = true
+ggml_metal_device_init: simdgroup matrix mul. = true
+ggml_metal_device_init: has unified memory    = true
+ggml_metal_device_init: has bfloat            = true
+ggml_metal_device_init: has tensor            = false
+ggml_metal_device_init: use residency sets    = true
+ggml_metal_device_init: use shared buffers    = true
+ggml_metal_device_init: recommendedMaxWorkingSetSize  = 12713.12 MB
+build_info: b172-97f06e9ee
+system_info: n_threads = 4 (n_threads_batch = 4) / 10 | MTL : EMBED_LIBRARY = 1 | CPU : NEON = 1 | ARM_FMA = 1 | FP16_VA = 1 | MATMUL_INT8 = 1 | DOTPROD = 1 | SME = 1 | ACCELERATE = 1 | REPACK = 1 |
+Running without SSL
+init: using 9 threads for HTTP server
+start: binding port with default address family
+main: loading model
+srv    load_model: loading model '/Volumes/AI-MODELS/llama.cpp/models/granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf'
+common_init_result: fitting params to device memory, for bugs during this step try to reproduce them with -fit off, or provide --verbose logs if the bug only occurs with -fit on
+common_params_fit_impl: getting device memory data for initial parameters:
+common_memory_breakdown_print: | memory breakdown [MiB] | total    free    self   model   context   compute    unaccounted |
+common_memory_breakdown_print: |   - MTL0 (Apple M4)    | 12124 = 12123 + (4540 =  3448 +     680 +     412) +       -4540 |
+common_memory_breakdown_print: |   - Host               |                   428 =   260 +       0 +     168                |
+common_params_fit_impl: projected to use 4540 MiB of device memory vs. 12123 MiB of free device memory
+common_params_fit_impl: will leave 7583 >= 1024 MiB of free device memory, no changes needed
+common_fit_params: successfully fit params to free device memory
+common_fit_params: fitting params to free memory took 0.07 seconds
+llama_model_loader: loaded meta data with 45 key-value pairs and 362 tensors from /Volumes/AI-MODELS/llama.cpp/models/granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf (version GGUF V3 (latest))
+llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
+llama_model_loader: - kv   0:                       general.architecture str              = granite
+llama_model_loader: - kv   1:                               general.type str              = model
+llama_model_loader: - kv   2:                               general.name str              = Granite-4.1-3B
+llama_model_loader: - kv   3:                           general.basename str              = Granite-4.1-3B
+llama_model_loader: - kv   4:                       general.quantized_by str              = Unsloth
+llama_model_loader: - kv   5:                         general.size_label str              = 3B
+llama_model_loader: - kv   6:                            general.license str              = apache-2.0
+llama_model_loader: - kv   7:                           general.repo_url str              = https://huggingface.co/unsloth
+llama_model_loader: - kv   8:                   general.base_model.count u32              = 1
+llama_model_loader: - kv   9:                  general.base_model.0.name str              = Granite 4.1 3b
+llama_model_loader: - kv  10:          general.base_model.0.organization str              = Ibm Granite
+llama_model_loader: - kv  11:              general.base_model.0.repo_url str              = https://huggingface.co/ibm-granite/gr...
+llama_model_loader: - kv  12:                               general.tags arr[str,3]       = ["language", "unsloth", "granite-4.1"]
+llama_model_loader: - kv  13:                        granite.block_count u32              = 40
+llama_model_loader: - kv  14:                     granite.context_length u32              = 131072
+llama_model_loader: - kv  15:                   granite.embedding_length u32              = 2560
+llama_model_loader: - kv  16:                granite.feed_forward_length u32              = 8192
+llama_model_loader: - kv  17:               granite.attention.head_count u32              = 40
+llama_model_loader: - kv  18:            granite.attention.head_count_kv u32              = 8
+llama_model_loader: - kv  19:                     granite.rope.freq_base f32              = 10000000.000000
+llama_model_loader: - kv  20:   granite.attention.layer_norm_rms_epsilon f32              = 0.000010
+llama_model_loader: - kv  21:                         granite.vocab_size u32              = 100352
+llama_model_loader: - kv  22:               granite.rope.dimension_count u32              = 64
+llama_model_loader: - kv  23:                    granite.attention.scale f32              = 0.015625
+llama_model_loader: - kv  24:                    granite.embedding_scale f32              = 12.000000
+llama_model_loader: - kv  25:                     granite.residual_scale f32              = 0.220000
+llama_model_loader: - kv  26:                        granite.logit_scale f32              = 10.000000
+llama_model_loader: - kv  27:                       tokenizer.ggml.model str              = gpt2
+llama_model_loader: - kv  28:                         tokenizer.ggml.pre str              = dbrx
+llama_model_loader: - kv  29:                      tokenizer.ggml.tokens arr[str,100352]  = ["!", "\"", "#", "$", "%", "&", "'", ...
+llama_model_loader: - kv  30:                  tokenizer.ggml.token_type arr[i32,100352]  = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, ...
+llama_model_loader: - kv  31:                      tokenizer.ggml.merges arr[str,100000]  = ["Ġ Ġ", "ĠĠ ĠĠ", "i n", "Ġ t",...
+llama_model_loader: - kv  32:                tokenizer.ggml.bos_token_id u32              = 100257
+llama_model_loader: - kv  33:                tokenizer.ggml.eos_token_id u32              = 100257
+llama_model_loader: - kv  34:            tokenizer.ggml.unknown_token_id u32              = 100269
+llama_model_loader: - kv  35:            tokenizer.ggml.padding_token_id u32              = 100256
+llama_model_loader: - kv  36:               tokenizer.ggml.add_bos_token bool             = false
+llama_model_loader: - kv  37:                    tokenizer.chat_template str              = {%- set tools_system_message_prefix =...
+llama_model_loader: - kv  38:            tokenizer.ggml.add_space_prefix bool             = false
+llama_model_loader: - kv  39:               general.quantization_version u32              = 2
+llama_model_loader: - kv  40:                          general.file_type u32              = 7
+llama_model_loader: - kv  41:                      quantize.imatrix.file str              = granite-4.1-3b-GGUF/imatrix_unsloth.gguf
+llama_model_loader: - kv  42:                   quantize.imatrix.dataset str              = unsloth_calibration_granite-4.1-3b.txt
+llama_model_loader: - kv  43:             quantize.imatrix.entries_count u32              = 280
+llama_model_loader: - kv  44:              quantize.imatrix.chunks_count u32              = 209
+llama_model_loader: - type  f32:   81 tensors
+llama_model_loader: - type q8_0:  281 tensors
+print_info: file format = GGUF V3 (latest)
+print_info: file type   = Q8_0
+print_info: file size   = 3.37 GiB (8.50 BPW)
+llama_prepare_model_devices: using device MTL0 (Apple M4) (unknown id) - 12123 MiB free
+load: 69 unused tokens
+load: printing all EOG tokens:
+load:   - 100257 ('<|end_of_text|>')
+load:   - 100261 ('<|fim_pad|>')
+load: special tokens cache size = 96
+load: token to piece cache size = 0.6152 MB
+print_info: arch                  = granite
+print_info: vocab_only            = 0
+print_info: no_alloc              = 0
+print_info: n_ctx_train           = 131072
+print_info: n_embd                = 2560
+print_info: n_embd_inp            = 2560
+print_info: n_layer               = 40
+print_info: n_head                = 40
+print_info: n_head_kv             = 8
+print_info: n_rot                 = 64
+print_info: n_swa                 = 0
+print_info: is_swa_any            = 0
+print_info: n_embd_head_k         = 64
+print_info: n_embd_head_v         = 64
+print_info: n_gqa                 = 5
+print_info: n_embd_k_gqa          = 512
+print_info: n_embd_v_gqa          = 512
+print_info: f_norm_eps            = 0.0e+00
+print_info: f_norm_rms_eps        = 1.0e-05
+print_info: f_clamp_kqv           = 0.0e+00
+print_info: f_max_alibi_bias      = 0.0e+00
+print_info: f_logit_scale         = 1.0e+01
+print_info: f_attn_scale          = 1.6e-02
+print_info: n_ff                  = 8192
+print_info: n_expert              = 0
+print_info: n_expert_used         = 0
+print_info: n_expert_groups       = 0
+print_info: n_group_used          = 0
+print_info: causal attn           = 1
+print_info: pooling type          = -1
+print_info: rope type             = 0
+print_info: rope scaling          = linear
+print_info: freq_base_train       = 10000000.0
+print_info: freq_scale_train      = 1
+print_info: n_ctx_orig_yarn       = 131072
+print_info: rope_yarn_log_mul     = 0.0000
+print_info: rope_finetuned        = yes
+print_info: model type            = 3B
+print_info: model params          = 3.40 B
+print_info: general.name          = Granite-4.1-3B
+print_info: f_embedding_scale     = 12.000000
+print_info: f_residual_scale      = 0.220000
+print_info: f_attention_scale     = 0.015625
+print_info: n_ff_shexp            = 0
+print_info: vocab type            = BPE
+print_info: n_vocab               = 100352
+print_info: n_merges              = 100000
+print_info: BOS token             = 100257 '<|end_of_text|>'
+print_info: EOS token             = 100257 '<|end_of_text|>'
+print_info: EOT token             = 100257 '<|end_of_text|>'
+print_info: UNK token             = 100269 '<|unk|>'
+print_info: PAD token             = 100256 '<|pad|>'
+print_info: LF token              = 198 'Ċ'
+print_info: FIM PRE token         = 100258 '<|fim_prefix|>'
+print_info: FIM SUF token         = 100260 '<|fim_suffix|>'
+print_info: FIM MID token         = 100259 '<|fim_middle|>'
+print_info: FIM PAD token         = 100261 '<|fim_pad|>'
+print_info: EOG token             = 100257 '<|end_of_text|>'
+print_info: EOG token             = 100261 '<|fim_pad|>'
+print_info: max token length      = 256
+load_tensors: loading model tensors, this can take a while... (mmap = true, direct_io = false)
+load_tensors: offloading output layer to GPU
+load_tensors: offloading 39 repeating layers to GPU
+load_tensors: offloaded 41/41 layers to GPU
+load_tensors:   CPU_Mapped model buffer size =   260.31 MiB
+load_tensors:  MTL0_Mapped model buffer size =  3448.60 MiB
+........................................................................................
+common_init_result: added <|end_of_text|> logit bias = -inf
+common_init_result: added <|fim_pad|> logit bias = -inf
+llama_context: constructing llama_context
+llama_context: n_seq_max     = 1
+llama_context: n_ctx         = 16384
+llama_context: n_ctx_seq     = 16384
+llama_context: n_batch       = 2048
+llama_context: n_ubatch      = 1024
+llama_context: causal_attn   = 1
+llama_context: flash_attn    = enabled
+llama_context: kv_unified    = false
+llama_context: freq_base     = 10000000.0
+llama_context: freq_scale    = 1
+llama_context: n_ctx_seq (16384) < n_ctx_train (131072) -- the full capacity of the model will not be utilized
+ggml_metal_init: allocating
+ggml_metal_init: found device: Apple M4
+ggml_metal_init: picking default device: Apple M4
+ggml_metal_init: use fusion         = true
+ggml_metal_init: use concurrency    = true
+ggml_metal_init: use graph optimize = true
+llama_context:        CPU  output buffer size =     0.38 MiB
+llama_kv_cache:       MTL0 KV buffer size =   680.00 MiB
+llama_kv_cache: size =  680.00 MiB ( 16384 cells,  40 layers,  1/1 seqs), K (q8_0):  340.00 MiB, V (q8_0):  340.00 MiB
+llama_kv_cache: attn_rot_k = 1, n_embd_head_k_all = 64
+llama_kv_cache: attn_rot_v = 1, n_embd_head_k_all = 64
+sched_reserve: reserving ...
+sched_reserve: resolving fused Gated Delta Net support:
+sched_reserve: fused Gated Delta Net (autoregressive) enabled
+sched_reserve: fused Gated Delta Net (chunked) enabled
+sched_reserve:       MTL0 compute buffer size =   412.00 MiB
+sched_reserve:        CPU compute buffer size =    84.06 MiB
+sched_reserve: graph nodes  = 1809
+sched_reserve: graph splits = 2
+sched_reserve: reserve took 20.11 ms, sched copies = 1
+srv    load_model: initializing slots, n_slots = 1
+no implementations specified for speculative decoding
+slot   load_model: id  0 | task -1 | new slot, n_ctx = 16384
+srv    load_model: prompt cache is enabled, size limit: 8192 MiB
+srv    load_model: use `--cache-ram 0` to disable the prompt cache
+srv    load_model: for more info see https://github.com/ggml-org/llama.cpp/pull/16391
+srv          init: init: --cache-idle-slots requires --kv-unified, disabling
+init: chat template, example_format: '<|start_of_role|>system<|end_of_role|>You are a helpful assistant<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>Hello<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>Hi there<|end_of_text|>
+<|start_of_role|>user<|end_of_role|>How are you?<|end_of_text|>
+<|start_of_role|>assistant<|end_of_role|>'
+srv          init: init: chat template, thinking = 0
+main: model loaded
+main: server is listening on http://0.0.0.0:8086

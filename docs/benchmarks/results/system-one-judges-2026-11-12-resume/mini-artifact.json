@@ -1,0 +1,10 @@
+{
+  "repo": "ggml-org/vllm-d3-mini-GGUF",
+  "revision": "8b29fd3b87373ea85fa59cc2f26251c1591d771a",
+  "file": "vllm-d3-mini-Q4_K_M.gguf",
+  "bytes": 3707523584,
+  "sha256": "1e5e5a87dd6903b6d8585331eee94a2f01d5069e369b143e1dceb9de51ba2902",
+  "localPath": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/models/vllm-d3-mini-Q4_K_M.gguf",
+  "visionProjector": false,
+  "licenseSource": "vllm-sr/d3-mini@df99bf4ca4418bc6908ee68e9b7479af1f3b8800"
+}

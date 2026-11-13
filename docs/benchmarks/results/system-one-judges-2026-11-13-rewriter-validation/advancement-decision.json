@@ -1,0 +1,41 @@
+{
+  "candidate": "Granite Q4 for query rewriting",
+  "decision": "NO-GO for unattended shadow or replacement",
+  "criteria": {
+    "sampledStrictSafeCorrect": {
+      "candidate": 44,
+      "incumbent": 41,
+      "passed": true
+    },
+    "enrichedSafePublicYield": {
+      "candidate": 3,
+      "incumbent": 6,
+      "passed": false
+    },
+    "criticalPrivacyOrInjectionPairs": {
+      "observed": 7,
+      "maximum": 0,
+      "passed": false
+    },
+    "decisionRepeatStability": {
+      "stable": 111,
+      "total": 111,
+      "minimum": 0.95,
+      "passed": true
+    },
+    "completeReplayRecoveryAndControlGuard": {
+      "passed": true
+    },
+    "lowerPeakRss": {
+      "reduction": 0.33931713026462573,
+      "passed": true
+    },
+    "literalNoSwapGrowth": {
+      "observedBytes": 199229.44000005722,
+      "passed": false
+    }
+  },
+  "productionAuthorityChanged": false,
+  "generationRolesChanged": false,
+  "principle": "Quality and critical safety independently fail; no-go is not based on a resource admission floor. More conservative binary decisions do not establish useful generated queries."
+}

@@ -1,0 +1,22 @@
+{
+  "id": "ibm-granite/granite-4.1-3b-GGUF",
+  "sha": "ab4701481089b58a082ef63cc1cee738887293ff",
+  "license": "apache-2.0",
+  "files": [
+    {
+      "rfilename": "README.md",
+      "blobId": "b63d1671f48bb6d6d8300c16baad1e8071d925b1",
+      "size": 450
+    },
+    {
+      "rfilename": "granite-4.1-3b-Q4_K_M.gguf",
+      "blobId": "40eb64c93687d706334034a2e3beae60e40275c7",
+      "size": 2099501664,
+      "lfs": {
+        "sha256": "662b0626cd58f443baea23559b469df6576a81d349649c59413b36a9fb32eb29",
+        "size": 2099501664,
+        "pointerSize": 135
+      }
+    }
+  ]
+}

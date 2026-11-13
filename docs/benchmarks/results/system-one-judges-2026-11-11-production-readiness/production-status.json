@@ -1,0 +1,44 @@
+{
+  "observedAtEpoch": 1794444977.3380322,
+  "activeOrApprovedHandoffs": 2,
+  "daemonPid": 28008,
+  "launchAgents": {
+    "daemon": {
+      "sha256": "0bda8eb092ae9fa9112979722b7e48c86924729f7b8edfac637f432144f806c3",
+      "unchangedFromOriginal": true,
+      "entry": "/Volumes/AI-DATA/maestro/bench/m4pro-qualification-20261029/Mini-rollout-preflight/ae513e5ac/source/packages/cli/bin/penumbra.ts"
+    },
+    "worker": {
+      "sha256": "ca74380046559c233336852365362648f9a1aca36cc3069c9654feabc9cda46a",
+      "unchangedFromOriginal": true,
+      "entry": "/Volumes/AI-DATA/maestro/bench/m4pro-qualification-20261029/Mini-rollout-preflight/ae513e5ac/source/packages/agentchat/bin/agentchat-worker.ts"
+    }
+  },
+  "newSourceActivated": false,
+  "nativeRuntimeListening": false,
+  "newLocalJudgeAuthority": false,
+  "newLocalShadowActivated": false,
+  "daemonHttpHealth": "ok",
+  "existingT2PromotionHealth": {
+    "enabled": true,
+    "reason": "judge_configured",
+    "judge_env": "PENUMBRA_JUDGE_BASE_URL",
+    "empty_extraction_streak": 7332,
+    "healthy": false
+  },
+  "probes": [
+    {
+      "route": "handoffs?status=dispatched,approved",
+      "status": 200,
+      "wallMs": 4.439499999999999
+    },
+    {
+      "route": "health",
+      "status": 200,
+      "wallMs": 75.415625
+    }
+  ],
+  "earlierFinalStatusAttempt": "Timed out after4s with native absent; subsequent capture uses20s deadline. Healthy production baseline remains unproven.",
+  "deploymentBlocker": "Idle cutover guard refuses while unrelated production work is active. Do not stop existing handoffs to activate this task.",
+  "qualityBlocker": "No tested specialist or locked cascade meets required promotion quality. Existing404 seats and hostedJev veto remain unchanged; sustained residency and managed lifecycle unverified."
+}

@@ -1,0 +1,23 @@
+{
+  "run": "docs/benchmarks/results/system-one-judges-2026-11-11/granite-fresh-c1/run.json",
+  "samples": 99,
+  "intervalStart": 1794432468.232,
+  "intervalEnd": 1794432568.6359997,
+  "peakSampledRssBytes": 4927406080,
+  "medianSampledRssBytes": 4364156928,
+  "psCpuPercentMedian": 2.6,
+  "psCpuPercentPeak": 11.7,
+  "swapStartBytes": 1747326074.88,
+  "swapEndBytes": 1747326074.88,
+  "swapGrowthBytes": 0.0,
+  "swapinsDelta": 24,
+  "swapoutsDelta": 0,
+  "healthTimeoutOrFailureCount": 0,
+  "healthWallP50Ms": 4.823374911211431,
+  "healthWallP95Ms": 5.426916992291808,
+  "maxReportedDaemonLagMs": 796.1617919951677,
+  "systemGpuInUseBytesPeak": 4912529408,
+  "systemGpuAllocatedBytesPeak": 6591741952,
+  "systemGpuUtilizationPercentMedian": 99,
+  "limitations": "1 Hz sampled RSS is not total unified-memory ownership; GPU counters are system-wide. ps CPU is a decaying process metric. /health lagMs is a rolling maximum, not request latency. Other host activity is uncontrolled."
+}

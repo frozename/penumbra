@@ -1,0 +1,32 @@
+[
+  {
+    "ts": 1794487502.028539,
+    "kind": "lock_acquired_preflight_passed",
+    "sourceCommit": "5b0aa54b71a1152af50370bc93822293e3df9d22",
+    "inferenceIdle": true,
+    "pid": 51379
+  },
+  {
+    "ts": 1794487502.3032691,
+    "kind": "authorized_granite_runtime_paused",
+    "pid": 51379,
+    "otherInferenceServicesChanged": false
+  },
+  {
+    "ts": 1794488199.008702,
+    "kind": "ci_finished",
+    "exitCode": 0,
+    "elapsedSeconds": 696.7046809196472
+  },
+  {
+    "ts": 1794488199.3433359,
+    "kind": "runtime_restored",
+    "samePlistSha256": "b52d90c7f32eead8d1ddc233ba7059621fad866f9e5403ad8454387da731999d",
+    "controlPlaneStatus": "ok"
+  },
+  {
+    "ts": 1794488204.158018,
+    "kind": "post_restore_inference",
+    "exitCode": 0
+  }
+]

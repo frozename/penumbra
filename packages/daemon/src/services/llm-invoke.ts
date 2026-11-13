@@ -12,6 +12,7 @@ import {
   type ResolveKeychainSecret,
   resolveLlmAuthorization,
   resolveLlmCandidates,
+  resolveLlmHttpOptions,
   tryResolveLlmProvider,
 } from "@penumbra/core";
 import { z } from "zod";
@@ -136,8 +137,12 @@ async function parseHttpResponse<T extends z.ZodType>(
     };
   }
 
-  const responseMessage = (payload as { choices?: { message?: { content?: unknown } }[] })
-    .choices?.[0]?.message?.content;
+  const choice = (
+    payload as { choices?: { message?: { content?: unknown }; finish_reason?: string }[] }
+  ).choices?.[0];
+  if (choice?.finish_reason === "length")
+    return httpError(response.status, "response truncated by token limit");
+  const responseMessage = choice?.message?.content;
   if (typeof responseMessage !== "string" || responseMessage.trim().length === 0) {
     return { ok: false, reason: "empty_response", failureMessage: "no response content" };
   }
@@ -216,9 +221,15 @@ async function invokeCandidate<T extends z.ZodType>(
   }
 
   const controller = new AbortController();
+  let httpOptions: ReturnType<typeof resolveLlmHttpOptions>;
+  try {
+    httpOptions = resolveLlmHttpOptions(candidate.options, { maxTokens: 4096, timeoutMs });
+  } catch (error) {
+    return httpError(0, error instanceof Error ? error.message : String(error));
+  }
   const timeout = setTimeout(() => {
     controller.abort(new DOMException("Request timed out", "AbortError"));
-  }, timeoutMs);
+  }, httpOptions.timeoutMs);
 
   try {
     const headers: Record<string, string> = { "content-type": "application/json" };
@@ -230,8 +241,12 @@ async function invokeCandidate<T extends z.ZodType>(
         method: "POST",
         headers,
         body: JSON.stringify({
+          ...httpOptions.requestExtras,
           model: candidate.model,
           messages: input.messages,
+          max_tokens: httpOptions.maxTokens,
+          stream: false,
+          n: 1,
           temperature: input.temperature ?? 0,
           response_format: { type: "json_object" },
         }),

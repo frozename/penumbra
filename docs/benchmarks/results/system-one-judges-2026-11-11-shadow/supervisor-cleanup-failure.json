@@ -1,0 +1,9 @@
+{
+  "observedAt": "2026-11-11T22:16:43.905173+00:00",
+  "failure": "subprocess.TimeoutExpired while waiting for experiment sampler for 10 seconds",
+  "effect": "automatic restoration was interrupted; Granite was restored manually with the exact command",
+  "fixed": "restore before terminating and bounded-waiting for telemetry",
+  "executedSupervisorSha256": "3aa2afd1dccf094e6b68d57611da0308dd1d7a1db834fa07f46781f46d289405",
+  "correctedSupervisorSha256": "d0073d572b8fb1b5489bf770afb94b1827c507d9e0a1a1208c37735b95f685e9",
+  "validation": "3 helper unit tests passed; corrected full supervisor not rerun"
+}

@@ -1,0 +1,512 @@
+{
+  "checkedOn": "2026-11-11",
+  "source": "unauthenticated Hugging Face model API and revision-pinned card/license files",
+  "models": [
+    {
+      "model": "LiquidAI/d1-3B",
+      "revision": "05b80faf55536582ad5ffb2da7456f6a653acf71",
+      "public": true,
+      "gated": false,
+      "cardLicense": "other",
+      "licenseUrl": "https://huggingface.co/LiquidAI/d1-3B/blob/05b80faf55536582ad5ffb2da7456f6a653acf71/LICENSE",
+      "licenseSha256": "4d28ca14dedc0b3d0fcc2b3339f0e79931faa33874f3d24f522183a8fc70068c",
+      "modelCardUrl": "https://huggingface.co/LiquidAI/d1-3B/blob/05b80faf55536582ad5ffb2da7456f6a653acf71/README.md",
+      "modelCardSha256": "e29927a558a8e4d25108d184ea12b9043e86699219683fc114ca5463db3e3e6d",
+      "weightFiles": [
+        {
+          "file": "model.safetensors",
+          "bytes": 6247065504,
+          "sha256": "50e03317847caf6df9a9aee27ed40f20554a86a21e60d1d47ba41a422b546c0c"
+        }
+      ],
+      "localMeasurement": "not run",
+      "publicWeightHead": {
+        "file": "model.safetensors",
+        "status": 200,
+        "contentLength": "6247065504"
+      }
+    },
+    {
+      "model": "LiquidAI/d1-3B-GGUF",
+      "revision": "bb1e436ea78eb96a3f1acb6da865f70c2fbeb563",
+      "public": true,
+      "gated": false,
+      "cardLicense": "other",
+      "licenseUrl": "https://huggingface.co/LiquidAI/d1-3B-GGUF/blob/bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/LICENSE",
+      "licenseSha256": "4d28ca14dedc0b3d0fcc2b3339f0e79931faa33874f3d24f522183a8fc70068c",
+      "modelCardUrl": "https://huggingface.co/LiquidAI/d1-3B-GGUF/blob/bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/README.md",
+      "modelCardSha256": "f9778e5b65c650618b23f24839708d395660af6da5c29c7da1efac71123e3f3b",
+      "weightFiles": [
+        {
+          "file": "d1-3B-BF16.gguf",
+          "bytes": 5403160160,
+          "sha256": "a03fdd5b13a93e0c5340ffdded985fbf59fb8d8f1b59ecc367986bb9a8ff2af6"
+        },
+        {
+          "file": "d1-3B-F16.gguf",
+          "bytes": 5403160160,
+          "sha256": "7d5edd2a3e94844d3c8ad79d5eaf043b3c3171c2bc06b555f29cce1c8ff41e34"
+        },
+        {
+          "file": "d1-3B-Q4_K_M.gguf",
+          "bytes": 1674456672,
+          "sha256": "16aff27ea2eefdc32b9897f43854a5d3170c1dc8dccb9c756905af30a4e22402"
+        },
+        {
+          "file": "d1-3B-Q8_0.gguf",
+          "bytes": 2874781280,
+          "sha256": "2f0942d5a5f64cf69c3356d2be439b71644b1f0eb3a580912a5a0179eeaba77d"
+        },
+        {
+          "file": "mmproj-d1-3B-BF16.gguf",
+          "bytes": 855763168,
+          "sha256": "485cee0b3d7a1784c7643eb44672a680b3baee25b2bf312cd87dffd5243eb6b3"
+        },
+        {
+          "file": "mmproj-d1-3B-F16.gguf",
+          "bytes": 853993696,
+          "sha256": "093be6e3437800b868bc24df13f1d6f6da877ad28dfa5a5da5db01e9e8df7128"
+        },
+        {
+          "file": "mmproj-d1-3B-Q8_0.gguf",
+          "bytes": 583109728,
+          "sha256": "2505920ce464b7c54acd8b7b74a931c0c671f06d0c8833760b2fbceeb253e92a"
+        }
+      ],
+      "localMeasurement": "not run",
+      "publicWeightHead": {
+        "file": "d1-3B-BF16.gguf",
+        "status": 200,
+        "contentLength": "5403160160"
+      }
+    },
+    {
+      "model": "Patrick-18/Dexy-Decision-9B",
+      "revision": "afee4baa7ef921221a0e74f695a150edd6887ce2",
+      "public": true,
+      "gated": false,
+      "cardLicense": "apache-2.0",
+      "licenseUrl": "https://huggingface.co/Patrick-18/Dexy-Decision-9B/blob/afee4baa7ef921221a0e74f695a150edd6887ce2/LICENSE",
+      "licenseSha256": "bbedc3fda3305820b977265f01b8619d87570a6739de3a5582c3464840f1e57a",
+      "modelCardUrl": "https://huggingface.co/Patrick-18/Dexy-Decision-9B/blob/afee4baa7ef921221a0e74f695a150edd6887ce2/README.md",
+      "modelCardSha256": "cad480e809cfaae5836297f6cc4e854b5d40b6326c3ca3ed5fb780b7f109a0e6",
+      "weightFiles": [
+        {
+          "file": "model-00001-of-00005.safetensors",
+          "bytes": 2034237568,
+          "sha256": "d08468dfa7b042b09651db5d79dc86c9b5f97f4cf3151cfb54c4be4c695f3fca"
+        },
+        {
+          "file": "model-00002-of-00005.safetensors",
+          "bytes": 3999615808,
+          "sha256": "e0df416e91f884a5f23512764ff6fe3361c4493f939a65b5bb79a2b55fb7fc03"
+        },
+        {
+          "file": "model-00003-of-00005.safetensors",
+          "bytes": 3997274128,
+          "sha256": "533040ef308bc1239ce6fd6b319d70b58c43f26501ea21a27faf908d9195e7de"
+        },
+        {
+          "file": "model-00004-of-00005.safetensors",
+          "bytes": 3997290904,
+          "sha256": "3ce6ea7d39700b647655701fbde87ac3af2e9466cb7e7f1ff0d29f2c7cc460a5"
+        },
+        {
+          "file": "model-00005-of-00005.safetensors",
+          "bytes": 3879244000,
+          "sha256": "589d0eef01fd133c0b24295340494a6a208ee87f9a93f241107111d706716596"
+        }
+      ],
+      "localMeasurement": "not run",
+      "publicWeightHead": {
+        "file": "model-00001-of-00005.safetensors",
+        "status": 200,
+        "contentLength": "2034237568"
+      }
+    },
+    {
+      "model": "Patrick-18/Dexy-Decision-9B-V2",
+      "revision": "4f434e2b5fd9f0addfe3233489571c2dc8ce7a19",
+      "public": true,
+      "gated": false,
+      "cardLicense": "apache-2.0",
+      "licenseUrl": "https://huggingface.co/Patrick-18/Dexy-Decision-9B-V2/blob/4f434e2b5fd9f0addfe3233489571c2dc8ce7a19/LICENSE",
+      "licenseSha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "modelCardUrl": "https://huggingface.co/Patrick-18/Dexy-Decision-9B-V2/blob/4f434e2b5fd9f0addfe3233489571c2dc8ce7a19/README.md",
+      "modelCardSha256": "f5c55e12b3b5e8c47264d3aa880ce1779740f8b076464104d58da3e3ccbc7041",
+      "weightFiles": [
+        {
+          "file": "model-00001-of-00005.safetensors",
+          "bytes": 3999615416,
+          "sha256": "d4c78fa717a51908c2e20210ca2301a62766cfc2439830d596cc2ccc7934badc"
+        },
+        {
+          "file": "model-00002-of-00005.safetensors",
+          "bytes": 3997273408,
+          "sha256": "6e5433feb168bc5a3a7e6947f229c1edff07e0972f1f923e3ba8aa005ed6185c"
+        },
+        {
+          "file": "model-00003-of-00005.safetensors",
+          "bytes": 3997290160,
+          "sha256": "c64d671696f72c80d34cd5a59d82184d55fb7d76e0332e299d84ce218ddc36a3"
+        },
+        {
+          "file": "model-00004-of-00005.safetensors",
+          "bytes": 3991238304,
+          "sha256": "78841120f7f9dc963c93fceb8c31c2e4cb7c6a68cf2fdda399e9ff1f29be56f8"
+        },
+        {
+          "file": "model-00005-of-00005.safetensors",
+          "bytes": 800061072,
+          "sha256": "439abdf1343b7b6cbbf791838fe417e7971b64d89543017e03ac54addff2b938"
+        },
+        {
+          "file": "readout.safetensors",
+          "bytes": 4178000,
+          "sha256": "bd3f9feb0382454d1d3ca781d1560cb4dbb7a767cf267c879d2662b05db41eb7"
+        }
+      ],
+      "localMeasurement": "not run",
+      "publicWeightHead": {
+        "file": "model-00001-of-00005.safetensors",
+        "status": 200,
+        "contentLength": "3999615416"
+      }
+    },
+    {
+      "model": "Qwen/Qwen3.5-0.8B",
+      "revision": "2fc06364715b967f1860aea9cf38778875588b17",
+      "public": true,
+      "gated": false,
+      "cardLicense": "apache-2.0",
+      "licenseUrl": "https://huggingface.co/Qwen/Qwen3.5-0.8B/blob/2fc06364715b967f1860aea9cf38778875588b17/LICENSE",
+      "licenseSha256": "bbedc3fda3305820b977265f01b8619d87570a6739de3a5582c3464840f1e57a",
+      "modelCardUrl": "https://huggingface.co/Qwen/Qwen3.5-0.8B/blob/2fc06364715b967f1860aea9cf38778875588b17/README.md",
+      "modelCardSha256": "87a163af54f32fa608a0f8d3ac67945c53dd2b4a7c96740b3d7fdc28e8458864",
+      "weightFiles": [
+        {
+          "file": "model.safetensors-00001-of-00001.safetensors",
+          "bytes": 1746942600,
+          "sha256": "04b1c301231dd422b8860db31311ab2721511346a32cb1e079c4c4e5f1fe4696"
+        }
+      ],
+      "localMeasurement": "not run",
+      "publicWeightHead": {
+        "file": "model.safetensors-00001-of-00001.safetensors",
+        "status": 200,
+        "contentLength": "1746942600"
+      }
+    },
+    {
+      "model": "fastino/GLiDE-0.4B",
+      "revision": "6bda7ab91aeb36dcad6d27828a8871e548c7fc71",
+      "public": true,
+      "gated": false,
+      "cardLicense": "other",
+      "licenseUrl": "https://huggingface.co/fastino/GLiDE-0.4B/blob/6bda7ab91aeb36dcad6d27828a8871e548c7fc71/LICENSE",
+      "licenseSha256": "7381146597b418d6fa4c1345c43ca2450ccccd6c6322257356efabfece9ebb9a",
+      "modelCardUrl": "https://huggingface.co/fastino/GLiDE-0.4B/blob/6bda7ab91aeb36dcad6d27828a8871e548c7fc71/README.md",
+      "modelCardSha256": "44acf7ca770fa9f2028dc43ccce20f377d44d2c7795842ae68cf8cfb0f316147",
+      "weightFiles": [
+        {
+          "file": "model-00001-of-00001.safetensors",
+          "bytes": 789581344,
+          "sha256": "4540aa6d168fd15b06f7d6a61c34dd45523b5a0a1a72f98f1b2a81cf60774f34"
+        },
+        {
+          "file": "readout.safetensors",
+          "bytes": 522320,
+          "sha256": "0cb6da049081b05dc60dcf0c9f95dc4309c8849ab921f61f67f4658172b57f2a"
+        }
+      ],
+      "localMeasurement": "not run",
+      "publicWeightHead": {
+        "file": "model-00001-of-00001.safetensors",
+        "status": 200,
+        "contentLength": "789581344"
+      }
+    },
+    {
+      "model": "fastino/GLiDE-9B",
+      "revision": "ab54df5acba0eebf7df45560ffdaacd64e32df3b",
+      "public": true,
+      "gated": false,
+      "cardLicense": "other",
+      "licenseUrl": "https://huggingface.co/fastino/GLiDE-9B/blob/ab54df5acba0eebf7df45560ffdaacd64e32df3b/LICENSE",
+      "licenseSha256": "4948c7c82e6879d25a10ebcb153361b373cec319490f6ba4616c2825df37c989",
+      "modelCardUrl": "https://huggingface.co/fastino/GLiDE-9B/blob/ab54df5acba0eebf7df45560ffdaacd64e32df3b/README.md",
+      "modelCardSha256": "dd89e31addc290cd12b054792527ae4b18f983d88ab014a28a2f76eee56dfcf9",
+      "weightFiles": [
+        {
+          "file": "model-00001-of-00002.safetensors",
+          "bytes": 10784454520,
+          "sha256": "9d30d2bceaac3d07dea5b07a62a996cefac83ced2de2a1fd1588c7e14821e432"
+        },
+        {
+          "file": "model-00002-of-00002.safetensors",
+          "bytes": 5088970464,
+          "sha256": "aec8a83b05d6d0ddad82ac1cc3c248c317e19c481990aa63f19fcf49db755d67"
+        },
+        {
+          "file": "readout.safetensors",
+          "bytes": 2089048,
+          "sha256": "4cbb89754d0434dce17808a3fbc717efac8d7729740faf3f0444f9a874547527"
+        }
+      ],
+      "localMeasurement": "not run",
+      "publicWeightHead": {
+        "file": "model-00001-of-00002.safetensors",
+        "status": 200,
+        "contentLength": "10784454520"
+      }
+    },
+    {
+      "model": "fastino/GLiNER2.5-Decide",
+      "revision": "9d1bfb848cd16d93ee56ccbc59cd92bf0f284d90",
+      "public": true,
+      "gated": false,
+      "cardLicense": "apache-2.0",
+      "licenseUrl": "https://huggingface.co/fastino/GLiNER2.5-Decide/blob/9d1bfb848cd16d93ee56ccbc59cd92bf0f284d90/LICENSE",
+      "licenseSha256": null,
+      "modelCardUrl": "https://huggingface.co/fastino/GLiNER2.5-Decide/blob/9d1bfb848cd16d93ee56ccbc59cd92bf0f284d90/README.md",
+      "modelCardSha256": "09a9705ee8c30392bb5a82ac503c01b889ff7e957a4c96bf7249f05acde709a3",
+      "weightFiles": [
+        {
+          "file": "model.safetensors",
+          "bytes": 1945828140,
+          "sha256": "40a5a23ff860dc3dff426cecd1048cacdd29c648c96db209dad818e9686dc997"
+        }
+      ],
+      "localMeasurement": "not run",
+      "publicWeightHead": {
+        "file": "model.safetensors",
+        "status": 200,
+        "contentLength": "1945828140"
+      }
+    },
+    {
+      "model": "ggml-org/vllm-d3-nano-GGUF",
+      "revision": "f2256dfaff5b8337e8bf67ca064aeef18ee14a79",
+      "public": true,
+      "gated": false,
+      "cardLicense": "apache-2.0",
+      "licenseUrl": "https://huggingface.co/ggml-org/vllm-d3-nano-GGUF/blob/f2256dfaff5b8337e8bf67ca064aeef18ee14a79/LICENSE",
+      "licenseSha256": null,
+      "modelCardUrl": "https://huggingface.co/ggml-org/vllm-d3-nano-GGUF/blob/f2256dfaff5b8337e8bf67ca064aeef18ee14a79/README.md",
+      "modelCardSha256": "addbae9b023d58a0b01c8be3af9669bc32a3817c36dd1d8e1b7cdf072f57bbc9",
+      "weightFiles": [
+        {
+          "file": "mmproj-vllm-d3-nano-BF16.gguf",
+          "bytes": 671372928,
+          "sha256": "1d06d8b0f828f3b895372bd2745480ed25bfb3920309a5597c460ce32d965ebf"
+        },
+        {
+          "file": "mmproj-vllm-d3-nano-Q8_0.gguf",
+          "bytes": 364664448,
+          "sha256": "b778993a051d604757dda94a554ba870bf6e685909c44e7399d71ffb73e0e58f"
+        },
+        {
+          "file": "vllm-d3-nano-BF16.gguf",
+          "bytes": 4792829536,
+          "sha256": "f76dcc0834b5ca79bf877e0443ab53cf4f029a18334fa0bff15c014234893329"
+        },
+        {
+          "file": "vllm-d3-nano-Q8_0.gguf",
+          "bytes": 2552358496,
+          "sha256": "a4d7563d9622a4c34cc7276a3381c3e27a25bbf8d4c0f5ee2f1404fc89ce2ab9"
+        }
+      ],
+      "localMeasurement": "partial, aborted for host health",
+      "publicWeightHead": {
+        "file": "mmproj-vllm-d3-nano-BF16.gguf",
+        "status": 200,
+        "contentLength": "671372928"
+      }
+    },
+    {
+      "model": "ibm-granite/granite-4.1-3b",
+      "revision": "c0650403e44e78ec0262dab1c90914c65b196c4e",
+      "public": true,
+      "gated": false,
+      "cardLicense": "apache-2.0",
+      "licenseUrl": "https://huggingface.co/ibm-granite/granite-4.1-3b/blob/c0650403e44e78ec0262dab1c90914c65b196c4e/LICENSE",
+      "licenseSha256": null,
+      "modelCardUrl": "https://huggingface.co/ibm-granite/granite-4.1-3b/blob/c0650403e44e78ec0262dab1c90914c65b196c4e/README.md",
+      "modelCardSha256": "7868b8ead19d157ad23ec827f252f6709a380d1b2cedc35c0e7a533b91550f1f",
+      "weightFiles": [
+        {
+          "file": "model-00001-of-00002.safetensors",
+          "bytes": 4991538344,
+          "sha256": "895bf5f2d7c8b06ca902499567d3c3d9ed30061e4c5ad94bf8216286ca67e2fd"
+        },
+        {
+          "file": "model-00002-of-00002.safetensors",
+          "bytes": 1814176448,
+          "sha256": "de8c9efdaa6f669d595bda8b949213cba92ea69689fd2a27fbceed3d1ebeb2f7"
+        }
+      ],
+      "localMeasurement": "not run",
+      "publicWeightHead": {
+        "file": "model-00001-of-00002.safetensors",
+        "status": 200,
+        "contentLength": "4991538344"
+      }
+    },
+    {
+      "model": "nace-ai/drex-v1.5",
+      "revision": "70a8a22d9b36bc91977efe296c3f59c9f756e6c2",
+      "public": true,
+      "gated": false,
+      "cardLicense": "other",
+      "licenseUrl": "https://huggingface.co/nace-ai/drex-v1.5/blob/70a8a22d9b36bc91977efe296c3f59c9f756e6c2/LICENSE",
+      "licenseSha256": "3ee4dcae9750be4be007654b3ce3ea551743b1fb39b9a4bae280db94e1b2e3e9",
+      "modelCardUrl": "https://huggingface.co/nace-ai/drex-v1.5/blob/70a8a22d9b36bc91977efe296c3f59c9f756e6c2/README.md",
+      "modelCardSha256": "aea1978bde58aa7abe8a5ad372b7d6d42e017e2bf35c6c2f4d45867c8e2ca274",
+      "weightFiles": [
+        {
+          "file": "model-00001-of-00004.safetensors",
+          "bytes": 4942706120,
+          "sha256": "1d2a5ffedb5923c930489f58d14197cfa054b403b3589ea87961f0a48fec502c"
+        },
+        {
+          "file": "model-00002-of-00004.safetensors",
+          "bytes": 4987757928,
+          "sha256": "1121fb2144c38ed6612b6f7cbfa183fe31efec33dca8cb5a69fc88bfeae8982f"
+        },
+        {
+          "file": "model-00003-of-00004.safetensors",
+          "bytes": 4954810240,
+          "sha256": "b144d0c842fb783557ca0e819850ee302772f75bfdc9e24d955643996a65d3c6"
+        },
+        {
+          "file": "model-00004-of-00004.safetensors",
+          "bytes": 3022388120,
+          "sha256": "bd7b4f1d63756ac0fae48fcc054b76ec32d66e893b71dfde6220a95f4e509e6c"
+        }
+      ],
+      "localMeasurement": "not run",
+      "publicWeightHead": {
+        "file": "model-00001-of-00004.safetensors",
+        "status": 200,
+        "contentLength": "4942706120"
+      }
+    },
+    {
+      "model": "perplexity-ai/pplx-decider-flash-v1.2",
+      "revision": "9ff7cf9838e59df461c276b7699d56b244d2af58",
+      "public": true,
+      "gated": false,
+      "cardLicense": "apache-2.0",
+      "licenseUrl": "https://huggingface.co/perplexity-ai/pplx-decider-flash-v1.2/blob/9ff7cf9838e59df461c276b7699d56b244d2af58/LICENSE",
+      "licenseSha256": "bbedc3fda3305820b977265f01b8619d87570a6739de3a5582c3464840f1e57a",
+      "modelCardUrl": "https://huggingface.co/perplexity-ai/pplx-decider-flash-v1.2/blob/9ff7cf9838e59df461c276b7699d56b244d2af58/README.md",
+      "modelCardSha256": "7428a155aa3484065fa97a43322a485e851f31e1eb6ea973dfec05ff224a71ad",
+      "weightFiles": [
+        {
+          "file": "model-00001-of-00002.safetensors",
+          "bytes": 4972946624,
+          "sha256": "1c1a0c1ab331c7aec1b4b7932eabf80593b56c694fe2b779209c0e0413df1cef"
+        },
+        {
+          "file": "model-00002-of-00002.safetensors",
+          "bytes": 4105669472,
+          "sha256": "21ba8301660e066f5849b60b1a36a242fc54ca18dd9bd526fdcbc50889171b70"
+        },
+        {
+          "file": "readout.safetensors",
+          "bytes": 1305712,
+          "sha256": "6751578171026190d4db8078e97162b404fd984646e0e9aec13844e4dd5b1711"
+        }
+      ],
+      "localMeasurement": "not run",
+      "publicWeightHead": {
+        "file": "model-00001-of-00002.safetensors",
+        "status": 200,
+        "contentLength": "4972946624"
+      }
+    },
+    {
+      "model": "vllm-sr/d3-edge",
+      "revision": "bee5e872f75b9c5d1405767bf244a6948b95c0af",
+      "public": true,
+      "gated": false,
+      "cardLicense": "apache-2.0",
+      "licenseUrl": "https://huggingface.co/vllm-sr/d3-edge/blob/bee5e872f75b9c5d1405767bf244a6948b95c0af/LICENSE",
+      "licenseSha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "modelCardUrl": "https://huggingface.co/vllm-sr/d3-edge/blob/bee5e872f75b9c5d1405767bf244a6948b95c0af/README.md",
+      "modelCardSha256": "e7df42704840545e87480543c96c4dfb329a1122de9cc8067f144da1ba882e8d",
+      "weightFiles": [
+        {
+          "file": "model-00001-of-00001.safetensors",
+          "bytes": 1188677968,
+          "sha256": "91bb8618450a7f628f1432bbced76bc19ee7346c93d191a228fdd33c25a57a9d"
+        },
+        {
+          "file": "readout.safetensors",
+          "bytes": 1044560,
+          "sha256": "de33d5dc795bbd77168e40bfadc340cca9b9f163b88744c10e1a788f4e166d3d"
+        }
+      ],
+      "localMeasurement": "not run",
+      "publicWeightHead": {
+        "file": "model-00001-of-00001.safetensors",
+        "status": 200,
+        "contentLength": "1188677968"
+      }
+    },
+    {
+      "model": "vllm-sr/d3-nano",
+      "revision": "8198c9f763b046605b2f4827b4999971fa2c92c4",
+      "public": true,
+      "gated": false,
+      "cardLicense": "apache-2.0",
+      "licenseUrl": "https://huggingface.co/vllm-sr/d3-nano/blob/8198c9f763b046605b2f4827b4999971fa2c92c4/LICENSE",
+      "licenseSha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "modelCardUrl": "https://huggingface.co/vllm-sr/d3-nano/blob/8198c9f763b046605b2f4827b4999971fa2c92c4/README.md",
+      "modelCardSha256": "e741b12755a91c7a002cefe2c29355869c47c5dd9b7891cbef3e711d3f006e1c",
+      "weightFiles": [
+        {
+          "file": "model.safetensors",
+          "bytes": 4426555160,
+          "sha256": "7269b3260f1106f3443bfdb028a76143be2e679db3f29a31f4dfd1d595f03155"
+        },
+        {
+          "file": "readout.safetensors",
+          "bytes": 2089040,
+          "sha256": "662e8a26d8016b2d479f1ca66bf64944603316c2b5e074ab7ac3304b8ae045e9"
+        }
+      ],
+      "localMeasurement": "not run",
+      "publicWeightHead": {
+        "file": "model.safetensors",
+        "status": 200,
+        "contentLength": "4426555160"
+      }
+    },
+    {
+      "model": "ibm-granite/granite-switch-4.1-3b-preview",
+      "revision": "daf8e650d23e5f3574ec2cb1cc6e346a2f90d116",
+      "public": true,
+      "gated": false,
+      "cardLicense": "apache-2.0",
+      "licenseUrl": "https://www.apache.org/licenses/LICENSE-2.0",
+      "licenseSha256": null,
+      "modelCardUrl": "https://huggingface.co/ibm-granite/granite-switch-4.1-3b-preview/blob/daf8e650d23e5f3574ec2cb1cc6e346a2f90d116/README.md",
+      "modelCardSha256": "9f94bff6c65e849193c712789f196c19319d6e1fdfb71be7e7183edfe3cb42c1",
+      "weightFiles": [
+        {
+          "file": "model-00001-of-00002.safetensors",
+          "bytes": 4992255632,
+          "sha256": "145a5b86ef917010db4ec9131223152623d07d2337f9bf316baafee3b20ce8be"
+        },
+        {
+          "file": "model-00002-of-00002.safetensors",
+          "bytes": 3309136000,
+          "sha256": "42750a927de0194ddc7acb550d0e708413fc527be35c7717380b4bfae30a33b0"
+        }
+      ],
+      "localMeasurement": "not run; card-declared license; inspect packaged upstream adapter licenses before redistribution",
+      "licenseSource": "model card declaration; packaged LICENSE was not found in this inspection"
+    }
+  ]
+}

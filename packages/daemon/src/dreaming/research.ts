@@ -12,6 +12,7 @@ import type { DreamCostMeter, ProjectRegistryEntry } from "./cycle.js";
 
 import { isDomainAllowed } from "../research/firecrawl-adapter.js";
 import { buildJudgePromptBlock, sanitizeResearchMarkdown } from "../research/sanitization.js";
+import { REWRITE_POLICY_VERSION, validateRewriteQuery } from "./rewrite-query-policy.js";
 
 export interface ResearchDeps {
   getResearchAdapter?: (project: ProjectRegistryEntry) => WebResearchAdapter | null;
@@ -30,6 +31,8 @@ interface ResearchActionRow {
 interface ResearchPayload {
   query?: unknown;
   url?: unknown;
+  source_memory_id?: unknown;
+  rewrite_policy_version?: unknown;
 }
 
 interface ResearchCacheRow {
@@ -46,6 +49,7 @@ interface ParsedAction {
   project_id: string;
   query: string;
   urlFromPayload?: string;
+  memoryPolicyFailure?: string;
 }
 
 interface FetchOutcome {
@@ -79,15 +83,27 @@ function parseAction(action: ResearchActionRow): ParsedAction {
 
   let query = "";
   let urlFromPayload: string | undefined;
+  let memoryPolicyFailure: string | undefined;
   try {
     const payload = JSON.parse(action.payload_json) as ResearchPayload;
     query = typeof payload.query === "string" ? payload.query : "";
     urlFromPayload = typeof payload.url === "string" ? payload.url : undefined;
+    if (Object.hasOwn(payload, "source_memory_id")) {
+      if (
+        typeof payload.source_memory_id !== "string" ||
+        !payload.source_memory_id ||
+        payload.rewrite_policy_version !== REWRITE_POLICY_VERSION
+      ) {
+        memoryPolicyFailure = "stale-rewrite-policy";
+      } else if (urlFromPayload !== undefined || !validateRewriteQuery(query, false).ok) {
+        memoryPolicyFailure = "query-privacy-gate";
+      }
+    }
   } catch {
     // fall through with empty query
   }
 
-  return { project_id, query, urlFromPayload };
+  return { project_id, query, urlFromPayload, memoryPolicyFailure };
 }
 
 function markActionFailed(db: Database, actionId: string, decidedBy?: string): void {
@@ -369,6 +385,10 @@ async function processAction(
   }
 
   const parsed = parseAction(action);
+  if (parsed.memoryPolicyFailure) {
+    markActionFailed(db, action.action_id, parsed.memoryPolicyFailure);
+    return;
+  }
   if (!parsed.project_id || !parsed.query) {
     markActionFailed(db, action.action_id);
     return;

@@ -1,4 +1,9 @@
-import { attemptCandidatesInOrder, resolveRoleLlmCandidates } from "@penumbra/core";
+import {
+  attemptCandidatesInOrder,
+  resolveLlmCandidateSelection,
+  resolveLlmHttpOptions,
+  resolveRoleLlmCandidates,
+} from "@penumbra/core";
 import { readFileSync } from "node:fs";
 
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
@@ -26,6 +31,7 @@ export interface BriefPromptOptions {
 }
 
 interface BriefSynthesizerOptions extends BriefPromptOptions {
+  candidateSelection?: "ordered" | "round-robin";
   log?: { warn?: (...a: unknown[]) => void; info?: (...a: unknown[]) => void };
 }
 
@@ -35,12 +41,13 @@ interface BriefSynthesizerEntry {
   apiKey: string;
   model: string;
   caPath?: string;
+  options?: Record<string, unknown>;
 }
 
 type BriefSynthesizerState = BriefSynthesizerEntry & { caPem?: string };
 
 interface ChatCompletionResponse {
-  choices?: { message?: { content?: string } }[];
+  choices?: { message?: { content?: string }; finish_reason?: string }[];
 }
 
 const DEFAULT_MAX_PROMPT_CHARS = 20_000;
@@ -155,6 +162,7 @@ class BriefSynthesizerImpl implements BriefSynthesizer {
   }
 
   private async callAgent(agent: BriefSynthesizerState, prompt: string): Promise<string> {
+    const options = resolveLlmHttpOptions(agent.options, { maxTokens: 2048, timeoutMs: 30_000 });
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (agent.apiKey) headers["Authorization"] = `Bearer ${agent.apiKey}`;
     const trimmed = agent.baseUrl.replace(/\/+$/, "");
@@ -164,10 +172,14 @@ class BriefSynthesizerImpl implements BriefSynthesizer {
     const init: RequestInit & { tls?: { ca: string } } = {
       method: "POST",
       headers,
+      signal: AbortSignal.timeout(options.timeoutMs),
       body: JSON.stringify({
+        ...options.requestExtras,
         model: agent.model,
         messages: [{ role: "user", content: prompt }],
-        max_tokens: 2048,
+        max_tokens: Math.min(2048, options.maxTokens),
+        stream: false,
+        n: 1,
         temperature: 0.3,
       }),
     };
@@ -179,8 +191,12 @@ class BriefSynthesizerImpl implements BriefSynthesizer {
       );
     }
     const json = (await res.json()) as ChatCompletionResponse;
+    if (json.choices?.[0]?.finish_reason === "length")
+      throw new Error("brief synthesizer response truncated by token limit");
     const rawContent = json.choices?.[0]?.message?.content ?? "";
-    return parseSynthesizerResponse(rawContent);
+    const markdown = parseSynthesizerResponse(rawContent);
+    if (!markdown) throw new Error("brief synthesizer empty response");
+    return markdown;
   }
 
   private logPromptShrink(
@@ -212,8 +228,8 @@ class BriefSynthesizerImpl implements BriefSynthesizer {
     }
     let rendered = renderBudgetedPrompt(input, this.opts);
     this.logPromptShrink(input, input.recent_memories.length, rendered, "budget");
-    const start = this.nextIndex % agentCount;
-    this.nextIndex = (start + 1) % agentCount;
+    const start = this.opts.candidateSelection === "ordered" ? 0 : this.nextIndex % agentCount;
+    if (this.opts.candidateSelection !== "ordered") this.nextIndex = (start + 1) % agentCount;
     // Try the round-robin pick first, then fail over to the remaining agents in
     // order. A single down seat (e.g. an unreachable local MLX endpoint) must not
     // degrade the brief to a stub when a healthy sibling is one retry away — only
@@ -318,6 +334,7 @@ export function createBriefSynthesizerFromAgentchat(
       apiKey: candidate.auth.source === "bearer" ? candidate.auth.token : "",
       model: candidate.model,
       caPath: candidate.caPath,
+      options: candidate.options,
     }));
 
   if (agents.length === 0) {
@@ -329,6 +346,9 @@ export function createBriefSynthesizerFromAgentchat(
   }
 
   return new BriefSynthesizerImpl(agents, fetchImpl, {
+    candidateSelection: resolveLlmCandidateSelection(
+      candidates[0]?.options?.["candidateSelection"],
+    ),
     log: services?.log,
     maxPromptChars: services?.maxPromptChars,
   });

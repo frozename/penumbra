@@ -9,6 +9,7 @@ import type { Uuid } from "../utils/uuid.js";
 import { isNearDuplicate, type NearDuplicateItem } from "../memory/near-dup.js";
 import { type T2MemoryWriteInput, T2MemoryWriteSchema } from "../schemas/memory.js";
 import { buildT2EmbedText, validateT2Body } from "./t2-embed-text.js";
+import { readSourceTranscriptContent } from "./t2-source-transcript.js";
 
 export const T2MemoryExtractionSchema = z.object({
   title: z.string().min(1),
@@ -346,6 +347,7 @@ export interface T2PromotionOpts {
   minEvents?: number;
   minTranscriptChars?: number;
   maxTranscriptChars?: number;
+  sourceTranscript?: boolean;
   highFrequencyThreshold?: number;
 }
 
@@ -400,7 +402,9 @@ export class T2Promotion {
       .filter((e) => e.event_type === "agent-prompt" || e.event_type === "agent-response")
       .map((e) => {
         const role = e.event_type === "agent-prompt" ? "User" : "Assistant";
-        const content = pickTranscriptContent(e.payload_summary, e.payload_json);
+        const content = this.opts.sourceTranscript
+          ? readSourceTranscriptContent(e.payload_json, e.payload_summary)
+          : pickTranscriptContent(e.payload_summary, e.payload_json);
         return content ? `${role}: ${content}` : null;
       })
       .filter(Boolean)
@@ -513,6 +517,7 @@ export class T2Promotion {
   private truncateTranscript(transcript: string): string {
     const maxTranscriptChars = this.opts.maxTranscriptChars ?? 20_000;
     if (transcript.length <= maxTranscriptChars) return transcript;
+    if (this.opts.sourceTranscript) throw new Error("source transcript exceeds character budget");
     return `${transcript.slice(0, 8000)}\n… [truncated] …\n${transcript.slice(-8000)}`;
   }
 

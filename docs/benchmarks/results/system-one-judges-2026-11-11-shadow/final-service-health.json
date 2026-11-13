@@ -1,0 +1,43 @@
+{
+  "capturedAt": "2026-11-11T22:24:49.109342+00:00",
+  "services": {
+    "granite": {
+      "httpStatus": 200,
+      "body": {
+        "status": "ok"
+      }
+    },
+    "embeddings": {
+      "httpStatus": 200,
+      "body": {
+        "status": "ok"
+      }
+    },
+    "penumbra": {
+      "httpStatus": 200,
+      "body": {
+        "status": "ok",
+        "version": "0.0.0",
+        "reviewBacklog": {
+          "open_lanes_count": 136,
+          "open_boundary_lanes_count": 0,
+          "oldest_open_lane_age_ms": 86431963
+        },
+        "lagMs": 1257.958582997322,
+        "llmRoleFloors": {
+          "ok": true,
+          "violations": []
+        },
+        "t2Promotion": {
+          "enabled": true,
+          "reason": "judge_configured",
+          "judge_env": "PENUMBRA_JUDGE_BASE_URL",
+          "empty_extraction_streak": 7318,
+          "healthy": false
+        }
+      }
+    }
+  },
+  "candidatePortOpen": false,
+  "graniteOriginalCommandVerified": true
+}

@@ -1,0 +1,14 @@
+{
+  "protocol": "systemone",
+  "promotionQuestionSet": "direct",
+  "baseUrl": "http://127.0.0.1:18945",
+  "model": "d3-nano",
+  "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+  "hardware": "Z13 Ryzen AI MAX+395,128GB; Gufo remains active; trial bypasses20GiB admission floor by explicit user instruction",
+  "runtime": "FastFlowLM1.0.12 cce7e5bb7d56af182b5051c12253175a86957b73 portable XRT; NPU-accelerated with CPU short attention; CPUQuota200%, MemoryHigh4GiB/Max6GiB, swap0; loopback via SSH; actual runtime context32768, frozen short inputs; vision not invoked",
+  "quantization": "Q4_K/GPTQ NPU q4nx package; exact pinned package, not Mac Q8 parity",
+  "contextTokens": 32768,
+  "timeoutMs": 5000,
+  "maxRequestBytes": 16384,
+  "allowRemote": false
+}

@@ -1,0 +1,11 @@
+{
+  "runs": [
+    "paired-q8"
+  ],
+  "incompleteSourcesAllowed": false,
+  "uniqueReviewUnits": 39,
+  "mappedRows": 95,
+  "packetSha256": "e4e61ca5786005b925356d872e91fe2c2319779806f9883e2193e8c5950f0fc6",
+  "mappingSha256": "0bf1c7d1306009041d707ff97437855276e694b675745b14a598669c9a2a22e2",
+  "method": "Exact input and gate-eligible text deduplication. No model identity or operational data in reviewer packet. Semantic labels attach only to exact input/query pairs. Incomplete source packets support preliminary blind review only, never a completed model score. First repetition primary, repeats not independent quality samples."
+}

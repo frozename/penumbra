@@ -1,0 +1,28 @@
+{
+  "observedAt": "2026-11-13T11:45:55.288716+00:00",
+  "memAvailableKiB": 21385972,
+  "swapFreeKiB": 8387496,
+  "gufoPid": 791917,
+  "originalGufoPidExists": true,
+  "/health": {
+    "status": "ok"
+  },
+  "/slots": [
+    {
+      "id": 0,
+      "is_processing": false,
+      "n_ctx": 131072
+    },
+    {
+      "id": 1,
+      "is_processing": false,
+      "n_ctx": 131072
+    },
+    {
+      "id": 2,
+      "is_processing": false,
+      "n_ctx": 131072
+    }
+  ],
+  "note": "Discrete post-canary OS snapshot, no peak memory, utilization, power, thermal or coding-contention measurement."
+}

@@ -1,0 +1,84 @@
+{
+  "status": "executed",
+  "config": {
+    "protocol": "constrained-promotion",
+    "promotionQuestionSet": "direct",
+    "baseUrl": "http://127.0.0.1:8086",
+    "model": "granite-mini-3b",
+    "revision": "resident-granite-4.1-3b-Q8_0; verify file hash in environment.json",
+    "hardware": "Mac mini M4 16 GiB; shared control plane",
+    "runtime": "llama.cpp 97f06e9eedd5190fa9373db5e0a954936e29c4c2 (existing service); fresh original process after restoration; reviewed corpus continuation; unchanged original runtime/model/flags",
+    "quantization": "Q8_0",
+    "contextTokens": 16384,
+    "timeoutMs": 20000,
+    "maxRequestBytes": 100000,
+    "allowRemote": false
+  },
+  "fixtureSha256": "12cab34541140109ae95d929a62e8cdbe3ee27f8b599432f657905664a9de567",
+  "firstRequestMs": 985.869417,
+  "requests": 320,
+  "answered": 317,
+  "failures": {
+    "invalid_response": 3
+  },
+  "p50LatencyMs": 682.4099159999896,
+  "p95LatencyMs": 787.44108400002,
+  "requestsPerSecond": 1.4456240942854466,
+  "quality": {
+    "calibration": {
+      "promote": {
+        "selected": 19,
+        "answered": 19,
+        "abstained": 0,
+        "coverage": 1,
+        "threshold": 0.5,
+        "tp": 11,
+        "fp": 0,
+        "tn": 5,
+        "fn": 3,
+        "precision": 1,
+        "recall": 0.7857142857142857,
+        "f1": 0.88,
+        "falsePromotionRate": 0,
+        "falseVetoRate": 0.21428571428571427,
+        "falseDiscoveryRate": 0,
+        "brier": 0.12999999999999998,
+        "calibrationError": 0.16842105263157892,
+        "falseVetoRateWithRejectFallback": 0.21428571428571427
+      }
+    },
+    "test": {
+      "promote": {
+        "selected": 259,
+        "answered": 256,
+        "abstained": 3,
+        "coverage": 0.9884169884169884,
+        "threshold": 0.5,
+        "tp": 50,
+        "fp": 39,
+        "tn": 151,
+        "fn": 16,
+        "precision": 0.5617977528089888,
+        "recall": 0.7575757575757576,
+        "f1": 0.6451612903225806,
+        "falsePromotionRate": 0.20526315789473684,
+        "falseVetoRate": 0.24242424242424243,
+        "falseDiscoveryRate": 0.43820224719101125,
+        "brier": 0.2362597656249999,
+        "calibrationError": 0.19003906250000036,
+        "falseVetoRateWithRejectFallback": 0.24242424242424243
+      }
+    }
+  },
+  "thresholdFit": {
+    "method": "calibration-only grid, max observed false-promotion rate 0.02; provisional labels",
+    "threshold": null,
+    "heldOut": null
+  },
+  "directThresholdFit": {
+    "threshold": null,
+    "heldOut": null
+  },
+  "authority": "none; mode=shadow, applied=false; no production database opened",
+  "qualityUses": "first iteration only; repeats are performance samples, not independent labels"
+}

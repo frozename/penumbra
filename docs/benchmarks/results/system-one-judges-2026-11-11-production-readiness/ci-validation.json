@@ -1,0 +1,139 @@
+{
+  "status": "passed",
+  "sourceCommit": "4fe01decbb522b850af84d5ac09dfa539dee6857",
+  "command": "bun run check:ci",
+  "gates": {
+    "passed": 7,
+    "failed": 0,
+    "skipped": 4
+  },
+  "testShardCounts": [
+    {
+      "pass": 632,
+      "skip": 3,
+      "fail": 0,
+      "assertions": 2498,
+      "tests": 635,
+      "files": 80
+    },
+    {
+      "pass": 2619,
+      "skip": 35,
+      "fail": 0,
+      "assertions": 10018,
+      "tests": 2654,
+      "files": 203
+    },
+    {
+      "pass": 58,
+      "skip": 3,
+      "fail": 0,
+      "assertions": 109,
+      "tests": 61,
+      "files": 7
+    },
+    {
+      "pass": 267,
+      "skip": 0,
+      "fail": 0,
+      "assertions": 504,
+      "tests": 267,
+      "files": 18
+    },
+    {
+      "pass": 980,
+      "skip": 1,
+      "fail": 0,
+      "assertions": 3279,
+      "tests": 981,
+      "files": 82
+    },
+    {
+      "pass": 387,
+      "skip": 0,
+      "fail": 0,
+      "assertions": 677,
+      "tests": 387,
+      "files": 30
+    },
+    {
+      "pass": 632,
+      "skip": 3,
+      "fail": 0,
+      "assertions": 2498,
+      "tests": 635,
+      "files": 80
+    },
+    {
+      "pass": 4154,
+      "skip": 6,
+      "fail": 0,
+      "assertions": 92855,
+      "tests": 4160,
+      "files": 303
+    },
+    {
+      "pass": 3304,
+      "skip": 61,
+      "fail": 0,
+      "assertions": 11954,
+      "tests": 3365,
+      "files": 296
+    },
+    {
+      "pass": 70,
+      "skip": 1,
+      "fail": 0,
+      "assertions": 231,
+      "tests": 71,
+      "files": 18
+    },
+    {
+      "pass": 43,
+      "skip": 0,
+      "fail": 0,
+      "assertions": 61,
+      "tests": 43,
+      "files": 4
+    },
+    {
+      "pass": 218,
+      "skip": 1,
+      "fail": 0,
+      "assertions": 621,
+      "tests": 219,
+      "files": 19
+    },
+    {
+      "pass": 852,
+      "skip": 0,
+      "fail": 0,
+      "assertions": 2851,
+      "tests": 852,
+      "files": 133
+    },
+    {
+      "pass": 676,
+      "skip": 0,
+      "fail": 0,
+      "assertions": 2142,
+      "tests": 676,
+      "files": 78
+    },
+    {
+      "pass": 1783,
+      "skip": 1,
+      "fail": 0,
+      "assertions": 6429,
+      "tests": 1784,
+      "files": 96
+    }
+  ],
+  "passedTestExecutions": 16675,
+  "baselineTypeDebt": "Scripts/test coverage ratchet remains at existing floor 8; no increase. Daemon/typeSafe packages zero errors.",
+  "rawLogPath": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/production-readiness/check-ci-final.log",
+  "rawLogSha256": "c38550bb5527f008fcfaca4e73be03d5cd9f85c72402e9bcb8503146604e8615",
+  "earlierRun": "All test shards passed; coverage gate found two new test/tool type errors and strict lint found issues. They were corrected; full CI rerun passed.",
+  "noModelInferenceDuringFinalCi": true,
+  "attestation": "Full CI checked source content committed as4fe01decb. Later comparator/test-only edits have targeted validation and are not included in this full-CI claim."
+}

@@ -1,0 +1,10 @@
+{
+  "sourceCommit": "39f1fe56157f41e363aba83d7f72e51361c656b3",
+  "command": "bun run check:ci",
+  "ciExitCode": 0,
+  "rawLogSha256": "871289b7fd152c08c29ba2a967602322ce0e0b9c410c15e87b01fa9e59d6cdf6",
+  "rawLogPath": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261113-generation/check-ci.final.log",
+  "runtimePlistUnchanged": true,
+  "heavyJobLock": "/Users/aimastermind/.penumbra/locks/heavy-job.lock",
+  "status": "passed"
+}

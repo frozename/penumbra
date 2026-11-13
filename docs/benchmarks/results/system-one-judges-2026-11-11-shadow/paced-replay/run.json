@@ -1,0 +1,17 @@
+{
+  "status": "executed",
+  "mode": "shadow",
+  "applied": false,
+  "methodology": "Paced read-only historical replay; incumbent ballots are exact-body-hash matched historical observations, not contemporaneous inference or ground truth. No labels or accuracy are inferred.",
+  "config": {
+    "baseUrl": "http://127.0.0.1:18944",
+    "model": "d3-nano-eval",
+    "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf"
+  },
+  "startedAt": "2026-11-11T22:09:14.952Z",
+  "endedAt": "2026-11-11T22:11:40.710Z",
+  "selected": 20,
+  "attempted": 5,
+  "answered": 4,
+  "interrupted": true
+}

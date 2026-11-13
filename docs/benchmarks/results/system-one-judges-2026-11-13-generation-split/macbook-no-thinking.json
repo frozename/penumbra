@@ -1,0 +1,278 @@
+{
+  "target": "macbook",
+  "base": "http://127.0.0.1:7944/v1",
+  "model": "kapitsa-q36-35b-a3b-4bit",
+  "config": "opencode-macbook-kapitsa",
+  "provider": "llamactl-macbook",
+  "startedAt": "2026-11-13T11:42:35.433Z",
+  "updatedAt": "2026-11-13T11:42:46.315Z",
+  "timeoutMs": 30000,
+  "concurrency": 1,
+  "temperature": 0,
+  "responseFormat": "json_object",
+  "requestExtras": {
+    "chat_template_kwargs": {
+      "enable_thinking": false
+    }
+  },
+  "method": "Synthetic output-semantic canary using existing production prompts/parser/schemas. Sequential, no retries, no production writes. Published controls are not independent quality acceptance. Extraction output cap 2048 (earlier Granite canary 16384); rewrite cap 512. Optional --no-thinking is a per-request template hint, not a server configuration change.",
+  "promptSha256": "f5b8eb570e7ed3f836e66cbf069e57b2f3e635f39febb26b0d10e4feaccb6e49",
+  "rows": [
+    {
+      "id": "decision",
+      "workload": "extraction",
+      "maxTokens": 2048,
+      "inputSha256": "b7f1978fc1dbff331261970463f6df6bfa6907fc2ce8d24df342422de4aaf498",
+      "raw": "{\n  \"memories\": [\n    {\n      \"title\": \"Public API backward compatibility window\",\n      \"body\": \"The public API must remain backward compatible for the next two releases. This constraint exists because deployed clients update on a quarterly schedule, and breaking changes would strand those clients.\",\n      \"kind\": \"decision\",\n      \"metadata\": {\n        \"constraint_type\": \"backward_compatibility\",\n        \"duration\": \"2 releases\"\n      },\n      \"why\": \"Client update schedules are quarterly and outside the project's control; breaking the API early would strand users.\",\n      \"source_quote\": \"Keep the public API backward compatible for the next two releases. Our deployed clients update quarterly, so breaking the API early would strand those clients.\",\n      \"promote\": true,\n      \"depth\": 2\n    }\n  ]\n}",
+      "reasoningChars": 0,
+      "finishReason": "stop",
+      "returnedModel": "kapitsa-q36-35b-a3b-4bit",
+      "usage": {
+        "prompt_tokens": 851,
+        "completion_tokens": 184,
+        "total_tokens": 1035,
+        "prompt_tokens_details": {
+          "cached_tokens": 844
+        },
+        "kapitsa": {
+          "prefill_ms": 116.2,
+          "kflash": {
+            "source": "DFlash2",
+            "cycles": 41
+          }
+        }
+      },
+      "timings": null,
+      "latencyMs": 1129.030041,
+      "passed": true,
+      "memories": [
+        {
+          "title": "Public API backward compatibility window",
+          "body": "The public API must remain backward compatible for the next two releases. This constraint exists because deployed clients update on a quarterly schedule, and breaking changes would strand those clients.",
+          "kind": "decision",
+          "metadata": {
+            "constraint_type": "backward_compatibility",
+            "duration": "2 releases"
+          },
+          "why": "Client update schedules are quarterly and outside the project's control; breaking the API early would strand users.",
+          "source_quote": "Keep the public API backward compatible for the next two releases. Our deployed clients update quarterly, so breaking the API early would strand those clients.",
+          "depth": 2,
+          "promote": true
+        }
+      ]
+    },
+    {
+      "id": "preference",
+      "workload": "extraction",
+      "maxTokens": 2048,
+      "inputSha256": "aff8876c6eb89ba2cc5a3bde0539248db6ec34bac759b4f1b0480da4d9fb3703",
+      "raw": "{\n  \"memories\": [\n    {\n      \"title\": \"Report Date Formatting Standard\",\n      \"body\": \"Reports must use YYYY-MM-DD (ISO 8601) date format. Slash-formatted dates are prohibited as they cause ambiguity when comparing reports across different regions.\",\n      \"kind\": \"preference\",\n      \"metadata\": {\n        \"scope\": \"reports\"\n      },\n      \"why\": \"User explicitly stated that slash-formatted dates cause ambiguity in cross-region comparisons, requiring a strict ISO format for consistency.\",\n      \"source_quote\": \"Always show dates in YYYY-MM-DD format in reports. I compare reports across regions and slash-formatted dates cause ambiguity.\",\n      \"promote\": true,\n      \"depth\": 1\n    }\n  ]\n}",
+      "reasoningChars": 0,
+      "finishReason": "stop",
+      "returnedModel": "kapitsa-q36-35b-a3b-4bit",
+      "usage": {
+        "prompt_tokens": 843,
+        "completion_tokens": 172,
+        "total_tokens": 1015,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "kapitsa": {
+          "prefill_ms": 735.2,
+          "kflash": {
+            "source": "DFlash2",
+            "cycles": 46
+          }
+        }
+      },
+      "timings": null,
+      "latencyMs": 1837.7917920000002,
+      "passed": true,
+      "memories": [
+        {
+          "title": "Report Date Formatting Standard",
+          "body": "Reports must use YYYY-MM-DD (ISO 8601) date format. Slash-formatted dates are prohibited as they cause ambiguity when comparing reports across different regions.",
+          "kind": "preference",
+          "metadata": {
+            "scope": "reports"
+          },
+          "why": "User explicitly stated that slash-formatted dates cause ambiguity in cross-region comparisons, requiring a strict ISO format for consistency.",
+          "source_quote": "Always show dates in YYYY-MM-DD format in reports. I compare reports across regions and slash-formatted dates cause ambiguity.",
+          "depth": 1,
+          "promote": true
+        }
+      ]
+    },
+    {
+      "id": "ephemeral",
+      "workload": "extraction",
+      "maxTokens": 2048,
+      "inputSha256": "eee5a630c22997d033a780f19af95675d39e4cc2eb28464c09baaf01442b6bef",
+      "raw": "{\"memories\":[]}",
+      "reasoningChars": 0,
+      "finishReason": "stop",
+      "returnedModel": "kapitsa-q36-35b-a3b-4bit",
+      "usage": {
+        "prompt_tokens": 842,
+        "completion_tokens": 6,
+        "total_tokens": 848,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "kapitsa": {
+          "prefill_ms": 727.8,
+          "kflash": {
+            "source": "DFlash2",
+            "cycles": 2
+          }
+        }
+      },
+      "timings": null,
+      "latencyMs": 840.529125,
+      "passed": true,
+      "memories": []
+    },
+    {
+      "id": "long-mixed",
+      "workload": "extraction",
+      "maxTokens": 2048,
+      "inputSha256": "cc87b8d1871c9bb0a124f2fe18788ad97a1756c9176ec952c0d3cdfda438395f",
+      "raw": "{\n  \"memories\": [\n    {\n      \"title\": \"Audit records must be append-only for seven years\",\n      \"body\": \"Audit records must be append-only for seven years because our contractual audit requirements prohibit rewriting historical records.\",\n      \"kind\": \"fact\",\n      \"metadata\": {\n        \"domain\": \"compliance\",\n        \"retention_period\": \"7 years\"\n      },\n      \"why\": \"This is a long-lived domain fact and contractual constraint that dictates system architecture (immutable storage) and cannot be derived from code alone.\",\n      \"source_quote\": \"Audit records must be append-only for seven years because our contractual audit requirements prohibit rewriting historical records.\",\n      \"depth\": 2,\n      \"promote\": true\n    }\n  ]\n}",
+      "reasoningChars": 0,
+      "finishReason": "stop",
+      "returnedModel": "kapitsa-q36-35b-a3b-4bit",
+      "usage": {
+        "prompt_tokens": 3721,
+        "completion_tokens": 171,
+        "total_tokens": 3892,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "kapitsa": {
+          "prefill_ms": 3162.1,
+          "kflash": {
+            "source": "DFlash2",
+            "cycles": 42
+          }
+        }
+      },
+      "timings": null,
+      "latencyMs": 4220.104375,
+      "passed": true,
+      "memories": [
+        {
+          "title": "Audit records must be append-only for seven years",
+          "body": "Audit records must be append-only for seven years because our contractual audit requirements prohibit rewriting historical records.",
+          "kind": "fact",
+          "metadata": {
+            "domain": "compliance",
+            "retention_period": "7 years"
+          },
+          "why": "This is a long-lived domain fact and contractual constraint that dictates system architecture (immutable storage) and cannot be derived from code alone.",
+          "source_quote": "Audit records must be append-only for seven years because our contractual audit requirements prohibit rewriting historical records.",
+          "depth": 2,
+          "promote": true
+        }
+      ]
+    },
+    {
+      "id": "public-sqlite",
+      "workload": "rewriter",
+      "maxTokens": 512,
+      "inputSha256": "311e87d3d8087546bca5e75fd301fd420481a2bb98fc5c92b77f59bfb65449e5",
+      "raw": "{\"kind\":\"query\",\"query\":\"SQLite WAL checkpoint starvation long running read transactions\"}",
+      "reasoningChars": 0,
+      "finishReason": "stop",
+      "returnedModel": "kapitsa-q36-35b-a3b-4bit",
+      "usage": {
+        "prompt_tokens": 780,
+        "completion_tokens": 17,
+        "total_tokens": 797,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "kapitsa": {
+          "prefill_ms": 752.8,
+          "kflash": {
+            "source": "DFlash2",
+            "cycles": 4
+          }
+        }
+      },
+      "timings": null,
+      "latencyMs": 917.5452079999995,
+      "passed": true,
+      "expected": "query",
+      "answer": {
+        "kind": "query",
+        "query": "SQLite WAL checkpoint starvation long running read transactions"
+      }
+    },
+    {
+      "id": "public-backpressure",
+      "workload": "rewriter",
+      "maxTokens": 512,
+      "inputSha256": "2be57fd20067bd98436ff9cef98ca109d6c339d664f376a21968eb10326e17ec",
+      "raw": "{\"kind\":\"query\",\"query\":\"bounded queues and backpressure asynchronous service\"}",
+      "reasoningChars": 0,
+      "finishReason": "stop",
+      "returnedModel": "kapitsa-q36-35b-a3b-4bit",
+      "usage": {
+        "prompt_tokens": 778,
+        "completion_tokens": 16,
+        "total_tokens": 794,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "kapitsa": {
+          "prefill_ms": 745.6,
+          "kflash": {
+            "source": "DFlash2",
+            "cycles": 5
+          }
+        }
+      },
+      "timings": null,
+      "latencyMs": 1205.579584000001,
+      "passed": true,
+      "expected": "query",
+      "answer": {
+        "kind": "query",
+        "query": "bounded queues and backpressure asynchronous service"
+      }
+    },
+    {
+      "id": "internal",
+      "workload": "rewriter",
+      "maxTokens": 512,
+      "inputSha256": "fcf3162e24b172f4df923503f82ae60186c9ef61292c9f3ec5b92d8f2d57cd9f",
+      "raw": "{\"kind\":\"skip\",\"reason\":\"internal handler names (dispatch_land, resolveBranchName) and task ID are project-specific\"}",
+      "reasoningChars": 0,
+      "finishReason": "stop",
+      "returnedModel": "kapitsa-q36-35b-a3b-4bit",
+      "usage": {
+        "prompt_tokens": 779,
+        "completion_tokens": 26,
+        "total_tokens": 805,
+        "prompt_tokens_details": {
+          "cached_tokens": 286
+        },
+        "kapitsa": {
+          "prefill_ms": 471.6,
+          "kflash": {
+            "source": "DFlash2",
+            "cycles": 9
+          }
+        }
+      },
+      "timings": null,
+      "latencyMs": 722.2087919999994,
+      "passed": true,
+      "expected": "skip",
+      "answer": {
+        "kind": "skip",
+        "reason": "internal handler names (dispatch_land, resolveBranchName) and task ID are project-specific"
+      }
+    }
+  ]
+}

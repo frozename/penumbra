@@ -1,0 +1,53 @@
+[
+  {
+    "ts": 1794481914.579408,
+    "kind": "preflight_passed",
+    "authorityChanged": false,
+    "localShadowEnabled": false,
+    "osReadProbePassed": true
+  },
+  {
+    "ts": 1794481914.847218,
+    "kind": "manual_process_stopped",
+    "role": "worker",
+    "pid": 52582
+  },
+  {
+    "ts": 1794481915.208808,
+    "kind": "manual_process_stopped",
+    "role": "daemon",
+    "pid": 52447
+  },
+  {
+    "ts": 1794481957.932394,
+    "kind": "activated_verified",
+    "pids": {
+      "daemon": 57483,
+      "worker": 57547
+    },
+    "authorityChanged": false,
+    "localShadowEnabled": false,
+    "graniteEndpoint": "http://127.0.0.1:18944/v1",
+    "health": {
+      "status": "ok",
+      "version": "0.0.0",
+      "reviewBacklog": {
+        "open_lanes_count": 89,
+        "open_boundary_lanes_count": 0,
+        "oldest_open_lane_age_ms": 88008195
+      },
+      "lagMs": 853.4760000000024,
+      "llmRoleFloors": {
+        "ok": true,
+        "violations": []
+      },
+      "t2Promotion": {
+        "enabled": true,
+        "reason": "judge_configured",
+        "judge_env": "PENUMBRA_JUDGE_BASE_URL",
+        "empty_extraction_streak": 7382,
+        "healthy": false
+      }
+    }
+  }
+]

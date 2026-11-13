@@ -1,0 +1,142 @@
+{
+  "method": "Five paced read-only historical hash-matched observations. Stored incumbent ballots are not contemporary inference or labels. No accuracy or population-performance claim. Each native request45s apart, exceeding30s idle sleep.",
+  "attempts": 5,
+  "answered": 5,
+  "candidatePromotions": 0,
+  "latencyP50Ms": 543.0943329999864,
+  "latencyP95Ms": 869.689708,
+  "allModeShadow": true,
+  "cases": [
+    {
+      "subjectId": "d1db216c-807c-4028-9f59-c6ad5547453b",
+      "candidatePromote": false,
+      "incumbentVotes": [
+        {
+          "promote": false,
+          "confidence": 0,
+          "seat": "local-granite-3b-q8-http",
+          "abstained": true,
+          "error_class": "http_502"
+        },
+        {
+          "promote": false,
+          "confidence": 0,
+          "seat": "local-gemma-e4b-judge-http",
+          "abstained": true,
+          "error_class": "http_404"
+        },
+        {
+          "promote": false,
+          "confidence": 0,
+          "seat": "local-qwen35-4b-judge-http",
+          "abstained": true,
+          "error_class": "http_404"
+        }
+      ]
+    },
+    {
+      "subjectId": "c5c1e730-c7ff-415f-984d-03bc58c7c158",
+      "candidatePromote": false,
+      "incumbentVotes": [
+        {
+          "promote": false,
+          "confidence": 0,
+          "seat": "local-granite-3b-q8-http",
+          "abstained": true,
+          "error_class": "http_502"
+        },
+        {
+          "promote": false,
+          "confidence": 0,
+          "seat": "local-gemma-e4b-judge-http",
+          "abstained": true,
+          "error_class": "http_404"
+        },
+        {
+          "promote": false,
+          "confidence": 0,
+          "seat": "local-qwen35-4b-judge-http",
+          "abstained": true,
+          "error_class": "http_404"
+        }
+      ]
+    },
+    {
+      "subjectId": "69837ea7-d487-4859-a48e-2f23260bece1",
+      "candidatePromote": false,
+      "incumbentVotes": [
+        {
+          "promote": false,
+          "confidence": 0,
+          "seat": "local-granite-3b-q8-http",
+          "abstained": true,
+          "error_class": "http_502"
+        },
+        {
+          "promote": false,
+          "confidence": 0,
+          "seat": "local-gemma-e4b-judge-http",
+          "abstained": true,
+          "error_class": "http_404"
+        },
+        {
+          "promote": false,
+          "confidence": 0,
+          "seat": "local-qwen35-4b-judge-http",
+          "abstained": true,
+          "error_class": "http_404"
+        }
+      ]
+    },
+    {
+      "subjectId": "aecb87cf-2b10-4134-81f4-d2fb0a07e61f",
+      "candidatePromote": false,
+      "incumbentVotes": [
+        {
+          "promote": false,
+          "confidence": 0.2,
+          "seat": "local-granite-3b-q8-http"
+        },
+        {
+          "promote": false,
+          "confidence": 0,
+          "seat": "local-gemma-e4b-judge-http",
+          "abstained": true,
+          "error_class": "http_404"
+        },
+        {
+          "promote": false,
+          "confidence": 0,
+          "seat": "local-qwen35-4b-judge-http",
+          "abstained": true,
+          "error_class": "http_404"
+        }
+      ]
+    },
+    {
+      "subjectId": "0aa3d0da-4d83-4cf5-9ac1-3fcd82a5820b",
+      "candidatePromote": false,
+      "incumbentVotes": [
+        {
+          "promote": false,
+          "confidence": 0.9,
+          "seat": "local-granite-3b-q8-http"
+        },
+        {
+          "promote": false,
+          "confidence": 0,
+          "seat": "local-gemma-e4b-judge-http",
+          "abstained": true,
+          "error_class": "http_404"
+        },
+        {
+          "promote": false,
+          "confidence": 0,
+          "seat": "local-qwen35-4b-judge-http",
+          "abstained": true,
+          "error_class": "http_404"
+        }
+      ]
+    }
+  ]
+}

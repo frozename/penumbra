@@ -1,0 +1,28 @@
+[
+  {
+    "at": "2026-11-13T14:49:45.288364+00:00",
+    "kind": "waiting_for_existing_heavy_job_lock",
+    "target": "granite-legacy"
+  },
+  {
+    "at": "2026-11-13T14:49:48.181387+00:00",
+    "kind": "admitted_and_warmed",
+    "modelPid": 999,
+    "routerPid": 590,
+    "warmupMs": 2803.683542064391,
+    "warmupCaveat": "Existing artifact/caches, not disk-cold latency. Warmup excluded from historical quality and latency.",
+    "samplerSha256": "48bbc866002bb89d8dc2134479db0ddecb170858d4a174f87b3ac11d9eb18a72",
+    "sourceCommit": "5063043587143f89c0a9dd00330c26bc0dadfc66"
+  },
+  {
+    "at": "2026-11-13T14:50:19.443669+00:00",
+    "kind": "replay_finished",
+    "exitCode": 0
+  },
+  {
+    "at": "2026-11-13T14:50:19.451237+00:00",
+    "kind": "finished_without_service_mutation",
+    "samePlistSha256": "b52d90c7f32eead8d1ddc233ba7059621fad866f9e5403ad8454387da731999d",
+    "controlPlaneStatus": "ok"
+  }
+]

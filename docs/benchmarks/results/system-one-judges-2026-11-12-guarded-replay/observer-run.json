@@ -1,0 +1,14 @@
+{
+  "startedAt": "2026-11-12T12:19:52.536Z",
+  "endedAt": "2026-11-12T12:34:50.799Z",
+  "endedBy": "duration",
+  "selected": 20,
+  "attempted": 18,
+  "answered": 17,
+  "mode": "shadow",
+  "applied": false,
+  "daemonShadowEnabled": false,
+  "productionDbOpenedReadonly": true,
+  "labelsSupplied": false,
+  "methodology": "Guarded paced historical replay through existing observer and strict client; no new live cases or independent accuracy claim. Resource admission per request; critical sensor separate from slow GPU sampling."
+}

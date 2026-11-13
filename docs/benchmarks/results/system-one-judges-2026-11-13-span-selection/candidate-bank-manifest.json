@@ -1,0 +1,212 @@
+{
+  "method": "Read-only actual source-text capture, no inference or production writes. Up to forty source sessions associated with stored T2 records plus forty other T1 sources; source sessions are pre-November10, while the referencing stored record may be newer, SHA256 order within strata. Stored retention is sampling enrichment only, never ground truth; reviewers do not receive stored memory bodies or stratum labels. Exclude both earlier generation cohorts. Cases may overlap other task-domain studies; no universal never-seen claim.",
+  "cases": 40,
+  "counts": {
+    "retainedSource": 0,
+    "otherRollup": 40
+  },
+  "privatePath": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261113-span-selection/candidate-bank.jsonl",
+  "inputSha256": "64c385785b67c11d4bedce79dcca321b8cecb95dfecce1665a863dfec8eb2205",
+  "caseHashes": [
+    {
+      "id": "bank-001",
+      "sha256": "08d24d4372f1bd59b50c9c2a46b9094ff9c05e1707b741a17988271936141830",
+      "chars": 7521
+    },
+    {
+      "id": "bank-002",
+      "sha256": "9e65976c73d93b72c227c015d1c3bb1513e239bcf4da42d7272603f75c2309cc",
+      "chars": 7346
+    },
+    {
+      "id": "bank-003",
+      "sha256": "da3fe9898afdc9355d6b39efe571cd4b1fe6d1540a98fd3f2ec76006aab0df79",
+      "chars": 8645
+    },
+    {
+      "id": "bank-004",
+      "sha256": "c3228fd17cbd266ed053580c295c8e822c3d9fad9ad64e09f0175a70b7d02e78",
+      "chars": 8178
+    },
+    {
+      "id": "bank-005",
+      "sha256": "8167870df322e836fd6adaddffd9cdb18df6992d017259f3ba694ddb7437159d",
+      "chars": 14098
+    },
+    {
+      "id": "bank-006",
+      "sha256": "d475cfd64ee0ca5d94f96ff6e61de6ec425328c68a0237862bcc936bb78a51b4",
+      "chars": 14421
+    },
+    {
+      "id": "bank-007",
+      "sha256": "06bc9b21036978d832acf5fb2f3bf089e4cfa77fe58c2e1589115d22f9491ac4",
+      "chars": 7699
+    },
+    {
+      "id": "bank-008",
+      "sha256": "e00d1ac2d14f9848455863bca71e345334f425eece2f8e9b386aafe4daf0759b",
+      "chars": 3202
+    },
+    {
+      "id": "bank-009",
+      "sha256": "dd1d44ffb0f531368389ef5ef857b2db99bc7659324dd02435cd4ee4b095f316",
+      "chars": 9065
+    },
+    {
+      "id": "bank-010",
+      "sha256": "aedc454059d1a67e1b41140881c57bc14bef237233a477ba5d5c24f17151a148",
+      "chars": 12498
+    },
+    {
+      "id": "bank-011",
+      "sha256": "75d6a8e82efa1ab170de5f8fadc2d03bd23a30e88a1eec7fd2509e3d55d0ffad",
+      "chars": 16733
+    },
+    {
+      "id": "bank-012",
+      "sha256": "5d6621238dac3ed62f4841d4db3dc568db12837d3cb2237f12182508a9f3c796",
+      "chars": 6816
+    },
+    {
+      "id": "bank-013",
+      "sha256": "8a2872dbfa6532a72da9e1c05db39ef04890c6b50e93439f53ac5b35c903498f",
+      "chars": 23295
+    },
+    {
+      "id": "bank-014",
+      "sha256": "c50c20761c61e1c11083ffd2c4f4a1209b41491e01d8a17d71caf2f9768706ac",
+      "chars": 6816
+    },
+    {
+      "id": "bank-015",
+      "sha256": "6cd9d6b1edaa687ecb0cbfbb8c18303075e0bfbdffe881c7fa3a515a3d90ea61",
+      "chars": 13114
+    },
+    {
+      "id": "bank-016",
+      "sha256": "bafa6c31d481ac611b7881a46fab2d19ed2d9a65b90c60b51446fddb15094b02",
+      "chars": 7555
+    },
+    {
+      "id": "bank-017",
+      "sha256": "b6acbbba7ad83963be22cf0bfd712d9decf26f9c9c8e40e7342731d12d7fe750",
+      "chars": 5095
+    },
+    {
+      "id": "bank-018",
+      "sha256": "23970f37ed21ad505170d0e77d97a451c2ea3ee19bf5a6697444cb8d6c36571a",
+      "chars": 5404
+    },
+    {
+      "id": "bank-019",
+      "sha256": "99148c15c3e31d54690b5ac9a8446987cfe542a9e3630547afc28af003df0766",
+      "chars": 15287
+    },
+    {
+      "id": "bank-020",
+      "sha256": "f9b82e436b076731a2950567bca0bf90547b6269a0df27e77d4c5f70bfc226c7",
+      "chars": 12144
+    },
+    {
+      "id": "bank-021",
+      "sha256": "b110671697528f67d278de2ffffcf0d1cebbaa8d8c1049af548ebb2871c910c1",
+      "chars": 12586
+    },
+    {
+      "id": "bank-022",
+      "sha256": "d765a2be320ca617e2e509c0d054e61158b7c33f18271df2d617a8b37ab76a90",
+      "chars": 4322
+    },
+    {
+      "id": "bank-023",
+      "sha256": "7b85f6040e2c91521cd2dbcff22d822f670fe5bd19406e5b56fb4be1b3585162",
+      "chars": 8565
+    },
+    {
+      "id": "bank-024",
+      "sha256": "021792db73bfadf7d7af0002639c431fcfa144bf48fe1e61ff68ee3e9df829c3",
+      "chars": 8490
+    },
+    {
+      "id": "bank-025",
+      "sha256": "0d80e408ad3ff1c2d761e2f7afde87c2bdd1ec249380ac76ff7cccd7fd3835e5",
+      "chars": 7380
+    },
+    {
+      "id": "bank-026",
+      "sha256": "b4e0d42184285c0574e09a2a7d2c0328a35efb5e44cc0521bbbde16b226b68a2",
+      "chars": 17007
+    },
+    {
+      "id": "bank-027",
+      "sha256": "c5cd888e560b3b6a93dde5e6dd7ebb8b597a66f53ff3854677ce3d6643013db9",
+      "chars": 13752
+    },
+    {
+      "id": "bank-028",
+      "sha256": "8d6c07d5e9a37c0d7b795bf2c40ca6faeff256d56c2804e7a96448cf8b956a42",
+      "chars": 7652
+    },
+    {
+      "id": "bank-029",
+      "sha256": "044dc655aa253a74c0f8f5493687166ac9311f4469c187bd8c6438a5a6a65db5",
+      "chars": 6885
+    },
+    {
+      "id": "bank-030",
+      "sha256": "af9dabb208ad8810de296dba9bdefe0939b4e48b6631d19ad8dc6475278c3c6d",
+      "chars": 9900
+    },
+    {
+      "id": "bank-031",
+      "sha256": "b16948f0ebf59105ea3af34d0c3c930b10732b83dc6b133912bcead3963e6a90",
+      "chars": 5485
+    },
+    {
+      "id": "bank-032",
+      "sha256": "ec8c35bce128bb4d16f9069b3caf7c532c965a3cfd7c64cf7eccf6104eb2757b",
+      "chars": 7732
+    },
+    {
+      "id": "bank-033",
+      "sha256": "cd252e12db60d01ef564394a90fa6807a95557f962cce811f8f39f12d16684bd",
+      "chars": 3269
+    },
+    {
+      "id": "bank-034",
+      "sha256": "8fba332362081fcc642a533ed0f2410ae82e5d174b3552471b2146d457a43eba",
+      "chars": 12642
+    },
+    {
+      "id": "bank-035",
+      "sha256": "e1a8c2c619d90788c970fe8b7ac384e6b6ed9373f399b6a94f50180570b26b70",
+      "chars": 8059
+    },
+    {
+      "id": "bank-036",
+      "sha256": "c2fcb9e18f7f228749ad0115c276003d520dfc20282b839b0e16d5d221929c57",
+      "chars": 10076
+    },
+    {
+      "id": "bank-037",
+      "sha256": "7b88fd54bc04d1878a56e2fad5b8727cf2b7bd717e038120321ee16d5f896d52",
+      "chars": 12732
+    },
+    {
+      "id": "bank-038",
+      "sha256": "6945942474ad5961a75ac30cdc5c3ddcc702304e5a3bad73a66d362247c77738",
+      "chars": 21987
+    },
+    {
+      "id": "bank-039",
+      "sha256": "1914945b6d0253f63c4839c15cc6f25c23c4224ee2aba7d83e588bd91215ec58",
+      "chars": 5390
+    },
+    {
+      "id": "bank-040",
+      "sha256": "36888280ec9671fac4a5fcd9d40b26c524fc3da90906d98602dfbe450b2e7679",
+      "chars": 4438
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "r1": {
+    "prompt_tokens": {
+      "n": 192,
+      "min": 741,
+      "median": 795.0,
+      "max": 872
+    },
+    "completion_tokens": {
+      "n": 192,
+      "min": 12,
+      "median": 20.0,
+      "max": 36
+    },
+    "total_tokens": {
+      "n": 192,
+      "min": 756,
+      "median": 815.0,
+      "max": 890
+    },
+    "reportedCachedPromptTokens": {
+      "n": 192,
+      "min": 0,
+      "median": 697.0,
+      "max": 697
+    }
+  },
+  "r2": {
+    "prompt_tokens": {
+      "n": 192,
+      "min": 827,
+      "median": 881.0,
+      "max": 958
+    },
+    "completion_tokens": {
+      "n": 192,
+      "min": 12,
+      "median": 20.0,
+      "max": 36
+    },
+    "total_tokens": {
+      "n": 192,
+      "min": 842,
+      "median": 902.0,
+      "max": 974
+    },
+    "reportedCachedPromptTokens": {
+      "n": 192,
+      "min": 40,
+      "median": 783.0,
+      "max": 783
+    }
+  }
+}

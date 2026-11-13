@@ -1,0 +1,49 @@
+{
+  "provenance": "Existing Jev decisions; model and body hash matched, no new hosted calls. Stored latency includes waiting for incumbent votes and is not isolated Jev inference latency. Question-version identity was not stored.",
+  "metrics": {
+    "selected": 3,
+    "answered": 3,
+    "abstained": 0,
+    "coverage": 1,
+    "threshold": 0.5,
+    "tp": 0,
+    "fp": 0,
+    "tn": 3,
+    "fn": 0,
+    "precision": null,
+    "recall": null,
+    "f1": null,
+    "falsePromotionRate": 0,
+    "falseVetoRate": null,
+    "falseDiscoveryRate": null,
+    "brier": 0.000012896666666666673,
+    "calibrationError": 0.0032333333333333346,
+    "falseVetoRateWithRejectFallback": null
+  },
+  "rows": [
+    {
+      "caseId": "hist-550eaabe-51ff-41d1-91cf-35a8a6fa147b",
+      "model": "jev-1.13.0",
+      "expected": false,
+      "probability": 0.001200000000000001,
+      "createdAt": "2026-11-10T11:32:03.317Z",
+      "storedLatencyMs": 4487
+    },
+    {
+      "caseId": "hist-523f9389-386e-44ef-a6b4-826b0e12eb6c",
+      "model": "jev-1.13.0",
+      "expected": false,
+      "probability": 0.0035000000000000035,
+      "createdAt": "2026-11-10T06:38:24.996Z",
+      "storedLatencyMs": 5140
+    },
+    {
+      "caseId": "hist-100c8269-0ebf-4280-b96e-9754a7bc1f1d",
+      "model": "jev-1.13.0",
+      "expected": false,
+      "probability": 0.004999999999999999,
+      "createdAt": "2026-11-11T17:12:27.522Z",
+      "storedLatencyMs": 1492
+    }
+  ]
+}

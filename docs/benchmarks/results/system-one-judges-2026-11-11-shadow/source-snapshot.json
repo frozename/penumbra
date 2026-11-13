@@ -1,0 +1,16 @@
+{
+  "purpose": "Final source reproduction pins; not an exact code-at-launch snapshot; corrected supervisor not rerun",
+  "files": {
+    "packages/config/src/env.ts": "a8eff9a36d8c96e606254bb3c8379bcc1a8a2e8f928172a82e42cec545767b35",
+    "packages/daemon/src/dreaming/config.ts": "594af113a2404e07e54e02856b93bcf42e89805eed143b6cc69a17a4c325138a",
+    "packages/daemon/src/dreaming/deps.ts": "0a15132c062fc726ddbc5b21c8fe94fb837f14a17f6798d7f00deb58d0c53827",
+    "packages/daemon/src/dreaming/local-promotion-shadow.ts": "cfb5c5250deaa0694012287cae62a0c6e41c91f406972aed5d8256af6f1030ba",
+    "packages/daemon/src/dreaming/local-promotion-shadow-runtime.ts": "e2d07371fc825242156781380ea38025711bb326ecf2b9054ec5891b1ffe3218",
+    "scripts/system-one-judge-observe.ts": "9c69b31dca72995aa5bf0a92be181510e32b9d6765dc7ce8561a587ee80d14c1",
+    "scripts/system-one-judge-review.ts": "ee64c27be9b7d9a81bfb4c73df862c19ceffce22f3f286bd6d4ffafb186766fd",
+    "docs/benchmarks/results/system-one-judges-2026-11-11-shadow/trial-supervisor.py": "d0073d572b8fb1b5489bf770afb94b1827c507d9e0a1a1208c37735b95f685e9",
+    "docs/benchmarks/results/system-one-judges-2026-11-11-shadow/trial-supervisor.executed.py": "3aa2afd1dccf094e6b68d57611da0308dd1d7a1db834fa07f46781f46d289405",
+    "docs/benchmarks/results/system-one-judges-2026-11-11-shadow/trial_cleanup.py": "7fbe4f8ca2a596c85508474c92dfdb3a4d266d076d40e90fe8ad1bfb0244aea8",
+    "docs/benchmarks/results/system-one-judges-2026-11-11-shadow/analyze.py": "6c239d79c93ed2a258facee7be62685293417d4f885183f9c720066a90e8b879"
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "executedPrivateScriptSha256": "cd2652effc7060ae4d120c9cbf6c325275b41e920e952da1a6df284970e80526",
+  "publicCopySha256": "cd2652effc7060ae4d120c9cbf6c325275b41e920e952da1a6df284970e80526",
+  "scope": "Exact executed fixed synthetic managed-Q8 availability and natural-sleep script. One32-token-cap local request, existing heavy lock/headroom checks; no private input, source/config/cache/research-queue/authority changes. Run from repo root only when intentional. Other small llama-labelled processes predate this phase and remain untouched;249MiB counts managed router/child only."
+}

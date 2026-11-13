@@ -1,0 +1,14 @@
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { loadAgentChatConfigUncached } from '../../../../packages/daemon/src/agentchat-config.ts';
+import { resolveT2ExtractionJudge } from '../../../../packages/daemon/src/workers/t2-promotion.ts';
+if(!process.argv.includes('--live'))throw new Error('Explicit --live required');
+const config=loadAgentChatConfigUncached();
+const a=config.agents.find(a=>a.name==='local-granite-3b-q8-http');
+if(a?.options.baseUrl!=='http://127.0.0.1:18944/v1'||a.options.model!=='granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf')throw new Error('unexpected Granite routing');
+const logs:unknown[][]=[];const log={info:(...v:unknown[])=>logs.push(v),warn:(...v:unknown[])=>logs.push(v),error:(...v:unknown[])=>logs.push(v)};
+const judge=resolveT2ExtractionJudge({log} as any);if(!judge)throw new Error('factory unavailable');
+const start=performance.now();const result=await judge('User: Run the tests and commit. Assistant: The tests passed in32ms and commit abc123 was created.');
+const evidence={at:new Date().toISOString(),method:'Actual T2 extraction factory with live user config and synthetic ephemeral input; no database writes; does not establish durable-positive extraction quality',granite:{name:a.name,model:a.options.model,baseUrl:a.options.baseUrl,roles:a.roles},latencyMs:performance.now()-start,result,logs};
+writeFileSync(join(import.meta.dir,'post-ci-granite-smoke.json'),JSON.stringify(evidence,null,2)+'\n');
+if(result.length!==0)throw new Error('ephemeral control should not create memory');console.log('actual configured T2 factory invoked local Granite; ephemeral control empty');

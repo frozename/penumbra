@@ -1,0 +1,815 @@
+{
+  "methodology": "Separate loopback Bun servers, same read-only two-table snapshot; repeated real P4 SQL synchronously in the server event loop; a separate Python thread polls health. Legacy 2 work requests vs grouped 50 is a stress/regression comparison, not a throughput ratio. Full CI was concurrently running on the host; production daemon/model services were untouched.",
+  "results": [
+    {
+      "variant": "legacy",
+      "iterations": 2,
+      "elapsedSeconds": 18.396778106689453,
+      "healthTimeoutMs": 200,
+      "healthFailures": 58,
+      "probes": [
+        {
+          "offsetSeconds": 0.02451801300048828,
+          "status": 200,
+          "wallMs": 12.71183299832046
+        },
+        {
+          "offsetSeconds": 0.33128881454467773,
+          "status": null,
+          "wallMs": 202.35562499146909
+        },
+        {
+          "offsetSeconds": 0.6436269283294678,
+          "status": null,
+          "wallMs": 202.31062511447817
+        },
+        {
+          "offsetSeconds": 0.9560017585754395,
+          "status": null,
+          "wallMs": 202.34795799478889
+        },
+        {
+          "offsetSeconds": 1.2621870040893555,
+          "status": null,
+          "wallMs": 202.34133303165436
+        },
+        {
+          "offsetSeconds": 1.568342924118042,
+          "status": null,
+          "wallMs": 202.35654094722122
+        },
+        {
+          "offsetSeconds": 1.8801798820495605,
+          "status": null,
+          "wallMs": 202.35479099210352
+        },
+        {
+          "offsetSeconds": 2.189054012298584,
+          "status": null,
+          "wallMs": 200.47387504018843
+        },
+        {
+          "offsetSeconds": 2.4970898628234863,
+          "status": null,
+          "wallMs": 200.70554199628532
+        },
+        {
+          "offsetSeconds": 2.8074848651885986,
+          "status": null,
+          "wallMs": 202.4482919368893
+        },
+        {
+          "offsetSeconds": 3.1168599128723145,
+          "status": null,
+          "wallMs": 200.49249997828156
+        },
+        {
+          "offsetSeconds": 3.4269168376922607,
+          "status": null,
+          "wallMs": 200.5495000630617
+        },
+        {
+          "offsetSeconds": 3.737001895904541,
+          "status": null,
+          "wallMs": 202.39729201421142
+        },
+        {
+          "offsetSeconds": 4.048802852630615,
+          "status": null,
+          "wallMs": 202.41991698276252
+        },
+        {
+          "offsetSeconds": 4.35877799987793,
+          "status": null,
+          "wallMs": 202.3619159590453
+        },
+        {
+          "offsetSeconds": 4.66797399520874,
+          "status": null,
+          "wallMs": 202.37658300902694
+        },
+        {
+          "offsetSeconds": 4.976041078567505,
+          "status": null,
+          "wallMs": 202.3453750880435
+        },
+        {
+          "offsetSeconds": 5.288459062576294,
+          "status": null,
+          "wallMs": 202.3741250159219
+        },
+        {
+          "offsetSeconds": 5.600818872451782,
+          "status": null,
+          "wallMs": 202.3302500601858
+        },
+        {
+          "offsetSeconds": 5.9081809520721436,
+          "status": null,
+          "wallMs": 202.34183396678418
+        },
+        {
+          "offsetSeconds": 6.213741779327393,
+          "status": null,
+          "wallMs": 202.34795904252678
+        },
+        {
+          "offsetSeconds": 6.526160001754761,
+          "status": null,
+          "wallMs": 202.38383393734694
+        },
+        {
+          "offsetSeconds": 6.837095022201538,
+          "status": null,
+          "wallMs": 201.34595804847777
+        },
+        {
+          "offsetSeconds": 7.14783787727356,
+          "status": null,
+          "wallMs": 201.4702920569107
+        },
+        {
+          "offsetSeconds": 7.458156108856201,
+          "status": null,
+          "wallMs": 202.39054202102125
+        },
+        {
+          "offsetSeconds": 7.76266884803772,
+          "status": null,
+          "wallMs": 202.39350001793355
+        },
+        {
+          "offsetSeconds": 8.068803787231445,
+          "status": null,
+          "wallMs": 202.40862492937595
+        },
+        {
+          "offsetSeconds": 8.371505975723267,
+          "status": null,
+          "wallMs": 202.4034169735387
+        },
+        {
+          "offsetSeconds": 8.676904916763306,
+          "status": null,
+          "wallMs": 200.54049999453127
+        },
+        {
+          "offsetSeconds": 8.903384923934937,
+          "status": 200,
+          "wallMs": 116.44216696731746
+        },
+        {
+          "offsetSeconds": 9.214817762374878,
+          "status": null,
+          "wallMs": 201.40179200097919
+        },
+        {
+          "offsetSeconds": 9.520416021347046,
+          "status": null,
+          "wallMs": 202.43529102299362
+        },
+        {
+          "offsetSeconds": 9.834518909454346,
+          "status": null,
+          "wallMs": 204.05479101464152
+        },
+        {
+          "offsetSeconds": 10.141983985900879,
+          "status": null,
+          "wallMs": 201.98620797600597
+        },
+        {
+          "offsetSeconds": 10.448866844177246,
+          "status": null,
+          "wallMs": 202.45504099875689
+        },
+        {
+          "offsetSeconds": 10.752048969268799,
+          "status": null,
+          "wallMs": 202.49320892617106
+        },
+        {
+          "offsetSeconds": 11.062180995941162,
+          "status": null,
+          "wallMs": 202.45491701643914
+        },
+        {
+          "offsetSeconds": 11.371116161346436,
+          "status": null,
+          "wallMs": 202.5027920026332
+        },
+        {
+          "offsetSeconds": 11.683634996414185,
+          "status": null,
+          "wallMs": 202.48758303932846
+        },
+        {
+          "offsetSeconds": 11.98644208908081,
+          "status": null,
+          "wallMs": 201.65429101325572
+        },
+        {
+          "offsetSeconds": 12.298974990844727,
+          "status": null,
+          "wallMs": 202.48416694812477
+        },
+        {
+          "offsetSeconds": 12.609534978866577,
+          "status": null,
+          "wallMs": 200.5323339253664
+        },
+        {
+          "offsetSeconds": 12.918880939483643,
+          "status": null,
+          "wallMs": 202.37120799720287
+        },
+        {
+          "offsetSeconds": 13.220979928970337,
+          "status": null,
+          "wallMs": 201.8375409534201
+        },
+        {
+          "offsetSeconds": 13.526203870773315,
+          "status": null,
+          "wallMs": 202.30020896997303
+        },
+        {
+          "offsetSeconds": 13.83857798576355,
+          "status": null,
+          "wallMs": 202.34766695648432
+        },
+        {
+          "offsetSeconds": 14.149364948272705,
+          "status": null,
+          "wallMs": 202.3652089992538
+        },
+        {
+          "offsetSeconds": 14.453502893447876,
+          "status": null,
+          "wallMs": 202.332166954875
+        },
+        {
+          "offsetSeconds": 14.764210939407349,
+          "status": null,
+          "wallMs": 200.67912503145635
+        },
+        {
+          "offsetSeconds": 15.06709098815918,
+          "status": null,
+          "wallMs": 202.36470794770867
+        },
+        {
+          "offsetSeconds": 15.379514932632446,
+          "status": null,
+          "wallMs": 202.39729108288884
+        },
+        {
+          "offsetSeconds": 15.689280986785889,
+          "status": null,
+          "wallMs": 202.44087500032037
+        },
+        {
+          "offsetSeconds": 15.999089002609253,
+          "status": null,
+          "wallMs": 202.39408395718783
+        },
+        {
+          "offsetSeconds": 16.30188298225403,
+          "status": null,
+          "wallMs": 202.34004210215062
+        },
+        {
+          "offsetSeconds": 16.613815784454346,
+          "status": null,
+          "wallMs": 202.31829199474305
+        },
+        {
+          "offsetSeconds": 16.926220893859863,
+          "status": null,
+          "wallMs": 202.37124990671873
+        },
+        {
+          "offsetSeconds": 17.23309087753296,
+          "status": null,
+          "wallMs": 202.33225007541478
+        },
+        {
+          "offsetSeconds": 17.54154086112976,
+          "status": null,
+          "wallMs": 202.4512920761481
+        },
+        {
+          "offsetSeconds": 17.847768783569336,
+          "status": null,
+          "wallMs": 202.34529196750373
+        },
+        {
+          "offsetSeconds": 18.156035900115967,
+          "status": null,
+          "wallMs": 202.3674170486629
+        },
+        {
+          "offsetSeconds": 18.286678075790405,
+          "status": 200,
+          "wallMs": 23.055708035826683
+        }
+      ],
+      "requests": [
+        {
+          "elapsedMs": 8877.687249999999,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 9275.446375000001,
+          "selected": 4
+        }
+      ]
+    },
+    {
+      "variant": "grouped",
+      "iterations": 50,
+      "elapsedSeconds": 5.892618894577026,
+      "healthTimeoutMs": 200,
+      "healthFailures": 0,
+      "probes": [
+        {
+          "offsetSeconds": 0.001004934310913086,
+          "status": 200,
+          "wallMs": 0.663875020109117
+        },
+        {
+          "offsetSeconds": 0.11149191856384277,
+          "status": 200,
+          "wallMs": 0.46133401338011026
+        },
+        {
+          "offsetSeconds": 0.21855497360229492,
+          "status": 200,
+          "wallMs": 0.38716697599738836
+        },
+        {
+          "offsetSeconds": 0.32381486892700195,
+          "status": 200,
+          "wallMs": 0.32591703347861767
+        },
+        {
+          "offsetSeconds": 0.42455601692199707,
+          "status": 200,
+          "wallMs": 0.4529999569058418
+        },
+        {
+          "offsetSeconds": 0.5349149703979492,
+          "status": 200,
+          "wallMs": 0.3372920909896493
+        },
+        {
+          "offsetSeconds": 0.639585018157959,
+          "status": 200,
+          "wallMs": 0.31170796137303114
+        },
+        {
+          "offsetSeconds": 0.7476217746734619,
+          "status": 200,
+          "wallMs": 0.3666250267997384
+        },
+        {
+          "offsetSeconds": 0.857374906539917,
+          "status": 200,
+          "wallMs": 0.33370801247656345
+        },
+        {
+          "offsetSeconds": 0.9669110774993896,
+          "status": 200,
+          "wallMs": 0.3451670054346323
+        },
+        {
+          "offsetSeconds": 1.0714869499206543,
+          "status": 200,
+          "wallMs": 0.32604194711893797
+        },
+        {
+          "offsetSeconds": 1.1747639179229736,
+          "status": 200,
+          "wallMs": 0.5148750497028232
+        },
+        {
+          "offsetSeconds": 1.285193920135498,
+          "status": 200,
+          "wallMs": 0.40437502320855856
+        },
+        {
+          "offsetSeconds": 1.3905699253082275,
+          "status": 200,
+          "wallMs": 0.41270803194493055
+        },
+        {
+          "offsetSeconds": 1.4926447868347168,
+          "status": 200,
+          "wallMs": 0.45849999878555536
+        },
+        {
+          "offsetSeconds": 1.603179931640625,
+          "status": 200,
+          "wallMs": 0.5146670155227184
+        },
+        {
+          "offsetSeconds": 1.713655948638916,
+          "status": 200,
+          "wallMs": 0.4467080580070615
+        },
+        {
+          "offsetSeconds": 1.8241209983825684,
+          "status": 200,
+          "wallMs": 0.44483295641839504
+        },
+        {
+          "offsetSeconds": 1.929135799407959,
+          "status": 200,
+          "wallMs": 0.37062494084239006
+        },
+        {
+          "offsetSeconds": 2.031775951385498,
+          "status": 200,
+          "wallMs": 0.44116692151874304
+        },
+        {
+          "offsetSeconds": 2.1377201080322266,
+          "status": 200,
+          "wallMs": 0.3583749057725072
+        },
+        {
+          "offsetSeconds": 2.241374969482422,
+          "status": 200,
+          "wallMs": 1.9571658922359347
+        },
+        {
+          "offsetSeconds": 2.343148946762085,
+          "status": 200,
+          "wallMs": 0.5104999290779233
+        },
+        {
+          "offsetSeconds": 2.45259690284729,
+          "status": 200,
+          "wallMs": 0.4428749671205878
+        },
+        {
+          "offsetSeconds": 2.5603859424591064,
+          "status": 200,
+          "wallMs": 0.536374980583787
+        },
+        {
+          "offsetSeconds": 2.670045852661133,
+          "status": 200,
+          "wallMs": 0.4146250430494547
+        },
+        {
+          "offsetSeconds": 2.774817943572998,
+          "status": 200,
+          "wallMs": 0.43591600842773914
+        },
+        {
+          "offsetSeconds": 2.8812990188598633,
+          "status": 200,
+          "wallMs": 0.4130830056965351
+        },
+        {
+          "offsetSeconds": 2.9906959533691406,
+          "status": 200,
+          "wallMs": 0.33258297480642796
+        },
+        {
+          "offsetSeconds": 3.1009888648986816,
+          "status": 200,
+          "wallMs": 0.2776249311864376
+        },
+        {
+          "offsetSeconds": 3.2113258838653564,
+          "status": 200,
+          "wallMs": 0.3196250181645155
+        },
+        {
+          "offsetSeconds": 3.321619987487793,
+          "status": 200,
+          "wallMs": 0.27979095466434956
+        },
+        {
+          "offsetSeconds": 3.4319920539855957,
+          "status": 200,
+          "wallMs": 0.3559170290827751
+        },
+        {
+          "offsetSeconds": 3.5390138626098633,
+          "status": 200,
+          "wallMs": 0.2592080272734165
+        },
+        {
+          "offsetSeconds": 3.641842842102051,
+          "status": 200,
+          "wallMs": 0.5113750230520964
+        },
+        {
+          "offsetSeconds": 3.7449028491973877,
+          "status": 200,
+          "wallMs": 0.3463750472292304
+        },
+        {
+          "offsetSeconds": 3.855360984802246,
+          "status": 200,
+          "wallMs": 0.43699995148926973
+        },
+        {
+          "offsetSeconds": 3.958066940307617,
+          "status": 200,
+          "wallMs": 0.38708397187292576
+        },
+        {
+          "offsetSeconds": 4.067918062210083,
+          "status": 200,
+          "wallMs": 0.4081249935552478
+        },
+        {
+          "offsetSeconds": 4.170228004455566,
+          "status": 200,
+          "wallMs": 0.48166699707508087
+        },
+        {
+          "offsetSeconds": 4.272234916687012,
+          "status": 200,
+          "wallMs": 0.3747090231627226
+        },
+        {
+          "offsetSeconds": 4.379366874694824,
+          "status": 200,
+          "wallMs": 0.48029201570898294
+        },
+        {
+          "offsetSeconds": 4.4897449016571045,
+          "status": 200,
+          "wallMs": 0.36058295518159866
+        },
+        {
+          "offsetSeconds": 4.600050926208496,
+          "status": 200,
+          "wallMs": 0.2917080419138074
+        },
+        {
+          "offsetSeconds": 4.712441921234131,
+          "status": 200,
+          "wallMs": 6.776624941267073
+        },
+        {
+          "offsetSeconds": 4.8293681144714355,
+          "status": 200,
+          "wallMs": 6.900875014252961
+        },
+        {
+          "offsetSeconds": 4.9349730014801025,
+          "status": 200,
+          "wallMs": 0.4349170485511422
+        },
+        {
+          "offsetSeconds": 5.041401147842407,
+          "status": 200,
+          "wallMs": 0.36112498492002487
+        },
+        {
+          "offsetSeconds": 5.142194986343384,
+          "status": 200,
+          "wallMs": 0.3126249648630619
+        },
+        {
+          "offsetSeconds": 5.245562791824341,
+          "status": 200,
+          "wallMs": 0.42108295019716024
+        },
+        {
+          "offsetSeconds": 5.35360312461853,
+          "status": 200,
+          "wallMs": 0.320750055834651
+        },
+        {
+          "offsetSeconds": 5.458053827285767,
+          "status": 200,
+          "wallMs": 0.3717090003192425
+        },
+        {
+          "offsetSeconds": 5.566120862960815,
+          "status": 200,
+          "wallMs": 0.3423749003559351
+        },
+        {
+          "offsetSeconds": 5.676438093185425,
+          "status": 200,
+          "wallMs": 0.3637910122051835
+        },
+        {
+          "offsetSeconds": 5.782536029815674,
+          "status": 200,
+          "wallMs": 0.31691696494817734
+        }
+      ],
+      "requests": [
+        {
+          "elapsedMs": 9.641458000000002,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 9.344415999999995,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 9.420041999999995,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 9.574917000000028,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 9.720583999999974,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 9.614750000000072,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 9.89995799999997,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 9.75933299999997,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 9.905749999999898,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.306125000000065,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 9.886833000000024,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.061790999999857,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.194083999999975,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.228207999999995,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.268958000000111,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.360584000000017,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 11.20487500000013,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.747959000000037,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.54574999999977,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.904292000000169,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.322583000000122,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.416541999999936,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 12.475832999999966,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.228665999999976,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.282208999999966,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.162832999999864,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.15112500000032,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.081625000000258,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.017083000000184,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.107750000000124,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.403708999999708,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.206625000000258,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.312124999999924,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.109708999999839,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.218875000000025,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.358625000000757,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.19800000000032,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.178417000000081,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.104333000000224,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.113957999999911,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.583208999999442,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.836832999999388,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.55212500000016,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.624667000000045,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.38591600000018,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.733666999999514,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 11.303417000000081,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 10.618875000000116,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 11.405707999999322,
+          "selected": 4
+        },
+        {
+          "elapsedMs": 11.089249999999993,
+          "selected": 4
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "tests": {
+    "passed": 351,
+    "failed": 0,
+    "files": 26,
+    "assertions": 1314,
+    "scope": "TypeSafe package, benchmark/observer/review tools, daemon local-shadow/runtime/deps/config, P1 and existing Typesafe shadow seats, worker judge, existing Jev replay suites"
+  },
+  "typecheck": {
+    "command": "bun run typecheck",
+    "exitCode": 0
+  },
+  "typedLint": {
+    "exitCode": 0,
+    "warnings": 0,
+    "scope": [
+      "packages/config/src/env.ts",
+      "packages/daemon/src/dreaming/config.ts",
+      "packages/daemon/src/dreaming/deps.ts",
+      "packages/daemon/src/dreaming/local-promotion-shadow.ts",
+      "packages/daemon/src/dreaming/local-promotion-shadow-runtime.ts",
+      "packages/daemon/test/dreaming/deps.test.ts",
+      "packages/daemon/test/dreaming/local-shadow-runtime.test.ts",
+      "packages/daemon/test/local-promotion-shadow.test.ts",
+      "scripts/system-one-judge-observe.test.ts",
+      "scripts/system-one-judge-review.test.ts",
+      "scripts/system-one-judge-observe.ts",
+      "scripts/system-one-judge-review.ts"
+    ],
+    "heapCapMiB": 8192
+  },
+  "pythonCleanupTests": {
+    "passed": 3,
+    "failed": 0,
+    "command": "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s docs/benchmarks/results/system-one-judges-2026-11-11-shadow -p '*_test.py'"
+  },
+  "pythonSyntax": "All recorded Python sources AST parsed",
+  "rawEnvLint": "strict check passed for local-promotion-shadow*.ts",
+  "syncExecLint": "passed for local-promotion-shadow*.ts",
+  "notRun": [
+    "full CI parity/merge gate",
+    "independent quality adjudication",
+    "production-connected shadow deployment",
+    "corrected full supervisor service run",
+    "additional candidate inference after health guard failed"
+  ],
+  "diffCheck": "Full branch diff checked after text-log normalization",
+  "artifactIntegrity": "Source pins, private review packet hash and tracked log hashes verified; no raw review text found in public artifact snapshots"
+}

@@ -1,0 +1,252 @@
+{
+  "target": "granite",
+  "base": "http://127.0.0.1:18944/v1",
+  "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+  "startedAt": "2026-11-13T11:42:47.289Z",
+  "updatedAt": "2026-11-13T11:43:00.788Z",
+  "timeoutMs": 30000,
+  "concurrency": 1,
+  "temperature": 0,
+  "responseFormat": "json_object",
+  "requestExtras": {},
+  "method": "Synthetic output-semantic canary using existing production prompts/parser/schemas. Sequential, no retries, no production writes. Published controls are not independent quality acceptance. Extraction output cap 2048 (earlier Granite canary 16384); rewrite cap 512. Optional --no-thinking is a per-request template hint, not a server configuration change.",
+  "promptSha256": "f5b8eb570e7ed3f836e66cbf069e57b2f3e635f39febb26b0d10e4feaccb6e49",
+  "rows": [
+    {
+      "id": "decision",
+      "workload": "extraction",
+      "maxTokens": 2048,
+      "inputSha256": "b7f1978fc1dbff331261970463f6df6bfa6907fc2ce8d24df342422de4aaf498",
+      "raw": "{\"memories\": []}",
+      "reasoningChars": 0,
+      "finishReason": "stop",
+      "returnedModel": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+      "usage": {
+        "completion_tokens": 7,
+        "prompt_tokens": 820,
+        "total_tokens": 827,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "timings": {
+        "cache_n": 0,
+        "prompt_n": 820,
+        "prompt_ms": 1679.273,
+        "prompt_per_token_ms": 2.047893902439024,
+        "prompt_per_second": 488.3065469402533,
+        "predicted_n": 7,
+        "predicted_ms": 218.112,
+        "predicted_per_token_ms": 36.352,
+        "predicted_per_second": 27.508802816901408
+      },
+      "latencyMs": 2900.0853749999997,
+      "passed": false,
+      "memories": []
+    },
+    {
+      "id": "preference",
+      "workload": "extraction",
+      "maxTokens": 2048,
+      "inputSha256": "aff8876c6eb89ba2cc5a3bde0539248db6ec34bac759b4f1b0480da4d9fb3703",
+      "raw": "{\"memories\":[]}",
+      "reasoningChars": 0,
+      "finishReason": "stop",
+      "returnedModel": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+      "usage": {
+        "completion_tokens": 6,
+        "prompt_tokens": 812,
+        "total_tokens": 818,
+        "prompt_tokens_details": {
+          "cached_tokens": 769
+        }
+      },
+      "timings": {
+        "cache_n": 769,
+        "prompt_n": 43,
+        "prompt_ms": 140.696,
+        "prompt_per_token_ms": 3.272,
+        "prompt_per_second": 305.6234718826406,
+        "predicted_n": 6,
+        "predicted_ms": 182.473,
+        "predicted_per_token_ms": 36.494600000000005,
+        "predicted_per_second": 27.40131416702745
+      },
+      "latencyMs": 325.95004199999994,
+      "passed": false,
+      "memories": []
+    },
+    {
+      "id": "ephemeral",
+      "workload": "extraction",
+      "maxTokens": 2048,
+      "inputSha256": "eee5a630c22997d033a780f19af95675d39e4cc2eb28464c09baaf01442b6bef",
+      "raw": "{\"memories\":[]}",
+      "reasoningChars": 0,
+      "finishReason": "stop",
+      "returnedModel": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+      "usage": {
+        "completion_tokens": 6,
+        "prompt_tokens": 808,
+        "total_tokens": 814,
+        "prompt_tokens_details": {
+          "cached_tokens": 769
+        }
+      },
+      "timings": {
+        "cache_n": 769,
+        "prompt_n": 39,
+        "prompt_ms": 139.34,
+        "prompt_per_token_ms": 3.572820512820513,
+        "prompt_per_second": 279.89091431032006,
+        "predicted_n": 6,
+        "predicted_ms": 183.011,
+        "predicted_per_token_ms": 36.602199999999996,
+        "predicted_per_second": 27.32076213998066
+      },
+      "latencyMs": 324.61516699999993,
+      "passed": true,
+      "memories": []
+    },
+    {
+      "id": "long-mixed",
+      "workload": "extraction",
+      "maxTokens": 2048,
+      "inputSha256": "cc87b8d1871c9bb0a124f2fe18788ad97a1756c9176ec952c0d3cdfda438395f",
+      "raw": "{\"memories\": []}",
+      "reasoningChars": 0,
+      "finishReason": "stop",
+      "returnedModel": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+      "usage": {
+        "completion_tokens": 7,
+        "prompt_tokens": 3330,
+        "total_tokens": 3337,
+        "prompt_tokens_details": {
+          "cached_tokens": 767
+        }
+      },
+      "timings": {
+        "cache_n": 767,
+        "prompt_n": 2563,
+        "prompt_ms": 6027.224,
+        "prompt_per_token_ms": 2.351628560280921,
+        "prompt_per_second": 425.2372236372831,
+        "predicted_n": 7,
+        "predicted_ms": 234.85,
+        "predicted_per_token_ms": 39.141666666666666,
+        "predicted_per_second": 25.548222269533746
+      },
+      "latencyMs": 6266.502708,
+      "passed": false,
+      "memories": []
+    },
+    {
+      "id": "public-sqlite",
+      "workload": "rewriter",
+      "maxTokens": 512,
+      "inputSha256": "311e87d3d8087546bca5e75fd301fd420481a2bb98fc5c92b77f59bfb65449e5",
+      "raw": "{\"kind\":\"query\",\"query\":\"SQLite WAL checkpoint starvation handling busy mode\"}",
+      "reasoningChars": 0,
+      "finishReason": "stop",
+      "returnedModel": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+      "usage": {
+        "completion_tokens": 16,
+        "prompt_tokens": 737,
+        "total_tokens": 753,
+        "prompt_tokens_details": {
+          "cached_tokens": 1
+        }
+      },
+      "timings": {
+        "cache_n": 1,
+        "prompt_n": 736,
+        "prompt_ms": 1564.802,
+        "prompt_per_token_ms": 2.1260896739130435,
+        "prompt_per_second": 470.347047102445,
+        "predicted_n": 16,
+        "predicted_ms": 553.886,
+        "predicted_per_token_ms": 36.92573333333333,
+        "predicted_per_second": 27.0813849781363
+      },
+      "latencyMs": 2123.3563749999994,
+      "passed": true,
+      "expected": "query",
+      "answer": {
+        "kind": "query",
+        "query": "SQLite WAL checkpoint starvation handling busy mode"
+      }
+    },
+    {
+      "id": "public-backpressure",
+      "workload": "rewriter",
+      "maxTokens": 512,
+      "inputSha256": "2be57fd20067bd98436ff9cef98ca109d6c339d664f376a21968eb10326e17ec",
+      "raw": "{\"kind\":\"query\",\"query\":\"bounded queues backpressure design pattern\"}",
+      "reasoningChars": 0,
+      "finishReason": "stop",
+      "returnedModel": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+      "usage": {
+        "completion_tokens": 15,
+        "prompt_tokens": 735,
+        "total_tokens": 750,
+        "prompt_tokens_details": {
+          "cached_tokens": 697
+        }
+      },
+      "timings": {
+        "cache_n": 697,
+        "prompt_n": 38,
+        "prompt_ms": 142.515,
+        "prompt_per_token_ms": 3.750394736842105,
+        "prompt_per_second": 266.6385994456724,
+        "predicted_n": 15,
+        "predicted_ms": 531.897,
+        "predicted_per_token_ms": 37.99264285714286,
+        "predicted_per_second": 26.320885434586017
+      },
+      "latencyMs": 688.1902499999997,
+      "passed": true,
+      "expected": "query",
+      "answer": {
+        "kind": "query",
+        "query": "bounded queues backpressure design pattern"
+      }
+    },
+    {
+      "id": "internal",
+      "workload": "rewriter",
+      "maxTokens": 512,
+      "inputSha256": "fcf3162e24b172f4df923503f82ae60186c9ef61292c9f3ec5b92d8f2d57cd9f",
+      "raw": "{\"kind\":\"skip\",\"reason\":\"internal helper name and task ID are not publicly searchable\"}",
+      "reasoningChars": 0,
+      "finishReason": "stop",
+      "returnedModel": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+      "usage": {
+        "completion_tokens": 19,
+        "prompt_tokens": 735,
+        "total_tokens": 754,
+        "prompt_tokens_details": {
+          "cached_tokens": 697
+        }
+      },
+      "timings": {
+        "cache_n": 697,
+        "prompt_n": 38,
+        "prompt_ms": 144.311,
+        "prompt_per_token_ms": 3.7976578947368425,
+        "prompt_per_second": 263.3201904220745,
+        "predicted_n": 19,
+        "predicted_ms": 703.04,
+        "predicted_per_token_ms": 39.05777777777777,
+        "predicted_per_second": 25.603095129722348
+      },
+      "latencyMs": 858.8933749999997,
+      "passed": true,
+      "expected": "skip",
+      "answer": {
+        "kind": "skip",
+        "reason": "internal helper name and task ID are not publicly searchable"
+      }
+    }
+  ]
+}

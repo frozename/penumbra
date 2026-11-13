@@ -1,0 +1,82 @@
+{
+  "evaluation": "provisional labels; answered common held-out cases only, not population quality",
+  "selected": 259,
+  "commonAnswered": 259,
+  "missing": [],
+  "incumbent": {
+    "selected": 259,
+    "answered": 259,
+    "abstained": 0,
+    "coverage": 1,
+    "threshold": 0.5,
+    "tp": 55,
+    "fp": 0,
+    "tn": 193,
+    "fn": 11,
+    "precision": 1,
+    "recall": 0.8333333333333334,
+    "f1": 0.9090909090909091,
+    "falsePromotionRate": 0,
+    "falseVetoRate": 0.16666666666666666,
+    "falseDiscoveryRate": 0,
+    "brier": 0.03727124456370028,
+    "calibrationError": 0.09073510809198189,
+    "falseVetoRateWithRejectFallback": 0.16666666666666666,
+    "p50LatencyMs": 299.6360829999976,
+    "p95LatencyMs": 339.3396670000002
+  },
+  "candidate": {
+    "selected": 259,
+    "answered": 259,
+    "abstained": 0,
+    "coverage": 1,
+    "threshold": 0.5,
+    "tp": 58,
+    "fp": 0,
+    "tn": 193,
+    "fn": 8,
+    "precision": 1,
+    "recall": 0.8787878787878788,
+    "f1": 0.9354838709677419,
+    "falsePromotionRate": 0,
+    "falseVetoRate": 0.12121212121212122,
+    "falseDiscoveryRate": 0,
+    "brier": 0.0370350767448115,
+    "calibrationError": 0.10084742151671579,
+    "falseVetoRateWithRejectFallback": 0.12121212121212122,
+    "p50LatencyMs": 310.4440840000025,
+    "p95LatencyMs": 337.79237499999726
+  },
+  "disagreements": [
+    {
+      "caseId": "synthetic:ce451102a48b0a4684319482",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "synthetic:d55ecab1eea9b07e7dde0f27",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "synthetic:8baf942e0d738ad5bbad6474",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "synthetic:9a1c3d8086465c1103fc7a81",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "synthetic:685d1e88ee2ce541b7f5fbd6",
+      "expected": true,
+      "incumbent": true,
+      "candidate": false
+    }
+  ]
+}

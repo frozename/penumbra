@@ -1,0 +1,639 @@
+{
+  "method": "Synthetic lifecycle/queue checks, no production routing or writes; stock router one-hot and idle sleep; not a quality benchmark",
+  "root": 47770,
+  "events": [
+    {
+      "ts": 1794479659.561,
+      "kind": "start"
+    },
+    {
+      "ts": 1794479660.625,
+      "kind": "idle_before",
+      "values": [
+        {
+          "pid": 47770,
+          "lines": [
+            "Physical footprint:         39.5M",
+            "Physical footprint (peak):  116.2M"
+          ]
+        },
+        {
+          "pid": 48486,
+          "lines": [
+            "Physical footprint:         78.3M",
+            "Physical footprint (peak):  812.4M"
+          ]
+        }
+      ]
+    },
+    {
+      "ts": 1794479663.933,
+      "kind": "concurrent_pair",
+      "iteration": 0,
+      "results": [
+        {
+          "kind": "generative",
+          "ms": 3305.569791
+        },
+        {
+          "kind": "native",
+          "ms": 528.2491660000001
+        }
+      ]
+    },
+    {
+      "ts": 1794479665.005,
+      "kind": "concurrent_pair",
+      "iteration": 1,
+      "results": [
+        {
+          "kind": "generative",
+          "ms": 338.41508299999987
+        },
+        {
+          "kind": "native",
+          "ms": 1070.6476249999996
+        }
+      ]
+    },
+    {
+      "ts": 1794479666.432,
+      "kind": "concurrent_pair",
+      "iteration": 2,
+      "results": [
+        {
+          "kind": "generative",
+          "ms": 864.8610829999998
+        },
+        {
+          "kind": "native",
+          "ms": 1427.1849999999995
+        }
+      ]
+    },
+    {
+      "ts": 1794479667.955,
+      "kind": "concurrent_pair",
+      "iteration": 3,
+      "results": [
+        {
+          "kind": "generative",
+          "ms": 955.0956669999996
+        },
+        {
+          "kind": "native",
+          "ms": 1522.7289170000004
+        }
+      ]
+    },
+    {
+      "ts": 1794479669.47,
+      "kind": "concurrent_pair",
+      "iteration": 4,
+      "results": [
+        {
+          "kind": "generative",
+          "ms": 934.7786250000008
+        },
+        {
+          "kind": "native",
+          "ms": 1514.7786669999987
+        }
+      ]
+    },
+    {
+      "ts": 1794479670.974,
+      "kind": "concurrent_pair",
+      "iteration": 5,
+      "results": [
+        {
+          "kind": "generative",
+          "ms": 938.3590000000004
+        },
+        {
+          "kind": "native",
+          "ms": 1503.6997499999998
+        }
+      ]
+    },
+    {
+      "ts": 1794479672.468,
+      "kind": "concurrent_pair",
+      "iteration": 6,
+      "results": [
+        {
+          "kind": "generative",
+          "ms": 922.6969580000004
+        },
+        {
+          "kind": "native",
+          "ms": 1494.3775829999995
+        }
+      ]
+    },
+    {
+      "ts": 1794479673.927,
+      "kind": "concurrent_pair",
+      "iteration": 7,
+      "results": [
+        {
+          "kind": "generative",
+          "ms": 907.3265409999985
+        },
+        {
+          "kind": "native",
+          "ms": 1458.0142500000002
+        }
+      ]
+    },
+    {
+      "ts": 1794479673.928,
+      "kind": "typecheck",
+      "exitCode": 0,
+      "stdout": "",
+      "stderr": "$ tsc --noEmit\n"
+    },
+    {
+      "ts": 1794479675.13,
+      "kind": "after_concurrent_load",
+      "values": [
+        {
+          "pid": 47770,
+          "lines": [
+            "Physical footprint:         39.5M",
+            "Physical footprint (peak):  116.2M"
+          ]
+        },
+        {
+          "pid": 50511,
+          "lines": [
+            "Physical footprint:         289.9M",
+            "Physical footprint (peak):  289.9M"
+          ]
+        }
+      ]
+    },
+    {
+      "ts": 1794479675.13,
+      "kind": "complete",
+      "latencies": [
+        {
+          "kind": "generative",
+          "ms": 3305.569791
+        },
+        {
+          "kind": "native",
+          "ms": 528.2491660000001
+        },
+        {
+          "kind": "generative",
+          "ms": 338.41508299999987
+        },
+        {
+          "kind": "native",
+          "ms": 1070.6476249999996
+        },
+        {
+          "kind": "generative",
+          "ms": 864.8610829999998
+        },
+        {
+          "kind": "native",
+          "ms": 1427.1849999999995
+        },
+        {
+          "kind": "generative",
+          "ms": 955.0956669999996
+        },
+        {
+          "kind": "native",
+          "ms": 1522.7289170000004
+        },
+        {
+          "kind": "generative",
+          "ms": 934.7786250000008
+        },
+        {
+          "kind": "native",
+          "ms": 1514.7786669999987
+        },
+        {
+          "kind": "generative",
+          "ms": 938.3590000000004
+        },
+        {
+          "kind": "native",
+          "ms": 1503.6997499999998
+        },
+        {
+          "kind": "generative",
+          "ms": 922.6969580000004
+        },
+        {
+          "kind": "native",
+          "ms": 1494.3775829999995
+        },
+        {
+          "kind": "generative",
+          "ms": 907.3265409999985
+        },
+        {
+          "kind": "native",
+          "ms": 1458.0142500000002
+        }
+      ]
+    }
+  ],
+  "samples": [
+    {
+      "ts": 1794479660.638,
+      "health": {
+        "status": 200,
+        "wallMs": 1066.446375
+      },
+      "processes": [
+        {
+          "pid": 47770,
+          "ppid": 1,
+          "rssBytes": 98566144
+        },
+        {
+          "pid": 48486,
+          "ppid": 47770,
+          "rssBytes": 137953280
+        }
+      ],
+      "aggregateRssBytes": 236519424,
+      "models": [
+        {
+          "model": "d3-nano-eval",
+          "status": "unloaded"
+        },
+        {
+          "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+          "status": "sleeping"
+        }
+      ]
+    },
+    {
+      "ts": 1794479661.653,
+      "health": {
+        "status": 200,
+        "wallMs": 2.518000000000029
+      },
+      "processes": [
+        {
+          "pid": 47770,
+          "ppid": 1,
+          "rssBytes": 98566144
+        },
+        {
+          "pid": 50458,
+          "ppid": 47770,
+          "rssBytes": 563494912
+        }
+      ],
+      "aggregateRssBytes": 662061056,
+      "models": [
+        {
+          "model": "d3-nano-eval",
+          "status": "unloaded"
+        },
+        {
+          "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+          "status": "loading"
+        }
+      ]
+    },
+    {
+      "ts": 1794479662.67,
+      "health": {
+        "status": 200,
+        "wallMs": 4.847916000000168
+      },
+      "processes": [
+        {
+          "pid": 47770,
+          "ppid": 1,
+          "rssBytes": 98566144
+        },
+        {
+          "pid": 50458,
+          "ppid": 47770,
+          "rssBytes": 2533900288
+        }
+      ],
+      "aggregateRssBytes": 2632466432,
+      "models": [
+        {
+          "model": "d3-nano-eval",
+          "status": "unloaded"
+        },
+        {
+          "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+          "status": "loading"
+        }
+      ]
+    },
+    {
+      "ts": 1794479663.753,
+      "health": {
+        "status": 200,
+        "wallMs": 67.03391600000032
+      },
+      "processes": [
+        {
+          "pid": 47770,
+          "ppid": 1,
+          "rssBytes": 98582528
+        },
+        {
+          "pid": 50458,
+          "ppid": 47770,
+          "rssBytes": 4423647232
+        }
+      ],
+      "aggregateRssBytes": 4522229760,
+      "models": [
+        {
+          "model": "d3-nano-eval",
+          "status": "unloaded"
+        },
+        {
+          "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+          "status": "loaded"
+        }
+      ]
+    },
+    {
+      "ts": 1794479664.766,
+      "health": {
+        "status": 200,
+        "wallMs": 1.306666999999834
+      },
+      "processes": [
+        {
+          "pid": 47770,
+          "ppid": 1,
+          "rssBytes": 98566144
+        },
+        {
+          "pid": 50462,
+          "ppid": 47770,
+          "rssBytes": 2713452544
+        }
+      ],
+      "aggregateRssBytes": 2812018688,
+      "models": [
+        {
+          "model": "d3-nano-eval",
+          "status": "loading"
+        },
+        {
+          "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+          "status": "unloaded"
+        }
+      ]
+    },
+    {
+      "ts": 1794479665.857,
+      "health": {
+        "status": 200,
+        "wallMs": 71.5136250000005
+      },
+      "processes": [
+        {
+          "pid": 47770,
+          "ppid": 1,
+          "rssBytes": 98582528
+        },
+        {
+          "pid": 50464,
+          "ppid": 47770,
+          "rssBytes": 4468703232
+        }
+      ],
+      "aggregateRssBytes": 4567285760,
+      "models": [
+        {
+          "model": "d3-nano-eval",
+          "status": "unloaded"
+        },
+        {
+          "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+          "status": "loaded"
+        }
+      ]
+    },
+    {
+      "ts": 1794479666.943,
+      "health": {
+        "status": 200,
+        "wallMs": 72.66483299999982
+      },
+      "processes": [
+        {
+          "pid": 47770,
+          "ppid": 1,
+          "rssBytes": 98566144
+        },
+        {
+          "pid": 50491,
+          "ppid": 47770,
+          "rssBytes": 4462821376
+        }
+      ],
+      "aggregateRssBytes": 4561387520,
+      "models": [
+        {
+          "model": "d3-nano-eval",
+          "status": "unloaded"
+        },
+        {
+          "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+          "status": "loading"
+        }
+      ]
+    },
+    {
+      "ts": 1794479668.027,
+      "health": {
+        "status": 200,
+        "wallMs": 71.32633300000089
+      },
+      "processes": [
+        {
+          "pid": 47770,
+          "ppid": 1,
+          "rssBytes": 98566144
+        },
+        {
+          "pid": 50493,
+          "ppid": 47770,
+          "rssBytes": 0
+        }
+      ],
+      "aggregateRssBytes": 98566144,
+      "models": [
+        {
+          "model": "d3-nano-eval",
+          "status": "loaded"
+        },
+        {
+          "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+          "status": "unloaded"
+        }
+      ]
+    },
+    {
+      "ts": 1794479669.042,
+      "health": {
+        "status": 200,
+        "wallMs": 5.3573749999995925
+      },
+      "processes": [
+        {
+          "pid": 47770,
+          "ppid": 1,
+          "rssBytes": 98566144
+        },
+        {
+          "pid": 50497,
+          "ppid": 47770,
+          "rssBytes": 99942400
+        }
+      ],
+      "aggregateRssBytes": 198508544,
+      "models": [
+        {
+          "model": "d3-nano-eval",
+          "status": "loading"
+        },
+        {
+          "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+          "status": "unloaded"
+        }
+      ]
+    },
+    {
+      "ts": 1794479670.128,
+      "health": {
+        "status": 200,
+        "wallMs": 71.95570899999984
+      },
+      "processes": [
+        {
+          "pid": 47770,
+          "ppid": 1,
+          "rssBytes": 98582528
+        },
+        {
+          "pid": 50499,
+          "ppid": 47770,
+          "rssBytes": 4468097024
+        }
+      ],
+      "aggregateRssBytes": 4566679552,
+      "models": [
+        {
+          "model": "d3-nano-eval",
+          "status": "unloaded"
+        },
+        {
+          "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+          "status": "loaded"
+        }
+      ]
+    },
+    {
+      "ts": 1794479671.213,
+      "health": {
+        "status": 200,
+        "wallMs": 71.83887499999946
+      },
+      "processes": [
+        {
+          "pid": 47770,
+          "ppid": 1,
+          "rssBytes": 98566144
+        },
+        {
+          "pid": 50505,
+          "ppid": 47770,
+          "rssBytes": 2093072384
+        }
+      ],
+      "aggregateRssBytes": 2191638528,
+      "models": [
+        {
+          "model": "d3-nano-eval",
+          "status": "unloaded"
+        },
+        {
+          "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+          "status": "loading"
+        }
+      ]
+    },
+    {
+      "ts": 1794479672.228,
+      "health": {
+        "status": 200,
+        "wallMs": 4.016042000001107
+      },
+      "processes": [
+        {
+          "pid": 47770,
+          "ppid": 1,
+          "rssBytes": 98582528
+        },
+        {
+          "pid": 50507,
+          "ppid": 47770,
+          "rssBytes": 2710421504
+        }
+      ],
+      "aggregateRssBytes": 2809004032,
+      "models": [
+        {
+          "model": "d3-nano-eval",
+          "status": "loading"
+        },
+        {
+          "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+          "status": "unloaded"
+        }
+      ]
+    },
+    {
+      "ts": 1794479673.324,
+      "health": {
+        "status": 200,
+        "wallMs": 72.46366599999965
+      },
+      "processes": [
+        {
+          "pid": 47770,
+          "ppid": 1,
+          "rssBytes": 98598912
+        },
+        {
+          "pid": 50509,
+          "ppid": 47770,
+          "rssBytes": 4469145600
+        }
+      ],
+      "aggregateRssBytes": 4567744512,
+      "models": [
+        {
+          "model": "d3-nano-eval",
+          "status": "unloaded"
+        },
+        {
+          "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+          "status": "loaded"
+        }
+      ]
+    }
+  ]
+}

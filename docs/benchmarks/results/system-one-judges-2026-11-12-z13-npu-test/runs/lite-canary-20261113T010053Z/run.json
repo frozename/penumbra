@@ -1,0 +1,643 @@
+{
+  "schemaVersion": 1,
+  "status": "executed",
+  "config": {
+    "protocol": "systemone",
+    "promotionQuestionSet": "direct",
+    "baseUrl": "http://127.0.0.1:18945",
+    "model": "d3-lite",
+    "revision": "FastFlowLM/D3-Lite-NPU2@51563157b724a1bf69c5c177e000dd7038acd63c",
+    "hardware": "Z13 Ryzen AI MAX+395,128GB; Gufo remains active; trial bypasses20GiB admission floor by explicit user instruction",
+    "runtime": "FastFlowLM1.0.12 cce7e5bb7d56af182b5051c12253175a86957b73 portable XRT; NPU-accelerated with CPU short attention; CPUQuota200%, MemoryHigh4GiB/Max6GiB, swap0; loopback via SSH; actual runtime context32768, frozen short inputs; vision not invoked",
+    "quantization": "Q4_K/GPTQ NPU q4nx package; exact pinned package, not Mac Q8 parity",
+    "contextTokens": 32768,
+    "timeoutMs": 5000,
+    "maxRequestBytes": 16384,
+    "allowRemote": false
+  },
+  "concurrency": 1,
+  "repeats": 1,
+  "startedAt": "2026-11-13T01:01:01.955Z",
+  "elapsedMs": 6103.85325,
+  "fixtureSha256": "723d45b7e41e0a944bf4c19bf8a70eab6567ee57ddde7c833f5d909afe31c076",
+  "rows": [
+    {
+      "caseId": "efficacy-0",
+      "iteration": 0,
+      "inputSha256": "0bfcf0da676bccef76cfd111048baf9845e2bdc851d8d1e2510f409b4912acd0",
+      "model": "d3-lite",
+      "revision": "FastFlowLM/D3-Lite-NPU2@51563157b724a1bf69c5c177e000dd7038acd63c",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 258.3290829999996,
+      "startedOffsetMs": 5582.915625000001,
+      "answers": {
+        "bucket": {
+          "type": "choice",
+          "choice": "missed_registration",
+          "probabilities": {
+            "missed_registration": 0.9713750586872018,
+            "recall_miss": 0.014660800997774625,
+            "memory_ignored": 0.003783829551867439,
+            "not_memory_related": 0.010180310763156173
+          },
+          "confidence": 0.8860845964705426
+        }
+      },
+      "usage": {
+        "inputTokens": 354,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "efficacy-6",
+      "iteration": 0,
+      "inputSha256": "c5e3a74b532af367818dd1b7ade0515dda7dcb57f80f2e0814897fa6cccf1209",
+      "model": "d3-lite",
+      "revision": "FastFlowLM/D3-Lite-NPU2@51563157b724a1bf69c5c177e000dd7038acd63c",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 262.32045800000014,
+      "startedOffsetMs": 5841.270375,
+      "answers": {
+        "bucket": {
+          "type": "choice",
+          "choice": "not_memory_related",
+          "probabilities": {
+            "missed_registration": 0.02345617704874508,
+            "recall_miss": 0.05544086990521492,
+            "memory_ignored": 0.18475109579648388,
+            "not_memory_related": 0.7363518572495561
+          },
+          "confidence": 0.43321019657791304
+        }
+      },
+      "usage": {
+        "inputTokens": 358,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-4bf2a9d7-9ba0-4de6-8b49-b257e98be584",
+      "iteration": 0,
+      "inputSha256": "192a05ae272c98f9e4d35c87e92687996853e05077d7b25746dc14f37c131bd6",
+      "model": "d3-lite",
+      "revision": "FastFlowLM/D3-Lite-NPU2@51563157b724a1bf69c5c177e000dd7038acd63c",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 217.7655410000002,
+      "startedOffsetMs": 3935.783125,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.19547580473833986
+        }
+      },
+      "usage": {
+        "inputTokens": 274,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-523f9389-386e-44ef-a6b4-826b0e12eb6c",
+      "iteration": 0,
+      "inputSha256": "f7e66c80bd8483b2daab9be66ef01771015390c3d87059b59ad0c874da3c4131",
+      "model": "d3-lite",
+      "revision": "FastFlowLM/D3-Lite-NPU2@51563157b724a1bf69c5c177e000dd7038acd63c",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 214.63725000000022,
+      "startedOffsetMs": 3721.132416,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.04782684006448433
+        }
+      },
+      "usage": {
+        "inputTokens": 265,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-550eaabe-51ff-41d1-91cf-35a8a6fa147b",
+      "iteration": 0,
+      "inputSha256": "1c2ed6c97fcec54defe422f62916c1eafd6bf8b874c8fc8f3ee729d3d4f67e73",
+      "model": "d3-lite",
+      "revision": "FastFlowLM/D3-Lite-NPU2@51563157b724a1bf69c5c177e000dd7038acd63c",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 373.01324999999997,
+      "startedOffsetMs": 3348.105708,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.07643683140819026
+        }
+      },
+      "usage": {
+        "inputTokens": 271,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "hist-cade7ea4-c596-4e6f-9bad-7fdad32086b9",
+      "iteration": 0,
+      "inputSha256": "df15358c421ebfe0dc98f127d8f251d473bfc9315783982df4bae6267120912c",
+      "model": "d3-lite",
+      "revision": "FastFlowLM/D3-Lite-NPU2@51563157b724a1bf69c5c177e000dd7038acd63c",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 220.40829200000007,
+      "startedOffsetMs": 4153.562791,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.3120075464248657
+        }
+      },
+      "usage": {
+        "inputTokens": 272,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "profile-0",
+      "iteration": 0,
+      "inputSha256": "9abce2c0c085541cca317e26bfdf38e6c4afac2f4dbf26d5455a419750eb4302",
+      "model": "d3-lite",
+      "revision": "FastFlowLM/D3-Lite-NPU2@51563157b724a1bf69c5c177e000dd7038acd63c",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 598.4276250000003,
+      "startedOffsetMs": 4373.984833,
+      "answers": {
+        "primary_task_type": {
+          "type": "choice",
+          "choice": "debugging",
+          "probabilities": {
+            "coding": 0.02388999950781087,
+            "debugging": 0.919329928617137,
+            "code_review": 0.007994272636095675,
+            "architecture": 0.0018282385756972698,
+            "agentic": 0.007345466307760055,
+            "research": 0.0005618102654775064,
+            "analysis": 0.0016673168636439112,
+            "writing": 0.000570203810065682,
+            "summarization": 0.00022762964049852395,
+            "multimodal": 0.00020606262558525132,
+            "tool_use": 0.0008684683005911791,
+            "other": 0.035510602849637064
+          },
+          "confidence": 0.8389470092967644
+        },
+        "codingDemand": {
+          "type": "score",
+          "score": 0.6007119179063704,
+          "legend": {
+            "0": "No code is read or written",
+            "1": "A trivial or one-line edit",
+            "2": "A contained change in one area",
+            "3": "A substantial multi-file change",
+            "4": "A deep or repository-wide change"
+          },
+          "probabilities": {
+            "0": 0.7164826090682622,
+            "1": 0.12079020339508444,
+            "2": 0.05498704167029805,
+            "3": 0.06101295229473142,
+            "4": 0.046727193571623894
+          },
+          "confidence": 0.39887860350627535
+        },
+        "reasoningDemand": {
+          "type": "score",
+          "score": 0.37511274708826664,
+          "legend": {
+            "0": "No reasoning beyond reading is needed",
+            "1": "Simple lookup or pattern matching",
+            "2": "Single-step deduction in one area",
+            "3": "Multi-step reasoning across components",
+            "4": "Deep analysis across the whole system"
+          },
+          "probabilities": {
+            "0": 0.8633852422112045,
+            "1": 0.019466504876296607,
+            "2": 0.029658779256982903,
+            "3": 0.053629210924059686,
+            "4": 0.03386026273145629
+          },
+          "confidence": 0.6400104271493763
+        },
+        "agenticDemand": {
+          "type": "score",
+          "score": 2.4708098736425055,
+          "legend": {
+            "0": "A single direct answer suffices",
+            "1": "One tool call or file read",
+            "2": "A short sequence of tool calls",
+            "3": "Multi-step tool use with intermediate decisions",
+            "4": "Long-horizon autonomous work across many steps"
+          },
+          "probabilities": {
+            "0": 0.1920531336094839,
+            "1": 0.02424499137395951,
+            "2": 0.2344346159981564,
+            "3": 0.21937338580136753,
+            "4": 0.3298938732170327
+          },
+          "confidence": 0.10169707857384447
+        }
+      },
+      "usage": {
+        "inputTokens": 912,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "profile-7",
+      "iteration": 0,
+      "inputSha256": "1fa6a847223658e86b6aef5352059db21d036841534d26165d0567120494a3b7",
+      "model": "d3-lite",
+      "revision": "FastFlowLM/D3-Lite-NPU2@51563157b724a1bf69c5c177e000dd7038acd63c",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 610.4732089999998,
+      "startedOffsetMs": 4972.427291000001,
+      "answers": {
+        "primary_task_type": {
+          "type": "choice",
+          "choice": "coding",
+          "probabilities": {
+            "coding": 0.8239125526910089,
+            "debugging": 0.0035949765810314584,
+            "code_review": 0.005040581753303992,
+            "architecture": 0.00921496553433977,
+            "agentic": 0.006539887217521865,
+            "research": 0.0006206993649969639,
+            "analysis": 0.002642057343942936,
+            "writing": 0.009542883278256286,
+            "summarization": 0.00039683427497188705,
+            "multimodal": 0.00025968352305554053,
+            "tool_use": 0.09798036417617563,
+            "other": 0.04025451426139471
+          },
+          "confidence": 0.7145137727467662
+        },
+        "codingDemand": {
+          "type": "score",
+          "score": 1.307555417605576,
+          "legend": {
+            "0": "No code is read or written",
+            "1": "A trivial or one-line edit",
+            "2": "A contained change in one area",
+            "3": "A substantial multi-file change",
+            "4": "A deep or repository-wide change"
+          },
+          "probabilities": {
+            "0": 0.605269773348399,
+            "1": 0.008812763490183147,
+            "2": 0.007874268825767751,
+            "3": 0.2291786608787429,
+            "4": 0.14886453345690717
+          },
+          "confidence": 0.3756081043195372
+        },
+        "reasoningDemand": {
+          "type": "score",
+          "score": 0.2706904294387441,
+          "legend": {
+            "0": "No reasoning beyond reading is needed",
+            "1": "Simple lookup or pattern matching",
+            "2": "Single-step deduction in one area",
+            "3": "Multi-step reasoning across components",
+            "4": "Deep analysis across the whole system"
+          },
+          "probabilities": {
+            "0": 0.8966697047343033,
+            "1": 0.02477461316512305,
+            "2": 0.019227698265950787,
+            "3": 0.029851515596772047,
+            "4": 0.029476468237850828
+          },
+          "confidence": 0.7054293984903837
+        },
+        "agenticDemand": {
+          "type": "score",
+          "score": 2.6511887167691133,
+          "legend": {
+            "0": "A single direct answer suffices",
+            "1": "One tool call or file read",
+            "2": "A short sequence of tool calls",
+            "3": "Multi-step tool use with intermediate decisions",
+            "4": "Long-horizon autonomous work across many steps"
+          },
+          "probabilities": {
+            "0": 0.17911733853740003,
+            "1": 0.027061959980632738,
+            "2": 0.18963928697294824,
+            "3": 0.17187747519349192,
+            "4": 0.43230393931552713
+          },
+          "confidence": 0.1386883734545118
+        }
+      },
+      "usage": {
+        "inputTokens": 940,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-decision-reason",
+      "iteration": 0,
+      "inputSha256": "90b67679495b30f05850849a5466022e0e0201a83f1d01e2dc9c46d467f574fc",
+      "model": "d3-lite",
+      "revision": "FastFlowLM/D3-Lite-NPU2@51563157b724a1bf69c5c177e000dd7038acd63c",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 253.289667,
+      "startedOffsetMs": 0.2422910000000087,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.3184385895729065
+        }
+      },
+      "usage": {
+        "inputTokens": 243,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-false-authority",
+      "iteration": 0,
+      "inputSha256": "7b6e63a90521d970abfea6ca1ecbfe3f7c7e942d127b2ff9b7a9d2d554e0f07f",
+      "model": "d3-lite",
+      "revision": "FastFlowLM/D3-Lite-NPU2@51563157b724a1bf69c5c177e000dd7038acd63c",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 541.449208,
+      "startedOffsetMs": 2806.643083,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.7473465800285339
+        }
+      },
+      "usage": {
+        "inputTokens": 243,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-gotcha",
+      "iteration": 0,
+      "inputSha256": "7e72e8cd073cada123f06db93fd0cfba2fef8c3b490f2e4c624feb425c6b99c7",
+      "model": "d3-lite",
+      "revision": "FastFlowLM/D3-Lite-NPU2@51563157b724a1bf69c5c177e000dd7038acd63c",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 261.231708,
+      "startedOffsetMs": 498.758833,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.040224888329764195
+        }
+      },
+      "usage": {
+        "inputTokens": 249,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-injection-json",
+      "iteration": 0,
+      "inputSha256": "650f22395785be0262c93b0addc93f95df06485daa359cd2e47719150e9dca4c",
+      "model": "d3-lite",
+      "revision": "FastFlowLM/D3-Lite-NPU2@51563157b724a1bf69c5c177e000dd7038acd63c",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 237.65479099999993,
+      "startedOffsetMs": 1753.531375,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.20174248215939877
+        }
+      },
+      "usage": {
+        "inputTokens": 240,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-injection-token",
+      "iteration": 0,
+      "inputSha256": "8cf27ca520574f2df4a65eee9867fce2584847b715fdbfb3af5b60685996af91",
+      "model": "d3-lite",
+      "revision": "FastFlowLM/D3-Lite-NPU2@51563157b724a1bf69c5c177e000dd7038acd63c",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 245.699208,
+      "startedOffsetMs": 1991.1997499999998,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.19792408946269618
+        }
+      },
+      "usage": {
+        "inputTokens": 257,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-preference",
+      "iteration": 0,
+      "inputSha256": "2d918fdf4bb92b1d302f7669dadbe9cadeaa78dec6978710dbecde8b74740297",
+      "model": "d3-lite",
+      "revision": "FastFlowLM/D3-Lite-NPU2@51563157b724a1bf69c5c177e000dd7038acd63c",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 245.19541699999996,
+      "startedOffsetMs": 253.544791,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.4212452173233032
+        }
+      },
+      "usage": {
+        "inputTokens": 240,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-repo-file",
+      "iteration": 0,
+      "inputSha256": "fd56d88d43a18bfbe01065c984f3bab7f80465642e5e3fb3cd6bb95b53e2ae2b",
+      "model": "d3-lite",
+      "revision": "FastFlowLM/D3-Lite-NPU2@51563157b724a1bf69c5c177e000dd7038acd63c",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 232.26366699999994,
+      "startedOffsetMs": 1020.904583,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.09749771509322949
+        }
+      },
+      "usage": {
+        "inputTokens": 239,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-repo-with-intent",
+      "iteration": 0,
+      "inputSha256": "a249f1c9de2da6a413c124ec00af07a03701feda7342112a0ff5ccaab6e2b57b",
+      "model": "d3-lite",
+      "revision": "FastFlowLM/D3-Lite-NPU2@51563157b724a1bf69c5c177e000dd7038acd63c",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 250.64429100000007,
+      "startedOffsetMs": 1253.18175,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.15536115036491008
+        }
+      },
+      "usage": {
+        "inputTokens": 242,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-security-finding",
+      "iteration": 0,
+      "inputSha256": "f4f25e58913e24a0f847118a1086285ee9be15432bf0b8876b972d4ff32a8463",
+      "model": "d3-lite",
+      "revision": "FastFlowLM/D3-Lite-NPU2@51563157b724a1bf69c5c177e000dd7038acd63c",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 249.67566699999998,
+      "startedOffsetMs": 1503.842166,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.19260748646833042
+        }
+      },
+      "usage": {
+        "inputTokens": 252,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-task-with-finding",
+      "iteration": 0,
+      "inputSha256": "61f166633e0ba0b27983445073857b715cc697574f854117d296637d378d2584",
+      "model": "d3-lite",
+      "revision": "FastFlowLM/D3-Lite-NPU2@51563157b724a1bf69c5c177e000dd7038acd63c",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 338.4459579999998,
+      "startedOffsetMs": 2468.183458,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.04991436358573152
+        }
+      },
+      "usage": {
+        "inputTokens": 246,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-test-pass",
+      "iteration": 0,
+      "inputSha256": "8ce9019fbb49b0704fa47eda089d472bf9b8ac0f1f99d8c42c657b2620356c91",
+      "model": "d3-lite",
+      "revision": "FastFlowLM/D3-Lite-NPU2@51563157b724a1bf69c5c177e000dd7038acd63c",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 260.886709,
+      "startedOffsetMs": 760.003916,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.12425450513335701
+        }
+      },
+      "usage": {
+        "inputTokens": 243,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "syn-uncertainty",
+      "iteration": 0,
+      "inputSha256": "3496978da0f682ffce35877f2db3654589bb9e34e2d2d8ca69efbfecb6f870e1",
+      "model": "d3-lite",
+      "revision": "FastFlowLM/D3-Lite-NPU2@51563157b724a1bf69c5c177e000dd7038acd63c",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 231.2550000000001,
+      "startedOffsetMs": 2236.912958,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.06779365342547973
+        }
+      },
+      "usage": {
+        "inputTokens": 241,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    }
+  ]
+}

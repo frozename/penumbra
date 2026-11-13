@@ -1,0 +1,8 @@
+{
+  "ts": 1794435236.7480042,
+  "kind": "granite_restored_manually",
+  "pid": 47355,
+  "sameBinaryModelFlags": true,
+  "healthStatus": 200,
+  "reason": "supervisor sampler-cleanup timeout interrupted automatic restoration"
+}

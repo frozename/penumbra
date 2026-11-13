@@ -1,0 +1,17 @@
+{
+  "productionAuthority": "NO-GO; quality decision unchanged",
+  "osAccessGate": "resolved by user grant, verified through launchd",
+  "controlPlaneSupervision": "restored",
+  "existingGraniteRoute": "active, same checkpoint and roles",
+  "nativeDaemonShadow": "off",
+  "newAuthorityActivated": false,
+  "inferenceIdleAggregateRssBytes": 164888576,
+  "remainingGates": [
+    "Other incumbent seats still404",
+    "Durable-positive extraction semantics",
+    "Hard admission and contemporary bounded daemon shadow",
+    "Independent quality bounds/calibration/downstream utility",
+    "PR review and land"
+  ],
+  "sourceImplementation": "unchanged; prior fullCI attestation applies; this retry changes only host endpoint configuration and evidence"
+}

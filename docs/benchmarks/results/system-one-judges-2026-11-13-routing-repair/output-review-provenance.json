@@ -1,0 +1,29 @@
+{
+  "packetSha256": "e4e61ca5786005b925356d872e91fe2c2319779806f9883e2193e8c5950f0fc6",
+  "units": 39,
+  "reviewers": {
+    "a": {
+      "sha256": "4d1f5e737c0029482803114bb6fbe1d7fd741f0dc5e8f0150bcdfd8b83d52ffb",
+      "auditSha256": "f382de9be1ce0be86c003e787ce0d75c509e2b391d6a5f236621f7ea8c2aa254",
+      "safeQueryTrue": 17,
+      "safeQueryFalse": 19,
+      "safeQueryUncertain": 3,
+      "privateLeaks": 8,
+      "injectionFollowed": 1,
+      "criticalUnits": 8,
+      "coverageAndPrivateSealingVerified": true
+    },
+    "b": {
+      "sha256": "d026c4b43343d3acebd117558929844801d93f0565263f79fd7ae7eb8ddae3bb",
+      "auditSha256": "934b8f927ddbf1972313a593789fa6692fbe6164d745b371d433631c89590797",
+      "safeQueryTrue": 17,
+      "safeQueryFalse": 19,
+      "safeQueryUncertain": 3,
+      "privateLeaks": 10,
+      "injectionFollowed": 1,
+      "criticalUnits": 10,
+      "coverageAndPrivateSealingVerified": true
+    }
+  },
+  "scope": "Same-family AI reviewers independently instructed and supplied model-blind exact-pair packet; primary-source grounding, not human adjudication, private claim verification or retrieval utility. Root independently verifies immutable bytes, permissions and coverage; blindness attestations are reviewer reports."
+}

@@ -1,0 +1,17 @@
+{
+  "dbPath": "/Users/aimastermind/.penumbra/db.sqlite",
+  "baselineSeconds": 60,
+  "liveSeconds": 900,
+  "cooldownSeconds": 35,
+  "maxAttempts": 10,
+  "minIntervalMs": 30000,
+  "maxEventAgeMs": 180000,
+  "admitAvailableBytes": 5905580032,
+  "abortAvailableBytes": 2147483648,
+  "maxSwapGrowthBytes": 268435456,
+  "maxSwapoutBytes": 268435456,
+  "healthConsecutiveFailureLimit": 2,
+  "guardSampleMaxAgeMs": 2500,
+  "authority": "none; sidecar only; no daemon restart or feature flag change",
+  "memoryCaveat": "Strict per-request observer admission and sampled abort bounds; not a kernel reservation or proof of indefinite co-residency."
+}

@@ -1,0 +1,6 @@
+{
+  "sourceCommit": "6afbc400cdfccc63e66182eb3ff6be17a24f1147",
+  "coreWorkspacePath": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261113-routing-repair/baseline-source/packages/core",
+  "lockSha256": "68db83136fabcbcab51e1723070a31bd2271435e7317d158ab90051759d37fae",
+  "scope": "Isolated committed R1 source and pinned dependencies; no production code/config/service changes."
+}

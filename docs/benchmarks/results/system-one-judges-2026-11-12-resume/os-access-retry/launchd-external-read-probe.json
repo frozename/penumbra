@@ -1,0 +1,14 @@
+{
+  "at": 1794481744.371382,
+  "method": "Read-only launchd Bun probe in internal cwd reading external package.json after user requested retry",
+  "stdout": "internal cwd ready\nexternal read bytes=2379\n",
+  "stderr": "",
+  "finishedExternalRead": true,
+  "wallMs": 270.18195899999995,
+  "observedState": [
+    "state = not running",
+    "last exit code = 0",
+    "state = active",
+    "state = active"
+  ]
+}

@@ -32,6 +32,7 @@ export const AgentOptionsSchema = z.strictObject({
   binary: z.string().optional(),
   bootTimeoutMs: z.number().int().optional(),
   caPath: z.string().optional(),
+  candidateSelection: z.enum(["ordered", "round-robin"]).optional(),
   capturePort: z.unknown().optional(),
   claudeCodeAllowedTools: z.array(z.string()).optional(),
   claudeCodeDisallowedTools: z.array(z.string()).optional(),
@@ -176,6 +177,7 @@ export const ADAPTER_SPECIFIC_OPTION_KEYS = {
     "extraBody",
     "maxTokens",
     "requestExtras",
+    "candidateSelection",
     "systemPrompt",
   ],
   "opencode-acp": [

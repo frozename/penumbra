@@ -1,0 +1,24 @@
+{
+  "at": "2026-11-13T19:55:02.343Z",
+  "scope": "Read-only live roster/served inventory resolution, no inference/cache/search/authority",
+  "roleTag": "dreaming-rewriter",
+  "configured": [
+    {
+      "name": "local-granite-3b-q8-http",
+      "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+      "baseUrl": "http://127.0.0.1:18944/v1"
+    },
+    {
+      "name": "sakana-fugu-http",
+      "model": "fugu",
+      "baseUrl": "https://api.sakana.ai/v1"
+    }
+  ],
+  "servedModelIds": [
+    "kapitsa-q36-35b-a3b-4bit",
+    "Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf"
+  ],
+  "filtered": [],
+  "inventoryStatus": "ok",
+  "limitation": "Does not execute a production cycle; current role/inventory state only"
+}

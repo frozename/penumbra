@@ -12,8 +12,16 @@ import { afterAll, beforeAll, expect, it } from "bun:test";
 import { z } from "zod";
 
 import type { DreamConfig } from "@src/dreaming/config.js";
-import { P1_CLAIM_TTL_MS, type ProjectRegistryEntry, runDreamCycle } from "@src/dreaming/cycle.js";
-import type { RewriteResponse } from "@src/dreaming/dream-rewriter-prompt-content.js";
+import {
+  type DreamCycleDeps,
+  P1_CLAIM_TTL_MS,
+  type ProjectRegistryEntry,
+  runDreamCycle as runProductionDreamCycle,
+} from "@src/dreaming/cycle.js";
+import {
+  REWRITE_RESPONSE_SCHEMA,
+  type RewriteResponse,
+} from "@src/dreaming/dream-rewriter-prompt-content.js";
 import { createDreamingJudgePool } from "@src/dreaming/dreaming-judge-pool.js";
 import { type JudgePool, type JudgeVote, makeFakeJudgePool } from "@src/dreaming/judge-pool.js";
 import { setRewriteForMemory } from "@src/dreaming/query-rewriter-cache.js";
@@ -83,7 +91,7 @@ function testConfig(overrides?: Partial<DreamConfig>): DreamConfig {
     linkAutoThreshold: 0.75,
     p1BatchSize: 10,
     t2PromotionMinEvents: 5,
-    rewriterEnabled: false,
+    rewriterEnabled: true,
     rewriterBaseUrl: "http://127.0.0.1:7944",
     rewriterModel: "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
     rewriterTimeoutMs: 5000,
@@ -126,6 +134,31 @@ function rewriteInvokerForTest(
     if (candidate) return Promise.resolve({ ok: true, value, raw, candidate });
     return Promise.resolve({ ok: true, value, raw } as LlmInvokeResult<T>);
   };
+}
+
+function runDreamCycle(
+  db: Database,
+  config: DreamConfig,
+  deps: DreamCycleDeps = {},
+): Promise<string> {
+  const candidates = deps.rewriterCandidates ?? [{ model: config.rewriterModel }];
+  return runProductionDreamCycle(db, config, {
+    rewriterInventory: {
+      collect: () =>
+        Promise.resolve(
+          inventoryWithModels(candidates.map((candidate) => ({ id: candidate.model }))),
+        ),
+    },
+    llmInvoke: rewriteInvokerForTest((input) => {
+      if (input.schema !== REWRITE_RESPONSE_SCHEMA)
+        throw new Error("Unexpected fixture LLM schema");
+      const content = input.messages.at(-1)?.content;
+      if (typeof content !== "string") throw new Error("Expected fixture text input");
+      const state = JSON.parse(content) as { title: string };
+      return { verdict: { kind: "query", query: state.title } };
+    }),
+    ...deps,
+  });
 }
 
 function seedTodaySpend(
@@ -2239,7 +2272,7 @@ it("P4 query gate allows valid memory titles and mints research_query", async ()
   expect((JSON.parse(actions[0]!.payload_json) as { query: string }).query).toBe(title);
 });
 
-it("P4 query gate can be disabled via env var for backward compatibility", async () => {
+it("P4 optional heuristic cannot disable privacy checks", async () => {
   const oldValue = process.env.PENUMBRA_DREAMING_QUERY_GATE_ENABLED;
   process.env.PENUMBRA_DREAMING_QUERY_GATE_ENABLED = "0";
   try {
@@ -2262,7 +2295,7 @@ it("P4 query gate can be disabled via env var for backward compatibility", async
         )
         .get() as { n: number }
     ).n;
-    expect(count).toBe(1);
+    expect(count).toBe(0);
   } finally {
     if (oldValue === undefined) {
       delete process.env.PENUMBRA_DREAMING_QUERY_GATE_ENABLED;
@@ -2272,7 +2305,7 @@ it("P4 query gate can be disabled via env var for backward compatibility", async
   }
 });
 
-it("P4 query gate logs structured rejection with title_hash", async () => {
+it("P4 logs rejection without disclosing the private query", async () => {
   const db = openTestDb();
   const projectId = "proj-gate-log";
   const gateTitle = "feat(daemon-workers): phase 5 supervisor";
@@ -2284,7 +2317,7 @@ it("P4 query gate logs structured rejection with title_hash", async () => {
   const projectRegistry = makeProjectRegistry([
     { project_id: projectId, dreaming: { research_provider: "firecrawl" } },
   ]);
-  await runDreamCycle(db, testConfig({ rewriterEnabled: false }), {
+  await runDreamCycle(db, testConfig({ rewriterEnabled: true }), {
     projectRegistry,
     dispatchEventLog: {
       record(event) {
@@ -2545,7 +2578,7 @@ it("P4 skips rewriter candidates absent from llamactl inventory and attempts an 
   expect(invokeInput?.fallbackCandidates).toEqual([]);
 });
 
-it("P4 degrades to configured rewriter candidates when llamactl inventory is unavailable", async () => {
+it("P4 abstains when llamactl inventory is unavailable", async () => {
   const db = openTestDb();
   const projectId = "proj-rewriter-inventory-unavailable";
   const memoryId = seedT2MemoryWithProjectId(db, {
@@ -2590,16 +2623,14 @@ it("P4 degrades to configured rewriter candidates when llamactl inventory is una
 
   expect(getCycleOutcome(db, cycleId)).toBe("completed");
   expect(inventoryCalls).toBe(1);
-  expect(invokeInput?.candidateName).toBe("primary-local");
-  expect(invokeInput?.fallbackCandidates).toEqual([
-    {
-      name: "fallback-local",
-      baseUrl: "http://127.0.0.1:7944/v1",
-      model: "fallback-local",
-      provider: "local",
-      auth: { source: "none" },
-    },
-  ]);
+  expect(invokeInput).toBeUndefined();
+  expect(
+    db
+      .query(
+        "SELECT COUNT(*) AS n FROM dream_actions WHERE phase='P4' AND action_type='research_query'",
+      )
+      .get(),
+  ).toEqual({ n: 0 });
   const cacheCount = (
     db
       .prepare(`SELECT COUNT(*) as n FROM dream_query_rewrites WHERE t2_memory_id=?`)
@@ -2708,16 +2739,10 @@ it("P4 never selects a candidate whose advertised llamactl model is owned by a c
       `SELECT payload_json FROM dream_actions WHERE phase='P4' AND action_type='research_query'`,
     )
     .get() as { payload_json: string } | null;
-  expect(action).not.toBeNull();
-  expect((JSON.parse(action!.payload_json) as { source_memory_id: string }).source_memory_id).toBe(
-    memoryId,
-  );
-  expect((JSON.parse(action!.payload_json) as { query: string }).query).toBe(
-    "TypeScript strict null checks in async systems",
-  );
+  expect(action).toBeNull();
 });
 
-it("P4 wires the subscription HTTP rung and records the fallback candidate that served", async () => {
+it("P4 uses an advertised local fallback and records the serving candidate", async () => {
   const db = openTestDb();
   const projectId = "proj-rewriter-cloud-fallback";
   seedT2MemoryWithProjectId(db, {
@@ -2740,11 +2765,11 @@ it("P4 wires the subscription HTTP rung and records the fallback candidate that 
         auth: { source: "none" },
       },
       {
-        name: "sakana-rewriter",
-        baseUrl: "https://api.sakana.ai/v1",
-        model: "sakana-rewriter",
-        provider: "sakana",
-        auth: { source: "bearer", token: "test-sakana-token" },
+        name: "local-backup",
+        baseUrl: "http://127.0.0.1:18947/v1",
+        model: "local-backup",
+        provider: "local",
+        auth: { source: "none" },
       },
     ],
     llmInvoke: rewriteInvokerForTest((input) => {
@@ -2752,11 +2777,11 @@ it("P4 wires the subscription HTTP rung and records the fallback candidate that 
       return {
         verdict: { kind: "query", query: "something searchable and useful query terms" },
         candidate: {
-          name: "sakana-rewriter",
-          baseUrl: "https://api.sakana.ai/v1",
-          model: "sakana-rewriter",
-          provider: "sakana",
-          authSource: "bearer",
+          name: "local-backup",
+          baseUrl: "http://127.0.0.1:18947/v1",
+          model: "local-backup",
+          provider: "local",
+          authSource: "none",
           tier: "fallback",
         },
       };
@@ -2765,11 +2790,11 @@ it("P4 wires the subscription HTTP rung and records the fallback candidate that 
 
   expect(invokeInput?.fallbackCandidates).toEqual([
     {
-      name: "sakana-rewriter",
-      baseUrl: "https://api.sakana.ai/v1",
-      model: "sakana-rewriter",
-      provider: "sakana",
-      auth: { source: "bearer", token: "test-sakana-token" },
+      name: "local-backup",
+      baseUrl: "http://127.0.0.1:18947/v1",
+      model: "local-backup",
+      provider: "local",
+      auth: { source: "none" },
     },
   ]);
   expect(invokeInput?.activeBiases).toEqual([]);
@@ -2782,13 +2807,13 @@ it("P4 wires the subscription HTTP rung and records the fallback candidate that 
     .get();
   expect(health).toEqual({
     tier: "fallback",
-    seat: "sakana-rewriter",
-    model: "sakana-rewriter",
-    host: "api.sakana.ai",
+    seat: "local-backup",
+    model: "local-backup",
+    host: "127.0.0.1",
   });
 });
 
-it("P4 falls back to title when rewriter fails and does not cache on failure", async () => {
+it("P4 abstains on rewrite failure without caching a model skip", async () => {
   const db = openTestDb();
   const projectId = "proj-rewriter-failure-fallback";
   const memoryId = seedT2MemoryWithProjectId(db, {
@@ -2854,10 +2879,7 @@ it("P4 falls back to title when rewriter fails and does not cache on failure", a
       `SELECT payload_json FROM dream_actions WHERE phase='P4' AND action_type='research_query'`,
     )
     .get() as { payload_json: string } | null;
-  expect(action).not.toBeNull();
-  expect((JSON.parse(action!.payload_json) as { query: string }).query).toBe(
-    "TypeScript strict null checks in async systems",
-  );
+  expect(action).toBeNull();
 
   const cacheRow = db
     .prepare(`SELECT COUNT(*) as n FROM dream_query_rewrites WHERE t2_memory_id=?`)
@@ -2904,10 +2926,10 @@ it("P4 falls back to title when rewriter fails and does not cache on failure", a
     last_failure_status: null,
     first_non_primary_ts: null,
   });
-  expect(events.some((entry) => entry.kind === "dream_p4_query_skipped")).toBe(false);
+  expect(events.some((entry) => entry.kind === "dream_p4_query_skipped")).toBe(true);
 });
 
-it("P4 falls back to title when the rewriter returns an empty response", async () => {
+it("P4 abstains when the rewriter returns an empty response", async () => {
   const db = openTestDb();
   const projectId = "proj-rewriter-empty-response-fallback";
   const memoryId = seedT2MemoryWithProjectId(db, {
@@ -2938,10 +2960,7 @@ it("P4 falls back to title when the rewriter returns an empty response", async (
       `SELECT payload_json FROM dream_actions WHERE phase='P4' AND action_type='research_query'`,
     )
     .get() as { payload_json: string } | null;
-  expect(action).not.toBeNull();
-  expect((JSON.parse(action!.payload_json) as { query: string }).query).toBe(
-    "TypeScript strict null checks in async systems",
-  );
+  expect(action).toBeNull();
 
   const cacheCount = (
     db
@@ -2980,10 +2999,7 @@ it("P4 rewritten query rejected by guard is tracked as unsearchable content, not
       `SELECT payload_json FROM dream_actions WHERE phase='P4' AND action_type='research_query'`,
     )
     .get() as { payload_json: string } | null;
-  expect(action).not.toBeNull();
-  expect((JSON.parse(action!.payload_json) as { query: string }).query).toBe(
-    "TypeScript strict null checks in async systems",
-  );
+  expect(action).toBeNull();
 
   const cacheCount = (
     db
@@ -3013,7 +3029,7 @@ it("P4 rewritten query rejected by guard is tracked as unsearchable content, not
   );
   expect(rewriteFailedEvents.length).toBe(0);
   const skippedEvents = events.filter((entry) => entry.kind === "dream_p4_query_skipped");
-  expect(skippedEvents.length).toBe(0);
+  expect(skippedEvents.length).toBe(1);
   const healthRow = db
     .query<
       {

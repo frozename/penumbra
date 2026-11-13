@@ -1,0 +1,24 @@
+[
+  {
+    "ts": 1794576000.7721212,
+    "kind": "lock_and_idle_preflight_passed",
+    "sourceCommit": "139de0a460c5daf9193ae9e4cb318b5b481c71ec",
+    "pid": 97758
+  },
+  {
+    "ts": 1794576000.775285,
+    "kind": "authorized_mini_runtime_paused",
+    "otherInferenceServicesChanged": false
+  },
+  {
+    "ts": 1794576686.142117,
+    "kind": "ci_finished",
+    "exitCode": 0
+  },
+  {
+    "ts": 1794576686.491841,
+    "kind": "runtime_restored",
+    "samePlistSha256": "b52d90c7f32eead8d1ddc233ba7059621fad866f9e5403ad8454387da731999d",
+    "controlPlaneStatus": "ok"
+  }
+]

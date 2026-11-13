@@ -1,0 +1,108 @@
+{
+  "observedAtEpoch": 1794446177.6583948,
+  "runtimeCommit": "2cbe0ec429b849a88664e0f62388fc92a5abd699",
+  "mini": {
+    "source": "https://huggingface.co/vllm-sr/d3-mini/tree/df99bf4ca4418bc6908ee68e9b7479af1f3b8800",
+    "config": {
+      "model_type": "qwen3_5",
+      "architectures": [
+        "Qwen3_5Model"
+      ],
+      "text_config": {
+        "attention_bias": false,
+        "attention_dropout": 0.0,
+        "attn_output_gate": true,
+        "bos_token_id": null,
+        "dtype": "bfloat16",
+        "eos_token_id": 248044,
+        "full_attention_interval": 4,
+        "head_dim": 256,
+        "hidden_act": "silu",
+        "hidden_size": 2560,
+        "initializer_range": 0.02,
+        "intermediate_size": 9216,
+        "layer_types": [
+          "linear_attention",
+          "linear_attention",
+          "linear_attention",
+          "full_attention",
+          "linear_attention",
+          "linear_attention",
+          "linear_attention",
+          "full_attention",
+          "linear_attention",
+          "linear_attention",
+          "linear_attention",
+          "full_attention",
+          "linear_attention",
+          "linear_attention",
+          "linear_attention",
+          "full_attention",
+          "linear_attention",
+          "linear_attention",
+          "linear_attention",
+          "full_attention",
+          "linear_attention",
+          "linear_attention",
+          "linear_attention",
+          "full_attention",
+          "linear_attention",
+          "linear_attention",
+          "linear_attention",
+          "full_attention",
+          "linear_attention",
+          "linear_attention",
+          "linear_attention",
+          "full_attention"
+        ],
+        "linear_conv_kernel_dim": 4,
+        "linear_key_head_dim": 128,
+        "linear_num_key_heads": 16,
+        "linear_num_value_heads": 32,
+        "linear_value_head_dim": 128,
+        "mamba_ssm_dtype": "float32",
+        "max_position_embeddings": 262144,
+        "mlp_only_layers": [],
+        "model_type": "qwen3_5_text",
+        "mtp_num_hidden_layers": 1,
+        "mtp_use_dedicated_embeddings": false,
+        "num_attention_heads": 16,
+        "num_hidden_layers": 32,
+        "num_key_value_heads": 4,
+        "pad_token_id": null,
+        "partial_rotary_factor": 0.25,
+        "rms_norm_eps": 1e-06,
+        "rope_parameters": {
+          "mrope_interleaved": true,
+          "mrope_section": [
+            11,
+            11,
+            10
+          ],
+          "partial_rotary_factor": 0.25,
+          "rope_theta": 10000000,
+          "rope_type": "default"
+        },
+        "tie_word_embeddings": true,
+        "use_cache": true,
+        "vocab_size": 248320
+      }
+    },
+    "GGUF": "https://huggingface.co/ggml-org/vllm-d3-mini-GGUF/tree/8b29fd3b87373ea85fa59cc2f26251c1591d771a",
+    "localApiCompatibility": "Native stock family expected, not verified by inference until run. Q8 failed memory admission before loading."
+  },
+  "decider": {
+    "officialGGUF": "https://huggingface.co/perplexity-ai/pplx-decider-flash-gguf-v1.2/tree/2514d5f0b7fbbe1ee1bfec9ffb5801a60289b4cc",
+    "publicWeightAvailability": "Verified public metadata,5,157,837,472bytes Q8 with published SHA; not downloaded for inference",
+    "protocol": "Official card says checkpoint protocolv3 requires joint inline per-marker readout and is incompatible with stock protocolv1 API",
+    "stockSourceInspection": "common_get_decision_type uses architecture.decision.type; server-decision init constructs old canonical label readout. This pinned source contains no pplx_decider.protocol_version parsing. A compatible name/backbone alone does not establish protocolv3 parity.",
+    "result": "Not benchmarked through an incompatible unverified path; compatible runtime/parity required. No protocol shim or Python inference dependency installed.",
+    "vendorMeasurement": "Official model author reports13 golden Metal argmax matches and max probability difference0.016; not a local or independent measurement."
+  },
+  "runtimeSourceHashes": {
+    "common/common.cpp": "69d4aeea15fbc50302944714ebf80195259b0c500453db13e7c7a21a0606bdc7",
+    "tools/server/server-decision.cpp": "129f922c4c69430233489b398a1c18e13019a3a27dbab19e3c68467144d5caa5",
+    "gguf-py/gguf/constants.py": "697ff6ce2e23528e4a7f10358af25dc5ecae6a18b70830546fe9955a1fa5dfa3"
+  },
+  "memoryInterpretation": "fleet status HIGH during artifact download reflected low free_mb; owning CLI compares free_mb alone, while peer-snapshot-poller correctly includes inactive cache. Preserve free+inactive and OS memory-pressure observations separately; do not confuse low free pages with OOM or claim model fit without admission."
+}

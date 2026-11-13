@@ -1,0 +1,646 @@
+[
+  {
+    "time": "2026-11-11T22:11:35.164Z",
+    "msg": "dream-cycle phase start",
+    "phase": "P0",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:11:35.166Z",
+    "msg": "dream-cycle phase end",
+    "durationMs": 2,
+    "phase": "P0",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:11:35.166Z",
+    "msg": "dream-cycle phase start",
+    "phase": "P1",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:11:35.386Z",
+    "msg": "dream-cycle phase end",
+    "durationMs": 220,
+    "phase": "P1",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:11:35.387Z",
+    "msg": "dream-cycle phase start",
+    "phase": "P2",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:11:35.537Z",
+    "msg": "dream-cycle phase end",
+    "durationMs": 150,
+    "phase": "P2",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:11:35.538Z",
+    "msg": "dream-cycle phase start",
+    "phase": "P3",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:11:35.538Z",
+    "msg": "dream-cycle phase end",
+    "durationMs": 0,
+    "phase": "P3",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:11:35.538Z",
+    "msg": "dream-cycle phase start",
+    "phase": "P4",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:11:35.845Z",
+    "msg": "slow query",
+    "durationMs": 307.34616599977016,
+    "sql": "SELECT COUNT(*) as n FROM dream_actions WHERE phase='P4' AND status='queued'",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "sql",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:11:41.379Z",
+    "msg": "slow query",
+    "durationMs": 5371.623250007629,
+    "sql": "SELECT\n           memory_id,\n           title,\n           SUBSTR(body, 1, 200) AS body,\n           updated_at,\n         ",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "sql",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:11:44.379Z",
+    "msg": "slow query",
+    "durationMs": 2998.2540419995785,
+    "sql": "SELECT\n           memory_id,\n           title,\n           SUBSTR(body, 1, 200) AS body,\n           updated_at,\n         ",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "sql",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:11:45.411Z",
+    "msg": "slow query",
+    "durationMs": 1032.4029589891434,
+    "sql": "SELECT\n           memory_id,\n           title,\n           SUBSTR(body, 1, 200) AS body,\n           updated_at,\n         ",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "sql",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:11:45.414Z",
+    "msg": "dream-cycle phase end",
+    "durationMs": 9876,
+    "phase": "P4",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:11:45.414Z",
+    "msg": "dream-cycle phase start",
+    "phase": "P5",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:11:45.419Z",
+    "msg": "dream-cycle phase end",
+    "durationMs": 4,
+    "phase": "P5",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:11:45.419Z",
+    "msg": "dream-cycle phase start",
+    "phase": "P6",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:11:45.420Z",
+    "msg": "dream-cycle phase end",
+    "durationMs": 1,
+    "phase": "P6",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:11:45.420Z",
+    "msg": "dream-cycle phase start",
+    "phase": "P7",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:11:45.422Z",
+    "msg": "dream-cycle phase end",
+    "durationMs": 2,
+    "phase": "P7",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:11:45.422Z",
+    "msg": "dream-cycle phase start",
+    "phase": "P8",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:11:45.422Z",
+    "msg": "dream-cycle phase end",
+    "durationMs": 0,
+    "phase": "P8",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:11:45.426Z",
+    "msg": "event-loop lag exceeded threshold",
+    "lagMs": 8551.484000012279,
+    "thresholdMs": 500,
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "lagMs",
+      "thresholdMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:12:17.483Z",
+    "msg": "event-loop lag exceeded threshold",
+    "lagMs": 2014.3606670051813,
+    "thresholdMs": 500,
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "lagMs",
+      "thresholdMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:12:24.864Z",
+    "msg": "dream-cycle phase start",
+    "phase": "P0",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:12:24.865Z",
+    "msg": "dream-cycle phase end",
+    "durationMs": 1,
+    "phase": "P0",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:12:24.865Z",
+    "msg": "dream-cycle phase start",
+    "phase": "P1",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:12:24.886Z",
+    "msg": "dream-cycle phase end",
+    "durationMs": 21,
+    "phase": "P1",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:12:24.886Z",
+    "msg": "dream-cycle phase start",
+    "phase": "P2",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:12:24.890Z",
+    "msg": "dream-cycle phase end",
+    "durationMs": 4,
+    "phase": "P2",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:12:24.891Z",
+    "msg": "dream-cycle phase start",
+    "phase": "P3",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:12:24.891Z",
+    "msg": "dream-cycle phase end",
+    "durationMs": 0,
+    "phase": "P3",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:12:24.891Z",
+    "msg": "dream-cycle phase start",
+    "phase": "P4",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:12:30.168Z",
+    "msg": "slow query",
+    "durationMs": 5259.092916995287,
+    "sql": "SELECT\n           memory_id,\n           title,\n           SUBSTR(body, 1, 200) AS body,\n           updated_at,\n         ",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "sql",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:12:33.182Z",
+    "msg": "slow query",
+    "durationMs": 3013.0119999945164,
+    "sql": "SELECT\n           memory_id,\n           title,\n           SUBSTR(body, 1, 200) AS body,\n           updated_at,\n         ",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "sql",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:12:34.219Z",
+    "msg": "slow query",
+    "durationMs": 1037.1011670082808,
+    "sql": "SELECT\n           memory_id,\n           title,\n           SUBSTR(body, 1, 200) AS body,\n           updated_at,\n         ",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "sql",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:12:34.221Z",
+    "msg": "dream-cycle phase end",
+    "durationMs": 9330,
+    "phase": "P4",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:12:34.221Z",
+    "msg": "dream-cycle phase start",
+    "phase": "P5",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:12:34.226Z",
+    "msg": "dream-cycle phase end",
+    "durationMs": 5,
+    "phase": "P5",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:12:34.226Z",
+    "msg": "dream-cycle phase start",
+    "phase": "P6",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:12:34.226Z",
+    "msg": "dream-cycle phase end",
+    "durationMs": 0,
+    "phase": "P6",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:12:34.226Z",
+    "msg": "dream-cycle phase start",
+    "phase": "P7",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:12:34.228Z",
+    "msg": "dream-cycle phase end",
+    "durationMs": 2,
+    "phase": "P7",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:12:34.228Z",
+    "msg": "dream-cycle phase start",
+    "phase": "P8",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:12:34.228Z",
+    "msg": "dream-cycle phase end",
+    "durationMs": 0,
+    "phase": "P8",
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "phase",
+      "cycleId",
+      "durationMs",
+      "msg"
+    ]
+  },
+  {
+    "time": "2026-11-11T22:12:34.228Z",
+    "msg": "event-loop lag exceeded threshold",
+    "lagMs": 9905.744166001678,
+    "thresholdMs": 500,
+    "availableKeys": [
+      "level",
+      "time",
+      "component",
+      "lagMs",
+      "thresholdMs",
+      "msg"
+    ]
+  }
+]

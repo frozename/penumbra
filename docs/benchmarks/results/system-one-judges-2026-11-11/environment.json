@@ -1,0 +1,70 @@
+{
+  "capturedAt": "2026-11-11T20:50:55.306098+00:00",
+  "repositoryBase": "ae513e5acea5160ab9aa36a80fe32b05c23e39b5",
+  "hardware": {
+    "model": "Mac16,10",
+    "chip": "Apple M4",
+    "memoryBytes": 17179869184,
+    "cpuCores": 10
+  },
+  "models": [
+    {
+      "file": "granite-4.1-3b-Q8_0.gguf",
+      "bytes": 3619691840,
+      "sha256": "82adafd4fbac04468c905e6d259a1bf051819804ed2c055c2831f1ef786af5a9"
+    },
+    {
+      "file": "vllm-d3-nano-Q8_0.gguf",
+      "bytes": 2552358496,
+      "sha256": "a4d7563d9622a4c34cc7276a3381c3e27a25bbf8d4c0f5ee2f1404fc89ce2ab9"
+    },
+    {
+      "file": "d1-3B-Q4_K_M.gguf",
+      "bytes": 1674456672,
+      "sha256": "16aff27ea2eefdc32b9897f43854a5d3170c1dc8dccb9c756905af30a4e22402"
+    },
+    {
+      "file": "d1-3B-Q8_0.gguf",
+      "bytes": 2874781280,
+      "sha256": "2f0942d5a5f64cf69c3356d2be439b71644b1f0eb3a580912a5a0179eeaba77d"
+    }
+  ],
+  "runtimeBuild": {
+    "commit": "2cbe0ec429b849a88664e0f62388fc92a5abd699",
+    "compiler": "AppleClang 17.0.0.17000604",
+    "cmake": [
+      "-DCMAKE_BUILD_TYPE=Release",
+      "-DGGML_METAL=ON",
+      "-DLLAMA_CURL=OFF",
+      "-DLLAMA_BUILD_TESTS=OFF",
+      "-DLLAMA_BUILD_EXAMPLES=OFF",
+      "-DLLAMA_UI_GZIP=OFF",
+      "-DLLAMA_USE_PREBUILT_UI=OFF",
+      "-DLLAMA_BUILD_UI=OFF"
+    ],
+    "buildParallelism": 2
+  },
+  "fleet": {
+    "macbook": "read-only SSH capacity probe denied for available credentials; no inference calls",
+    "z13": {
+      "memoryAvailableBytes": 21960675328,
+      "memoryTotalBytes": 134155739136,
+      "admissionFloorGiB": 20,
+      "decision": "no new model loaded; preserve production headroom"
+    }
+  },
+  "experimentStatus": {
+    "granite": "44/44 single-seat promotion baseline completed; temporarily stopped under explicit user authorization and restored with identical binary/model/flags",
+    "d3": "initial co-resident run interrupted; later direct c1=44/44, direct c2=88/88, full bundle=59/60 with Granite stopped",
+    "d1q4": "direct c1=44/44, c2=88/88, full bundle=58/60 with Granite stopped",
+    "d1q8": "direct c1=44/44, c2=88/88, full bundle=58/60 with Granite stopped",
+    "hosted": "three body-hash-matched historical Jev rows analyzed read-only; no new external inference or hosted credential lookup",
+    "authority": "no new startup wiring, promotions or vetoes; pre-existing Jev mode preserved",
+    "graniteControls": "Fresh existing prompt reproduced metrics; same-policy constrained JSON control completed 44/44 with F1 0.538 on provisional held-out labels"
+  },
+  "attemptedRequests": 768,
+  "restorationRecord": "granite-restored.json",
+  "updatedAt": "2026-11-11T21:42:31.207836+00:00",
+  "validationGranitePause": "Temporarily paused for repository-standard 8 GiB typed lint; final exact-command restoration verified in granite-restored.json",
+  "textLogNormalization": "Trailing whitespace and extra terminal blank lines removed from text logs only; measurements and timestamps retained"
+}

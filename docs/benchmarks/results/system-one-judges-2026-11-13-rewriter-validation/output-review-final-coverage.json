@@ -1,0 +1,6 @@
+{
+  "completeReplayUniquePairs": 47,
+  "newUnreviewedPairs": 0,
+  "coveredByPreviousExactPairPackets": 47,
+  "method": "Only full fresh Q8/Q4 replays enter final manifest. Prior semantic labels transfer only by exact input/query hash; partial requests never enter final model scores."
+}

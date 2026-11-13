@@ -1,0 +1,22 @@
+{
+  "note": "Plain-text copies of local gitignored logs, trailing whitespace normalized. Granite copy ends at its first readiness line; subsequent production requests are excluded. No request-body records are included.",
+  "localLogRepair": "Whitespace normalization of the still-open Granite log introduced ten NUL padding bytes after startup; replaced in place with spaces without truncating its active descriptor. The tracked startup copy excludes that region. Resource JSONL and decision measurements were unaffected.",
+  "files": [
+    {
+      "trackedCopy": "granite-restoration.txt",
+      "sha256": "0e89f392ac163f5f69d9c6e03086b92048824253faf603b2b1817adb5b7c1477"
+    },
+    {
+      "trackedCopy": "nano-server-initial.txt",
+      "sha256": "eead892bfeb0cc4c2f9920e8846769ca4b21044d78c9dd5323846bb3b1fbad65"
+    },
+    {
+      "trackedCopy": "nano-server-recovery.txt",
+      "sha256": "99138fa131972958cf2e572104f9bb2b447a2ec3baba7993f47ed92f36ce30fa"
+    },
+    {
+      "trackedCopy": "observer.txt",
+      "sha256": "77829cf6ee2f8c3d72a807c309165c6482f6e2261bacd6189fe18bf62109d63b"
+    }
+  ]
+}

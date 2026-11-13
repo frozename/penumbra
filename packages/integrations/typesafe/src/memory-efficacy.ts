@@ -5,7 +5,7 @@ import {
 } from "@penumbra/core";
 
 import type { TypesafeClient } from "./client.js";
-import type { TypesafeFailureKind } from "./types.js";
+import type { TypesafeFailureKind, TypesafeQuestion } from "./types.js";
 
 import { choice } from "./questions.js";
 
@@ -48,6 +48,10 @@ interface JevBucketRead {
   probabilities: Record<MemoryEfficacyBucket, number>;
 }
 
+export function buildEfficacyQuestions(): Record<string, TypesafeQuestion> {
+  return { bucket: choice(BUCKET_INSTRUCTIONS, MEMORY_EFFICACY_BUCKET_DEFINITIONS) };
+}
+
 export function createJevEfficacyClassifier(
   options: CreateJevEfficacyClassifierOptions,
 ): JevEfficacyClassifier {
@@ -64,9 +68,7 @@ export function createJevEfficacyClassifier(
       try {
         const result = await options.client.evaluate({
           state: { finding: finding.text, severity: finding.severity },
-          questions: {
-            bucket: choice(BUCKET_INSTRUCTIONS, MEMORY_EFFICACY_BUCKET_DEFINITIONS),
-          },
+          questions: buildEfficacyQuestions(),
           signal: controller.signal,
         });
         if (!result.ok) return { kind: "abstained", reason: mapFailureKind(result.kind) };

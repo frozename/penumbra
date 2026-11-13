@@ -1,0 +1,100 @@
+{
+  "evaluation": "provisional labels; answered common held-out cases only, not population quality",
+  "selected": 34,
+  "commonAnswered": 34,
+  "missing": [],
+  "incumbent": {
+    "selected": 34,
+    "answered": 34,
+    "abstained": 0,
+    "coverage": 1,
+    "threshold": 0.5,
+    "tp": 7,
+    "fp": 4,
+    "tn": 15,
+    "fn": 8,
+    "precision": 0.6363636363636364,
+    "recall": 0.4666666666666667,
+    "f1": 0.5384615384615384,
+    "falsePromotionRate": 0.21052631578947367,
+    "falseVetoRate": 0.5333333333333333,
+    "falseDiscoveryRate": 0.36363636363636365,
+    "brier": 0.31220588235294117,
+    "calibrationError": 0.29411764705882354,
+    "falseVetoRateWithRejectFallback": 0.5333333333333333,
+    "p50LatencyMs": 659.0940830000018,
+    "p95LatencyMs": 12524.262582999996
+  },
+  "candidate": {
+    "selected": 34,
+    "answered": 34,
+    "abstained": 0,
+    "coverage": 1,
+    "threshold": 0.5,
+    "tp": 11,
+    "fp": 0,
+    "tn": 19,
+    "fn": 4,
+    "precision": 1,
+    "recall": 0.7333333333333333,
+    "f1": 0.8461538461538461,
+    "falsePromotionRate": 0,
+    "falseVetoRate": 0.26666666666666666,
+    "falseDiscoveryRate": 0,
+    "brier": 0.08535372700700929,
+    "calibrationError": 0.11816961519848883,
+    "falseVetoRateWithRejectFallback": 0.26666666666666666,
+    "p50LatencyMs": 250.68195800000012,
+    "p95LatencyMs": 4659.774540999999
+  },
+  "disagreements": [
+    {
+      "caseId": "syn-preference",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "syn-gotcha",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "syn-long-lived-dispatch",
+      "expected": false,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "syn-injection-token",
+      "expected": false,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "hist-cade7ea4-c596-4e6f-9bad-7fdad32086b9",
+      "expected": false,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "hist-100c8269-0ebf-4280-b96e-9754a7bc1f1d",
+      "expected": false,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "hist-28a61336-c6b0-4795-a5f6-148f594a7dc9",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "hist-95047116-ecf4-46f8-8b03-f5813becb361",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    }
+  ]
+}

@@ -12,6 +12,7 @@ import {
   resolveLlmCandidates,
   resolveLlmProvider,
 } from "./llm-candidates.js";
+import { resolveLlmHttpOptions } from "./llm-http-options.js";
 
 export type JudgeChatFn = (opts: {
   messages: { role: string; content: string }[];
@@ -42,6 +43,7 @@ export function createJudgeChat(opts: {
   provider?: string;
   auth?: LlmAuthSource;
   candidateName?: string;
+  options?: Record<string, unknown>;
   fallbackCandidates?: LlmCandidate[];
   activeBiases?: LlmRoutingBias[] | (() => LlmRoutingBias[]);
   now?: Date;
@@ -63,6 +65,7 @@ export function createJudgeChat(opts: {
           baseUrl: opts.baseUrl,
           model: chatOpts.model,
           provider: opts.provider ?? "local",
+          options: opts.options,
           auth:
             opts.auth ??
             (opts.token ? { source: "bearer", token: opts.token } : { source: "none" }),
@@ -123,10 +126,14 @@ async function invokeJudgeCandidate(
     resolveKeychain?: ResolveKeychainSecret;
   },
 ): Promise<string> {
+  const httpOptions = resolveLlmHttpOptions(candidate.options, {
+    maxTokens: 4096,
+    timeoutMs: opts.timeoutMs,
+  });
   const controller = new AbortController();
   const timer = setTimeout(() => {
     controller.abort();
-  }, opts.timeoutMs);
+  }, httpOptions.timeoutMs);
   let res: Response;
   try {
     const headers: Record<string, string> = {
@@ -138,34 +145,39 @@ async function invokeJudgeCandidate(
       method: "POST",
       headers,
       body: JSON.stringify({
+        ...httpOptions.requestExtras,
         model: candidate.model,
         messages,
+        max_tokens: httpOptions.maxTokens,
+        stream: false,
+        n: 1,
       }),
       signal: controller.signal,
     });
-  } catch (err) {
-    if (controller.signal.aborted) {
-      throw new Error(`judge chat: timed out after ${String(opts.timeoutMs)}ms`);
+    if (!res.ok) {
+      const error = new Error(`judge chat: HTTP ${String(res.status)}`) as Error & {
+        status?: number;
+      };
+      error.status = res.status;
+      throw error;
     }
+    const body = (await res.json()) as {
+      choices?: { message?: { content?: string }; finish_reason?: string }[];
+    };
+    if (body.choices?.[0]?.finish_reason === "length")
+      throw new Error("judge chat: response truncated by token limit");
+    const content = body.choices?.[0]?.message?.content;
+    if (typeof content !== "string" || content.trim().length === 0) {
+      throw new Error("judge chat: empty response");
+    }
+    return content;
+  } catch (err) {
+    if (controller.signal.aborted)
+      throw new Error(`judge chat: timed out after ${String(httpOptions.timeoutMs)}ms`);
     throw err;
   } finally {
     clearTimeout(timer);
   }
-  if (!res.ok) {
-    const error = new Error(`judge chat: HTTP ${String(res.status)}`) as Error & {
-      status?: number;
-    };
-    error.status = res.status;
-    throw error;
-  }
-  const body = (await res.json()) as {
-    choices?: { message?: { content?: string } }[];
-  };
-  const content = body.choices?.[0]?.message?.content;
-  if (typeof content !== "string" || content.trim().length === 0) {
-    throw new Error("judge chat: empty response");
-  }
-  return content;
 }
 
 const DEFAULT_JUDGE_BASE_URL = "http://127.0.0.1:7944";

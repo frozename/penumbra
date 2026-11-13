@@ -1,0 +1,39 @@
+{
+  "startedAtEpoch": 1794444128.228672,
+  "sourceCommit": "f6d4e797c0d8a51002c2318e14cf85e74347fbee",
+  "command": "bun run check:ci",
+  "heavyJobLock": "/Users/aimastermind/.penumbra/locks/heavy-job.lock",
+  "granitePausedPid": 52066,
+  "ciExitCode": 0,
+  "restoredGranitePid": 91558,
+  "sameOriginalGraniteCommand": true,
+  "endedAtEpoch": 1794444789.3322392,
+  "rawLogSha256": "007acca33a75b6f635a82aae1286eb81d9fe9399ef144e9d682cf40f997945be",
+  "status": "passed",
+  "gates": {
+    "passed": 7,
+    "failed": 0,
+    "skipped": 4
+  },
+  "testShardPassCounts": [
+    632,
+    2619,
+    58,
+    267,
+    980,
+    387,
+    632,
+    4154,
+    3304,
+    70,
+    43,
+    218,
+    852,
+    676,
+    1784
+  ],
+  "passedTestExecutions": 16676,
+  "rawLogPath": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/production-readiness/check-ci-readiness-final.log",
+  "sourceAttestation": "All runtime/package/script/root configuration content matches recorded CI source commit; later changes are docs/results only. Raw test log remains private.",
+  "typeDebt": "Existing scripts/test floor8 unchanged; daemon/TypeSafe zero type errors"
+}

@@ -1,0 +1,44 @@
+[
+  {
+    "ts": 1794446329.1473222,
+    "kind": "granite_paused_authorized",
+    "pid": 10743
+  },
+  {
+    "ts": 1794446329.153373,
+    "kind": "post_pause_memory",
+    "availableFreeInactiveBytes": 4755849216,
+    "swapUsedBytes": 1652618690.56,
+    "swapoutBytes": 118096216064,
+    "osMemoryPressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 54%"
+  },
+  {
+    "ts": 1794446329.1535842,
+    "kind": "admission_deferred",
+    "availableBytes": 4755849216,
+    "requiredBytes": 5318136320.0
+  },
+  {
+    "ts": 1794446342.502677,
+    "kind": "native_started",
+    "name": "mini",
+    "pid": 13078,
+    "startupMs": 3328.07993888855
+  },
+  {
+    "ts": 1794446720.7945678,
+    "kind": "extension_failed_or_aborted",
+    "reason": "KeyboardInterrupt: 2"
+  },
+  {
+    "ts": 1794446724.552175,
+    "kind": "granite_restored_verified",
+    "pid": 49430,
+    "sameOriginalCommand": true,
+    "startupMs": 2912.346124649048
+  },
+  {
+    "ts": 1794446724.552458,
+    "kind": "finished_with_granite_restored"
+  }
+]

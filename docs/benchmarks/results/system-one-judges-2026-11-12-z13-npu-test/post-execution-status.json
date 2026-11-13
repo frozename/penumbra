@@ -1,0 +1,34 @@
+{
+  "at": 1794533244.8270645,
+  "trialUnits": "",
+  "listening": "State  Recv-Q Send-Q Local Address:Port  Peer Address:PortProcess                                   \nLISTEN 0      128        127.0.0.1:14873      0.0.0.0:*    users:((\"ssh\",pid=2245,fd=4))            \nLISTEN 0      16         127.0.0.1:8080       0.0.0.0:*    users:((\"gufo-78d74185\",pid=791917,fd=3))\nLISTEN 0      4096   127.0.0.53%lo:53         0.0.0.0:*                                             \nLISTEN 0      4096      127.0.0.54:53         0.0.0.0:*                                             \nLISTEN 0      4096         0.0.0.0:22         0.0.0.0:*                                             \nLISTEN 0      512          0.0.0.0:7843       0.0.0.0:*    users:((\"bun\",pid=825078,fd=6))          \nLISTEN 0      4096            [::]:22            [::]:*                                             \n",
+  "gufoHealth": {
+    "httpStatus": 200,
+    "models": {
+      "object": "list",
+      "data": [
+        {
+          "id": "Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
+          "object": "model",
+          "created": 1794533244,
+          "owned_by": "gufo",
+          "context_length": 131072,
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "memory": {
+    "MemAvailableBytes": 21952258048,
+    "SwapTotalBytes": 8589930496,
+    "SwapFreeBytes": 8588484608
+  },
+  "npuPowerState": "suspended",
+  "authorityChanged": false,
+  "globalAdmissionChanged": false,
+  "productionServicesRestarted": false
+}
