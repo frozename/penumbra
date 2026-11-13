@@ -1,5 +1,7 @@
 # Self-hosted System One judge evaluation
 
+November 13 continuation: the [source-preserving extraction study](../benchmarks/system-one-source-grounded-extraction.md) tests richer inputs and quote/completeness checks on a fresh cohort. No completed profile recovers the expected facts; the MacBook attempt is resource-aborted, not a quality measurement. Exact quotes do not establish semantic support or durability. Binary specialist findings below remain separate.
+
 Date: 2026-11-11. Repository inspected at `ae513e5acea5160ab9aa36a80fe32b05c23e39b5`. Experiments and proposed code are in an isolated worktree. No new promotion or veto authority is enabled.
 
 This is a workload-specific evaluation, not a public leaderboard ranking. The [local benchmark report](../benchmarks/system-one-judges.md) distinguishes the initial interrupted co-residency experiment from subsequent experiments with Granite temporarily stopped under explicit user authorization. The [recommendation](../decisions/system-one-judge-recommendation.md) states the remaining acceptance conditions.

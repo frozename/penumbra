@@ -2,6 +2,8 @@
 
 Date: 2026-11-13. This follows the [initial generation-placement canary](system-one-generation-placement.md). **The routing implementation passes full CI; no tested generator qualifies for production memory-extraction replacement. Production roles, promotion/veto authority and inference-worker configuration remain unchanged.**
 
+The subsequent [source-preserving input study](system-one-source-grounded-extraction.md) evaluates a new cohort and disabled source-mode repair. It preserves this earlier study separately and finds no accepted extractor; MacBook testing stops at a memory guard.
+
 ## Implemented support
 
 The existing HTTP generation paths now honor validated per-candidate output/deadline settings and forward non-thinking template options. The shared rewrite/refiner/brief helper protects caller-owned model, messages, output format, stream mode and token budgets from request extras. Extraction preserves its existing trusted-extra contract, while explicit per-seat token limits take precedence over those extras and per-seat deadlines cannot extend the pool deadline. Rewrite and refiner factories preserve primary options; brief synthesis forwards options and rejects empty or token-truncated replies. Deadlines cover response bodies. Schema-invalid extraction now fails inside the judge pool, allowing fallback before the writer consumes it; the writer already rejected malformed batches.

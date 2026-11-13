@@ -1,0 +1,16 @@
+{
+  "method": "Final observational source hashes; do not claim a pre-execution timestamp. Exact experiment sources will be preserved by the final git commit. Package content is separately bound to the full-CI source commit.",
+  "changesSinceInitialObservation": "A CPU-clock telemetry field was added to the Z13 sensor before its launch; the MacBook helper and analysis/capture helpers were subsequently added before use. Running inference helpers were not edited. Frozen source policy and candidate prompts were unchanged. Lifecycle files bind actual composed sensor hashes.",
+  "sha256": {
+    "eval-source-extraction.ts": "6147617bb824bec2c2f8f48a28ccca62df79bd68a9fc952d8180b9b311153f6a",
+    "run-mini-replay.py": "6faa132bf269096e035704ea16dcbee060732c8c2c32fd2fa134454ab154e6b2",
+    "run-z13-replay.py": "8babdfdcee3972bd516714e43aa89ad9406818c08a9298bfcfa93bf8c954c2b9",
+    "run-macbook-replay.py": "2c985a408dfa89f1b2603d2ef4dee96ebb08353dcb006781176894ba49faeb93",
+    "freeze-source-cohort.ts": "6fc66f5cbe3c77a2764d07ed810d4d0bb038f2f15ee567ecf298eb568be4f58c",
+    "protocol.json": "89b5d8338c01caf8586bed6d4c14b3430e62eb8ae11de3b7191d5a002d302397",
+    "prepare-output-review.py": "f60592974eeb49b0847db5cfd7ebef982bdbe64a17b6acd7f63147ef83793da4",
+    "summarize.py": "f4a68c635e7ac528fc98a630c76493e4e17ff75ce925b82680307baef3d1ccac",
+    "capture-final-runtime-status.py": "bb0bcd38683bc4c193ef21b3f3ed3718186595fca861a09de1372318de04534f",
+    "post-validation-availability.ts": "578f8614bbc11d79279f5991273375171ad40a94ead2c9d46e4a5233472a314c"
+  }
+}

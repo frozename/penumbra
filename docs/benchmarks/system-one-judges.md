@@ -6,6 +6,8 @@ The later [Z13 NPU comparison](system-one-z13-npu-results.md) tests a complement
 
 The November 13 [configured generation validation](system-one-generation-validation.md) compares Granite, MacBook Kapitsa, Z13 Gufo and a smaller local Qwen3.5-2B on 24 historical extraction inputs plus seven contract controls. Independent AI source review rejects all four as replacement extractors. The smaller model's measured footprint and opt-in routing support remain useful evidence; production generation roles are unchanged.
 
+The subsequent [source-preserving extraction study](system-one-source-grounded-extraction.md) adds an opt-in input/grounding repair, fresh independently reviewed cases, guarded fleet replays and full CI. It finds no extraction-quality improvement and preserves a MacBook memory-guard abort. Production source mode and authority remain unchanged.
+
 2026-11-11. This is an exploratory content-classification and deployment experiment. It does not authorize replacement, establish factual correctness of memories, or demonstrate downstream memory benefit. All new outputs have `mode=shadow, applied=false`.
 
 The subsequent [bounded shadow continuation](system-one-judge-shadow-trial.md) adds disabled-by-default wiring and a fresh 200-case review packet. Its operational replay failed the health guard with existing P4 database/event-loop stalls as a material confound. It does not change the pilot quality results below or establish production readiness.

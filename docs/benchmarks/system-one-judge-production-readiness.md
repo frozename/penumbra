@@ -1,5 +1,7 @@
 # System One judge validation continuation
 
+The later [source-preserving extraction study](system-one-source-grounded-extraction.md) adds opt-in package changes at `5063043587143f89c0a9dd00330c26bc0dadfc66`, with full CI passing seven gates and 16,707 passing executions including repeated shards. It reports no production-ready extractor; source mode stays disabled.
+
 Date: 2026-11-11. This report extends the [initial pilot](system-one-judges.md) and the [interrupted shadow trial](system-one-judge-shadow-trial.md). Keep these cohorts separate. New classifier authority remains disabled.
 
 The later [configured generation study](system-one-generation-validation.md) adds independent historical output-fidelity review, a measured small local generator and full CI on implementation commit 39f1fe56157f41e363aba83d7f72e51361c656b3. It supersedes earlier statements that all subsequent package changes are documentation-only; no new production authority is activated.

@@ -1,0 +1,10 @@
+{
+  "method": "Hashes observed while Granite source replay is running. Files have not been modified since each launch; no retrospective pre-execution timestamp claim. Final git revision will preserve these exact sources.",
+  "sha256": {
+    "eval-source-extraction.ts": "6147617bb824bec2c2f8f48a28ccca62df79bd68a9fc952d8180b9b311153f6a",
+    "run-mini-replay.py": "6faa132bf269096e035704ea16dcbee060732c8c2c32fd2fa134454ab154e6b2",
+    "run-z13-replay.py": "09b9be78d05ca0d983a596fad97f2b30e639e5766a404e0dc949359bf0788add",
+    "freeze-source-cohort.ts": "6fc66f5cbe3c77a2764d07ed810d4d0bb038f2f15ee567ecf298eb568be4f58c",
+    "protocol.json": "89b5d8338c01caf8586bed6d4c14b3430e62eb8ae11de3b7191d5a002d302397"
+  }
+}
