@@ -236,7 +236,7 @@ describe("dreaming/config", () => {
     expect(config.rewriterModel).toBe("granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf");
     expect(config.rewriterTimeoutMs).toBe(5000);
     expect(config.rewriterCacheTtlMs).toBe(30 * 24 * 60 * 60 * 1000);
-    expect(config.rewriterConcurrency).toBe(4);
+    expect(config.rewriterConcurrency).toBe(1);
   });
 
   it("overrides new rewriter settings via env when provided", () => {

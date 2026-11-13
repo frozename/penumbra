@@ -8,9 +8,9 @@ import {
   type RewriteResponse,
 } from "../packages/daemon/src/dreaming/dream-rewriter-prompt-content.js";
 import { buildDreamQueryRewritePrompt } from "../packages/daemon/src/dreaming/dream-rewriter-prompt.js";
-import { isWebSearchable } from "../packages/daemon/src/dreaming/query-rewriting.js";
 import { sanitizeTitleForQuery } from "../packages/daemon/src/dreaming/query-sanitize.js";
 import { invokeRewriter } from "../packages/daemon/src/dreaming/rewrite-invoke.js";
+import { validateRewriteQuery } from "../packages/daemon/src/dreaming/rewrite-query-policy.js";
 import { llmInvoke } from "../packages/daemon/src/services/llm-invoke.js";
 
 const ModelSchema = z
@@ -146,16 +146,12 @@ export function assessRewrite(
   const words = value.query.trim().split(/\s+/).length;
   if (words < 4 || words > 12) issues.push("word_count");
   if (/["'`#*]|[\r\n]/.test(value.query)) issues.push("quotes_or_markdown");
-  const passes = isWebSearchable(value.query).ok;
+  const passes = validateRewriteQuery(value.query).ok;
   return {
     issues,
     productionGatePass: passes,
     sanitizedQuery: passes ? sanitizeTitleForQuery(value.query) : null,
   };
-}
-
-function titleFallback(title: string): string | null {
-  return isWebSearchable(title).ok ? sanitizeTitleForQuery(title) : null;
 }
 
 export async function runCase(
@@ -195,7 +191,7 @@ export async function runCase(
       correct: input.expected_verdict === "uncertain" ? null : false,
       contract_issues: [],
       production_gate_pass: false,
-      gate_eligible_text: titleFallback(input.title),
+      gate_eligible_text: null,
     };
   const audit = assessRewrite(result.value, result.raw);
   return {
@@ -208,8 +204,7 @@ export async function runCase(
       input.expected_verdict === "uncertain" ? null : result.value.kind === input.expected_verdict,
     contract_issues: audit.issues,
     production_gate_pass: audit.productionGatePass,
-    gate_eligible_text:
-      result.value.kind === "skip" ? null : (audit.sanitizedQuery ?? titleFallback(input.title)),
+    gate_eligible_text: result.value.kind === "skip" ? null : audit.sanitizedQuery,
   };
 }
 
@@ -268,7 +263,7 @@ export async function runBenchmark(
           config,
           fixtureSha256,
           method:
-            "Existing production rewriter prompt/schema/invoke path; no cache writes, research queue or downstream web search. Strict output and deterministic gate audited separately. Gate-eligible fallback text is an observation before research budgets/cooldowns, not a dispatched query.",
+            "Production rewriter prompt/schema/invoke and mandatory privacy contract; no cache writes, research queue or downstream web search. Errors and rejected queries abstain without title fallback. Gate-eligible text is before research budgets/cooldowns, not a dispatched query.",
           rows,
           calls,
           applied: false,

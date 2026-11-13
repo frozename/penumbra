@@ -108,7 +108,7 @@ function getInternalTerms(): string[] {
     .map((term) => term.trim().toLowerCase())
     .filter((term) => term.length > 0);
 
-  return overrideTerms.length > 0 ? overrideTerms : [...INTERNAL_TERMS_SEED];
+  return [...new Set([...INTERNAL_TERMS_SEED, ...overrideTerms])];
 }
 
 function hasInternalJargon(title: string): boolean {

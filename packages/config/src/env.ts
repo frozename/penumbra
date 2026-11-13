@@ -591,7 +591,8 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   PENUMBRA_DREAMING_REWRITER_ENABLED: {
     schema: Bool,
     default: false,
-    description: "Enable the dreaming rewriter.",
+    description:
+      "Enable local rewriting for automatic P4 memory research. Disabled or failed rewriting skips memory research.",
   },
   PENUMBRA_DREAMING_REWRITER_BASE_URL: {
     schema: z.string(),
@@ -619,17 +620,19 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   },
   PENUMBRA_DREAMING_REWRITER_CONCURRENCY: {
     schema: NonNegInt,
-    default: 4,
+    default: 1,
     description: "Rewriter concurrency limit.",
   },
   PENUMBRA_DREAMING_QUERY_GATE_ENABLED: {
     schema: Bool,
     default: true,
-    description: "Enable dreaming query gate.",
+    description:
+      "Enable additional dreaming searchability heuristics; privacy and rewrite output-contract checks always run.",
   },
   PENUMBRA_DREAMING_INTERNAL_TERMS: {
     schema: OptStr,
-    description: "Comma-separated internal terms for query rewriting.",
+    description:
+      "Additional comma-separated internal terms for query rewriting. Built-in internal terms remain blocked.",
   },
   PENUMBRA_DREAM_DIGEST_DIR: {
     schema: OptStr,

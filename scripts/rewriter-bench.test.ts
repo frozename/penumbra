@@ -135,15 +135,29 @@ test("case invocation sends only title/excerpt and never the expected label or s
   });
 });
 
-test("transport/schema failures remain explicit errors and preserve deterministic title fallback observation", async () => {
+test("transport/schema failures remain explicit errors and never expose the memory title", async () => {
   const result = await runCase(model, input, fakeFetch("{}", 503));
   expect(result.error).toBe("http_error");
   expect(result.verdict).toBeNull();
   expect(result.correct).toBe(false);
-  expect(result.gate_eligible_text).toBe(input.title);
+  expect(result.gate_eligible_text).toBeNull();
   const malformed = await runCase(model, input, fakeFetch('{"kind":"query"}'));
   expect(malformed.error).toBe("schema_violation");
   expect(malformed.verdict).toBeNull();
+  expect(malformed.gate_eligible_text).toBeNull();
+});
+
+test("a rejected model query never falls back to the memory title", async () => {
+  const result = await runCase(
+    model,
+    input,
+    fakeFetch(
+      '{"kind":"query","query":"SQLite errors https://private.internal/customer debugging"}',
+    ),
+  );
+  expect(result.verdict).toBe("query");
+  expect(result.production_gate_pass).toBe(false);
+  expect(result.gate_eligible_text).toBeNull();
 });
 
 test("valid skip has no fallback query, and uncertain cases never receive a fabricated correctness label", async () => {
