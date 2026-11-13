@@ -156,8 +156,10 @@ function isLocalOrLanHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replaceAll("[", "").replaceAll("]", "");
   if (host === "localhost" || host === "::1") return true;
   if (host.endsWith(".local")) return true;
-  const parts = host.split(".").map((part) => Number.parseInt(part, 10));
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part))) return false;
+  const octets = host.split(".");
+  if (octets.length !== 4 || octets.some((part) => !/^\d{1,3}$/.test(part))) return false;
+  const parts = octets.map(Number);
+  if (parts.some((part) => part > 255)) return false;
   const [a = 0, b = 0] = parts;
   if (a === 10) return true;
   if (a === 127) return true;

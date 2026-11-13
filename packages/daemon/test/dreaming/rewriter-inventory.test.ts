@@ -185,6 +185,20 @@ it("does not authorize memory research through an experimental model", async () 
   );
 });
 
+it("rejects DNS hostnames with private-IP numeric prefixes in candidates and inventory", async () => {
+  const local = candidate({ name: "mini", baseUrl: "http://127.0.0.1:18944/v1", model: "granite" });
+  for (const host of ["10.0.0.1evil", "192.168.1.2junk", "172.16.0.3suffix", "127.0.0.1e0"]) {
+    const invalid = candidate({ ...local, baseUrl: `http://${host}/v1` });
+    expect(await resolveAgainstInventory([invalid], [{ id: "granite" }])).toEqual([]);
+    expect(
+      await resolveAgainstInventory(
+        [local],
+        [{ id: "granite", node: { name: "invalid", endpoint: `http://${host}/v1` } }],
+      ),
+    ).toEqual([]);
+  }
+});
+
 it("binds a registered loopback catalog to its configured endpoint", async () => {
   const direct = candidate({
     name: "mini",
