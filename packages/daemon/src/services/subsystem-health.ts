@@ -119,7 +119,11 @@ export function buildRequiredLlmRoleFloors(
       minimumHolders: 1,
     },
     {
-      role: envRole(env, "PENUMBRA_JUDGE_ROLE", "memory-refiner"),
+      role: envRole(
+        env,
+        "PENUMBRA_T2_EXTRACTION_ROLE",
+        envRole(env, "PENUMBRA_JUDGE_ROLE", "memory-refiner"),
+      ),
       consumer: "t2.promotion",
       minimumHolders: 1,
     },

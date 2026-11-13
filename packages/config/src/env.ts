@@ -779,6 +779,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: "memory-refiner",
     description: "Role for the judge.",
   },
+  PENUMBRA_T2_EXTRACTION_ROLE: {
+    schema: OptStr,
+    description:
+      "Optional T2 transcript extractor role; defaults to PENUMBRA_JUDGE_ROLE. Does not reassign memory-efficacy classifiers or promotion ballots.",
+  },
   PENUMBRA_JUDGE_TOKEN: {
     schema: OptStr,
     description: "Bearer token for the judge LLM.",

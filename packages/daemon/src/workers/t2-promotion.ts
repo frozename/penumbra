@@ -850,7 +850,8 @@ function createJudgePoolFromAgentchat(
   const cfg = loadAgentChatConfigSafe(services, configDir);
   if (!cfg) return null;
 
-  const roleTag = process.env.PENUMBRA_JUDGE_ROLE ?? "memory-refiner";
+  const roleTag =
+    process.env.PENUMBRA_T2_EXTRACTION_ROLE ?? process.env.PENUMBRA_JUDGE_ROLE ?? "memory-refiner";
   const candidates = resolveRoleLlmCandidates({ roleTag, agentchatConfig: cfg });
   const judges: JudgeEntry[] = candidates.map((candidate) => {
     const requestExtras = extractT2JudgeRequestExtras(candidate.options);
