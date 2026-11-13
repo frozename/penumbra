@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 47,
+  "schemaVersion": 48,
   "tables": {
     "agent_performance": [
       "agent_kind",
@@ -719,12 +719,14 @@
     "handoffs_workflow_run_id",
     "idx_corpus_members_memory",
     "idx_curator_ephemera_status",
+    "idx_dispatch_events_activity_end_ts",
     "idx_dispatch_events_end_ts",
     "idx_dispatch_events_handoff",
     "idx_dispatch_events_handoff_kind",
     "idx_dispatch_events_ts",
     "idx_dream_actions_cycle",
     "idx_dream_actions_expires",
+    "idx_dream_actions_phase_status",
     "idx_dream_actions_queued_link_target",
     "idx_dream_actions_queued_promote_target",
     "idx_dream_actions_status",
@@ -790,6 +792,8 @@
     "t0_events_workflow_outcome_lookup",
     "t1_by_project",
     "t1_claimed_idx",
+    "t1_promotion_claim_lookup",
+    "t1_promotion_eligible_lookup",
     "t1_session",
     "t1_unpromoted_idx",
     "t2_by_project",
