@@ -40,6 +40,27 @@ function seedMemory(db: Database, memoryId: string, updatedAt: string): void {
 }
 
 describe("dreaming/query-rewriter-cache", () => {
+  it("does not reuse a query produced before the current privacy policy", () => {
+    const db = new Database(":memory:");
+    loadSqliteVec(db);
+    applySchema(db);
+    seedMemory(db, "old-query", "2026-01-01T00:00:00Z");
+    db.run(
+      `INSERT INTO dream_query_rewrites(t2_memory_id,memory_updated_at_ms,verdict_kind,query,model,created_at,expires_at)
+       VALUES('old-query',1,'query','private implementation inventory details','granite',10,1000)`,
+    );
+    expect(
+      getRewriteForMemory({
+        db,
+        t2_memory_id: "old-query",
+        memory_updated_at_ms: 1,
+        model: "granite",
+        now_ms: 20,
+      }),
+    ).toBeNull();
+    db.close();
+  });
+
   it("writes and reads a rewrite cache row by t2 memory id", () => {
     const db = new Database(":memory:");
     loadSqliteVec(db);

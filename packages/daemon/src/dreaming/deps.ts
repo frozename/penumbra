@@ -21,10 +21,8 @@ import { type DreamConfig, resolveP1JevShadowEstimateUsd } from "./config.js";
 import { ContentQualityJudge } from "./curator/content-quality-judge.js";
 import { createDreamingJudgePoolFromAgentchat } from "./dreaming-judge-pool.js";
 import { type JudgeVote, type SerializedJudgeVote, StubJudgePool } from "./judge-pool.js";
-import {
-  createCachedDreamingRewriterInventory,
-  DREAMING_REWRITER_LOCAL_SECONDARY_MODEL,
-} from "./rewriter-inventory.js";
+import { wireLocalPromotionShadow } from "./local-promotion-shadow-runtime.js";
+import { createCachedDreamingRewriterInventory } from "./rewriter-inventory.js";
 import {
   composeShadowJudgePool,
   createLazyShadowSeat,
@@ -57,6 +55,7 @@ interface DreamDepsServices {
   // Test seam only: production leaves this unset and the judge pool uses the
   // global fetch.
   judgeFetch?: typeof fetch;
+  localJudgeFetch?: import("@penumbra/typesafe").TypesafeFetch;
 }
 
 export function createDreamingRewriterCandidates(
@@ -77,49 +76,18 @@ export function createDreamingRewriterCandidates(
       : [];
   const roleTag = process.env["PENUMBRA_DREAMING_REWRITER_ROLE"] ?? "dreaming-rewriter";
   try {
-    return withDefaultLocalRewriterSecondary(
-      resolveRoleLlmCandidates({
-        roleTag,
-        agentchatConfig: loadAgentChatConfig(),
-        fallbackCandidates,
-      }),
-      dreamConfig,
-    );
+    return resolveRoleLlmCandidates({
+      roleTag,
+      agentchatConfig: loadAgentChatConfig(),
+      fallbackCandidates,
+    });
   } catch (err) {
     log?.warn(
       { err, configDir: resolveAgentChatConfigPath(), roleTag },
       "dreaming: failed to resolve rewriter role candidates; using legacy environment candidate",
     );
-    return withDefaultLocalRewriterSecondary(fallbackCandidates, dreamConfig);
+    return fallbackCandidates;
   }
-}
-
-function withDefaultLocalRewriterSecondary(
-  candidates: LlmCandidate[],
-  dreamConfig: DreamConfig,
-): LlmCandidate[] {
-  if (!dreamConfig.rewriterBaseUrl) return candidates;
-  const provider = tryResolveLlmProvider(dreamConfig.rewriterBaseUrl) ?? "unknown";
-  if (provider !== "local") return candidates;
-  if (
-    candidates.some(
-      (candidate) =>
-        candidate.baseUrl === dreamConfig.rewriterBaseUrl &&
-        candidate.model === DREAMING_REWRITER_LOCAL_SECONDARY_MODEL,
-    )
-  ) {
-    return candidates;
-  }
-  return [
-    ...candidates,
-    {
-      name: DREAMING_REWRITER_LOCAL_SECONDARY_MODEL,
-      baseUrl: dreamConfig.rewriterBaseUrl,
-      model: DREAMING_REWRITER_LOCAL_SECONDARY_MODEL,
-      provider,
-      auth: { source: "none" },
-    },
-  ];
 }
 
 export function buildDreamCycleDeps(
@@ -222,6 +190,14 @@ export function buildDreamCycleDeps(
     wireTypesafeShadow(deps, services, db, dreamConfig);
   }
 
+  if (deps.judgePool) {
+    deps.judgePool = wireLocalPromotionShadow(
+      deps.judgePool,
+      dreamConfig.localPromotionShadow,
+      db,
+      services,
+    );
+  }
   return deps;
 }
 

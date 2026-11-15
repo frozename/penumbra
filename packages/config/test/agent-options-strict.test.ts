@@ -21,6 +21,7 @@ const fullAgentOptions = {
   binary: "codex",
   bootTimeoutMs: 1000,
   caPath: "/tmp/test-ca.pem",
+  candidateSelection: "ordered",
   capturePort: {},
   claudeCodeAllowedTools: ["mcp__penumbra__memory_recall"],
   claudeCodeDisallowedTools: ["Bash"],

@@ -1,12 +1,16 @@
 import { Database } from "bun:sqlite";
 
+import { ensureControlPlaneIndexes } from "./control-plane-indexes.js";
+
+// 49 = policy-versioned public-search rewrite cache.
+// 48 = covering indexes for control-plane promotion scans, queue counts and activity.
 // 46 = judge_decisions shadow sink for the TypeSafe judge.
 // 45 = t1_rollups promotion_retry_exhausted_at terminal stamp.
 // 44 = t1_rollups promotion livelock columns (unusable excerpt marker, retry backoff).
 // 43 = session_note_drafts approval state table.
 // 42 = registrar entry_transition event kind.
 // 41 = registrar entries, phases, and event journal.
-export const SCHEMA_VERSION = 47;
+export const SCHEMA_VERSION = 49;
 const LANE_LEDGER_OPEN_DEDUPE_SCHEMA_META_KEY = "lane_ledger_open_dedupe_schema_version";
 const T0_FTS_EXTERNAL_CONTENT_SCHEMA_META_KEY = "t0_fts_external_content_v1";
 
@@ -1371,6 +1375,7 @@ function applyLateMemoryMigration(db: Database): void {
   db.run(
     `CREATE INDEX IF NOT EXISTS t1_claimed_idx ON t1_rollups(claimed_at) WHERE claimed_at IS NOT NULL`,
   );
+  ensureControlPlaneIndexes(db);
   addColumnIfMissing(db, "t2_memories", "embedding_model_version", "TEXT");
   addColumnIfMissing(db, "t2_memories", "retired_at", "INTEGER");
   db.run(`DROP INDEX IF EXISTS idx_t2_memories_slug`);
@@ -1477,6 +1482,12 @@ export function applySchema(db: Database, opts: { embeddingDim?: number } = {}):
   // enclosing transaction) keeps the FK-disable effective so an orphaned row upgrades
   // instead of crashing applySchema on a FOREIGN KEY violation.
   migrateDreamQueryRewritesToModelScopedKeys(db);
+  addColumnIfMissing(
+    db,
+    "dream_query_rewrites",
+    "policy_version",
+    "TEXT NOT NULL DEFAULT 'legacy'",
+  );
   // Same envelope: registrar_events declares a self-referencing FK, so the rebuild
   // also runs with FK enforcement off, outside the main transaction.
   ensureRegistrarEventsEntryTransitionKind(db);

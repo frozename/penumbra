@@ -151,7 +151,7 @@ export function createJevTaskProfileJudge(
         controller.abort();
       }, timeoutMs);
       try {
-        const questions = buildQuestions();
+        const questions = buildTaskProfileQuestions();
         const longestQuestionChars = Math.max(
           ...Object.values(questions).map((question) => JSON.stringify(question).length),
         );
@@ -232,7 +232,7 @@ function sliceToSerializedChars(text: string, serializedChars: number): string {
   return text.slice(0, lo);
 }
 
-function buildQuestions(): Record<string, TypesafeQuestion> {
+export function buildTaskProfileQuestions(): Record<string, TypesafeQuestion> {
   const questions: Record<string, TypesafeQuestion> = {
     [PRIMARY_TASK_TYPE_ID]: choice(
       `${UNTRUSTED_STATE_NOTICE} Choose the single task type that best describes the dispatch.`,

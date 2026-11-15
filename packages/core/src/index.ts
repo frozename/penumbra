@@ -477,6 +477,7 @@ export {
   type RoleLlmCandidate,
   tryResolveLlmProvider,
 } from "./services/llm-candidates.js";
+export * from "./services/llm-http-options.js";
 export {
   type Classification,
   classifyFindings,
@@ -673,11 +674,7 @@ export {
   setRoutingBias,
   type SetRoutingBiasArgs,
 } from "./writers/routing-bias.js";
-export {
-  extractSessionCandidates,
-  type SessionExtractCandidate,
-  type SessionExtractOpts,
-} from "./writers/session-extract.js";
+export * from "./writers/session-extract.js";
 export { T0Writer } from "./writers/t0.js";
 export { T1Rollup, type T1RollupOpts } from "./writers/t1.js";
 export { buildT2EmbedText, MAX_BODY_CHARS, validateT2Body } from "./writers/t2-embed-text.js";
@@ -690,6 +687,7 @@ export {
   type LLMJudge,
   readExistingNearDuplicateCandidates,
   type T2MemoryExtraction,
+  T2MemoryExtractionSchema,
   type T2MemoryWriteInput,
   T2Promotion,
   type T2PromotionOpts,

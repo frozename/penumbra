@@ -58,6 +58,7 @@ export type AnswersOf<M extends Record<string, TypesafeQuestion>> = {
 };
 
 export type TypesafeFailureKind =
+  | "busy"
   | "disabled"
   | "auth"
   | "rate_limited"

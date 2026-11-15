@@ -60,16 +60,17 @@ import {
   type P1SkipReason,
   renderP1PromptBlock,
 } from "./p1-input.js";
+import { p4MemoryCandidatesSql } from "./p4-memory-candidates.js";
 import {
   getRewriteForMemory,
   pruneExpiredRewriteCache,
   setRewriteForMemory,
 } from "./query-rewriter-cache.js";
-import { isWebSearchable } from "./query-rewriting.js";
 import { sanitizeTitleForQuery } from "./query-sanitize.js";
 import { runReembedPhase } from "./reembed.js";
 import { hashQuery, runP5Phase } from "./research.js";
 import { invokeRewriter, noEligibleCandidateMessage } from "./rewrite-invoke.js";
+import { REWRITE_POLICY_VERSION, validateRewriteQuery } from "./rewrite-query-policy.js";
 import {
   type DreamingRewriterInventory,
   resolveRewriterCandidatesAgainstInventory,
@@ -316,7 +317,6 @@ export async function runDreamCycle(
   }
 }
 
-// eslint-disable-next-line max-lines-per-function -- Preserve cycle context construction while grandfathering its pre-existing size.
 function buildCycleCtx(
   db: Database,
   cycleId: string,
@@ -375,52 +375,7 @@ function buildCycleCtx(
   const p1QueuedPromoteExistsStmt = db.prepare(
     `SELECT 1 FROM dream_actions WHERE phase='P1' AND action_type='promote_t1' AND status='queued' AND target_ids=? LIMIT 1`,
   );
-  const p4MemoryByProjectStmt = hasT2ProjectId
-    ? db.prepare(
-        `SELECT
-           memory_id,
-           title,
-           SUBSTR(body, 1, 200) AS body,
-           updated_at,
-           (
-             SELECT MAX(COALESCE(da.decided_at, ?2))
-             FROM dream_actions da
-             WHERE da.phase='P4'
-               AND da.action_type='research_query'
-               AND json_extract(da.payload_json, '$.source_memory_id') = t2_memories.memory_id
-               AND COALESCE(da.decided_at, ?2) > ?3
-           ) AS last_researched_at
-         FROM t2_memories
-         WHERE project_id = ?1
-           AND kind NOT IN ('brief')
-           AND retired_at IS NULL
-           AND title IS NOT NULL
-           AND title != ''
-         ORDER BY last_researched_at IS NOT NULL ASC, last_researched_at ASC, created_at DESC
-         LIMIT 2`,
-      )
-    : db.prepare(
-        `SELECT
-           memory_id,
-           title,
-           SUBSTR(body, 1, 200) AS body,
-           updated_at,
-           (
-             SELECT MAX(COALESCE(da.decided_at, ?1))
-             FROM dream_actions da
-             WHERE da.phase='P4'
-               AND da.action_type='research_query'
-               AND json_extract(da.payload_json, '$.source_memory_id') = t2_memories.memory_id
-               AND COALESCE(da.decided_at, ?1) > ?2
-           ) AS last_researched_at
-         FROM t2_memories
-         WHERE kind NOT IN ('brief')
-           AND retired_at IS NULL
-           AND title IS NOT NULL
-           AND title != ''
-         ORDER BY last_researched_at IS NOT NULL ASC, last_researched_at ASC, created_at DESC
-         LIMIT 2`,
-      );
+  const p4MemoryByProjectStmt = db.prepare(p4MemoryCandidatesSql(hasT2ProjectId));
 
   const dispatchEventLog = deps.dispatchEventLog;
   const emitDreamEvent = (
@@ -1518,17 +1473,18 @@ async function runMemoryRewrite(
 
   const { resolvedQuery, cacheHit, rewriteModel, rewriteLatencyMs } = resolved;
 
-  if (ctx.gateEnabled) {
-    const verdict = isWebSearchable(resolvedQuery);
-    if (!verdict.ok) {
-      ctx.emitDreamEvent("dream_p4_query_rejected_unsearchable", {
-        t2_memory_id: memory.memory_id,
-        cache_hit: cacheHit,
-        model: rewriteModel,
-        latency_ms: rewriteLatencyMs,
-      });
-      return;
-    }
+  const verdict = validateRewriteQuery(resolvedQuery, ctx.gateEnabled);
+  if (!verdict.ok) {
+    ctx.emitDreamEvent("dream_p4_query_rejected_unsearchable", {
+      t2_memory_id: memory.memory_id,
+      cache_hit: cacheHit,
+      model: rewriteModel,
+      policy_version: REWRITE_POLICY_VERSION,
+      latency_ms: rewriteLatencyMs,
+      reason: verdict.reason,
+      stage: cacheHit ? "cache" : "dispatch",
+    });
+    return;
   }
 
   const query = sanitizeTitleForQuery(resolvedQuery);
@@ -1555,7 +1511,11 @@ async function runMemoryRewrite(
     crypto.randomUUID(),
     ctx.cycleId,
     projectIdJson,
-    JSON.stringify({ query, source_memory_id: memory.memory_id }),
+    JSON.stringify({
+      query,
+      source_memory_id: memory.memory_id,
+      rewrite_policy_version: REWRITE_POLICY_VERSION,
+    }),
   );
 }
 
@@ -1573,17 +1533,22 @@ type ResolvedQuery = {
   rewriteLatencyMs: number;
 };
 
-function fallbackToMemoryTitle(
+function abstainFromMemoryResearch(
   ctx: CycleCtx,
-  memory: { title: string },
+  memory: { memory_id: string },
   rewriteLatencyMs: number,
-): ResolvedQuery {
-  return {
-    resolvedQuery: memory.title,
-    cacheHit: false,
-    rewriteModel: ctx.rewriterModel,
-    rewriteLatencyMs,
-  };
+  reason: string,
+): null {
+  ctx.emitDreamEvent("dream_p4_query_skipped", {
+    t2_memory_id: memory.memory_id,
+    cache_hit: false,
+    model: ctx.rewriterModel,
+    policy_version: REWRITE_POLICY_VERSION,
+    latency_ms: rewriteLatencyMs,
+    reason,
+    decision_source: "policy",
+  });
+  return null;
 }
 
 function safeHostname(baseUrl: string): string | null {
@@ -1676,7 +1641,7 @@ async function resolveMemoryQuery(
   updatedAtMs: number,
 ): Promise<ResolvedQuery | null> {
   if (!ctx.rewriterEnabled) {
-    return fallbackToMemoryTitle(ctx, memory, 0);
+    return abstainFromMemoryResearch(ctx, memory, 0, "rewriter_disabled");
   }
 
   const cached = getRewriteForMemory({
@@ -1694,6 +1659,7 @@ async function resolveMemoryQuery(
         cache_hit: true,
         latency_ms: 0,
         model: cached.model,
+        policy_version: REWRITE_POLICY_VERSION,
       });
       return null;
     }
@@ -1702,6 +1668,7 @@ async function resolveMemoryQuery(
       cache_hit: true,
       latency_ms: 0,
       model: cached.model,
+      policy_version: REWRITE_POLICY_VERSION,
     });
     return {
       resolvedQuery: cached.verdict.query,
@@ -1723,7 +1690,7 @@ async function fetchRewriteFromLlm(
   if (!ctx.costMeter.canAfford("P4", "llm", ctx.phaseCostEstimates.p4RewriterLlmUsd)) return null;
 
   const [primaryCandidate, ...fallbackCandidates] = ctx.rewriterCandidates;
-  if (!primaryCandidate) return fallbackToMemoryTitle(ctx, memory, 0);
+  if (!primaryCandidate) return abstainFromMemoryResearch(ctx, memory, 0, "no_eligible_candidate");
   const prompt = buildDreamQueryRewritePrompt({ title: memory.title, bodyFirst200: memory.body });
   const rewriteStart = Date.now();
   const rewriteResult = await invokeRewriter<typeof REWRITE_RESPONSE_SCHEMA>(ctx.invokeLlm, {
@@ -1732,6 +1699,7 @@ async function fetchRewriteFromLlm(
     provider: primaryCandidate.provider,
     auth: primaryCandidate.auth,
     candidateName: primaryCandidate.name,
+    options: primaryCandidate.options,
     fallbackCandidates,
     activeBiases: readRoutingBiases(db),
     messages: prompt,
@@ -1751,7 +1719,7 @@ async function fetchRewriteFromLlm(
       candidateFailures: rewriteResult.failures,
       failureMessage: noEligibleCandidateMessage(rewriteResult),
     });
-    return fallbackToMemoryTitle(ctx, memory, rewriteLatencyMs);
+    return abstainFromMemoryResearch(ctx, memory, rewriteLatencyMs, rewriteResult.reason);
   }
   const servingCandidate = withNullishFallback(
     rewriteResult.candidate,
@@ -1772,13 +1740,14 @@ async function fetchRewriteFromLlm(
       t2_memory_id: memory.memory_id,
       cache_hit: false,
       model: servingCandidate.model,
+      policy_version: REWRITE_POLICY_VERSION,
       latency_ms: rewriteLatencyMs,
     });
     recordRewriteSkip(db, servingCandidate);
     return null;
   }
 
-  const passes = ctx.gateEnabled ? isWebSearchable(rewriteResult.value.query) : { ok: true };
+  const passes = validateRewriteQuery(rewriteResult.value.query, ctx.gateEnabled);
   if (!passes.ok) {
     ctx.emitDreamEvent("dream_p4_query_rejected_unsearchable", {
       t2_memory_id: memory.memory_id,
@@ -1795,7 +1764,12 @@ async function fetchRewriteFromLlm(
     // rewrite_no_recent_success alert while content degradation stays covered by
     // the rewrite_unsearchable rate alert.
     recordRewriteSuccess(db, servingCandidate);
-    return fallbackToMemoryTitle(ctx, memory, rewriteLatencyMs);
+    return abstainFromMemoryResearch(
+      ctx,
+      memory,
+      rewriteLatencyMs,
+      passes.reason ?? "rejected_query",
+    );
   }
 
   const sanitized = sanitizeTitleForQuery(rewriteResult.value.query);
@@ -1806,7 +1780,7 @@ async function fetchRewriteFromLlm(
       reason: "empty_sanitized_query",
       candidate: servingCandidate,
     });
-    return fallbackToMemoryTitle(ctx, memory, rewriteLatencyMs);
+    return abstainFromMemoryResearch(ctx, memory, rewriteLatencyMs, "empty_sanitized_query");
   }
 
   setRewriteForMemory({
@@ -1822,6 +1796,7 @@ async function fetchRewriteFromLlm(
     t2_memory_id: memory.memory_id,
     cache_hit: false,
     model: servingCandidate.model,
+    policy_version: REWRITE_POLICY_VERSION,
     latency_ms: rewriteLatencyMs,
   });
   recordRewriteSuccess(db, servingCandidate);

@@ -1252,6 +1252,7 @@ export function createDaemonFetchHandler(opts: {
       provider: primaryCandidate.provider,
       auth: primaryCandidate.auth,
       candidateName: primaryCandidate.name,
+      options: primaryCandidate.options,
       fallbackCandidates,
       activeBiases: () => readRoutingBiases(opts.services.db),
       fetchFn: opts.llmFetchFn,
@@ -1754,6 +1755,7 @@ function createEfficacyJobRunnerEntry(
     provider: primaryCandidate.provider,
     auth: primaryCandidate.auth,
     candidateName: primaryCandidate.name,
+    options: primaryCandidate.options,
     fallbackCandidates,
     activeBiases: () => readRoutingBiases(opts.services.db),
     onOutcome: (outcome) => {

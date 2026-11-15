@@ -591,7 +591,8 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   PENUMBRA_DREAMING_REWRITER_ENABLED: {
     schema: Bool,
     default: false,
-    description: "Enable the dreaming rewriter.",
+    description:
+      "Enable local rewriting for automatic P4 memory research. Disabled or failed rewriting skips memory research.",
   },
   PENUMBRA_DREAMING_REWRITER_BASE_URL: {
     schema: z.string(),
@@ -619,17 +620,19 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   },
   PENUMBRA_DREAMING_REWRITER_CONCURRENCY: {
     schema: NonNegInt,
-    default: 4,
+    default: 1,
     description: "Rewriter concurrency limit.",
   },
   PENUMBRA_DREAMING_QUERY_GATE_ENABLED: {
     schema: Bool,
     default: true,
-    description: "Enable dreaming query gate.",
+    description:
+      "Enable additional dreaming searchability heuristics; privacy and rewrite output-contract checks always run.",
   },
   PENUMBRA_DREAMING_INTERNAL_TERMS: {
     schema: OptStr,
-    description: "Comma-separated internal terms for query rewriting.",
+    description:
+      "Additional comma-separated internal terms for query rewriting. Built-in internal terms remain blocked.",
   },
   PENUMBRA_DREAM_DIGEST_DIR: {
     schema: OptStr,
@@ -779,6 +782,17 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: "memory-refiner",
     description: "Role for the judge.",
   },
+  PENUMBRA_T2_EXTRACTION_ROLE: {
+    schema: OptStr,
+    description:
+      "Optional T2 transcript extractor role; defaults to PENUMBRA_JUDGE_ROLE. Does not reassign memory-efficacy classifiers or promotion ballots.",
+  },
+  PENUMBRA_T2_SOURCE_TRANSCRIPT: {
+    schema: z.enum(["0", "1"]),
+    default: "0",
+    description:
+      "Opt-in source-text extraction with quote checks, complete bounded chunks and no silent evidence truncation. Requires independent quality validation before activation.",
+  },
   PENUMBRA_JUDGE_TOKEN: {
     schema: OptStr,
     description: "Bearer token for the judge LLM.",
@@ -786,6 +800,25 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   },
 
   // ── typesafe (Jev judge) ──────────────────────────────────────────────
+  PENUMBRA_LOCAL_JUDGE_SHADOW: {
+    schema: Bool,
+    default: false,
+    description:
+      "Opt in to the bounded local promotion observer. Never grants promotion or veto authority.",
+  },
+  PENUMBRA_LOCAL_JUDGE_BASE_URL: {
+    schema: z.url(),
+    default: "http://127.0.0.1:18944",
+    description: "Dedicated loopback System One origin; no model loading or remote fleet routing.",
+  },
+  PENUMBRA_LOCAL_JUDGE_MODEL: {
+    schema: OptStr,
+    description: "Exact served model alias; required when local shadow is enabled.",
+  },
+  PENUMBRA_LOCAL_JUDGE_REVISION: {
+    schema: OptStr,
+    description: "Verified model artifact revision/hash; required when local shadow is enabled.",
+  },
   PENUMBRA_TYPESAFE_API_KEY: {
     schema: OptStr,
     description: "TypeSafe API key. Wins over the keychain ref when non-empty.",
