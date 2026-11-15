@@ -458,6 +458,7 @@ export {
   attemptLlmCandidates,
   buildChatCompletionsUrl,
   describeLlmCandidate,
+  GenerationRoleSeatRefusedError,
   type LlmAuthSource,
   type LlmCandidate,
   type LlmCandidateAttemptResult,

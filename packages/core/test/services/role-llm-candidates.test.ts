@@ -388,6 +388,56 @@ test("refuses a generation role whose HTTP seat carries a maxTokens above the tr
   ).not.toThrow();
 });
 
+test("onSeatRefused drops only the over-cap seat and reports the refusal", () => {
+  const ok = {
+    name: "ok-seat",
+    adapter: "openai-compat-http",
+    roles: ["refiner"],
+    options: { baseUrl: "http://127.0.0.1:7944/v1", model: "ok", maxTokens: 4096 },
+  };
+  const wide = {
+    name: "wide-seat",
+    adapter: "openai-compat-http",
+    roles: ["refiner"],
+    options: { baseUrl: "http://127.0.0.1:7945/v1", model: "wide", maxTokens: 32_768 },
+  };
+  const refusals: llmCandidates.GenerationRoleSeatRefusedError[] = [];
+  const candidates = resolver({
+    roleTag: "refiner",
+    agentchatConfig: { agents: [wide, ok] },
+    onSeatRefused: (err) => refusals.push(err),
+  });
+  expect(candidates.map(({ name }) => name)).toEqual(["ok-seat"]);
+  expect(refusals).toHaveLength(1);
+  expect(refusals[0]).toBeInstanceOf(llmCandidates.GenerationRoleSeatRefusedError);
+  expect(refusals[0]?.agentName).toBe("wide-seat");
+  expect(refusals[0]?.roleTag).toBe("refiner");
+  expect(refusals[0]?.message).toBe(
+    'agent "wide-seat" cannot serve generation role "refiner": options.maxTokens 32768 is outside 1 to 16384 (the generation transport cap)',
+  );
+
+  // Every seat refused: no seats remain and the legacy fallback is not substituted.
+  const fallback: llmCandidates.RoleLlmCandidate = {
+    name: "legacy",
+    baseUrl: "http://127.0.0.1:7944",
+    model: "legacy",
+    provider: "local",
+    auth: { source: "none" },
+  };
+  const none = resolver({
+    roleTag: "refiner",
+    agentchatConfig: { agents: [wide] },
+    fallbackCandidates: [fallback],
+    onSeatRefused: () => undefined,
+  });
+  expect(none).toEqual([]);
+
+  // Without the callback the refusal still throws, as every other caller expects.
+  expect(() => resolver({ roleTag: "refiner", agentchatConfig: { agents: [wide, ok] } })).toThrow(
+    llmCandidates.GenerationRoleSeatRefusedError,
+  );
+});
+
 test("uses the supplied legacy candidate when no seat carries the role", () => {
   const fallback: llmCandidates.RoleLlmCandidate = {
     name: "PENUMBRA_DREAMING_REWRITER_MODEL",

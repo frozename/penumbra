@@ -49,6 +49,28 @@ export interface ResolveRoleLlmCandidatesInput {
     }[];
   };
   fallbackCandidates?: RoleLlmCandidate[];
+  /**
+   * When set, a seat refused for this role is skipped and reported here instead
+   * of throwing. If every role-tagged seat is refused, the result is empty and
+   * `fallbackCandidates` is not substituted: the role has seats, so routing to
+   * the legacy endpoint would hide the misconfiguration.
+   */
+  onSeatRefused?: (refusal: GenerationRoleSeatRefusedError) => void;
+}
+
+/** A role-tagged HTTP seat whose `maxTokens` is outside the generation transport cap. */
+export class GenerationRoleSeatRefusedError extends Error {
+  readonly agentName: string;
+  readonly roleTag: string;
+
+  constructor(agentName: string, roleTag: string, maxTokens: unknown) {
+    super(
+      `agent "${agentName}" cannot serve generation role "${roleTag}": options.maxTokens ${JSON.stringify(maxTokens)} is outside 1 to ${String(GENERATION_MAX_TOKENS_CAP)} (the generation transport cap)`,
+    );
+    this.name = "GenerationRoleSeatRefusedError";
+    this.agentName = agentName;
+    this.roleTag = roleTag;
+  }
 }
 
 export interface LlmRoutingBias {
@@ -110,6 +132,7 @@ const ALLOWED_PROVIDER_SET = new Set<string>(ALLOWED_LLM_PROVIDERS);
  * the cap is enforced here and fails only the role being resolved.
  */
 export function resolveRoleLlmCandidates(input: ResolveRoleLlmCandidatesInput): RoleLlmCandidate[] {
+  let refusedSeats = 0;
   const candidates = (input.agentchatConfig.agents ?? []).flatMap((agent) => {
     const options = agent.options;
     const adapter = agent.adapter ?? "openai-compat-http";
@@ -120,7 +143,13 @@ export function resolveRoleLlmCandidates(input: ResolveRoleLlmCandidatesInput): 
       return [];
     }
     if (adapter === "openai-compat-http") {
-      assertGenerationMaxTokens(agent.name, input.roleTag, options?.["maxTokens"]);
+      const refusal = generationMaxTokensRefusal(agent.name, input.roleTag, options?.["maxTokens"]);
+      if (refusal) {
+        if (!input.onSeatRefused) throw refusal;
+        refusedSeats += 1;
+        input.onSeatRefused(refusal);
+        return [];
+      }
     }
     const baseUrl = options?.baseUrl ?? `adapter://${encodeURIComponent(agent.name)}`;
     return [
@@ -142,7 +171,7 @@ export function resolveRoleLlmCandidates(input: ResolveRoleLlmCandidatesInput): 
       },
     ];
   });
-  if (candidates.length === 0) return input.fallbackCandidates ?? [];
+  if (candidates.length === 0) return refusedSeats > 0 ? [] : (input.fallbackCandidates ?? []);
 
   return candidates
     .map((candidate, index) => ({ candidate, index }))
@@ -153,19 +182,21 @@ export function resolveRoleLlmCandidates(input: ResolveRoleLlmCandidatesInput): 
     .map(({ candidate }) => candidate);
 }
 
-function assertGenerationMaxTokens(agentName: string, roleTag: string, maxTokens: unknown): void {
-  if (maxTokens === undefined) return;
+function generationMaxTokensRefusal(
+  agentName: string,
+  roleTag: string,
+  maxTokens: unknown,
+): GenerationRoleSeatRefusedError | null {
+  if (maxTokens === undefined) return null;
   if (
     typeof maxTokens === "number" &&
     Number.isSafeInteger(maxTokens) &&
     maxTokens >= 1 &&
     maxTokens <= GENERATION_MAX_TOKENS_CAP
   ) {
-    return;
+    return null;
   }
-  throw new Error(
-    `agent "${agentName}" cannot serve generation role "${roleTag}": options.maxTokens ${JSON.stringify(maxTokens)} is outside 1 to ${String(GENERATION_MAX_TOKENS_CAP)} (the generation transport cap)`,
-  );
+  return new GenerationRoleSeatRefusedError(agentName, roleTag, maxTokens);
 }
 
 export function resolveLlmCandidates(input: ResolveLlmCandidatesInput): ResolvedLlmCandidate[] {
