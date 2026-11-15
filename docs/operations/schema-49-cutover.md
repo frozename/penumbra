@@ -25,11 +25,18 @@ deadline. It is optional.
 Placeholders used below:
 
 ```bash
-DB="${PENUMBRA_STORAGE_ROOT:-$HOME/.penumbra}/db.sqlite"
+ROOT="${PENUMBRA_STORAGE_ROOT:-$HOME/.penumbra}"   # holds db.sqlite, port and token
+DB="$ROOT/db.sqlite"
 BACKUP_DIR="$HOME/.penumbra/backups/schema-49-$(date -u +%Y%m%dT%H%M%SZ)"
-REPO=/path/to/penumbra   # the checkout of the schema-49 build
+REPO=/path/to/penumbra-49   # any checkout of the schema-49 build, used for read-only checks
+LIVE=/path/to/penumbra      # the checkout the daemon and worker LaunchAgents run from
+NEW_SHA=<full sha of the schema-49 build>
 UID_=$(id -u)
 ```
+
+`REPO` can be a separate worktree at `$NEW_SHA`. The `bun` snippets in steps 0, 3 and 6 only import
+source from it. `LIVE` is not moved until step 7, after the services are
+stopped.
 
 ## 0. Deploy prerequisites (before the window)
 
@@ -45,31 +52,77 @@ Edit the plist with `plutil`; do not hand-merge it.
    example `P4` or `P3,P4`).
 2. **Point the inventory at the real registry.** Set
    `DEV_STORAGE=/Users/<you>/DevStorage`, or set `LLAMACTL_CONFIG` to the
-   registry file. The new build no longer defaults to `~/DevStorage/config`.
-   With neither variable set, it reads only `~/.llamactl/config`. If that file
-   is missing, the rewriter inventory comes back empty and every rewriter
-   candidate is dropped (`abstaining from memory research`).
+   registry file. The new build resolves exactly one registry path, with no
+   fallback chain: `LLAMACTL_CONFIG` if set, otherwise `$DEV_STORAGE/config` if
+   `DEV_STORAGE` is set, otherwise `~/.llamactl/config`. It no longer defaults
+   to `~/DevStorage/config`. If `DEV_STORAGE` is set but `$DEV_STORAGE/config`
+   is missing, `~/.llamactl/config` is not tried. When the one resolved file is
+   missing, the rewriter inventory comes back empty and every rewriter
+   candidate is dropped (`abstaining from memory research`). `penumbra config
+   sync-local` reads the same inventory, so run it with the same variables.
 
-Also check, without printing the roster, that it loads under the new
-`maxTokens` cap (an integer from 1 to 16384):
+Also check, without printing the roster, that it loads and that every daemon
+generation role resolves under the generation `maxTokens` cap (an integer from 1
+to 16384). The roster schema accepts any integer `maxTokens`, because
+dispatch-only seats share the option. The cap applies only to an
+`openai-compat-http` seat that carries a generation role. When such a seat is
+over the cap, the daemon refuses that role when it resolves it.
+
+If the daemon plist overrides any of the `PENUMBRA_*_ROLE` variables below,
+export the same values in this shell first.
 
 ```bash
-cd "$REPO" && bun -e 'import { loadAgentChatConfigFromDir } from "@penumbra/config";
-loadAgentChatConfigFromDir(process.env.HOME + "/.config/penumbra"); console.log("roster ok")'
+cd "$REPO" && CONFIG_DIR="${PENUMBRA_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/penumbra}" bun -e '
+import { loadAgentChatConfigFromDir } from "./packages/config/src/index.ts";
+import { resolveRoleLlmCandidates } from "./packages/core/src/services/llm-candidates.ts";
+const env = process.env;
+const cfg = loadAgentChatConfigFromDir(env.CONFIG_DIR);
+const roles = new Set([
+  env.PENUMBRA_JUDGE_ROLE ?? "memory-refiner",
+  env.PENUMBRA_T2_EXTRACTION_ROLE ?? env.PENUMBRA_JUDGE_ROLE ?? "memory-refiner",
+  env.PENUMBRA_REFINER_ROLE ?? "refiner",
+  env.PENUMBRA_DREAMING_JUDGE_ROLE ?? "dreaming-judge",
+  env.PENUMBRA_DREAMING_REWRITER_ROLE ?? "dreaming-rewriter",
+  env.PENUMBRA_DREAMING_BRIEF_SYNTHESIZER_ROLE ?? "brief-synthesizer",
+]);
+let refused = 0;
+for (const roleTag of roles) {
+  try {
+    const n = resolveRoleLlmCandidates({ roleTag, agentchatConfig: cfg }).length;
+    console.log(`${roleTag}: ok (${n} seat(s))`);
+  } catch (err) {
+    refused += 1;
+    console.log(`${roleTag}: REFUSED ${err.message}`);
+  }
+}
+console.log(refused === 0 ? "roster ok" : "roster NOT ok");
+process.exit(refused === 0 ? 0 : 1);'
 ```
 
-A failure prints `agents.yaml: agents.N.options.maxTokens: maxTokens must be an
-integer from 1 to 16384 ...`. Fix that entry before you continue.
+It prints one line per role and counts seats, never seat options. It exits
+non-zero on any failure:
+
+- A schema failure throws before any role line:
+  `<config dir>/agents.yaml: agents.N.<field>: <message>`, with the full path of
+  the file.
+- A role refusal prints `<role>: REFUSED agent "<name>" cannot serve generation
+  role "<role>": options.maxTokens <n> is outside 1 to 16384 (the generation
+  transport cap)`. Lower that seat's `maxTokens`, or take the role off it, before
+  you continue.
 
 ## 1. Enter the idle window
 
-Wait until no dispatch, workflow or long-lived tick is running (`penumbra
-status`, `chain_list` and `workflow_status` are empty or terminal). Then stop
-the watchdog first, so it does not restart anything, and then stop the daemon
-and the worker:
+Wait until no dispatch, workflow or long-lived tick is running.
+`penumbra update --check` is read-only. It reports idle only when the daemon
+has nothing in flight and the worker has no job scopes or busy children. For a
+chain or workflow run you started yourself, confirm that it is terminal with the
+MCP `chain_status` (by conversation id) or `workflow_status` (by run id). Then
+stop the watchdog first, if it is installed, so it does not restart anything.
+Then stop the worker and the daemon:
 
 ```bash
-launchctl bootout "gui/$UID_" ~/Library/LaunchAgents/dev.penumbra.watchdog.plist
+WATCHDOG=~/Library/LaunchAgents/dev.penumbra.watchdog.plist
+if [ -f "$WATCHDOG" ]; then launchctl bootout "gui/$UID_" "$WATCHDOG"; else echo "no watchdog installed"; fi
 launchctl bootout "gui/$UID_" ~/Library/LaunchAgents/dev.penumbra.worker.plist
 launchctl bootout "gui/$UID_" ~/Library/LaunchAgents/dev.penumbra.daemon.plist
 pgrep -fl 'penumbra.ts serve|agentchat-worker' || echo "no writers"
@@ -178,19 +231,39 @@ or skip it. Do not move it back into the boot path.
 
 ## 7. Boot the schema-49 build
 
-Install the build with `penumbra update --apply`, or by hand, and make sure the
-step 0 environment is in the plist. Then start the services in reverse order:
+Install the build by hand. Do not use `penumbra update --apply` here. Its idle
+probe requires a running daemon, and step 1 has booted the daemon out. Its
+service restart (`launchctl kickstart -k`) also fails on unloaded labels. Even
+before step 1 it would be wrong, because it would boot schema 49 before the
+backup and the index checks.
+
+Fast-forward the live checkout and install the locked dependencies while the
+services are still stopped:
+
+```bash
+git -C "$LIVE" status --porcelain   # must print nothing
+git -C "$LIVE" fetch origin
+git -C "$LIVE" merge --ff-only "$NEW_SHA"
+test "$(git -C "$LIVE" rev-parse HEAD)" = "$NEW_SHA" && echo "at $NEW_SHA"
+(cd "$LIVE" && bun install --frozen-lockfile)
+```
+
+Make sure the step 0 environment is in the daemon plist. Then bootstrap the
+services in reverse order. The daemon's first start is the schema-49 boot
+(step 4):
 
 ```bash
 launchctl bootstrap "gui/$UID_" ~/Library/LaunchAgents/dev.penumbra.daemon.plist
 launchctl bootstrap "gui/$UID_" ~/Library/LaunchAgents/dev.penumbra.worker.plist
-launchctl bootstrap "gui/$UID_" ~/Library/LaunchAgents/dev.penumbra.watchdog.plist
+WATCHDOG=~/Library/LaunchAgents/dev.penumbra.watchdog.plist
+if [ -f "$WATCHDOG" ]; then launchctl bootstrap "gui/$UID_" "$WATCHDOG"; fi
 ```
 
 ## 8. Post-checks
 
 ```bash
-curl -fsS http://127.0.0.1:51257/health
+PORT=$(cat "$ROOT/port")
+curl -fsS "http://127.0.0.1:$PORT/health"
 sqlite3 "file:$DB?mode=ro" "
 SELECT key, value FROM db_meta
  WHERE key IN ('schema_version','lane_ledger_open_dedupe_schema_version');
@@ -200,8 +273,15 @@ SELECT name FROM sqlite_master WHERE type='index' AND name IN (
 EXPLAIN QUERY PLAN SELECT MAX(ts) FROM dispatch_events
  WHERE kind IN ('dispatch.end','long_lived.tick.end');
 SELECT COUNT(*) FROM lane_ledger WHERE override_reason LIKE 'schema dedupe:%';"
-curl -fsS http://127.0.0.1:51257/dreaming/health
+# Every route except /health needs the daemon bearer token. The CLI reads it from
+# "$ROOT/token". curl takes the header on stdin (-H @-), so the token never shows
+# in argv, in the shell trace or on screen.
+curl -fsS -H @- "http://127.0.0.1:$PORT/dreaming/health" \
+  <<<"Authorization: Bearer $(tr -d '[:space:]' < "$ROOT/token")"
 ```
+
+You can also call the MCP `dreaming_health` tool, which goes through the same
+token.
 
 Expect all of the following:
 
@@ -213,8 +293,9 @@ Expect all of the following:
 - The dedupe count matches the step 5 preview.
 - After the next dreaming cycle, `/dreaming/health` shows P4 skipped, and no new
   `dream_actions` rows have `phase='P4'` and `action_type='research_query'`.
-- The daemon log has no `invalid generation maxTokens` errors and no
-  `abstaining from memory research` inventory warnings (step 0, item 2).
+- The daemon log has no `invalid generation maxTokens` errors, no `cannot serve
+  generation role` refusals (step 0) and no `abstaining from memory research`
+  inventory warnings (step 0, item 2).
 - `PENUMBRA_LOCAL_JUDGE_SHADOW` is unset or false. Jev authority and the
   Kapitsa and Gufo seats are unchanged.
 
