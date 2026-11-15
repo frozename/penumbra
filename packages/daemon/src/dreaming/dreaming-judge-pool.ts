@@ -5,6 +5,7 @@ import type { JudgePool, JudgeVote } from "./judge-pool.js";
 
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
 import { DEFAULT_DREAMING_AUTO_PROMOTE_MIN_JUDGES } from "./config.js";
+import { DREAMING_JUDGE_PROMPT_OUTPUT, DREAMING_JUDGE_PROMPT_PREAMBLE } from "./judge-prompt.js";
 
 // Shared helper approach was considered but deferred: t2-judge-pool returns
 // T2MemoryExtraction[] while dreaming returns DreamingVoteRaw — the generic
@@ -35,15 +36,12 @@ interface ChatCompletionResponse {
 }
 
 export function buildDreamingPromptBlock({ body, kind }: { body: string; kind: string }): string {
-  return `You are a memory quality judge deciding whether a candidate memory record should be promoted to long-term storage.
-
-Return promote: false when the content is ephemeral: one-time observations ("X passed", "task #5 created"), session-specific events, literal system/dispatch prompts ("You are X, a long-lived agent...", "# Operating rules", "IMPLEMENTER MODE"), or anything that won't be true in 30 days. Return promote: true ONLY for durable knowledge: design decisions, project facts, user preferences, conventions, rules, debugging findings, gotchas, traps.
+  return `${DREAMING_JUDGE_PROMPT_PREAMBLE}
 Memory kind: ${kind}
 Memory body:
 ${body}
 
-Output ONLY valid JSON — no prose, no code fences, no wrapper tags:
-{"promote": <boolean>, "confidence": <number 0.0-1.0>, "rationale": "<one sentence>"}`.trim();
+${DREAMING_JUDGE_PROMPT_OUTPUT}`.trim();
 }
 
 const UNPARSEABLE_VOTE: DreamingVoteRaw = {
@@ -163,8 +161,9 @@ class DreamingJudgePoolImpl implements JudgePool {
   async judge(args: {
     body: string;
     kind: "promote_t1" | "link" | "retire" | "rewrite";
+    prompt?: string;
   }): Promise<{ confidence: number; verdict: "yes" | "no" | "unsure"; rationale?: string }> {
-    const prompt = buildDreamingPromptBlock(args);
+    const prompt = args.prompt ?? buildDreamingPromptBlock(args);
     const judgeCount = this.judges.length;
     if (judgeCount === 0) {
       throw new Error("dreaming judge pool has no configured judges");
@@ -194,8 +193,9 @@ class DreamingJudgePoolImpl implements JudgePool {
   async judgeAll(args: {
     body: string;
     kind: "promote_t1" | "link" | "retire" | "rewrite";
+    prompt?: string;
   }): Promise<JudgeVote[]> {
-    const prompt = buildDreamingPromptBlock(args);
+    const prompt = args.prompt ?? buildDreamingPromptBlock(args);
     return await Promise.all(
       this.judges.map(async (judge): Promise<JudgeVote> => {
         try {

@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 
 import {
   buildT2EmbedText,
+  DEFAULT_T2_PROMOTION_MIN_EVENTS,
   type DispatchEventInput,
   type LlmCandidate,
   type LlmServingCandidate,
@@ -12,6 +13,11 @@ import {
   tryResolveLlmProvider,
   type WebResearchAdapter,
 } from "@penumbra/core";
+import {
+  DEFAULT_T2_PROMOTION_DELAY_HOURS,
+  T2_SETTLED_ROLLUP_SQL,
+  t2PromotionCutoffIso,
+} from "@penumbra/core/writers/t2-settle";
 import { z } from "zod";
 
 import type { BriefSynthesizer } from "./brief-synthesizer.js";
@@ -46,6 +52,14 @@ import {
   type SerializedJudgeVote,
   StubJudgePool,
 } from "./judge-pool.js";
+import {
+  buildP1PromotionInput,
+  type P1InputContract,
+  type P1PromotionInput,
+  type P1PromptProvenance,
+  type P1SkipReason,
+  renderP1PromptBlock,
+} from "./p1-input.js";
 import {
   getRewriteForMemory,
   pruneExpiredRewriteCache,
@@ -639,21 +653,47 @@ async function runCycleP1(
     staleBeforeMs: ctx.nowMs - P1_CLAIM_TTL_MS,
   });
 
-  const claimedRollups = claimT1Rollups(db, ctx, config, longLivedFilter);
+  const contract: P1InputContract = config.p1InputContract ?? "v1";
+  const t2MinEvents = config.t2PromotionMinEvents ?? DEFAULT_T2_PROMOTION_MIN_EVENTS;
+  const v2ClaimGate: P1V2ClaimGate | null =
+    contract === "v2"
+      ? {
+          t2MinEvents,
+          settledCutoff: t2PromotionCutoffIso(
+            config.t2PromotionDelayHours ?? DEFAULT_T2_PROMOTION_DELAY_HOURS,
+            ctx.nowMs,
+          ),
+        }
+      : null;
+  const claimedRollups = claimT1Rollups(db, ctx, config, longLivedFilter, v2ClaimGate);
+  const readFirstPrompt = contract === "v2" ? firstPromptReader(db) : null;
+  const skipped: Partial<Record<P1SkipReason, number>> = {};
   const abstainLoggedSeats = new Set<string>();
 
   for (const rollup of claimedRollups) {
-    const body = rollup.first_prompt_excerpt;
-    if (!body || body.trim().length < 40) {
+    const input: P1PromotionInput = readFirstPrompt
+      ? buildP1PromotionInput({
+          contract: "v2",
+          excerpt: rollup.first_prompt_excerpt,
+          nEvents: rollup.n_events ?? 0,
+          t2MinEvents,
+          firstPrompt: readFirstPrompt(rollup.session_id ?? ""),
+        })
+      : buildP1PromotionInput({ contract: "v1", excerpt: rollup.first_prompt_excerpt });
+    if (!input.eligible) {
+      if (readFirstPrompt) skipped[input.reason] = (skipped[input.reason] ?? 0) + 1;
       // Terminal ineligibility, distinct from a judged NO: without this mark the
       // rollup stays claimable and re-blocks the ORDER BY started_at ASC head
-      // every cycle, starving every newer eligible rollup behind it.
+      // every cycle, starving every newer eligible rollup behind it. A
+      // T2-owned rollup is left unmarked for T2.
+      if (input.reason === "t2_owned") continue;
       db.prepare(`UPDATE t1_rollups SET promotion_unusable_excerpt_at=? WHERE rollup_id=?`).run(
         ctx.nowMs,
         rollup.rollup_id,
       );
       continue;
     }
+    const body = input.body;
 
     const rollupTargetIds = JSON.stringify([rollup.rollup_id]);
     if (ctx.p1QueuedPromoteExistsStmt.get(rollupTargetIds)) {
@@ -663,7 +703,12 @@ async function runCycleP1(
       continue;
     }
 
-    const votes = await getPromoteVotes(ctx.judgePool, body, rollup.rollup_id);
+    const votes = await getPromoteVotes(
+      ctx.judgePool,
+      body,
+      rollup.rollup_id,
+      contract === "v2" ? renderP1PromptBlock({ body }) : undefined,
+    );
     recordJudgeSeatOutcomes(db, ctx, votes, abstainLoggedSeats);
     const countedVotes = votes.filter((v) => !v.abstained);
     if (countedVotes.length === 0 || countedVotes.length < autoPromoteMinJudges) {
@@ -678,31 +723,10 @@ async function runCycleP1(
     const autoPromote = yesCount >= Math.ceil((total * 2) / 3);
 
     // Consulted only when the incumbent auto-promotes; it can remove a YES but
-    // never turn a NO into a YES. A throw or a non-"allow" answer fails closed.
-    let jevVeto: "allowed" | "blocked" | undefined;
-    let jevVetoReason: JevVetoReason | undefined;
-    if (autoPromote && deps.promotionVeto !== undefined) {
-      try {
-        const verdict = await deps.promotionVeto({ rollupId: rollup.rollup_id, body });
-        jevVeto = verdict.decision === "allow" ? "allowed" : "blocked";
-        jevVetoReason = verdict.reason;
-      } catch {
-        jevVeto = "blocked";
-        jevVetoReason = "exception";
-      }
-      // One line per consultation; only ids and the verdict class, never the
-      // rollup body or any settings material.
-      const vetoLogFields = {
-        rollup_id: rollup.rollup_id,
-        jev_veto: jevVeto,
-        jev_veto_reason: jevVetoReason,
-      };
-      if (jevVetoReason === "jev_promote" || jevVetoReason === "jev_reject") {
-        ctx.log?.info(vetoLogFields, "dream-cycle P1 jev veto");
-      } else {
-        ctx.log?.warn(vetoLogFields, "dream-cycle P1 jev veto");
-      }
-    }
+    // never turn a NO into a YES.
+    const { jevVeto, jevVetoReason } = autoPromote
+      ? await consultPromotionVeto(ctx, deps, rollup.rollup_id, body)
+      : { jevVeto: undefined, jevVetoReason: undefined };
 
     const result = await maybeAutoPromoteT1(
       db,
@@ -713,10 +737,18 @@ async function runCycleP1(
       autoPromote && jevVeto !== "blocked",
       votes,
       avgConfidence,
+      contract === "v1",
       jevVeto,
       jevVetoReason,
     );
     if (result.skip) continue;
+    if (contract === "v2" && result.status === "queued") {
+      // v2 owns only rollups T2 never extracts, and applyDreamAction cannot
+      // apply a queued promote_t1. A NO, a vetoed YES and a YES whose embed or
+      // mint failed all end here with the same stamp v1 writes, and no action.
+      markT1PromotionFiltered(db, ctx, rollup.rollup_id);
+      continue;
+    }
 
     db.prepare(
       `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
@@ -734,15 +766,70 @@ async function runCycleP1(
       }),
     );
 
-    if (result.status === "queued") {
-      db.prepare(`UPDATE t1_rollups SET promotion_filtered_at=? WHERE rollup_id=?`).run(
-        new Date(ctx.nowMs).toISOString(),
-        rollup.rollup_id,
-      );
-    }
+    if (result.status === "queued") markT1PromotionFiltered(db, ctx, rollup.rollup_id);
   }
 
+  if (contract === "v2") reportP1InputSkips(ctx, skipped);
   phaseEnd(db, ctx, "P1", p1Start);
+}
+
+function markT1PromotionFiltered(db: Database, ctx: CycleCtx, rollupId: string): void {
+  db.prepare(`UPDATE t1_rollups SET promotion_filtered_at=? WHERE rollup_id=?`).run(
+    new Date(ctx.nowMs).toISOString(),
+    rollupId,
+  );
+}
+
+// A throw or a non-"allow" answer fails closed. The veto sees only the
+// candidate text, never provenance or other evidence.
+async function consultPromotionVeto(
+  ctx: CycleCtx,
+  deps: DreamCycleDeps,
+  rollupId: string,
+  body: string,
+): Promise<{ jevVeto?: "allowed" | "blocked"; jevVetoReason?: JevVetoReason }> {
+  if (deps.promotionVeto === undefined) return {};
+  let jevVeto: "allowed" | "blocked";
+  let jevVetoReason: JevVetoReason;
+  try {
+    const verdict = await deps.promotionVeto({ rollupId, body });
+    jevVeto = verdict.decision === "allow" ? "allowed" : "blocked";
+    jevVetoReason = verdict.reason;
+  } catch {
+    jevVeto = "blocked";
+    jevVetoReason = "exception";
+  }
+  // One line per consultation; only ids and the verdict class, never the
+  // rollup body or any settings material.
+  const vetoLogFields = { rollup_id: rollupId, jev_veto: jevVeto, jev_veto_reason: jevVetoReason };
+  if (jevVetoReason === "jev_promote" || jevVetoReason === "jev_reject") {
+    ctx.log?.info(vetoLogFields, "dream-cycle P1 jev veto");
+  } else {
+    ctx.log?.warn(vetoLogFields, "dream-cycle P1 jev veto");
+  }
+  return { jevVeto, jevVetoReason };
+}
+
+// Counted once per cycle so a skip is visible without logging any prompt text.
+function reportP1InputSkips(ctx: CycleCtx, skipped: Partial<Record<P1SkipReason, number>>): void {
+  if (Object.keys(skipped).length === 0) return;
+  ctx.emitDreamEvent("dream_p1_input_skipped", { contract: "v2", skipped });
+  ctx.log?.info(
+    { phase: "P1", cycleId: ctx.cycleId, contract: "v2", skipped },
+    "dream-cycle P1 input skipped",
+  );
+}
+
+// Same pick as T1's first_prompt_excerpt: the session's earliest agent-prompt,
+// served by t0_by_session_type_ts.
+function firstPromptReader(db: Database): (sessionId: string) => P1PromptProvenance | null {
+  const stmt = db.prepare(
+    `SELECT source, source_detail, payload_summary FROM t0_events
+      WHERE session_id = ? AND event_type = 'agent-prompt'
+      ORDER BY ts ASC
+      LIMIT 1`,
+  );
+  return (sessionId) => (stmt.get(sessionId) as P1PromptProvenance | null) ?? null;
 }
 
 interface ClaimedT1Rollup {
@@ -750,6 +837,9 @@ interface ClaimedT1Rollup {
   first_prompt_excerpt: string | null;
   project_id: string | null;
   promotion_retry_count: number;
+  // Returned only by the v2 claim.
+  session_id?: string;
+  n_events?: number;
 }
 
 // Non-verdict backoff: keeps a retryable rollup out of the claim head without
@@ -850,18 +940,32 @@ function serializeJudgeVotes(votes: JudgeVote[]): SerializedJudgeVote[] {
   }));
 }
 
+// Set only under input contract v2. The claim then leaves every rollup T2 can
+// extract to T2, and takes a rollup only once it is settled by T2's own gate:
+// T1 can still grow n_events on an unsettled rollup, and a P1 stamp would then
+// lock T2 out of it for good.
+interface P1V2ClaimGate {
+  t2MinEvents: number;
+  settledCutoff: string;
+}
+
+// A null gate keeps the v1 SQL byte-identical.
 function claimT1Rollups(
   db: Database,
   ctx: CycleCtx,
   config: DreamConfig,
   longLivedFilter: string,
+  v2Gate: P1V2ClaimGate | null,
 ): ClaimedT1Rollup[] {
+  const t2OwnedFilter = v2Gate === null ? "" : ` AND n_events < ? AND ${T2_SETTLED_ROLLUP_SQL}`;
+  const v2Returning = v2Gate === null ? "" : ", session_id, n_events";
   const baseParams = [
     ctx.nowMs,
     ctx.cycleId,
     ctx.nowMs,
     ...EPHEMERA_PROMPT_LIKE_PATTERNS,
     ...KNOWN_LONG_LIVED_DISPATCHER_USER_IDS,
+    ...(v2Gate === null ? [] : [v2Gate.t2MinEvents, v2Gate.settledCutoff, v2Gate.settledCutoff]),
     config.p1BatchSize,
   ];
 
@@ -879,7 +983,7 @@ function claimT1Rollups(
                  AND promotion_retry_exhausted_at IS NULL
                  AND (promotion_retry_after IS NULL OR promotion_retry_after <= ?)
                  AND (first_prompt_excerpt IS NULL OR (${EPHEMERA_PROMPT_NOT_LIKE_CLAUSE}))
-                 ${longLivedFilter}
+                 ${longLivedFilter}${t2OwnedFilter}
                  AND NOT EXISTS (
                    SELECT 1 FROM dream_actions da
                    WHERE da.action_type = 'promote_t1'
@@ -890,7 +994,7 @@ function claimT1Rollups(
                  LIMIT ?
             )
         )
-        RETURNING rollup_id, first_prompt_excerpt, project_id, promotion_retry_count`,
+        RETURNING rollup_id, first_prompt_excerpt, project_id, promotion_retry_count${v2Returning}`,
       )
       .all(...baseParams) as ClaimedT1Rollup[];
   }
@@ -907,7 +1011,7 @@ function claimT1Rollups(
             AND promotion_retry_exhausted_at IS NULL
             AND (promotion_retry_after IS NULL OR promotion_retry_after <= ?)
             AND (first_prompt_excerpt IS NULL OR (${EPHEMERA_PROMPT_NOT_LIKE_CLAUSE}))
-            ${longLivedFilter}
+            ${longLivedFilter}${t2OwnedFilter}
             AND NOT EXISTS (
               SELECT 1 FROM dream_actions da
               WHERE da.action_type = 'promote_t1'
@@ -917,7 +1021,7 @@ function claimT1Rollups(
           ORDER BY started_at ASC
           LIMIT ?
       )
-      RETURNING rollup_id, first_prompt_excerpt, promotion_retry_count`,
+      RETURNING rollup_id, first_prompt_excerpt, promotion_retry_count${v2Returning}`,
     )
     .all(...baseParams) as Omit<ClaimedT1Rollup, "project_id">[];
   return rows.map((r) => ({ ...r, project_id: null }));
@@ -927,12 +1031,14 @@ async function getPromoteVotes(
   judgePool: JudgePool,
   body: string,
   subjectId: string,
+  prompt: string | undefined,
 ): Promise<JudgeVote[]> {
+  const promptArg = prompt === undefined ? {} : { prompt };
   try {
     if (judgePool.judgeAll) {
-      return await judgePool.judgeAll({ body, kind: "promote_t1", subjectId });
+      return await judgePool.judgeAll({ body, kind: "promote_t1", subjectId, ...promptArg });
     }
-    const result = await judgePool.judge({ body, kind: "promote_t1" });
+    const result = await judgePool.judge({ body, kind: "promote_t1", ...promptArg });
     return [
       {
         promote: result.verdict === "yes",
@@ -1001,6 +1107,8 @@ async function maybeAutoPromoteT1(
   autoPromote: boolean,
   votes: JudgeVote[],
   avgConfidence: number,
+  // false under input contract v2, which never queues an unappliable action.
+  queueDedupAction: boolean,
   jevVeto?: "allowed" | "blocked",
   jevVetoReason?: JevVetoReason,
 ): Promise<{ skip: true } | { skip: false; status: string; mintedT2Id?: string }> {
@@ -1018,6 +1126,10 @@ async function maybeAutoPromoteT1(
         .get(title);
   const existing = existingRow as { memory_id: string } | undefined;
 
+  if (existing && !queueDedupAction) {
+    markT1PromotionFiltered(db, ctx, rollup.rollup_id);
+    return { skip: true };
+  }
   if (existing) {
     const rollupTargetIds = JSON.stringify([rollup.rollup_id]);
     if (!ctx.p1QueuedPromoteExistsStmt.get(rollupTargetIds)) {

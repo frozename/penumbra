@@ -9,6 +9,7 @@ import type { Uuid } from "../utils/uuid.js";
 import { isNearDuplicate, type NearDuplicateItem } from "../memory/near-dup.js";
 import { type T2MemoryWriteInput, T2MemoryWriteSchema } from "../schemas/memory.js";
 import { buildT2EmbedText, validateT2Body } from "./t2-embed-text.js";
+import { T2_SETTLED_ROLLUP_SQL, t2PromotionCutoffIso } from "./t2-settle.js";
 
 export const T2MemoryExtractionSchema = z.object({
   title: z.string().min(1),
@@ -678,7 +679,7 @@ export class T2Promotion {
    * Skips rollups that have reached the retry limit.
    */
   detectEligibleRollups(delayHours: number, now: Date, minEvents?: number): string[] {
-    const cutoff = new Date(now.getTime() - delayHours * 3600_000).toISOString();
+    const cutoff = t2PromotionCutoffIso(delayHours, now.getTime());
     const limit = this.opts.retryLimit ?? 5;
     const finalMinEvents = minEvents ?? this.opts.minEvents ?? DEFAULT_T2_PROMOTION_MIN_EVENTS;
     return this.opts.db
@@ -686,7 +687,7 @@ export class T2Promotion {
         `SELECT rollup_id FROM t1_rollups 
          WHERE t2_promoted_at IS NULL 
            AND promotion_filtered_at IS NULL
-           AND (ended_at < ? OR (ended_at IS NULL AND started_at < ?))
+           AND ${T2_SETTLED_ROLLUP_SQL}
            AND failed_promotion_attempts < ?
            AND n_events >= ?`,
       )

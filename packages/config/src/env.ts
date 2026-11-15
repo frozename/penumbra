@@ -1145,6 +1145,12 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     default: 5,
     description: "Minimum t1_rollups.n_events required for t2 promotion eligibility (default 5).",
   },
+  PENUMBRA_DREAMING_P1_INPUT_CONTRACT: {
+    schema: z.enum(["v1", "v2"]),
+    default: "v1",
+    description:
+      "P1 promotion input contract: v1 | v2. v2 judges only human-authored rollups below PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS, leaves every larger rollup to T2, and drops the promote_t1 action on a NO. Any other value fails the config parse.",
+  },
   PENUMBRA_SESSION_SWEEP_ENABLED: {
     schema: Bool,
     default: true,

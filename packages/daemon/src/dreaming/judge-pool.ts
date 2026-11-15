@@ -26,8 +26,14 @@ export interface SerializedJudgeVote {
   error_class?: string;
 }
 
+// `prompt`, when set, is the exact text a prompt-rendering pool sends in place
+// of its own template. It carries no evidence beyond `body`.
 export interface JudgePool {
-  judge(args: { body: string; kind: "promote_t1" | "link" | "retire" | "rewrite" }): Promise<{
+  judge(args: {
+    body: string;
+    kind: "promote_t1" | "link" | "retire" | "rewrite";
+    prompt?: string;
+  }): Promise<{
     confidence: number;
     verdict: "yes" | "no" | "unsure";
     rationale?: string;
@@ -36,6 +42,7 @@ export interface JudgePool {
     body: string;
     kind: "promote_t1" | "link" | "retire" | "rewrite";
     subjectId?: string;
+    prompt?: string;
   }): Promise<JudgeVote[]>;
 }
 

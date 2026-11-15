@@ -32,6 +32,7 @@
     "./sweepers/notification-sweeper": "./src/sweepers/notification-sweeper.ts",
     "./sweepers/plan-runtime": "./src/sweepers/plan-runtime.ts",
     "./dreaming/digest": "./src/dreaming/digest.ts",
+    "./dreaming/p1-input": "./src/dreaming/p1-input.ts",
     "./dreaming/reembed": "./src/dreaming/reembed.ts",
     "./slow-query": "./src/slow-query.ts",
     "./test-utils": "./test-utils.ts"
