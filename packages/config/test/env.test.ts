@@ -143,6 +143,14 @@ describe("ENV_REGISTRY", () => {
     expect(() => parseEnv({ PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "true" })).toThrow();
   });
 
+  test("dreaming P1 input contract is a closed v1|v2 enum defaulting to v1", () => {
+    expect(parseEnv({}).PENUMBRA_DREAMING_P1_INPUT_CONTRACT).toBe("v1");
+    expect(
+      parseEnv({ PENUMBRA_DREAMING_P1_INPUT_CONTRACT: "v2" }).PENUMBRA_DREAMING_P1_INPUT_CONTRACT,
+    ).toBe("v2");
+    expect(() => parseEnv({ PENUMBRA_DREAMING_P1_INPUT_CONTRACT: "v3" })).toThrow();
+  });
+
   test("dispatch capsule mode defaults to off and accepts shadow", () => {
     expect(parseEnv({}).PENUMBRA_DISPATCH_CAPSULE_MODE).toBe("off");
     expect(

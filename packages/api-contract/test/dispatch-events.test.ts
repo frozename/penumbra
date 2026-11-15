@@ -59,6 +59,10 @@ describe("dispatch event contract", () => {
     );
   });
 
+  it("DispatchEventKindSchema accepts dream_p1_input_skipped", () => {
+    expect(DispatchEventKindSchema.safeParse("dream_p1_input_skipped").success).toBe(true);
+  });
+
   it("DispatchEventKindSchema accepts agent.turn_retry (#322)", () => {
     expect(DispatchEventKindSchema.safeParse("agent.turn_retry").success).toBe(true);
   });

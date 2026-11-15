@@ -344,6 +344,19 @@ describe("dreaming/config", () => {
     expect(forged.typesafeJudgePromotion).toBe("off");
   });
 
+  it("maps the P1 input contract flag, defaulting to v1 and failing closed to v1", () => {
+    expect(buildDreamingConfig(getConfig({})).p1InputContract).toBe("v1");
+    expect(
+      buildDreamingConfig(getConfig({ PENUMBRA_DREAMING_P1_INPUT_CONTRACT: "v2" })).p1InputContract,
+    ).toBe("v2");
+    const bundle = getConfig({});
+    const forged = buildDreamingConfig({
+      ...bundle,
+      env: { ...bundle.env, PENUMBRA_DREAMING_P1_INPUT_CONTRACT: "bogus" },
+    });
+    expect(forged.p1InputContract).toBe("v1");
+  });
+
   it("resolveP1JevShadowEstimateUsd honors a positive finite override and defaults the rest", () => {
     const base: DreamPhaseCostEstimatesUsd = {
       p3ScorerLlmUsd: 0.02,

@@ -1,5 +1,7 @@
 import type { ConfigBundle } from "@penumbra/config";
 
+import { type P1InputContract, resolveP1InputContract } from "./p1-input.js";
+
 export const DEFAULT_DREAMING_AUTO_PROMOTE_MIN_JUDGES = 2;
 
 export interface JudgePoolConfig {
@@ -62,6 +64,7 @@ export interface DreamConfig {
   linkAutoThreshold: number;
   p1BatchSize: number;
   t2PromotionMinEvents?: number;
+  p1InputContract?: P1InputContract;
   retireAutoThreshold?: number;
   autoPromoteMinJudges?: number;
   contentQualityThreshold: number;
@@ -121,6 +124,7 @@ interface DreamingEnvSlice {
   PENUMBRA_DREAMING_LINK_AUTO_THRESHOLD: number;
   PENUMBRA_DREAMING_P1_BATCH_SIZE: number | undefined;
   PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS: number;
+  PENUMBRA_DREAMING_P1_INPUT_CONTRACT: P1InputContract;
   PENUMBRA_DREAMING_P: number | undefined;
   PENUMBRA_DREAMING_RETIRE_AUTO_THRESHOLD: number;
   PENUMBRA_DREAMING_CONTENT_QUALITY_THRESHOLD: number;
@@ -252,6 +256,7 @@ export function buildDreamingConfig(bundle: ConfigBundle): DreamConfig {
     linkAutoThreshold: env.PENUMBRA_DREAMING_LINK_AUTO_THRESHOLD,
     p1BatchSize: nonNegIntOr(env.PENUMBRA_DREAMING_P1_BATCH_SIZE ?? env.PENUMBRA_DREAMING_P, 10),
     t2PromotionMinEvents: nonNegIntOr(t2PromotionMinEventsRaw, 5),
+    p1InputContract: resolveP1InputContract(env.PENUMBRA_DREAMING_P1_INPUT_CONTRACT),
     retireAutoThreshold: env.PENUMBRA_DREAMING_RETIRE_AUTO_THRESHOLD,
     contentQualityThreshold: env.PENUMBRA_DREAMING_CONTENT_QUALITY_THRESHOLD,
     autoPromoteMinJudges: env.PENUMBRA_DREAMING_AUTO_PROMOTE_MIN_JUDGES,
