@@ -1,0 +1,31 @@
+{
+  "startedAt": "2026-11-12T12:01:46.981070Z",
+  "endedAt": "2026-11-12T12:12:46.274Z",
+  "endedBy": "Error: stale_or_failed_guard",
+  "discovered": 0,
+  "attempted": 0,
+  "answered": 0,
+  "expired": 0,
+  "unattempted": 0,
+  "maxReadMs": 4.037625000000162,
+  "mode": "shadow",
+  "applied": false,
+  "daemonShadowEnabled": false,
+  "productionDatabaseOpenedReadonly": true,
+  "qualityLabelsSupplied": false,
+  "config": {
+    "protocol": "systemone",
+    "promotionQuestionSet": "direct",
+    "baseUrl": "http://127.0.0.1:18944",
+    "hardware": "Mac mini M4 16GiB; development/control plane priority; Granite on-demand in same router",
+    "runtime": "llama.cpp2cbe0ec HTTP-only Metal; supervised one-hot router; native ctx/batch/ubatch2048; threads2; cache0; idle30s; P4 corrected source4fe live; current Granite route18944; event-following sidecar, no source changes",
+    "quantization": "Q8_0, no mmproj",
+    "contextTokens": 2048,
+    "timeoutMs": 5000,
+    "maxRequestBytes": 65536,
+    "allowRemote": false,
+    "model": "d3-nano-eval",
+    "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf"
+  },
+  "methodology": "Bounded event-following sidecar using existing loader/observer. Only audit records created during live phase; no historical backfill or synthesized workload. Incumbent ballots recorded shortly earlier, not simultaneous calls or ground truth."
+}

@@ -1,0 +1,612 @@
+{
+  "cases": 96,
+  "fixtureSha256": "ce4adee85c328d6d8de9fb14ff3dd1438a552230c5958a8be9feaca971b162d4",
+  "labelSha256": "22887f52131a8f3874c73d4b2166076c24266c5268e9a5ff0baad6eeb7e5a54b",
+  "inputArtifactSha256": {
+    "review-packet.jsonl": "df571b5f49cb43b00bd90327cc17800a60ccf395d6cd2382c964f538ae7ad67d",
+    "review-a.jsonl": "105430596ad62e1fcadcf861fe4f7f1961761a855dc46607b0f4dd06f3177933",
+    "review-b.jsonl": "9309fe0f8b2e5aad3474390f9cc7f5fac41aa34489a5423fbd0b3c5ea8e95a67",
+    "labels-adjudicated.jsonl": "22887f52131a8f3874c73d4b2166076c24266c5268e9a5ff0baad6eeb7e5a54b",
+    "curator-manifest.json": "fa560bd78a612062d86dd46ddd0ef1983d6c3cd5bf358d5223029931ba0489fd",
+    "label-adjudication.json": "465e8196e5d55498dc658d5e3eaffa876130130734aff0137c1956983fe19cbc"
+  },
+  "strata": {
+    "sampled-current": 64,
+    "controlled": 16,
+    "enriched-public": 16
+  },
+  "labelsByStratum": {
+    "controlled": {
+      "query": 8,
+      "skip": 8
+    },
+    "enriched-public": {
+      "query": 16
+    },
+    "sampled-current": {
+      "skip": 52,
+      "uncertain": 5,
+      "query": 7
+    }
+  },
+  "casesManifest": [
+    {
+      "id": "rpr-v2-381e2d59dde68a79",
+      "inputSha256": "30e310e2e42c360b2c367a8b755b35e40fdaf134c3877c25dad743c1d63cfae0",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-54b955517f383064",
+      "inputSha256": "7c738676c29e3991100bccac2e5c0ed03549fb06f68057aa70409daf43993559",
+      "stratum": "sampled-current",
+      "expected_verdict": "uncertain"
+    },
+    {
+      "id": "rpr-v2-960554ad82771892",
+      "inputSha256": "01e3494bbce186236507571c99a5e475e02172cdf9bfad2f4c1a0b29980b9f79",
+      "stratum": "controlled",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-7084ddd5781ac136",
+      "inputSha256": "c745e052894d523e57210351ffdf8c65bd132245e3159834f8ffe37c8c0e6a7a",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-a99b1b1a79d0e36f",
+      "inputSha256": "ec199129f97a3304379e54e35bde6fdf9d2daa3da7702c024886ac78f470c564",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-9aa02e9a919ad06d",
+      "inputSha256": "c3eb3d440f4a716edd22d835c3a3a2f4b20479e284953128bee472cee99a46d6",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-f1fdbbbfa084929c",
+      "inputSha256": "17fb666b9742db36970e1e69aee5472ff6f1cbc03d2be5583e54e1be30618dd6",
+      "stratum": "controlled",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-5aecc81e0c6fc882",
+      "inputSha256": "64e14af850fc17f09ce7ded880a0f88fdd18919e81695b4f4e58e6ff7c134746",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-725b7fb2f3fe2c03",
+      "inputSha256": "26b4c88ed201475f2642a350b44c21692faed75e405c825baf6276bb83f5e0a4",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-b484c2b1785bf286",
+      "inputSha256": "70106adcd5d5f3282ecda3639c2338af2b72435691635fb7a10c9ae5e14b9f2b",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-c605909eddb7e2be",
+      "inputSha256": "bdc8502d187d5a92d7a5a7b8c4420fac85039b838c42b17728a66f0812ab7af1",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-e121775daaba2eb7",
+      "inputSha256": "e60f09f93aabd2ceeaf42a5f60a6ca21734eb93038a69023798881b3a9b7c3af",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-5209e2c023c56431",
+      "inputSha256": "50a0899c9c5b186becab720c26026bbb5c93d08ebd44df7e4334b5a4ef1f87c7",
+      "stratum": "controlled",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-bdf663412219a3c1",
+      "inputSha256": "6a5e8676e5fc74d98d010263e52742d6cf609f28bc74467ec6a22f6cd27f6570",
+      "stratum": "controlled",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-1887b53b891d21b5",
+      "inputSha256": "63a7def2a76fdb0c2928eb0773cdb8f7ceb36781268f7aa1953e1f5452ccd6ca",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-c78a0a8c56206635",
+      "inputSha256": "ac58fc8714c71407495acce2b3bf66a85f532307aedef134729cf75a1193caea",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-5dfac7812a216872",
+      "inputSha256": "6fe30077f071a487d776a2c50db170cbec7624e33b034efc0fc8a9c2edbf158e",
+      "stratum": "controlled",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-3fce7f942e8a2d61",
+      "inputSha256": "9e0e2bc1f74e4ee57709a0e7d82fb28def5fa877b1d105674993576b0d7937cb",
+      "stratum": "enriched-public",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-66b9a95e06641461",
+      "inputSha256": "eb948d5848285950f2758af1396353e3ff0c1c3cfbd72470378ff648836c5547",
+      "stratum": "enriched-public",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-9e2c0fd687f05039",
+      "inputSha256": "90bbcc7730b0c680dc239bcc365c6a49dea6cbb2a1895963e50c56852a70911c",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-421e36227487823c",
+      "inputSha256": "aff061e373cb44ea30ee6e2408e64a3e55b42f5ef2c3311ae0af83102fac8015",
+      "stratum": "enriched-public",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-1c731c498f274c98",
+      "inputSha256": "6685a3541d4519b4bbd6b81ba35f97a3b877c22e6c46e0057e20563bbc8d80d1",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-2b01fee57cb5b159",
+      "inputSha256": "a8a106f1f80cc6879ebbd2d5d0bd421e38e3bff9f2a4b3decc7c4ca503d93e71",
+      "stratum": "enriched-public",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-d123e7eb7e1599ab",
+      "inputSha256": "5aa9ab14d4faafd70ae3922ff694f273e23ab235b7d7f0377b6a166dc0610603",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-0913103177533eab",
+      "inputSha256": "9c0e40521201f5c6dc7c0d981855d90393fbfd6ca47f52266a35866adc7e3d76",
+      "stratum": "controlled",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-36b5c544e888e114",
+      "inputSha256": "e7d0a7faead20e6b81f5480bd888584e4986266d7ebaa326a729596830963d61",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-390317805779b8a1",
+      "inputSha256": "5ef71a29604d606cb9252d356e8f84fabe452d42b825184ff7fdc787362d6251",
+      "stratum": "controlled",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-1bb30c7ccd107f2c",
+      "inputSha256": "3990a96242467e11e0642a02a81dac94fbe24c89bb9916a284d42982bc459f51",
+      "stratum": "enriched-public",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-b8a4fdba45b3edf1",
+      "inputSha256": "ce5708b4f0e863a95dfb6f4b9822b8598427cecd0d47cc9514923274978afe35",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-63d3cf3c8991aa16",
+      "inputSha256": "bef9ac279ffb7077433353701644e634dfa06e69de77fab1ac562bf5558ce2f8",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-c0b9e15700a31447",
+      "inputSha256": "62cb229e6bdfb008fd7ff7743f9cc15bacc6dd3b952cdd5533c5824c516ae945",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-bca6591d7b3e62ea",
+      "inputSha256": "f6b9bb713c7fdf928b9962c8782ca1a09c12635018006ddc9d0145beecd93beb",
+      "stratum": "enriched-public",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-d9b3e873104e8f34",
+      "inputSha256": "9b6125e3c6d07983bacfda85146cb85f891c1254b24963ddb03c79a01f5123e2",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-68c8fd6e3dc1e679",
+      "inputSha256": "ba1dc85722270259191fdefd5f9bb771d78e5806868b64ed64ab2dc0d02b66a9",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-a96029ec8e97c1e2",
+      "inputSha256": "e20812d709bddec8852e4d27ed7f4b1e085a0a2d91cd90411da3adf479e1574e",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-aced2f91aea2ff7c",
+      "inputSha256": "8a39a9e27bfd9569c2e60eae83661fb201b2d18ce2d6c3044fb0b554ed197690",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-b69c29490468f914",
+      "inputSha256": "c219905cb0cc9228f098c2094fd260b775b93171376b4105497cdebeb8c51f7e",
+      "stratum": "enriched-public",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-55ab0a8ee462b778",
+      "inputSha256": "c3cb6a5364387bc69d04e8acfe467788186c991480f900488f0c69c0c7a82810",
+      "stratum": "sampled-current",
+      "expected_verdict": "uncertain"
+    },
+    {
+      "id": "rpr-v2-8b9ee3d99ad1904f",
+      "inputSha256": "f0aa1d5c9ef384dc9b08daab3ac895b97388b9371da1c06680b4a57b3f76bd69",
+      "stratum": "enriched-public",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-0aa11dab30c28ac1",
+      "inputSha256": "3c3f40bb465e2998699bfed0937868d5d8b7784f5c55ecdf5d74aeb6d2c1fc92",
+      "stratum": "enriched-public",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-4a94bbf16dd3977c",
+      "inputSha256": "f827c2d6f76fc2a13d189c92d81385107a40da7a0e815d74f78922ff5d0fac31",
+      "stratum": "controlled",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-852fc2d6a9cb7fb2",
+      "inputSha256": "f6914955a19a5efe4d11ffdc271669eb9e948f140f57d518606242f7bb7f1586",
+      "stratum": "enriched-public",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-853aa4be1f1b726d",
+      "inputSha256": "d6793235f184020724b81027c02c8edff26c15881dce872a971b63b2c188989d",
+      "stratum": "sampled-current",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-908ea2c320dbd534",
+      "inputSha256": "2a0009933b00139ccd206c04e779077ef341e3dc54c5a04de563f8fe47a503d7",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-d055e681413a7287",
+      "inputSha256": "24c532da3fc578ae41fe4d24c00299063ca98debc2f584bfad2d0c417b1dd6a5",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-2860a1b212bbac08",
+      "inputSha256": "c8b99ae635292534a3cee2fc7d20f913f0b37a43f253fab2b35161aa330e59f5",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-92aa63338c4a4587",
+      "inputSha256": "fc9b1525a4dff4d1bad9ecd620110d595e265e4af2412e038873f9279b8c81b7",
+      "stratum": "enriched-public",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-9d01fb6e9accbd03",
+      "inputSha256": "bac11323e58dfeabed0a3ef81937d8bb3ad40d87754cf6fc52dc3f0f933418c1",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-168bf92d641d94ad",
+      "inputSha256": "aaf8f9ab9b6749beeab869d12d5c1fe82165e49d0d5bf18d5a9ee632c9659b15",
+      "stratum": "enriched-public",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-6839bae030f989bb",
+      "inputSha256": "3aeda4ca8b6e659f528901dacc0a2ff9c581fed8b9c0d6cce4c3bc930f1c0a18",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-3bd55a7a7c9ce1e8",
+      "inputSha256": "45d15ab4445841f59f17b8975359f0c20945b72fa6fd61a1af0b8faf7e34668b",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-774a577e4f0d4e7b",
+      "inputSha256": "60dbfb60ee0c81b3274db888fb50cfe3ad187f69553af1cbe0346a38a191b9fe",
+      "stratum": "sampled-current",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-a4a0f7ee0edccbc9",
+      "inputSha256": "57b58fdebe36e5852e72aab53bced8636a9c403ee45355c3ef1f6a1df0c9ab07",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-de9b967d7e2c2472",
+      "inputSha256": "795555ae270388e5bb207a473e3816612d88c39b0fad57c323a4509c4f79381c",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-1d51ecad016f7903",
+      "inputSha256": "e09b4b4fa3f3c7d845dc2e9c597cfba61d4016f12a8ca39f8d276d2a5dd8b863",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-a0f67b9a39a0e4a0",
+      "inputSha256": "1cbc97f2db4c0626177c311f61ddb2b207027de34298d47a8cef58f5ed0a108e",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-436c56e90139672d",
+      "inputSha256": "41fac1dcc77ec07e5aeb35038ed089e59438a83c52c9db63feeea056fee1a3f6",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-290ba7f2f9fde2f4",
+      "inputSha256": "b3839c11ceda15b8c5922fa4e68e11ea00a39be3989302e6aa9035712aaf489d",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-7dc81ef39981fa3f",
+      "inputSha256": "bf2e13af4019312fbe014bd02ef89e1c8b2e85c86b0c50ca773d2485d2db7bba",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-490c170af52bf0c2",
+      "inputSha256": "c44b085e1f600484ec095c6e1eed6ecf1e423c14bb73c2e5eb3dde9b01adb898",
+      "stratum": "sampled-current",
+      "expected_verdict": "uncertain"
+    },
+    {
+      "id": "rpr-v2-0926bdc43cb239c3",
+      "inputSha256": "78bd37b17fd74df09eceb9152bde3450560f34ee46e791dee612f33105134466",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-b4dc95d2fd2d1ca7",
+      "inputSha256": "e2b22922d632ef170ba81652ea3fbf5e8efa980aab70d1b0ff6706a93638deea",
+      "stratum": "sampled-current",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-adcf1d8e0eac50f4",
+      "inputSha256": "c61247bf69087063b0393200512cbc0b53c0d95b84d9e35d70dbbf86b6c17bcb",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-76253a5f88add0ca",
+      "inputSha256": "4baae6878b4faf86036e993021aa96ee63f4bdf1ed4e27bd6d1f1b106ae0f420",
+      "stratum": "sampled-current",
+      "expected_verdict": "uncertain"
+    },
+    {
+      "id": "rpr-v2-36a78675c85d8ac8",
+      "inputSha256": "93960b03409754b44af226416bbb48b7a9db79b8f921cdd124cbedcbcb65f59b",
+      "stratum": "controlled",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-90065675c362e9a8",
+      "inputSha256": "7b95faf1afa506edfafa4ef0e9bf3213f721db63b4796e546a72af8fe3a47406",
+      "stratum": "controlled",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-ad31d84d1a2ae2e3",
+      "inputSha256": "d3e28bbf94a0e2b4f93e5bdc24f0939f2334c20d380cd0837b049d5aaf92c018",
+      "stratum": "controlled",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-4db710546205f39a",
+      "inputSha256": "1d1a566b2440676eae7cde2c73cd19bdabf4d33b93c1cf24e553ceae47463ac8",
+      "stratum": "sampled-current",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-b0f5c22019ea1bbe",
+      "inputSha256": "5a62f25ca4c7260270e461112972d8ecd86e7605be601e52891c4e6a5dc1d39f",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-4553e66c37e76cd8",
+      "inputSha256": "9ce664b28230b32751318ba19b17f422e082b3de1ef07a2ab8cd332de9664e0f",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-53b4badf3b6df85f",
+      "inputSha256": "67a447908b8c7c59386be6f4cae1a74849f80b942be0b03bab495f585f33b6d9",
+      "stratum": "enriched-public",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-328cb1c7301df149",
+      "inputSha256": "b36e5abce122f0c47e58be71cbb7a7c94fabdac6c5dfe8e8ce6a5ac5d4c14593",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-af9531aa50a80ee4",
+      "inputSha256": "ca7f24262d541b4f3d20f194b13471705a7835d8bbaf8648fa6b0da1e92fc8b1",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-865e87f59acb0c87",
+      "inputSha256": "ee36d96c3ca6aac7dc4d03d0e64357c8035a6fc0249445d044a8a08bf082bd47",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-c0bba2583d0f0a5c",
+      "inputSha256": "7f298a07769dd32f3b510b9b8c1e476d17f3535ff1aee583a423e90c65ce606b",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-4f428a1c3ef64b06",
+      "inputSha256": "3bdb825baaefdcd3557c667eeb1c15b936cac9a8154fd451e538f0561adf5f70",
+      "stratum": "enriched-public",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-572978fb18395fed",
+      "inputSha256": "12c461785e2c2ba1bb0d9efeaf735fb5316324bd034b21be965cbe2522842eab",
+      "stratum": "sampled-current",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-53a8cf5bcd3a1c08",
+      "inputSha256": "f297c866cf3f63c5607e0fb7fa602d25a0b0e06adcbfbf6faac0856c5f148b7c",
+      "stratum": "sampled-current",
+      "expected_verdict": "uncertain"
+    },
+    {
+      "id": "rpr-v2-0afce0aa3f975ed8",
+      "inputSha256": "8a7eda2e0c7cf642fefe1d14418b759016bad6daf30b0994a05c756262f9fb15",
+      "stratum": "controlled",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-acca6f8fbdb3f65a",
+      "inputSha256": "144a300cf5bd4f27857f3b136b9df4addfc7efe29677b59b8e589482923423f4",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-b1f6edf37b10a3f5",
+      "inputSha256": "8481da52657be9057b3359c3cb712757938ea3938f775b801df6a848bf151e01",
+      "stratum": "controlled",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-8252c6454a414bc0",
+      "inputSha256": "57dd8a102d436caf96bbc07bb3af94de764b29115f8350e78071fc454b297dcd",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-1569b1560952a80d",
+      "inputSha256": "11e7266effacf3b39d6dfc0c5edb7573ee1f865f7b25dff0e99c4e58c35521ae",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-4dc0326380e04b0d",
+      "inputSha256": "636c5afae05424fe31527e6115e7a793a1c0b582bc6a7948a744010825cefe7f",
+      "stratum": "enriched-public",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-f4266fd5d84c9dba",
+      "inputSha256": "8b1aaa0289d589c12a044457798a10c3b92ccf7b09bd78b776be016fcd836be9",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-599946b03cfae3ca",
+      "inputSha256": "d0433fcf42b0e81f6a441fc8a2da727227f244d3a054f9f34427d3664390c853",
+      "stratum": "controlled",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-00f60f72a2fac613",
+      "inputSha256": "af85b144650e94c40c687ede0cd8c93d1c51150086c70b3c9c6d646fcf49728f",
+      "stratum": "controlled",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-7855d6b938c9f163",
+      "inputSha256": "c535ee71fe2ed54c9db8187f64fc2256d5e11f9212d19bfff9de148ddbadd69d",
+      "stratum": "controlled",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-1ae9768180998222",
+      "inputSha256": "84ed599299808bb7232bf6f0284a2687998e6860d09293c161236c082b5c4289",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-2d3d5fd5ebcf4ab9",
+      "inputSha256": "64a365c388bc5cba805d5fbd7e694026a3f0cc08286ecf786abc79cd71c11410",
+      "stratum": "sampled-current",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-0594f62b645ca77d",
+      "inputSha256": "4556ab35e3f618020670c13034a1ff71f2dcc7dea29a887342ded26582c754dc",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-adbca2f4ff22f8a2",
+      "inputSha256": "5cf9f157aec26dad63d6658f675cb7609fd1007690eb82c373f74c0a389640bd",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-7abc5275870a1c05",
+      "inputSha256": "fa04f0d3bdab89c266b5fce5ef9d2d3d432154c6a0f8ded5f83d2a5ab163c108",
+      "stratum": "enriched-public",
+      "expected_verdict": "query"
+    },
+    {
+      "id": "rpr-v2-785ba9b6decffd55",
+      "inputSha256": "2527af3abbd52cb6c5a7b0cd117f821dcd2ff6077c8c4e6611f13bb22972978c",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-4197b1fa1fafb589",
+      "inputSha256": "c8ba2da75bd86f0248f94e48af7d8b3a8836e75fbe04ab36178c5fda843e45ce",
+      "stratum": "sampled-current",
+      "expected_verdict": "skip"
+    },
+    {
+      "id": "rpr-v2-fa23f007c7ce8b23",
+      "inputSha256": "d333bf8db538bed790f0230f20a116ea6ee3b498c97469a5afff4e23455662d8",
+      "stratum": "sampled-current",
+      "expected_verdict": "query"
+    }
+  ],
+  "controlledFixtureSha256": "480f0cdce32745f72c8cc48302f4d1779aeb186b2bbef2ee447e8aff9a9fd45c",
+  "method": "Fresh 64 deterministic historical samples, 16 enriched public cases and 16 controlled cases. Two independent AI input reviewers plus source-checking AI adjudication; same model family, no human ground truth. Private real inputs withheld. Prior 111-case corpus is development only. No TEST output inspected before sealing."
+}

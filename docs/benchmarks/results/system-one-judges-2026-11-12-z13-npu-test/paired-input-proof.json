@@ -1,0 +1,42 @@
+{
+  "comparisons": [
+    {
+      "comparison": "excerpt-granite",
+      "rows": 320,
+      "parsedFixtureSha256": "12cab34541140109ae95d929a62e8cdbe3ee27f8b599432f657905664a9de567",
+      "allCaseInputHashesMatch": true
+    },
+    {
+      "comparison": "excerpt-mac-nano",
+      "rows": 320,
+      "parsedFixtureSha256": "12cab34541140109ae95d929a62e8cdbe3ee27f8b599432f657905664a9de567",
+      "allCaseInputHashesMatch": true
+    },
+    {
+      "comparison": "body-granite",
+      "rows": 120,
+      "parsedFixtureSha256": "fa2cf7888ec91878c4f3bdf57f42c8a024cd3ca6ed8972bf6656869604780d16",
+      "allCaseInputHashesMatch": true
+    },
+    {
+      "comparison": "body-mac-nano",
+      "rows": 120,
+      "parsedFixtureSha256": "fa2cf7888ec91878c4f3bdf57f42c8a024cd3ca6ed8972bf6656869604780d16",
+      "allCaseInputHashesMatch": true
+    }
+  ],
+  "sourceTruthSeparateFromDurability": {
+    "verified": {
+      "selected": 8,
+      "accepted": 8
+    },
+    "contradicted": {
+      "selected": 38,
+      "accepted": 36
+    },
+    "insufficient": {
+      "selected": 74,
+      "accepted": 59
+    }
+  }
+}

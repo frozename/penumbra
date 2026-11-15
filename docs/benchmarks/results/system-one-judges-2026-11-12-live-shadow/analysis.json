@@ -1,0 +1,19 @@
+{
+  "status": "interrupted_unexercised",
+  "plannedLiveSeconds": 900,
+  "actualObserverSeconds": 659.2929298877716,
+  "candidateRequests": 0,
+  "newEligibleInputs": 0,
+  "reason": "Error: stale_or_failed_guard",
+  "supervisorRecordedAborted": false,
+  "interpretation": "Outer supervisor falsely left aborted=false when child caught its stale-guard error and exited0. This is NOT a passing trial. Original records preserved. Subsequent guard tests and revised replay classify child termination reasons explicitly.",
+  "telemetry": {
+    "samples": 748,
+    "httpHealthFailures": 0,
+    "swapGrowthBytes": 0.0,
+    "maxStartToStartSampleGapMs": 1815.6578540802002,
+    "liveObservedSamples": 651
+  },
+  "quality": "No inference exposure and no labels: no accuracy, calibration, latency or candidate reliability result.",
+  "servicesChanged": false
+}

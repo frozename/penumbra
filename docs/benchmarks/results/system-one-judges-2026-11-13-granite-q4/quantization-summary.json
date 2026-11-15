@@ -1,0 +1,186 @@
+{
+  "method": "Exploratory matched-context quantization canary, repeated exposed controls, actual factory temperatures. Not hidden quality acceptance or decoder source-span trial.",
+  "runs": [
+    {
+      "run": "granite-q4-canary",
+      "modelAlias": "granite-q4-canary",
+      "rawSha256": "c71efe9984c268c97e985c84437ab62230454be9bc340a0b43fc4cb9b3947df0",
+      "cases": 31,
+      "controlsPassed": 6,
+      "controls": 7,
+      "controlOutcomes": [
+        {
+          "caseId": "extraction-injection",
+          "workload": "extraction-control",
+          "passed": true,
+          "error": null,
+          "latencyMs": 319.4852919999994
+        },
+        {
+          "caseId": "brief-continuity",
+          "workload": "brief",
+          "passed": true,
+          "error": null,
+          "latencyMs": 5205.3581250000025
+        },
+        {
+          "caseId": "brief-injection",
+          "workload": "brief",
+          "passed": true,
+          "error": null,
+          "latencyMs": 4301.628167000003
+        },
+        {
+          "caseId": "refiner-approved",
+          "workload": "refiner",
+          "passed": false,
+          "error": null,
+          "latencyMs": 2541.867250000003
+        },
+        {
+          "caseId": "refiner-small",
+          "workload": "refiner",
+          "passed": true,
+          "error": null,
+          "latencyMs": 2180.0045000000027
+        },
+        {
+          "caseId": "rewrite-public",
+          "workload": "rewrite",
+          "passed": true,
+          "error": null,
+          "latencyMs": 1992.1813750000001
+        },
+        {
+          "caseId": "rewrite-private",
+          "workload": "rewrite",
+          "passed": true,
+          "error": null,
+          "latencyMs": 532.6425830000007
+        }
+      ],
+      "controlledCases": 24,
+      "controlledAcceptedArrays": 24,
+      "controlledProposals": 0,
+      "controlledMechanicallyPromotable": 0,
+      "calls": 31,
+      "http200": 31,
+      "tokenTruncations": 0,
+      "temperatures": [
+        "0",
+        "0.3",
+        "None"
+      ],
+      "rssMedianBytes": 2928427008,
+      "rssPeakBytes": 2928803840,
+      "sampleCount": 33,
+      "swapGrowthBytes": 0.0,
+      "healthFailures": 0,
+      "healthP95Ms": 4.965582978911698,
+      "maxTrailingMinuteDaemonLagMs": 19328.388583004475,
+      "controlledLatencyMs": {
+        "p50": 427.2196254999999,
+        "p95": 2219.556542
+      },
+      "resourcesSha256": "58f8c56a5cc27f1ff1239fe3a1b0cc1c7300fdc0a22a474a43a7e729e0ef29ea"
+    },
+    {
+      "run": "granite-q8-canary-retry",
+      "modelAlias": "granite-q8-canary",
+      "rawSha256": "b58f09746fceb38f56a891bfaa16b76b0b550e3fbac0d5beeb388208ab4bb569",
+      "cases": 31,
+      "controlsPassed": 6,
+      "controls": 7,
+      "controlOutcomes": [
+        {
+          "caseId": "extraction-injection",
+          "workload": "extraction-control",
+          "passed": false,
+          "error": null,
+          "latencyMs": 1663.0263339999983
+        },
+        {
+          "caseId": "brief-continuity",
+          "workload": "brief",
+          "passed": true,
+          "error": null,
+          "latencyMs": 6101.4925
+        },
+        {
+          "caseId": "brief-injection",
+          "workload": "brief",
+          "passed": true,
+          "error": null,
+          "latencyMs": 4519.077375000001
+        },
+        {
+          "caseId": "refiner-approved",
+          "workload": "refiner",
+          "passed": true,
+          "error": null,
+          "latencyMs": 3540.598291000002
+        },
+        {
+          "caseId": "refiner-small",
+          "workload": "refiner",
+          "passed": true,
+          "error": null,
+          "latencyMs": 5913.899208000003
+        },
+        {
+          "caseId": "rewrite-public",
+          "workload": "rewrite",
+          "passed": true,
+          "error": null,
+          "latencyMs": 2160.550750000002
+        },
+        {
+          "caseId": "rewrite-private",
+          "workload": "rewrite",
+          "passed": true,
+          "error": null,
+          "latencyMs": 662.5256670000017
+        }
+      ],
+      "controlledCases": 24,
+      "controlledAcceptedArrays": 24,
+      "controlledProposals": 1,
+      "controlledMechanicallyPromotable": 0,
+      "calls": 31,
+      "http200": 31,
+      "tokenTruncations": 0,
+      "temperatures": [
+        "0",
+        "0.3",
+        "None"
+      ],
+      "rssMedianBytes": 4492861440.0,
+      "rssPeakBytes": 4492984320,
+      "sampleCount": 46,
+      "swapGrowthBytes": 0.0,
+      "healthFailures": 0,
+      "healthP95Ms": 5.537915974855423,
+      "maxTrailingMinuteDaemonLagMs": 772.0409590005875,
+      "controlledLatencyMs": {
+        "p50": 469.9731254999997,
+        "p95": 4112.525582999999
+      },
+      "resourcesSha256": "945011c5caac2154e5c1d56ae5962fb85cd80622b4227db08ad45d5f2979afe6"
+    }
+  ],
+  "priorAbort": {
+    "run": "granite-q8-canary",
+    "beforeInference": true,
+    "reason": "Three-second daemon preflight health timeout after CI; no model started/no quality result."
+  },
+  "memorySavingPeakProfileFraction": 0.3481384239506983,
+  "caveats": [
+    "One-Hz process RSS, not total unified memory or hard-real-time peak.",
+    "Q4 executed before completed Q8 retry; filesystem cache and brief/refiner sampling uncontrolled.",
+    "Health lag is trailing60-second maximum, carrying an earlier19.3-second post-CI event into Q4 samples. Healthy HTTP wall times do not negate that operational issue.",
+    "Neither profile yields promotable controlled memories; empty output does not establish quality.",
+    "Six/seven coarse contract controls are not semantic non-inferiority.",
+    "Original full rewriter benchmark fixture files unavailable."
+  ],
+  "productionActivated": false
+}

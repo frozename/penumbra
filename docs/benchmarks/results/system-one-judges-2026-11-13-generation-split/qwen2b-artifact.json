@@ -1,0 +1,27 @@
+{
+  "repo": "bartowski/Qwen_Qwen3.5-2B-GGUF",
+  "revision": "7d26695454df6de5fbcce2e58681e62dae06ce43",
+  "file": {
+    "rfilename": "Qwen_Qwen3.5-2B-Q4_K_M.gguf",
+    "blobId": "0eca420846d815ea300eafe36fb26a69dbf02481",
+    "size": 1396198496,
+    "lfs": {
+      "sha256": "57a1085840f497d764a7fc5d346922dbde961efb54cc792ea81d694fd846a1d8",
+      "size": 1396198496,
+      "pointerSize": 135
+    }
+  },
+  "license": "apache-2.0",
+  "actualSha256": "57a1085840f497d764a7fc5d346922dbde961efb54cc792ea81d694fd846a1d8",
+  "actualSizeBytes": 1396198496,
+  "localPath": "/Users/aimastermind/.local/share/penumbra/inference/models/qwen35-2b-eval/Qwen_Qwen3.5-2B-Q4_K_M.gguf",
+  "upstream": {
+    "repo": "Qwen/Qwen3.5-2B",
+    "revision": "15852e8c16360a2fea060d615a32b45270f8a8fc",
+    "license": "apache-2.0",
+    "retainedFiles": [
+      "LICENSE"
+    ]
+  },
+  "retainedLicenseSha256": "bbedc3fda3305820b977265f01b8619d87570a6739de3a5582c3464840f1e57a"
+}

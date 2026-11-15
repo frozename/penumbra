@@ -1,0 +1,27 @@
+{
+  "observedAt": "2026-11-13T11:44:19.558688+00:00",
+  "models": [
+    {
+      "id": "d3-nano-eval",
+      "state": "unloaded"
+    },
+    {
+      "id": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+      "state": "sleeping"
+    }
+  ],
+  "processes": [
+    {
+      "pid": 13949,
+      "ppid": 1,
+      "rssKiB": 95488
+    },
+    {
+      "pid": 13953,
+      "ppid": 13949,
+      "rssKiB": 140288
+    }
+  ],
+  "aggregateRssMiB": 230.25,
+  "note": "Discrete idle RSS snapshot, not a peak or physical-footprint measurement. Summing process RSS can double count shared pages."
+}

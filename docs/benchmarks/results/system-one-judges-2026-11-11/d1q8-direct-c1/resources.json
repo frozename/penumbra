@@ -1,0 +1,23 @@
+{
+  "run": "docs/benchmarks/results/system-one-judges-2026-11-11/d1q8-direct-c1/run.json",
+  "samples": 26,
+  "intervalStart": 1794431547.206,
+  "intervalEnd": 1794431577.323774,
+  "peakSampledRssBytes": 3390193664,
+  "medianSampledRssBytes": 3389636608.0,
+  "psCpuPercentMedian": 0.2,
+  "psCpuPercentPeak": 3.6,
+  "swapStartBytes": 1747326074.88,
+  "swapEndBytes": 1747326074.88,
+  "swapGrowthBytes": 0.0,
+  "swapinsDelta": 0,
+  "swapoutsDelta": 0,
+  "healthTimeoutOrFailureCount": 3,
+  "healthWallP50Ms": 2.0752494456246495,
+  "healthWallP95Ms": 2002.4767080321908,
+  "maxReportedDaemonLagMs": 8643.301707997918,
+  "systemGpuInUseBytesPeak": 4527472640,
+  "systemGpuAllocatedBytesPeak": 6222004224,
+  "systemGpuUtilizationPercentMedian": 100.0,
+  "limitations": "1 Hz sampled RSS is not total unified-memory ownership; GPU counters are system-wide. ps CPU is a decaying process metric. /health lagMs is a rolling maximum, not request latency. Other host activity is uncontrolled."
+}

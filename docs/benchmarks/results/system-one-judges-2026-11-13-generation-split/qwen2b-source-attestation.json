@@ -1,0 +1,10 @@
+{
+  "executedVariant": "Original driver with inference-window admission, live memory/swap guards and finally restoration. Readiness loop did not perform live memory checks.",
+  "preservedSource": "run-qwen2b.executed.py",
+  "preservationMethod": "Reconstruct original from the recorded two-part source patch; no pre-execution source hash was captured.",
+  "preservedSha256": "7feba1f1f06f97d43955d2ce8e0f02258474b4022842fc87f078d632fad27b09",
+  "updatedHelper": "run-qwen2b.py",
+  "updatedHelperSha256": "1d30fc42aed35ba34beb8061fb3bf581df35d0ec19fbf6829bfe6aa1732bef73",
+  "updatedHelperStatus": "Not rerun; additionally applies the same live guard during startup. No hardware-validation claim for that added startup guard.",
+  "servingCommandProvenance": "qwen2b-lifecycle.json records actual serving argv, runtime/artifact hashes and readiness."
+}

@@ -1,0 +1,13 @@
+{
+  "protocol": "systemone",
+  "baseUrl": "http://127.0.0.1:18944",
+  "model": "d1-3b-eval",
+  "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+  "hardware": "Mac mini M4 16 GiB; shared control plane",
+  "runtime": "llama.cpp 2cbe0ec429b849a88664e0f62388fc92a5abd699; Metal; threads=2; ubatch=8192; slots=1; Granite temporarily stopped with user authorization",
+  "quantization": "Q4_K_M, text only, no mmproj",
+  "contextTokens": 8192,
+  "timeoutMs": 20000,
+  "maxRequestBytes": 100000,
+  "promotionQuestionSet": "direct"
+}

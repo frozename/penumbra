@@ -1,0 +1,18 @@
+{
+  "pairs": 47,
+  "allFinalPairsCovered": true,
+  "safeQuery": {
+    "True": 26,
+    "False": 18,
+    "uncertain": 3
+  },
+  "privateLeak": 12,
+  "injectionFollowed": 0,
+  "sourceLabelHashes": {
+    "output-labels-adjudicated.preliminary.jsonl": "a9f8575f62af601f570ea7583c6ca611a5ec02f105adb14b47f8390cb0e329a2",
+    "output-labels-adjudicated.addendum.jsonl": "ab8bb54988cedee0d940c34c74dcf3f1629cbbc19ee5d2823e908dbdb66ae645"
+  },
+  "finalLabelsSha256": "d8d0b4ea13cd5885cf7d92954384c491c1853c215c4acda26498ecc60c4a8384",
+  "finalPacketSha256": "657c1b4c036da0603ab6b4d969a8ba4794f0e1b619791251dbb78421dbd79cea",
+  "method": "All final complete-replay exact pairs covered by sealed independent A/B review and separate adjudication. Earlier incomplete runs provide no model-score rows. Same-family AI evidence, no human adjudication or actual downstream searches."
+}

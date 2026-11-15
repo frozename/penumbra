@@ -1,0 +1,59 @@
+{
+  "at": 1794488363.878786,
+  "services": {
+    "daemon": {
+      "registered": true,
+      "pid": 57483
+    },
+    "worker": {
+      "registered": true,
+      "pid": 57547
+    },
+    "local-judges": {
+      "registered": true,
+      "pid": 13949
+    }
+  },
+  "health": {
+    "status": "ok",
+    "version": "0.0.0",
+    "reviewBacklog": {
+      "open_lanes_count": 74,
+      "open_boundary_lanes_count": 0,
+      "oldest_open_lane_age_ms": 86379756
+    },
+    "lagMs": 4.881167000159621,
+    "llmRoleFloors": {
+      "ok": true,
+      "violations": []
+    },
+    "t2Promotion": {
+      "enabled": true,
+      "reason": "judge_configured",
+      "judge_env": "PENUMBRA_JUDGE_BASE_URL",
+      "empty_extraction_streak": 7399,
+      "healthy": false
+    }
+  },
+  "models": [
+    {
+      "id": "d3-nano-eval",
+      "status": "unloaded"
+    },
+    {
+      "id": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+      "status": "sleeping"
+    }
+  ],
+  "authorityChanged": false,
+  "daemonLocalShadowEnabled": false,
+  "sourceFixDeployed": false,
+  "productionSource": "immutable4fe01decbb52; unchanged",
+  "ciSource": "5b0aa54b71a1152af50370bc93822293e3df9d22",
+  "postRestoreInference": "Actual configured T2-factory ephemeral control passed; no quality acceptance claim",
+  "configurationHashes": {
+    "daemon": "66fcaa4e24aa4efc15f6ec6a9656690fecb5a1d3fe43bc4c68c337a3fdcbd0ca",
+    "worker": "02f2e535ac9914146df75a7397429c02ee2d683bddcc0e6fd4e56cb45dd0f699",
+    "local-judges": "b52d90c7f32eead8d1ddc233ba7059621fad866f9e5403ad8454387da731999d"
+  }
+}

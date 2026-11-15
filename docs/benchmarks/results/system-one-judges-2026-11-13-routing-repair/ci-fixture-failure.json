@@ -1,0 +1,8 @@
+{
+  "at": "2026-11-13T22:14:54.366247+00:00",
+  "action": "terminate exact owned CI wrapper after known failed route fixture; restore via wrapper finally",
+  "pid": 20798,
+  "failure": "dreaming-health-route timeout fixture lacks explicit inventory after fail-closed routing repair",
+  "sourceModifiedDuringCI": false,
+  "inferenceNotRun": true
+}

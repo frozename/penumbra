@@ -1,0 +1,12 @@
+{
+  "cases": 38,
+  "anonymousRuns": 6,
+  "caseRunRows": 228,
+  "proposals": 92,
+  "packetSha256": "16864c25d36439db400fecb6fa9be08ad1cc4289d2b8f12a57e08b875cb0d6da",
+  "rawSha256": {
+    "test-granite-v3": "95c61ecc1e7b02873d3a4b4f86be36d81eb663d40611d3f0fdc4440261ebba08",
+    "test-z13-v3": "f511b29a3513872b3b572d12366cb5a65abe9f38799de90aed303973f47f4311",
+    "test-qwen2b-v3": "7fca4521cea808dfd70789d55f8c55ff4b479bdf5bfd85908665c3f828e387ff"
+  }
+}

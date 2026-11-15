@@ -1,0 +1,313 @@
+{
+  "checkedAt": "2026-11-12T23:43:24.899150+00:00",
+  "scope": "Primary-source research and read-only inventory; no model inference, weights download, runtime installation or service mutation",
+  "runtime": {
+    "repository": "ROCm/FastFlowLM",
+    "tag": "v1.0.12",
+    "commit": "cce7e5bb7d56af182b5051c12253175a86957b73",
+    "tagObject": "1dc44d6fe80680c1837230137b1f9d0a606c2e54",
+    "licenses": [
+      {
+        "file": "LICENSE_RUNTIME.txt",
+        "url": "https://raw.githubusercontent.com/ROCm/FastFlowLM/cce7e5bb7d56af182b5051c12253175a86957b73/LICENSE_RUNTIME.txt",
+        "sha256": "3de7fea911353980067e0f943d332dd74cbd2b610d4421318aaef25d8103f11d",
+        "locallyRead": true
+      },
+      {
+        "file": "LICENSE_BINARY.txt",
+        "url": "https://raw.githubusercontent.com/ROCm/FastFlowLM/cce7e5bb7d56af182b5051c12253175a86957b73/LICENSE_BINARY.txt",
+        "sha256": "40f10a537b3a783a00531b2e6889b3456b3182e2dbbc3d16bfaab9cb83b87abc",
+        "locallyRead": true
+      },
+      {
+        "file": "THIRD_PARTY_NOTICES.txt",
+        "url": "https://raw.githubusercontent.com/ROCm/FastFlowLM/cce7e5bb7d56af182b5051c12253175a86957b73/THIRD_PARTY_NOTICES.txt",
+        "sha256": "30a747c0e1e70b6db086ae41e0b2bf6e09a066a6db0e3b3e0b877e90f11ed01b",
+        "locallyRead": true
+      }
+    ]
+  },
+  "packages": [
+    {
+      "repository": "FastFlowLM/D3-Lite-NPU2",
+      "revision": "51563157b724a1bf69c5c177e000dd7038acd63c",
+      "public": true,
+      "gated": false,
+      "license": "apache-2.0",
+      "files": [
+        {
+          "name": ".gitattributes",
+          "bytes": 1672,
+          "lfs": null
+        },
+        {
+          "name": "LICENSE",
+          "bytes": 11357,
+          "lfs": null
+        },
+        {
+          "name": "MANIFEST.sha256",
+          "bytes": 891,
+          "lfs": null
+        },
+        {
+          "name": "NOTICE",
+          "bytes": 352,
+          "lfs": null
+        },
+        {
+          "name": "README.md",
+          "bytes": 4548,
+          "lfs": null
+        },
+        {
+          "name": "chat_template.jinja",
+          "bytes": 7755,
+          "lfs": null
+        },
+        {
+          "name": "config.json",
+          "bytes": 3237,
+          "lfs": null
+        },
+        {
+          "name": "decision_config.json",
+          "bytes": 5504,
+          "lfs": null
+        },
+        {
+          "name": "model.q4nx",
+          "bytes": 560985936,
+          "lfs": {
+            "sha256": "04a20706f44dcc8f142a1774034fc2a01110bef14031fc8ccf26295db00bef42",
+            "size": 560985936,
+            "pointerSize": 134
+          }
+        },
+        {
+          "name": "readout.safetensors",
+          "bytes": 1044560,
+          "lfs": {
+            "sha256": "fe11cfac5c79b6a83e35b707581b1260214279bb22b003c215c62719186ef629",
+            "size": 1044560,
+            "pointerSize": 132
+          }
+        },
+        {
+          "name": "tokenizer.json",
+          "bytes": 12807982,
+          "lfs": {
+            "sha256": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+            "size": 12807982,
+            "pointerSize": 133
+          }
+        },
+        {
+          "name": "tokenizer_config.json",
+          "bytes": 16709,
+          "lfs": null
+        },
+        {
+          "name": "vision_weight.q4nx",
+          "bytes": 201202552,
+          "lfs": {
+            "sha256": "8c960575c61dff809e900883af3c74b91df3871e418d6dae3ec04cce0ccc40b5",
+            "size": 201202552,
+            "pointerSize": 134
+          }
+        }
+      ],
+      "smallFileChecks": [
+        {
+          "file": "README.md",
+          "url": "https://huggingface.co/FastFlowLM/D3-Lite-NPU2/resolve/51563157b724a1bf69c5c177e000dd7038acd63c/README.md",
+          "sha256": "944edd2a82fb0ec05991f7ae5b7515111f019c64fb9cfc05a8673154a3553f43",
+          "locallyRead": true
+        },
+        {
+          "file": "LICENSE",
+          "url": "https://huggingface.co/FastFlowLM/D3-Lite-NPU2/resolve/51563157b724a1bf69c5c177e000dd7038acd63c/LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "locallyRead": true
+        },
+        {
+          "file": "NOTICE",
+          "url": "https://huggingface.co/FastFlowLM/D3-Lite-NPU2/resolve/51563157b724a1bf69c5c177e000dd7038acd63c/NOTICE",
+          "sha256": "b1f8d5da5bd599029de424b307a979abc0bfc60500e95018c6cd5c8caf3de970",
+          "locallyRead": true
+        },
+        {
+          "file": "config.json",
+          "url": "https://huggingface.co/FastFlowLM/D3-Lite-NPU2/resolve/51563157b724a1bf69c5c177e000dd7038acd63c/config.json",
+          "sha256": "6cc1a8f6306a38a95f730a16b0ad22ada5b49f1a2aa94d77b0058076b5fbb7f1",
+          "locallyRead": true
+        },
+        {
+          "file": "MANIFEST.sha256",
+          "url": "https://huggingface.co/FastFlowLM/D3-Lite-NPU2/resolve/51563157b724a1bf69c5c177e000dd7038acd63c/MANIFEST.sha256",
+          "sha256": "70e0a2dfba2a19c0dbde1d7c1c74da3114527b7117decc7f32cc1e510187658f",
+          "locallyRead": true
+        }
+      ],
+      "weightsDownloadedOrLocallyHashed": false
+    },
+    {
+      "repository": "FastFlowLM/D3-Nano-NPU2",
+      "revision": "6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+      "public": true,
+      "gated": false,
+      "license": "apache-2.0",
+      "files": [
+        {
+          "name": ".gitattributes",
+          "bytes": 1672,
+          "lfs": null
+        },
+        {
+          "name": "LICENSE",
+          "bytes": 11357,
+          "lfs": null
+        },
+        {
+          "name": "MANIFEST.sha256",
+          "bytes": 891,
+          "lfs": null
+        },
+        {
+          "name": "NOTICE",
+          "bytes": 334,
+          "lfs": null
+        },
+        {
+          "name": "README.md",
+          "bytes": 4358,
+          "lfs": null
+        },
+        {
+          "name": "chat_template.jinja",
+          "bytes": 7755,
+          "lfs": null
+        },
+        {
+          "name": "config.json",
+          "bytes": 2811,
+          "lfs": null
+        },
+        {
+          "name": "decision_config.json",
+          "bytes": 5502,
+          "lfs": null
+        },
+        {
+          "name": "model.q4nx",
+          "bytes": 1339269144,
+          "lfs": {
+            "sha256": "4527ccda731d2c1149d8529d46ed6ce4035f19041951ba87b579d9dfe867bb33",
+            "size": 1339269144,
+            "pointerSize": 135
+          }
+        },
+        {
+          "name": "readout.safetensors",
+          "bytes": 2089040,
+          "lfs": {
+            "sha256": "662e8a26d8016b2d479f1ca66bf64944603316c2b5e074ab7ac3304b8ae045e9",
+            "size": 2089040,
+            "pointerSize": 132
+          }
+        },
+        {
+          "name": "tokenizer.json",
+          "bytes": 12807982,
+          "lfs": {
+            "sha256": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+            "size": 12807982,
+            "pointerSize": 133
+          }
+        },
+        {
+          "name": "tokenizer_config.json",
+          "bytes": 16709,
+          "lfs": null
+        },
+        {
+          "name": "vision_weight.q4nx",
+          "bytes": 662866216,
+          "lfs": {
+            "sha256": "03bf757d70874ec0e6951e904cdc3addcb49a45b13d46964f7184a5ea4bf6a25",
+            "size": 662866216,
+            "pointerSize": 134
+          }
+        }
+      ],
+      "smallFileChecks": [
+        {
+          "file": "README.md",
+          "url": "https://huggingface.co/FastFlowLM/D3-Nano-NPU2/resolve/6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e/README.md",
+          "sha256": "eee405b68e72fe0b77128c24f02cf6f3cfd0d1c9597cc03bb2f1ba0983d28295",
+          "locallyRead": true
+        },
+        {
+          "file": "LICENSE",
+          "url": "https://huggingface.co/FastFlowLM/D3-Nano-NPU2/resolve/6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e/LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "locallyRead": true
+        },
+        {
+          "file": "NOTICE",
+          "url": "https://huggingface.co/FastFlowLM/D3-Nano-NPU2/resolve/6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e/NOTICE",
+          "sha256": "b926ac0e9a72a24e29e3f518f3241064416bc137c185c3349c3eae2370cfe7a0",
+          "locallyRead": true
+        },
+        {
+          "file": "config.json",
+          "url": "https://huggingface.co/FastFlowLM/D3-Nano-NPU2/resolve/6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e/config.json",
+          "sha256": "62d60871b818a708fb0bc91582d704bbef56ffc942f1ca62013b4c1c77650d10",
+          "locallyRead": true
+        },
+        {
+          "file": "MANIFEST.sha256",
+          "url": "https://huggingface.co/FastFlowLM/D3-Nano-NPU2/resolve/6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e/MANIFEST.sha256",
+          "sha256": "304c34223f844a6249dffb3675438a2fe5bd21585c734ee02ce357f6248176f2",
+          "locallyRead": true
+        }
+      ],
+      "weightsDownloadedOrLocallyHashed": false
+    }
+  ],
+  "vendorMeasurements": {
+    "source": "https://fastflowlm.com/docs/benchmarks/d3_results/",
+    "hardware": "Ryzen AI MAX+ PRO 395, 128 GB, Ubuntu24.04, XRT",
+    "kind": "Vendor-reported warm engine medians; not independent or local Penumbra measurements",
+    "milliseconds": {
+      "lite": {
+        "tokens330": 151,
+        "tokens1024": 430
+      },
+      "nano": {
+        "tokens330": 252,
+        "tokens1024": 584
+      },
+      "mini": {
+        "tokens330": 536,
+        "tokens1024": 1315
+      }
+    },
+    "limitations": [
+      "No fleet/network latency comparison",
+      "No Gufo coexistence measurement",
+      "Different repetitions and subsets; public accuracy suites are not merged into a ranking"
+    ]
+  },
+  "localNpuInference": {
+    "executed": false,
+    "reason": "Research-only scope; no serving-envelope headroom established above the existing20GiB floor, and XRT/FLM not located in the checked paths/packages. No runtime or production changes made."
+  },
+  "sources": [
+    "https://fastflowlm.com/docs/models/d3/",
+    "https://fastflowlm.com/docs/install_lin/",
+    "https://github.com/ROCm/FastFlowLM/releases/tag/v1.0.12",
+    "https://huggingface.co/vllm-sr/d3-lite",
+    "https://huggingface.co/vllm-sr/d3-nano"
+  ]
+}

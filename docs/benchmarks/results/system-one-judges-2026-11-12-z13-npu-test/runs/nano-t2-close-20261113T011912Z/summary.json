@@ -1,0 +1,66 @@
+{
+  "status": "executed",
+  "config": {
+    "protocol": "systemone",
+    "promotionQuestionSet": "direct",
+    "baseUrl": "http://127.0.0.1:18945",
+    "model": "d3-nano",
+    "revision": "FastFlowLM/D3-Nano-NPU2@6cb318a5019e82b699ef7a1485ad5dd9d3c9c45e",
+    "hardware": "Z13 Ryzen AI MAX+395,128GB; Gufo remains active; trial bypasses20GiB admission floor by explicit user instruction",
+    "runtime": "FastFlowLM1.0.12 cce7e5bb7d56af182b5051c12253175a86957b73 portable XRT; NPU-accelerated with CPU short attention; CPUQuota200%, MemoryHigh4GiB/Max6GiB, swap0; loopback via SSH; actual runtime context32768, frozen short inputs; vision not invoked",
+    "quantization": "Q4_K/GPTQ NPU q4nx package; exact pinned package, not Mac Q8 parity",
+    "contextTokens": 32768,
+    "timeoutMs": 5000,
+    "maxRequestBytes": 16384,
+    "allowRemote": false
+  },
+  "fixtureSha256": "fa2cf7888ec91878c4f3bdf57f42c8a024cd3ca6ed8972bf6656869604780d16",
+  "firstRequestMs": 1800.61875,
+  "requests": 120,
+  "answered": 120,
+  "failures": {},
+  "p50LatencyMs": 833.4246250000015,
+  "p95LatencyMs": 1333.6270829999994,
+  "requestsPerSecond": 1.1855069200545776,
+  "quality": {
+    "calibration": {},
+    "test": {
+      "promote": {
+        "selected": 116,
+        "answered": 116,
+        "abstained": 0,
+        "coverage": 1,
+        "threshold": 0.5,
+        "tp": 92,
+        "fp": 7,
+        "tn": 7,
+        "fn": 10,
+        "precision": 0.9292929292929293,
+        "recall": 0.9019607843137255,
+        "f1": 0.9154228855721394,
+        "falsePromotionRate": 0.5,
+        "falseVetoRate": 0.09803921568627451,
+        "falseDiscoveryRate": 0.0707070707070707,
+        "brier": 0.09526998940029821,
+        "calibrationError": 0.12005208436542149,
+        "falseVetoRateWithRejectFallback": 0.09803921568627451
+      }
+    }
+  },
+  "thresholdFit": {
+    "method": "calibration-only grid, max observed false-promotion rate 0.02; provisional labels",
+    "threshold": null,
+    "heldOut": null
+  },
+  "directThresholdFit": {
+    "threshold": null,
+    "heldOut": null
+  },
+  "authority": "none; mode=shadow, applied=false; no production database opened",
+  "qualityUses": "first iteration only; repeats are performance samples, not independent labels",
+  "transport": {
+    "connectionClose": true,
+    "retries": 0,
+    "diagnostics": "hashes/status/error codes only"
+  }
+}

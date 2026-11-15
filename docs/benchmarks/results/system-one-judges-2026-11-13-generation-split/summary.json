@@ -1,0 +1,152 @@
+{
+  "method": "Seven published synthetic generation controls; no independent quality-acceptance, throughput or tail-latency claim. Default MacBook probe covers only one control. Repeats/ordering and prefix-cache differences prevent a causal speedup estimate.",
+  "runs": [
+    {
+      "file": "granite-default.json",
+      "sha256": "98b5a1fa3486b32f5ee643eb84946a622ce99f230ab816b349a21022d053b031",
+      "target": "granite",
+      "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+      "requestExtras": {},
+      "cases": 7,
+      "passed": 4,
+      "errors": 0,
+      "reasoningChars": 0,
+      "extraction": {
+        "n": 4,
+        "passed": 1,
+        "latencyMsMedian": 1613.0177084999998,
+        "latencyMsMin": 324.61516699999993,
+        "latencyMsMax": 6266.502708
+      },
+      "rewriter": {
+        "n": 3,
+        "passed": 3,
+        "latencyMsMedian": 858.8933749999997,
+        "latencyMsMin": 688.1902499999997,
+        "latencyMsMax": 2123.3563749999994
+      }
+    },
+    {
+      "file": "macbook-decision-default.json",
+      "sha256": "3460f654d790eb23aa7017ace991a0dfb0e3e5264861a58411c021ecd36f7ba5",
+      "target": "macbook",
+      "model": "kapitsa-q36-35b-a3b-4bit",
+      "requestExtras": {},
+      "cases": 1,
+      "passed": 1,
+      "errors": 0,
+      "reasoningChars": 7117,
+      "extraction": {
+        "n": 1,
+        "passed": 1,
+        "latencyMsMedian": 11789.343375,
+        "latencyMsMin": 11789.343375,
+        "latencyMsMax": 11789.343375
+      }
+    },
+    {
+      "file": "macbook-no-thinking.json",
+      "sha256": "cda551bd5d52a252c4b3a234edabf2c57ff2a4307a99acc6022bdb675d12c629",
+      "target": "macbook",
+      "model": "kapitsa-q36-35b-a3b-4bit",
+      "requestExtras": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      },
+      "cases": 7,
+      "passed": 7,
+      "errors": 0,
+      "reasoningChars": 0,
+      "extraction": {
+        "n": 4,
+        "passed": 4,
+        "latencyMsMedian": 1483.4109165,
+        "latencyMsMin": 840.529125,
+        "latencyMsMax": 4220.104375
+      },
+      "rewriter": {
+        "n": 3,
+        "passed": 3,
+        "latencyMsMedian": 917.5452079999995,
+        "latencyMsMin": 722.2087919999994,
+        "latencyMsMax": 1205.579584000001
+      }
+    },
+    {
+      "file": "z13-default.json",
+      "sha256": "532846283647ed77cc0ef19727aaa7bd08ae5fc2de07cbce001785d5700beaec",
+      "target": "z13",
+      "model": "Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
+      "requestExtras": {},
+      "cases": 7,
+      "passed": 7,
+      "errors": 0,
+      "reasoningChars": 7590,
+      "extraction": {
+        "n": 4,
+        "passed": 4,
+        "latencyMsMedian": 12171.572249999997,
+        "latencyMsMin": 3010.927125000002,
+        "latencyMsMax": 15000.63475
+      },
+      "rewriter": {
+        "n": 3,
+        "passed": 3,
+        "latencyMsMedian": 4419.281707999995,
+        "latencyMsMin": 2855.925666000003,
+        "latencyMsMax": 4616.593042
+      }
+    },
+    {
+      "file": "z13-no-thinking.json",
+      "sha256": "b4fc6005be76e3eafe7d772bdfe0d3a8d21839d8234e88504ba3157009bbd0c2",
+      "target": "z13",
+      "model": "Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
+      "requestExtras": {
+        "chat_template_kwargs": {
+          "enable_thinking": false
+        }
+      },
+      "cases": 7,
+      "passed": 7,
+      "errors": 0,
+      "reasoningChars": 0,
+      "extraction": {
+        "n": 4,
+        "passed": 4,
+        "latencyMsMedian": 3866.326083,
+        "latencyMsMin": 1192.421625,
+        "latencyMsMax": 6615.127458000001
+      },
+      "rewriter": {
+        "n": 3,
+        "passed": 3,
+        "latencyMsMedian": 1545.8902080000007,
+        "latencyMsMin": 1393.5016660000001,
+        "latencyMsMax": 1596.8177499999983
+      }
+    }
+  ],
+  "totalRequests": 29,
+  "errors": 0,
+  "semanticFailures": 3,
+  "driverSha256": "c82766dd3f4af65cc3d8baa70b265eece5240bddcfa29f77e4337ea78ba5dfcc",
+  "offlineGuards": [
+    {
+      "guard": "requires-live",
+      "passed": true,
+      "exitCode": 1
+    },
+    {
+      "guard": "rejects-target",
+      "passed": true,
+      "exitCode": 1
+    },
+    {
+      "guard": "refuses-overwrite",
+      "passed": true,
+      "exitCode": 1
+    }
+  ]
+}

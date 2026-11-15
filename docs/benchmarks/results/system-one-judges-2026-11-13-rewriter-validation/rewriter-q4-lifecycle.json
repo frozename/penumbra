@@ -1,0 +1,145 @@
+[
+  {
+    "at": "2026-11-13T18:56:41.697241+00:00",
+    "kind": "waiting_for_existing_heavy_job_lock",
+    "target": "graniteq4"
+  },
+  {
+    "at": "2026-11-13T19:01:00.799316+00:00",
+    "kind": "matched_control_plane_baseline_passed",
+    "consecutiveSamples": 60,
+    "latestLagMs": 5.431125000119209
+  },
+  {
+    "at": "2026-11-13T19:01:00.815589+00:00",
+    "kind": "authorized_mini_runtime_paused",
+    "routerPid": 10862,
+    "command": [
+      "nice",
+      "-n",
+      "10",
+      "/Users/aimastermind/.local/share/penumbra/inference/system-one-llama/2cbe0ec-http-only/bin/llama-server",
+      "--model",
+      "/Users/aimastermind/.local/share/penumbra/inference/models/granite-q4-eval/granite-4.1-3b-Q4_K_M.gguf",
+      "--alias",
+      "granite-q4-rewriter-eval",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "18945",
+      "--ctx-size",
+      "16384",
+      "--batch-size",
+      "512",
+      "--ubatch-size",
+      "256",
+      "--parallel",
+      "1",
+      "--threads",
+      "2",
+      "--threads-batch",
+      "2",
+      "--n-gpu-layers",
+      "99",
+      "--flash-attn",
+      "on",
+      "--cache-type-k",
+      "q8_0",
+      "--cache-type-v",
+      "q8_0",
+      "--cache-ram",
+      "0",
+      "--no-cache-idle-slots",
+      "--no-mmproj-auto",
+      "--offline",
+      "--no-webui",
+      "--jinja",
+      "--fit",
+      "off"
+    ],
+    "artifactSha256": "662b0626cd58f443baea23559b469df6576a81d349649c59413b36a9fb32eb29",
+    "runtimeSha256": "a9990314838bafcbaa2601c41a375eb764489084ff2469b0770a7d47a33da104"
+  },
+  {
+    "at": "2026-11-13T19:01:02.087037+00:00",
+    "kind": "candidate_ready",
+    "pid": 11699,
+    "startupMs": 1270.0243750587106,
+    "metadata": {
+      "models": [
+        {
+          "name": "granite-q4-rewriter-eval",
+          "model": "granite-q4-rewriter-eval",
+          "modified_at": "",
+          "size": "",
+          "digest": "",
+          "type": "model",
+          "description": "",
+          "tags": [
+            ""
+          ],
+          "capabilities": [
+            "completion"
+          ],
+          "parameters": "",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "",
+            "families": [
+              ""
+            ],
+            "parameter_size": "",
+            "quantization_level": ""
+          }
+        }
+      ],
+      "object": "list",
+      "data": [
+        {
+          "id": "granite-q4-rewriter-eval",
+          "aliases": [
+            "granite-q4-rewriter-eval"
+          ],
+          "tags": [],
+          "object": "model",
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ],
+            "output_modalities": [
+              "text"
+            ]
+          },
+          "created": 1794596462,
+          "owned_by": "llamacpp",
+          "meta": {
+            "vocab_type": 2,
+            "n_vocab": 100352,
+            "n_ctx": 16384,
+            "n_ctx_train": 131072,
+            "n_embd": 2560,
+            "n_params": 3402836480,
+            "size": 2095933440,
+            "ftype": "Q4_K - Medium"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "at": "2026-11-13T19:03:03.180168+00:00",
+    "kind": "aborted",
+    "reason": "mini startup/inference guard refused continuation"
+  },
+  {
+    "at": "2026-11-13T19:03:03.886861+00:00",
+    "kind": "mini_router_restored",
+    "samePlistSha256": "b52d90c7f32eead8d1ddc233ba7059621fad866f9e5403ad8454387da731999d"
+  },
+  {
+    "at": "2026-11-13T19:03:03.892386+00:00",
+    "kind": "control_plane_postflight",
+    "daemonHealth": "ok"
+  }
+]

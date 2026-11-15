@@ -1,0 +1,27 @@
+{
+  "scope": "Read-only source audit during live observation; no production mutation or input-contract change",
+  "sourceCommit": "18eaa32e25cafe4f9a74f79f3d7b6c1bcdc09c13 (production package content unchanged since CI source)",
+  "sourceFile": "packages/core/src/writers/t2.ts",
+  "sourceSha256": "09d323bb54aa6d414dd7060d1f7e681356d109cc2da23d04bb6208e91e723592",
+  "inputConstruction": {
+    "acceptedEventTypes": [
+      "agent-prompt",
+      "agent-response"
+    ],
+    "sourceQuery": "t0_events by session_id, ts ascending",
+    "contentChoice": "Prefer nonempty scrubbed payload_summary; use parsed payload_json text only when summary empty",
+    "writerDefaultMaxTranscriptChars": 20000,
+    "aboveLimit": "First8000 chars + truncation marker + last8000 chars",
+    "downstreamWorkerSoftChunkChars": 80000,
+    "implication": "The writer truncates before worker chunking;80k soft chunk configuration is not the effective evidence window."
+  },
+  "emptyResultHandling": {
+    "validEmptyArray": "Increment empty-extraction health streak and mark rollup promoted; no memories inserted",
+    "malformedOrTruncated": "Transport/parser error handling and retries apply separately"
+  },
+  "limits": [
+    "No claim that this source-path risk explains synthetic positive-control failures",
+    "No full-transcript quality or input change accepted from this audit",
+    "Do not change production evidence windows without independent semantic evaluation"
+  ]
+}

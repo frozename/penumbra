@@ -1,0 +1,21 @@
+{
+  "pid": 43175,
+  "startedAtEpoch": 1794434954.8132522,
+  "command": [
+    "bun",
+    "scripts/system-one-judge-observe.ts",
+    "--db",
+    "/Volumes/AI-DATA/maestro/state/penumbra/db.sqlite",
+    "--config",
+    "docs/benchmarks/fixtures/system-one-d3-direct.json",
+    "--out",
+    "docs/benchmarks/results/system-one-judges-2026-11-11-shadow/paced-replay",
+    "--since",
+    "2026-09-01T00:00:00Z",
+    "--limit",
+    "20",
+    "--interval-ms",
+    "30000",
+    "--live"
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "method": "Transient no-inference/no-model cgroup capability probe",
+  "exitCode": 0,
+  "stdout": "{\"memory.high\": \"4294967296\", \"memory.max\": \"6442450944\", \"memory.swap.max\": \"0\", \"cpu.max\": \"200000 100000\"}\n",
+  "stderr": "Running as unit: penumbra-npu-prepare-cap-probe-1794529055.service; invocation ID: c55d29fab26f48798cf38e69a417a8ae\nFinished with result: success\nMain processes terminated with: code=exited/status=0\nService runtime: 22ms\nCPU time consumed: 22ms\nMemory peak: 1.2M\nMemory swap peak: 0B\n",
+  "unit": "penumbra-npu-prepare-cap-probe-1794529055"
+}

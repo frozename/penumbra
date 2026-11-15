@@ -1,0 +1,26 @@
+{
+  "frozenBeforeInferenceEpoch": 1794477900.244419,
+  "recipe": "Direct binary0.5, no threshold tuning on complete T2 corpus; same previously frozen fixtures",
+  "config": {
+    "protocol": "systemone",
+    "promotionQuestionSet": "direct",
+    "baseUrl": "http://127.0.0.1:18944",
+    "hardware": "Mac mini M4 16 GiB; shared control plane; Granite paused with user authorization",
+    "runtime": "llama.cpp2cbe0ec Metal HTTP-only; threads2; slots1;ctx/batch/ubatch8192; production P4 corrected source4fe01decb; no overlapping CI/build from this task",
+    "quantization": "Q4_K_M, no mmproj",
+    "contextTokens": 8192,
+    "timeoutMs": 5000,
+    "maxRequestBytes": 65536,
+    "allowRemote": false,
+    "model": "d3-mini-q4-eval",
+    "revision": "ggml-org/vllm-d3-mini-GGUF@8b29fd3b87373ea85fa59cc2f26251c1591d771a/vllm-d3-mini-Q4_K_M.gguf"
+  },
+  "admission": "After authorized Granite pause, free+inactive >= artifact bytes +1.5GiB; guard256MiB swap used/gross swapouts; no extra fleet model",
+  "memoryBeforePause": {
+    "availableFreeInactiveBytes": 5433982976,
+    "swapUsedBytes": 1219619717.12,
+    "swapoutBytes": 118310289408,
+    "osMemoryPressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 69%"
+  },
+  "authority": "shadow only; no new authority; user authorized Granite nonresidency for development-plane headroom"
+}

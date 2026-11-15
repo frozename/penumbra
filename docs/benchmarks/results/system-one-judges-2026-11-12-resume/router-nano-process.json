@@ -1,0 +1,19 @@
+{
+  "pid": 47770,
+  "command": [
+    "/Volumes/AI-DATA/maestro/inference/system-one-llama/2cbe0ec-http-only/bin/llama-server",
+    "--models-preset",
+    "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/resume-20261112/local-judges.nano-test.ini",
+    "--models-max",
+    "1",
+    "--models-memory-margin",
+    "2048",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "18944",
+    "--offline",
+    "--metrics"
+  ],
+  "startedAtEpoch": 1794479442.335216
+}

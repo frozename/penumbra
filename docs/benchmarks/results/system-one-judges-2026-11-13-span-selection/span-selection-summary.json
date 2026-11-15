@@ -1,0 +1,778 @@
+{
+  "method": "Pre-inference frozen 14 historical +24 controlled cases; independent AI source labels and model-blind proposal grades. Populations reported separately. Exact copy constrains authorship, not truth or eligibility.",
+  "qualityUnits": "Proposal precision and fact recall have different units and are not combined into F1. Separate answered-only binary case decision uses any mechanically promotable proposal; it can count an unsupported proposal as a positive and must be read alongside safe precision/recall. Abstentions are never true negatives; report their counts. Uncertain case excluded from binary quality.",
+  "notMeasured": [
+    "Brier/ECE: generated arrays/ranges provide no model probability.",
+    "Realistic coding contention, load-isolation and sustained concurrent capacity.",
+    "Historical execution from code checks; population error bounds from purposive small samples."
+  ],
+  "provenanceSha256": {
+    "heldout.jsonl": "96dbd5b33190a15441490834d6687f306f556c5175324fa2fcbc9380d37eda50",
+    "labels-adjudicated.jsonl": "61f457f41c7896b377d270bb34bfc3676be98b345a0bdad87a942a73a5a8b2fe",
+    "output-review-packet.jsonl": "16864c25d36439db400fecb6fa9be08ad1cc4289d2b8f12a57e08b875cb0d6da",
+    "output-review-key.json": "3df58875f4c87cf79dbb9d4c1a6b4c2912a4248d3e0d3ca930b068941673cec2",
+    "output-review-a.jsonl": "cc78fd0d5f6a7706a5c5743ea8613070e7ffbab1b9305398708be689cdef9c75",
+    "output-review-b.jsonl": "66acee528aec925dd21a1aef744132320ea8f08fee371e7eddb0252617a7a0bf",
+    "output-review-adjudicated.jsonl": "b990218489c7a9db606f9a59c7d7ea00898c1321926170dba5f1a08d138fba2e",
+    "output-adjudication.json": "3634cd6d42095ffc89a056e794a2eb055ea2f495c6579a7c685c416ab6f8d05f",
+    "label-adjudication.json": "f558e192abb321b57d62c3cf7e95ebe03aa32719699e419ccdf7258cc0746ee8"
+  },
+  "runs": [
+    {
+      "profile": "test-granite-v3",
+      "variant": "legacy-full",
+      "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+      "rawSha256": "95c61ecc1e7b02873d3a4b4f86be36d81eb663d40611d3f0fdc4440261ebba08",
+      "cohorts": {
+        "historical": {
+          "positiveCases": 5,
+          "negativeCases": 8,
+          "uncertainCases": 1,
+          "validArrays": 13,
+          "abstentions": 1,
+          "proposals": 0,
+          "mechanicallyPromotable": 0,
+          "supportedProposals": 0,
+          "eligibleProposals": 0,
+          "safePromotable": 0,
+          "expectedFactInstances": 9,
+          "coveredFactInstances": 0,
+          "safelyCoveredFactInstances": 0,
+          "negativeCasesWithPromotableProposals": 0,
+          "validFalseVetoes": 5,
+          "positiveAbstentions": 0,
+          "negativeAbstentions": 1,
+          "positiveCasesWithSafeProposal": 0,
+          "tp": 0,
+          "fp": 0,
+          "tn": 7,
+          "fnAnswered": 5,
+          "safeProposalPrecision": null,
+          "safeFactRecall": 0.0,
+          "decisionPrecisionAnswered": null,
+          "decisionRecallAnswered": 0.0,
+          "decisionF1Answered": 0.0,
+          "falsePromotionRateAllNegatives": 0.0,
+          "validFalseVetoRateAllPositives": 1.0,
+          "latencyMsAll": {
+            "p50": 4355.062021000001,
+            "p95NearestRank": 7294.761542,
+            "max": 7294.761542
+          },
+          "latencyMsValidArrays": {
+            "p50": 3886.3196670000016,
+            "p95NearestRank": 7294.761542,
+            "max": 7294.761542
+          },
+          "serialObservedCasesPerSecond": 0.22015817713610633
+        },
+        "controlled": {
+          "positiveCases": 12,
+          "negativeCases": 12,
+          "uncertainCases": 0,
+          "validArrays": 24,
+          "abstentions": 0,
+          "proposals": 1,
+          "mechanicallyPromotable": 0,
+          "supportedProposals": 0,
+          "eligibleProposals": 1,
+          "safePromotable": 0,
+          "expectedFactInstances": 12,
+          "coveredFactInstances": 1,
+          "safelyCoveredFactInstances": 0,
+          "negativeCasesWithPromotableProposals": 0,
+          "validFalseVetoes": 12,
+          "positiveAbstentions": 0,
+          "negativeAbstentions": 0,
+          "positiveCasesWithSafeProposal": 0,
+          "tp": 0,
+          "fp": 0,
+          "tn": 12,
+          "fnAnswered": 12,
+          "safeProposalPrecision": null,
+          "safeFactRecall": 0.0,
+          "decisionPrecisionAnswered": null,
+          "decisionRecallAnswered": 0.0,
+          "decisionF1Answered": 0.0,
+          "falsePromotionRateAllNegatives": 0.0,
+          "validFalseVetoRateAllPositives": 1.0,
+          "latencyMsAll": {
+            "p50": 479.88012549999985,
+            "p95NearestRank": 4332.651832999996,
+            "max": 6299.902624999995
+          },
+          "latencyMsValidArrays": {
+            "p50": 479.88012549999985,
+            "p95NearestRank": 4332.651832999996,
+            "max": 6299.902624999995
+          },
+          "serialObservedCasesPerSecond": 1.1324928891857982
+        }
+      },
+      "calls": 38,
+      "httpStatuses": {
+        "200": 38
+      },
+      "tokenTruncatedReplies": 0,
+      "maxPromptTokens": 3527,
+      "maxCompletionTokens": 161,
+      "errors": [
+        {
+          "caseId": "bank-017",
+          "error": "JudgeError: t2 judge memories failed schema validation"
+        }
+      ]
+    },
+    {
+      "profile": "test-granite-v3",
+      "variant": "selection",
+      "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+      "rawSha256": "95c61ecc1e7b02873d3a4b4f86be36d81eb663d40611d3f0fdc4440261ebba08",
+      "cohorts": {
+        "historical": {
+          "positiveCases": 5,
+          "negativeCases": 8,
+          "uncertainCases": 1,
+          "validArrays": 2,
+          "abstentions": 12,
+          "proposals": 1,
+          "mechanicallyPromotable": 1,
+          "supportedProposals": 0,
+          "eligibleProposals": 0,
+          "safePromotable": 0,
+          "expectedFactInstances": 9,
+          "coveredFactInstances": 0,
+          "safelyCoveredFactInstances": 0,
+          "negativeCasesWithPromotableProposals": 1,
+          "validFalseVetoes": 1,
+          "positiveAbstentions": 4,
+          "negativeAbstentions": 7,
+          "positiveCasesWithSafeProposal": 0,
+          "tp": 0,
+          "fp": 1,
+          "tn": 0,
+          "fnAnswered": 1,
+          "safeProposalPrecision": 0.0,
+          "safeFactRecall": 0.0,
+          "decisionPrecisionAnswered": 0.0,
+          "decisionRecallAnswered": 0.0,
+          "decisionF1Answered": 0.0,
+          "falsePromotionRateAllNegatives": 0.125,
+          "validFalseVetoRateAllPositives": 0.2,
+          "latencyMsAll": {
+            "p50": 5312.697979500008,
+            "p95NearestRank": 9614.944415999984,
+            "max": 9614.944415999984
+          },
+          "latencyMsValidArrays": {
+            "p50": 3574.720166999992,
+            "p95NearestRank": 4225.74004199999,
+            "max": 4225.74004199999
+          },
+          "serialObservedCasesPerSecond": 0.163310189601724
+        },
+        "controlled": {
+          "positiveCases": 12,
+          "negativeCases": 12,
+          "uncertainCases": 0,
+          "validArrays": 23,
+          "abstentions": 1,
+          "proposals": 23,
+          "mechanicallyPromotable": 23,
+          "supportedProposals": 20,
+          "eligibleProposals": 8,
+          "safePromotable": 8,
+          "expectedFactInstances": 12,
+          "coveredFactInstances": 10,
+          "safelyCoveredFactInstances": 8,
+          "negativeCasesWithPromotableProposals": 11,
+          "validFalseVetoes": 0,
+          "positiveAbstentions": 0,
+          "negativeAbstentions": 1,
+          "positiveCasesWithSafeProposal": 8,
+          "tp": 12,
+          "fp": 11,
+          "tn": 0,
+          "fnAnswered": 0,
+          "safeProposalPrecision": 0.34782608695652173,
+          "safeFactRecall": 0.6666666666666666,
+          "decisionPrecisionAnswered": 0.5217391304347826,
+          "decisionRecallAnswered": 1.0,
+          "decisionF1Answered": 0.6857142857142857,
+          "falsePromotionRateAllNegatives": 0.9166666666666666,
+          "validFalseVetoRateAllPositives": 0.0,
+          "latencyMsAll": {
+            "p50": 696.9158745000022,
+            "p95NearestRank": 938.1163330000127,
+            "max": 5872.171334000013
+          },
+          "latencyMsValidArrays": {
+            "p50": 697.5755409999983,
+            "p95NearestRank": 938.1163330000127,
+            "max": 5872.171334000013
+          },
+          "serialObservedCasesPerSecond": 1.0836469589971292
+        }
+      },
+      "calls": 38,
+      "httpStatuses": {
+        "200": 38
+      },
+      "tokenTruncatedReplies": 0,
+      "maxPromptTokens": 4200,
+      "maxCompletionTokens": 14,
+      "errors": [
+        {
+          "caseId": "bank-003",
+          "error": "Error: selection includes ineligible source origin"
+        },
+        {
+          "caseId": "bank-018",
+          "error": "Error: selection includes ineligible source origin"
+        },
+        {
+          "caseId": "bank-022",
+          "error": "Error: selection includes ineligible source origin"
+        },
+        {
+          "caseId": "bank-025",
+          "error": "Error: selection includes ineligible source origin"
+        },
+        {
+          "caseId": "bank-001",
+          "error": "Error: selection includes ineligible source origin"
+        },
+        {
+          "caseId": "bank-004",
+          "error": "Error: selection includes ineligible source origin"
+        },
+        {
+          "caseId": "bank-009",
+          "error": "Error: selection includes ineligible source origin"
+        },
+        {
+          "caseId": "bank-017",
+          "error": "Error: selection includes ineligible source origin"
+        },
+        {
+          "caseId": "bank-030",
+          "error": "Error: selection includes ineligible source origin"
+        },
+        {
+          "caseId": "bank-036",
+          "error": "Error: selection includes ineligible source origin"
+        },
+        {
+          "caseId": "bank-039",
+          "error": "Error: selected source passage fails body limits"
+        },
+        {
+          "caseId": "bank-023",
+          "error": "Error: selection includes ineligible source origin"
+        },
+        {
+          "caseId": "controlled-02-n",
+          "error": "Error: selected source passage fails body limits"
+        }
+      ]
+    },
+    {
+      "profile": "test-qwen2b-v3",
+      "variant": "legacy-full",
+      "model": "qwen35-2b-eval",
+      "rawSha256": "7fca4521cea808dfd70789d55f8c55ff4b479bdf5bfd85908665c3f828e387ff",
+      "cohorts": {
+        "historical": {
+          "positiveCases": 5,
+          "negativeCases": 8,
+          "uncertainCases": 1,
+          "validArrays": 14,
+          "abstentions": 0,
+          "proposals": 0,
+          "mechanicallyPromotable": 0,
+          "supportedProposals": 0,
+          "eligibleProposals": 0,
+          "safePromotable": 0,
+          "expectedFactInstances": 9,
+          "coveredFactInstances": 0,
+          "safelyCoveredFactInstances": 0,
+          "negativeCasesWithPromotableProposals": 0,
+          "validFalseVetoes": 5,
+          "positiveAbstentions": 0,
+          "negativeAbstentions": 0,
+          "positiveCasesWithSafeProposal": 0,
+          "tp": 0,
+          "fp": 0,
+          "tn": 8,
+          "fnAnswered": 5,
+          "safeProposalPrecision": null,
+          "safeFactRecall": 0.0,
+          "decisionPrecisionAnswered": null,
+          "decisionRecallAnswered": 0.0,
+          "decisionF1Answered": 0.0,
+          "falsePromotionRateAllNegatives": 0.0,
+          "validFalseVetoRateAllPositives": 1.0,
+          "latencyMsAll": {
+            "p50": 2946.889083000001,
+            "p95NearestRank": 4388.892625,
+            "max": 4388.892625
+          },
+          "latencyMsValidArrays": {
+            "p50": 2946.889083000001,
+            "p95NearestRank": 4388.892625,
+            "max": 4388.892625
+          },
+          "serialObservedCasesPerSecond": 0.3421951279640588
+        },
+        "controlled": {
+          "positiveCases": 12,
+          "negativeCases": 12,
+          "uncertainCases": 0,
+          "validArrays": 24,
+          "abstentions": 0,
+          "proposals": 4,
+          "mechanicallyPromotable": 0,
+          "supportedProposals": 0,
+          "eligibleProposals": 4,
+          "safePromotable": 0,
+          "expectedFactInstances": 12,
+          "coveredFactInstances": 4,
+          "safelyCoveredFactInstances": 0,
+          "negativeCasesWithPromotableProposals": 0,
+          "validFalseVetoes": 12,
+          "positiveAbstentions": 0,
+          "negativeAbstentions": 0,
+          "positiveCasesWithSafeProposal": 0,
+          "tp": 0,
+          "fp": 0,
+          "tn": 12,
+          "fnAnswered": 12,
+          "safeProposalPrecision": null,
+          "safeFactRecall": 0.0,
+          "decisionPrecisionAnswered": null,
+          "decisionRecallAnswered": 0.0,
+          "decisionF1Answered": 0.0,
+          "falsePromotionRateAllNegatives": 0.0,
+          "validFalseVetoRateAllPositives": 1.0,
+          "latencyMsAll": {
+            "p50": 389.4042914999991,
+            "p95NearestRank": 4923.521916999998,
+            "max": 5090.854125000005
+          },
+          "latencyMsValidArrays": {
+            "p50": 389.4042914999991,
+            "p95NearestRank": 4923.521916999998,
+            "max": 5090.854125000005
+          },
+          "serialObservedCasesPerSecond": 0.8730451841625634
+        }
+      },
+      "calls": 38,
+      "httpStatuses": {
+        "200": 38
+      },
+      "tokenTruncatedReplies": 0,
+      "maxPromptTokens": 3961,
+      "maxCompletionTokens": 288,
+      "errors": []
+    },
+    {
+      "profile": "test-qwen2b-v3",
+      "variant": "selection",
+      "model": "qwen35-2b-eval",
+      "rawSha256": "7fca4521cea808dfd70789d55f8c55ff4b479bdf5bfd85908665c3f828e387ff",
+      "cohorts": {
+        "historical": {
+          "positiveCases": 5,
+          "negativeCases": 8,
+          "uncertainCases": 1,
+          "validArrays": 8,
+          "abstentions": 6,
+          "proposals": 4,
+          "mechanicallyPromotable": 4,
+          "supportedProposals": 0,
+          "eligibleProposals": 0,
+          "safePromotable": 0,
+          "expectedFactInstances": 9,
+          "coveredFactInstances": 1,
+          "safelyCoveredFactInstances": 0,
+          "negativeCasesWithPromotableProposals": 2,
+          "validFalseVetoes": 0,
+          "positiveAbstentions": 3,
+          "negativeAbstentions": 3,
+          "positiveCasesWithSafeProposal": 0,
+          "tp": 2,
+          "fp": 2,
+          "tn": 3,
+          "fnAnswered": 0,
+          "safeProposalPrecision": 0.0,
+          "safeFactRecall": 0.0,
+          "decisionPrecisionAnswered": 0.5,
+          "decisionRecallAnswered": 1.0,
+          "decisionF1Answered": 0.6666666666666666,
+          "falsePromotionRateAllNegatives": 0.25,
+          "validFalseVetoRateAllPositives": 0.0,
+          "latencyMsAll": {
+            "p50": 3196.117792000012,
+            "p95NearestRank": 4911.8587909999915,
+            "max": 4911.8587909999915
+          },
+          "latencyMsValidArrays": {
+            "p50": 2985.6675840000025,
+            "p95NearestRank": 4911.8587909999915,
+            "max": 4911.8587909999915
+          },
+          "serialObservedCasesPerSecond": 0.32367397893046895
+        },
+        "controlled": {
+          "positiveCases": 12,
+          "negativeCases": 12,
+          "uncertainCases": 0,
+          "validArrays": 24,
+          "abstentions": 0,
+          "proposals": 22,
+          "mechanicallyPromotable": 22,
+          "supportedProposals": 19,
+          "eligibleProposals": 4,
+          "safePromotable": 4,
+          "expectedFactInstances": 12,
+          "coveredFactInstances": 9,
+          "safelyCoveredFactInstances": 4,
+          "negativeCasesWithPromotableProposals": 10,
+          "validFalseVetoes": 0,
+          "positiveAbstentions": 0,
+          "negativeAbstentions": 0,
+          "positiveCasesWithSafeProposal": 4,
+          "tp": 12,
+          "fp": 10,
+          "tn": 2,
+          "fnAnswered": 0,
+          "safeProposalPrecision": 0.18181818181818182,
+          "safeFactRecall": 0.3333333333333333,
+          "decisionPrecisionAnswered": 0.5454545454545454,
+          "decisionRecallAnswered": 1.0,
+          "decisionF1Answered": 0.7058823529411765,
+          "falsePromotionRateAllNegatives": 0.8333333333333334,
+          "validFalseVetoRateAllPositives": 0.0,
+          "latencyMsAll": {
+            "p50": 393.9846045000013,
+            "p95NearestRank": 640.1919580000103,
+            "max": 2859.06016600001
+          },
+          "latencyMsValidArrays": {
+            "p50": 393.9846045000013,
+            "p95NearestRank": 640.1919580000103,
+            "max": 2859.06016600001
+          },
+          "serialObservedCasesPerSecond": 1.9437914896968216
+        }
+      },
+      "calls": 38,
+      "httpStatuses": {
+        "200": 38
+      },
+      "tokenTruncatedReplies": 0,
+      "maxPromptTokens": 4755,
+      "maxCompletionTokens": 14,
+      "errors": [
+        {
+          "caseId": "bank-003",
+          "error": "Error: selection includes ineligible source origin"
+        },
+        {
+          "caseId": "bank-025",
+          "error": "Error: selection includes ineligible source origin"
+        },
+        {
+          "caseId": "bank-040",
+          "error": "Error: selection includes ineligible source origin"
+        },
+        {
+          "caseId": "bank-009",
+          "error": "Error: selection includes ineligible source origin"
+        },
+        {
+          "caseId": "bank-017",
+          "error": "Error: selection includes ineligible source origin"
+        },
+        {
+          "caseId": "bank-036",
+          "error": "Error: selection includes ineligible source origin"
+        }
+      ]
+    },
+    {
+      "profile": "test-z13-v3",
+      "variant": "legacy-full",
+      "model": "Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
+      "rawSha256": "f511b29a3513872b3b572d12366cb5a65abe9f38799de90aed303973f47f4311",
+      "cohorts": {
+        "historical": {
+          "positiveCases": 5,
+          "negativeCases": 8,
+          "uncertainCases": 1,
+          "validArrays": 14,
+          "abstentions": 0,
+          "proposals": 11,
+          "mechanicallyPromotable": 10,
+          "supportedProposals": 0,
+          "eligibleProposals": 1,
+          "safePromotable": 0,
+          "expectedFactInstances": 9,
+          "coveredFactInstances": 2,
+          "safelyCoveredFactInstances": 0,
+          "negativeCasesWithPromotableProposals": 2,
+          "validFalseVetoes": 2,
+          "positiveAbstentions": 0,
+          "negativeAbstentions": 0,
+          "positiveCasesWithSafeProposal": 0,
+          "tp": 3,
+          "fp": 2,
+          "tn": 6,
+          "fnAnswered": 2,
+          "safeProposalPrecision": 0.0,
+          "safeFactRecall": 0.0,
+          "decisionPrecisionAnswered": 0.6,
+          "decisionRecallAnswered": 0.6,
+          "decisionF1Answered": 0.6,
+          "falsePromotionRateAllNegatives": 0.25,
+          "validFalseVetoRateAllPositives": 0.4,
+          "latencyMsAll": {
+            "p50": 3037.520791499999,
+            "p95NearestRank": 17963.116958000006,
+            "max": 17963.116958000006
+          },
+          "latencyMsValidArrays": {
+            "p50": 3037.520791499999,
+            "p95NearestRank": 17963.116958000006,
+            "max": 17963.116958000006
+          },
+          "serialObservedCasesPerSecond": 0.17954817129198228
+        },
+        "controlled": {
+          "positiveCases": 12,
+          "negativeCases": 12,
+          "uncertainCases": 0,
+          "validArrays": 24,
+          "abstentions": 0,
+          "proposals": 12,
+          "mechanicallyPromotable": 8,
+          "supportedProposals": 9,
+          "eligibleProposals": 12,
+          "safePromotable": 5,
+          "expectedFactInstances": 12,
+          "coveredFactInstances": 12,
+          "safelyCoveredFactInstances": 5,
+          "negativeCasesWithPromotableProposals": 0,
+          "validFalseVetoes": 4,
+          "positiveAbstentions": 0,
+          "negativeAbstentions": 0,
+          "positiveCasesWithSafeProposal": 5,
+          "tp": 8,
+          "fp": 0,
+          "tn": 12,
+          "fnAnswered": 4,
+          "safeProposalPrecision": 0.625,
+          "safeFactRecall": 0.4166666666666667,
+          "decisionPrecisionAnswered": 1.0,
+          "decisionRecallAnswered": 0.6666666666666666,
+          "decisionF1Answered": 0.8,
+          "falsePromotionRateAllNegatives": 0.0,
+          "validFalseVetoRateAllPositives": 0.3333333333333333,
+          "latencyMsAll": {
+            "p50": 1821.8846249999988,
+            "p95NearestRank": 6479.356333000003,
+            "max": 6598.090249999979
+          },
+          "latencyMsValidArrays": {
+            "p50": 1821.8846249999988,
+            "p95NearestRank": 6479.356333000003,
+            "max": 6598.090249999979
+          },
+          "serialObservedCasesPerSecond": 0.39500056564920377
+        }
+      },
+      "calls": 38,
+      "httpStatuses": {
+        "200": 38
+      },
+      "tokenTruncatedReplies": 0,
+      "maxPromptTokens": 3975,
+      "maxCompletionTokens": 630,
+      "errors": []
+    },
+    {
+      "profile": "test-z13-v3",
+      "variant": "selection",
+      "model": "Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
+      "rawSha256": "f511b29a3513872b3b572d12366cb5a65abe9f38799de90aed303973f47f4311",
+      "cohorts": {
+        "historical": {
+          "positiveCases": 5,
+          "negativeCases": 8,
+          "uncertainCases": 1,
+          "validArrays": 12,
+          "abstentions": 2,
+          "proposals": 2,
+          "mechanicallyPromotable": 2,
+          "supportedProposals": 1,
+          "eligibleProposals": 1,
+          "safePromotable": 1,
+          "expectedFactInstances": 9,
+          "coveredFactInstances": 1,
+          "safelyCoveredFactInstances": 1,
+          "negativeCasesWithPromotableProposals": 0,
+          "validFalseVetoes": 2,
+          "positiveAbstentions": 2,
+          "negativeAbstentions": 0,
+          "positiveCasesWithSafeProposal": 1,
+          "tp": 1,
+          "fp": 0,
+          "tn": 8,
+          "fnAnswered": 2,
+          "safeProposalPrecision": 0.5,
+          "safeFactRecall": 0.1111111111111111,
+          "decisionPrecisionAnswered": 1.0,
+          "decisionRecallAnswered": 0.3333333333333333,
+          "decisionF1Answered": 0.5,
+          "falsePromotionRateAllNegatives": 0.0,
+          "validFalseVetoRateAllPositives": 0.4,
+          "latencyMsAll": {
+            "p50": 3431.0408754999953,
+            "p95NearestRank": 5167.1966660000035,
+            "max": 5167.1966660000035
+          },
+          "latencyMsValidArrays": {
+            "p50": 3628.2067295000015,
+            "p95NearestRank": 5167.1966660000035,
+            "max": 5167.1966660000035
+          },
+          "serialObservedCasesPerSecond": 0.2936715372588618
+        },
+        "controlled": {
+          "positiveCases": 12,
+          "negativeCases": 12,
+          "uncertainCases": 0,
+          "validArrays": 23,
+          "abstentions": 1,
+          "proposals": 12,
+          "mechanicallyPromotable": 12,
+          "supportedProposals": 12,
+          "eligibleProposals": 12,
+          "safePromotable": 12,
+          "expectedFactInstances": 12,
+          "coveredFactInstances": 11,
+          "safelyCoveredFactInstances": 11,
+          "negativeCasesWithPromotableProposals": 0,
+          "validFalseVetoes": 0,
+          "positiveAbstentions": 1,
+          "negativeAbstentions": 0,
+          "positiveCasesWithSafeProposal": 11,
+          "tp": 11,
+          "fp": 0,
+          "tn": 12,
+          "fnAnswered": 0,
+          "safeProposalPrecision": 1.0,
+          "safeFactRecall": 0.9166666666666666,
+          "decisionPrecisionAnswered": 1.0,
+          "decisionRecallAnswered": 1.0,
+          "decisionF1Answered": 1.0,
+          "falsePromotionRateAllNegatives": 0.0,
+          "validFalseVetoRateAllPositives": 0.0,
+          "latencyMsAll": {
+            "p50": 672.8358125000086,
+            "p95NearestRank": 3144.9715419999848,
+            "max": 3276.2417089999944
+          },
+          "latencyMsValidArrays": {
+            "p50": 680.5314170000202,
+            "p95NearestRank": 3144.9715419999848,
+            "max": 3276.2417089999944
+          },
+          "serialObservedCasesPerSecond": 0.9526704141034472
+        }
+      },
+      "calls": 38,
+      "httpStatuses": {
+        "200": 38
+      },
+      "tokenTruncatedReplies": 0,
+      "maxPromptTokens": 4784,
+      "maxCompletionTokens": 15,
+      "errors": [
+        {
+          "caseId": "bank-018",
+          "error": "Error: selection includes ineligible source origin"
+        },
+        {
+          "caseId": "bank-025",
+          "error": "Error: selection includes ineligible source origin"
+        },
+        {
+          "caseId": "controlled-02-p",
+          "error": "Error: selected source passage fails body limits"
+        }
+      ]
+    }
+  ],
+  "modelResourcesAcrossBothVariants": [
+    {
+      "profile": "test-granite-v3",
+      "samples": 191,
+      "rawSha256": "6224874363324319a19a9b78f022c21b8c833bfaf63ec15cb8dc927d8a23c03b",
+      "intervalCoverage": 0.993302398020617,
+      "method": "One-Hz process RSS; not physical footprint or total unified memory. Host GPU counters are separate and non-additive. ps CPU is the displayed process percentage, not instantaneous interval utilization.",
+      "rssMedianBytes": 4474191872,
+      "rssPeakBytes": 4487774208,
+      "minFreePlusInactiveBytes": 4090462208,
+      "swapGrowthBytes": 0.0,
+      "swapins": 4,
+      "swapouts": 0,
+      "healthFailures": 0,
+      "healthP95Ms": 5.192916956730187,
+      "psCpuPeakPercent": 51.2,
+      "hostGpuInUsePeakBytes": 4550868992,
+      "hostGpuAllocatedPeakBytes": 6287294464
+    },
+    {
+      "profile": "test-z13-v3",
+      "samples": 211,
+      "rawSha256": "85af516d27e8049f059a99c4d8c8821708f9b660160bc6eaa5429067cb8a4dba",
+      "intervalCoverage": 0.9918382052299677,
+      "method": "One-Hz Gufo process RSS excludes GPU/shared allocations; not total footprint or incremental request memory. CPU tick deltas; GPU/thermal counters are host-wide. Remote timestamps normalized with bounded roundtrip clock calibration.",
+      "rssMedianBytes": 9183019008,
+      "rssPeakBytes": 9183019008,
+      "minAvailableBytes": 21890580480,
+      "swapGrowthBytes": 0,
+      "swapoutBytes": 0,
+      "maxMemoryFullAvg10": 0.0,
+      "healthFailures": 0,
+      "healthP95Ms": 2.094455005135387,
+      "maxProcessingSlots": 1,
+      "cpuIntervalPeakPercent": 226.92257923820262,
+      "readableGpuBusyPeakPercent": 100.0,
+      "maxReadableThermalZoneC": 83.0
+    },
+    {
+      "profile": "test-qwen2b-v3",
+      "samples": 123,
+      "rawSha256": "927ba7ce3cd5888aff5fa0f122ae4c5daa5ec03d8969dd58f82dd1b256f87a5b",
+      "intervalCoverage": 0.9908155616660475,
+      "method": "One-Hz process RSS; not physical footprint or total unified memory. Host GPU counters are separate and non-additive. ps CPU is the displayed process percentage, not instantaneous interval utilization.",
+      "rssMedianBytes": 1705689088,
+      "rssPeakBytes": 1788493824,
+      "minFreePlusInactiveBytes": 4899373056,
+      "swapGrowthBytes": 0.0,
+      "swapins": 0,
+      "swapouts": 0,
+      "healthFailures": 0,
+      "healthP95Ms": 5.081500043161213,
+      "psCpuPeakPercent": 57.3,
+      "hostGpuInUsePeakBytes": 1659404288,
+      "hostGpuAllocatedPeakBytes": 3380854784
+    }
+  ],
+  "productionAuthorityChanged": false,
+  "sourceFlagActivated": false,
+  "packageCodeChangedInThisStudy": false
+}

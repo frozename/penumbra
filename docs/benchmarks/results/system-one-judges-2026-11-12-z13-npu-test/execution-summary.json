@@ -1,0 +1,1466 @@
+{
+  "runs": [
+    {
+      "path": "docs/benchmarks/results/system-one-judges-2026-11-12-z13-npu-test/runs/lite-canary-20261113T010053Z",
+      "status": {
+        "status": "completed_runtime_replay",
+        "expected": 20,
+        "attempted": 20,
+        "answered": 20,
+        "admissionFloorIgnored": true,
+        "authority": "none",
+        "gufoDuringProbesOverlappingCandidate": [
+          0,
+          1,
+          2
+        ],
+        "coexistenceStatus": "observed_overlap_not_acceptance",
+        "qualityAcceptance": false,
+        "guard": {
+          "status": "stopped",
+          "model": "lite",
+          "admissionFloorIgnored": true,
+          "authority": "none",
+          "startedAt": 1794531657.895578,
+          "command": [
+            "/home/alex/DevStorage/penumbra-system-one-npu-test-20261112/runtime/flm",
+            "serve",
+            "--decision",
+            "d3:lite",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "52625",
+            "--pmode",
+            "default"
+          ],
+          "gufoPid": 791917,
+          "npuUtilization": "not available from inspected unprivileged counters",
+          "runtimePid": 1021281,
+          "reason": null,
+          "elapsedSeconds": 11.034699098963756,
+          "endedAt": 1794531668.9304345,
+          "gufoPidAfter": 791917,
+          "runtimeExitCode": -15
+        }
+      },
+      "resources": {
+        "samples": 11,
+        "sampledSpanSeconds": 10.00219464302063,
+        "runtimeRssMedianBytes": 747782144,
+        "runtimeRssPeakBytes": 748568576,
+        "sampledCgroupPeakBytes": 1332473856,
+        "availableMinBytes": 20389986304,
+        "swapGrowthBytes": 0,
+        "swapoutBytes": 0,
+        "memoryFullAvg10Max": 0.0,
+        "gufoHealthFailureSamples": 0,
+        "maxReadableThermalZoneC": 69.0,
+        "cgroupAverageCpuCores": 1.582637867484994,
+        "cgroupThrottledUsecDelta": 22912,
+        "gpuBusyMaxPercent": 94,
+        "npuUtilizationPercent": null,
+        "caveat": "One-Hz samples include startup/cleanup; accounting includes guardian/page cache and may omit driver/shared allocations. Do not equate cgroup or RSS with total physical NPU footprint or Mac unified memory."
+      },
+      "gufo": {
+        "before": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 228.73830795288086,
+          "medianElapsedMs": 1349.3592739105225,
+          "tokenUsageReported": 0
+        },
+        "during": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 8.721113204956055,
+          "medianElapsedMs": 1144.0370082855225,
+          "tokenUsageReported": 0
+        },
+        "after": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 7.431268692016602,
+          "medianElapsedMs": 1118.2103157043457,
+          "tokenUsageReported": 0
+        }
+      },
+      "performance": {
+        "requests": 20,
+        "answered": 20,
+        "failures": {},
+        "firstRequestMs": 253.289667,
+        "p50LatencyMs": 250.64429100000007,
+        "p95LatencyMs": 598.4276250000003,
+        "requestsPerSecond": 3.2766187489845042,
+        "fixtureSha256": "723d45b7e41e0a944bf4c19bf8a70eab6567ee57ddde7c833f5d909afe31c076"
+      },
+      "quality": {
+        "calibration": {
+          "selected": 4,
+          "answered": 4,
+          "abstained": 0,
+          "coverage": 1,
+          "threshold": 0.5,
+          "tp": 0,
+          "fp": 0,
+          "tn": 1,
+          "fn": 3,
+          "precision": null,
+          "recall": 0,
+          "f1": 0,
+          "falsePromotionRate": 0,
+          "falseVetoRate": 1,
+          "falseDiscoveryRate": null,
+          "brier": 0.4613156488622949,
+          "calibrationError": 0.5523345671151241,
+          "falseVetoRateWithRejectFallback": 1
+        },
+        "test": {
+          "selected": 12,
+          "answered": 12,
+          "abstained": 0,
+          "coverage": 1,
+          "threshold": 0.5,
+          "tp": 0,
+          "fp": 1,
+          "tn": 8,
+          "fn": 3,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0,
+          "falsePromotionRate": 0.1111111111111111,
+          "falseVetoRate": 1,
+          "falseDiscoveryRate": 1,
+          "brier": 0.23831779507665926,
+          "calibrationError": 0.3211297494653043,
+          "falseVetoRateWithRejectFallback": 1
+        }
+      },
+      "calibrationOnlyThresholdFit": {
+        "threshold": 0.15,
+        "heldOut": {
+          "selected": 12,
+          "answered": 12,
+          "abstained": 0,
+          "coverage": 1,
+          "threshold": 0.15,
+          "tp": 1,
+          "fp": 5,
+          "tn": 4,
+          "fn": 2,
+          "precision": 0.16666666666666666,
+          "recall": 0.3333333333333333,
+          "f1": 0.2222222222222222,
+          "falsePromotionRate": 0.5555555555555556,
+          "falseVetoRate": 0.6666666666666666,
+          "falseDiscoveryRate": 0.8333333333333334,
+          "brier": 0.23831779507665926,
+          "calibrationError": 0.3211297494653043,
+          "falseVetoRateWithRejectFallback": 0.6666666666666666
+        }
+      }
+    },
+    {
+      "path": "docs/benchmarks/results/system-one-judges-2026-11-12-z13-npu-test/runs/lite-reviewed-close-20261113T011719Z",
+      "status": {
+        "status": "completed_runtime_replay",
+        "expected": 320,
+        "attempted": 320,
+        "answered": 320,
+        "admissionFloorIgnored": true,
+        "authority": "none",
+        "gufoDuringProbesOverlappingCandidate": [
+          0,
+          1,
+          2
+        ],
+        "coexistenceStatus": "observed_overlap_not_acceptance",
+        "qualityAcceptance": false,
+        "guard": {
+          "status": "stopped",
+          "model": "lite",
+          "admissionFloorIgnored": true,
+          "authority": "none",
+          "startedAt": 1794532643.6286347,
+          "command": [
+            "/home/alex/DevStorage/penumbra-system-one-npu-test-20261112/runtime/flm",
+            "serve",
+            "--decision",
+            "d3:lite",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "52625",
+            "--pmode",
+            "default",
+            "--quiet"
+          ],
+          "gufoPid": 791917,
+          "runtimeOutput": "suppressed: FLM --quiet still prints request bodies; use typed client errors and resource/exit diagnostics",
+          "npuUtilization": "not available from inspected unprivileged counters",
+          "runtimePid": 1023547,
+          "reason": null,
+          "elapsedSeconds": 74.03938599699177,
+          "endedAt": 1794532717.668025,
+          "gufoPidAfter": 791917,
+          "runtimeExitCode": -15
+        }
+      },
+      "resources": {
+        "samples": 74,
+        "sampledSpanSeconds": 73.01207160949707,
+        "runtimeRssMedianBytes": 750100480.0,
+        "runtimeRssPeakBytes": 750886912,
+        "sampledCgroupPeakBytes": 1331003392,
+        "availableMinBytes": 20424822784,
+        "swapGrowthBytes": 0,
+        "swapoutBytes": 0,
+        "memoryFullAvg10Max": 0.0,
+        "gufoHealthFailureSamples": 0,
+        "maxReadableThermalZoneC": 81.0,
+        "cgroupAverageCpuCores": 1.684726734749984,
+        "cgroupThrottledUsecDelta": 76763,
+        "gpuBusyMaxPercent": 95,
+        "npuUtilizationPercent": null,
+        "caveat": "One-Hz samples include startup/cleanup; accounting includes guardian/page cache and may omit driver/shared allocations. Do not equate cgroup or RSS with total physical NPU footprint or Mac unified memory."
+      },
+      "gufo": {
+        "before": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 7.8830718994140625,
+          "medianElapsedMs": 1096.0793495178223,
+          "tokenUsageReported": 0
+        },
+        "during": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 10.204792022705078,
+          "medianElapsedMs": 1149.9943733215332,
+          "tokenUsageReported": 0
+        },
+        "after": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 6.482362747192383,
+          "medianElapsedMs": 1117.41304397583,
+          "tokenUsageReported": 0
+        }
+      },
+      "performance": {
+        "requests": 320,
+        "answered": 320,
+        "failures": {},
+        "firstRequestMs": 258.441375,
+        "p50LatencyMs": 212.92987500000163,
+        "p95LatencyMs": 236.03074999999808,
+        "requestsPerSecond": 4.581963172944314,
+        "fixtureSha256": "12cab34541140109ae95d929a62e8cdbe3ee27f8b599432f657905664a9de567"
+      },
+      "quality": {
+        "calibration": {
+          "selected": 19,
+          "answered": 19,
+          "abstained": 0,
+          "coverage": 1,
+          "threshold": 0.5,
+          "tp": 0,
+          "fp": 0,
+          "tn": 5,
+          "fn": 14,
+          "precision": null,
+          "recall": 0,
+          "f1": 0,
+          "falsePromotionRate": 0,
+          "falseVetoRate": 1,
+          "falseDiscoveryRate": null,
+          "brier": 0.553939674637157,
+          "calibrationError": 0.617895764614949,
+          "falseVetoRateWithRejectFallback": 1
+        },
+        "test": {
+          "selected": 259,
+          "answered": 259,
+          "abstained": 0,
+          "coverage": 1,
+          "threshold": 0.5,
+          "tp": 0,
+          "fp": 0,
+          "tn": 193,
+          "fn": 66,
+          "precision": null,
+          "recall": 0,
+          "f1": 0,
+          "falsePromotionRate": 0,
+          "falseVetoRate": 1,
+          "falseDiscoveryRate": null,
+          "brier": 0.21022001045324062,
+          "calibrationError": 0.18246942120764761,
+          "falseVetoRateWithRejectFallback": 1
+        }
+      },
+      "calibrationOnlyThresholdFit": {
+        "threshold": 0.1,
+        "heldOut": {
+          "selected": 259,
+          "answered": 259,
+          "abstained": 0,
+          "coverage": 1,
+          "threshold": 0.1,
+          "tp": 39,
+          "fp": 54,
+          "tn": 139,
+          "fn": 27,
+          "precision": 0.41935483870967744,
+          "recall": 0.5909090909090909,
+          "f1": 0.49056603773584906,
+          "falsePromotionRate": 0.27979274611398963,
+          "falseVetoRate": 0.4090909090909091,
+          "falseDiscoveryRate": 0.5806451612903226,
+          "brier": 0.21022001045324062,
+          "calibrationError": 0.18246942120764761,
+          "falseVetoRateWithRejectFallback": 0.4090909090909091
+        }
+      }
+    },
+    {
+      "path": "docs/benchmarks/results/system-one-judges-2026-11-12-z13-npu-test/runs/nano-canary-20261113T010235Z",
+      "status": {
+        "status": "interrupted",
+        "expected": 20,
+        "attempted": 0,
+        "answered": 0,
+        "admissionFloorIgnored": true,
+        "authority": "none",
+        "gufoDuringProbesOverlappingCandidate": [],
+        "coexistenceStatus": "incomplete",
+        "qualityAcceptance": false,
+        "guard": null
+      },
+      "resources": null,
+      "gufo": {
+        "before": null,
+        "during": null,
+        "after": null
+      }
+    },
+    {
+      "path": "docs/benchmarks/results/system-one-judges-2026-11-12-z13-npu-test/runs/nano-canary-20261113T010305Z",
+      "status": {
+        "status": "completed_runtime_replay",
+        "expected": 20,
+        "attempted": 20,
+        "answered": 20,
+        "admissionFloorIgnored": true,
+        "authority": "none",
+        "gufoDuringProbesOverlappingCandidate": [
+          0,
+          1,
+          2
+        ],
+        "coexistenceStatus": "observed_overlap_not_acceptance",
+        "qualityAcceptance": false,
+        "guard": {
+          "status": "stopped",
+          "model": "nano",
+          "admissionFloorIgnored": true,
+          "authority": "none",
+          "startedAt": 1794531789.5704703,
+          "command": [
+            "/home/alex/DevStorage/penumbra-system-one-npu-test-20261112/runtime/flm",
+            "serve",
+            "--decision",
+            "d3:nano",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "52625",
+            "--pmode",
+            "default",
+            "--quiet"
+          ],
+          "gufoPid": 791917,
+          "npuUtilization": "not available from inspected unprivileged counters",
+          "runtimePid": 1021549,
+          "reason": null,
+          "elapsedSeconds": 14.031035837018862,
+          "endedAt": 1794531803.6015103,
+          "gufoPidAfter": 791917,
+          "runtimeExitCode": -15
+        }
+      },
+      "resources": {
+        "samples": 14,
+        "sampledSpanSeconds": 13.002238512039185,
+        "runtimeRssMedianBytes": 1261342720.0,
+        "runtimeRssPeakBytes": 1740271616,
+        "sampledCgroupPeakBytes": 2623578112,
+        "availableMinBytes": 19165921280,
+        "swapGrowthBytes": 0,
+        "swapoutBytes": 0,
+        "memoryFullAvg10Max": 0.0,
+        "gufoHealthFailureSamples": 0,
+        "maxReadableThermalZoneC": 68.0,
+        "cgroupAverageCpuCores": 1.4216854261582776,
+        "cgroupThrottledUsecDelta": 35147,
+        "gpuBusyMaxPercent": 97,
+        "npuUtilizationPercent": null,
+        "caveat": "One-Hz samples include startup/cleanup; accounting includes guardian/page cache and may omit driver/shared allocations. Do not equate cgroup or RSS with total physical NPU footprint or Mac unified memory."
+      },
+      "gufo": {
+        "before": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 7.096529006958008,
+          "medianElapsedMs": 1082.8967094421387,
+          "tokenUsageReported": 0
+        },
+        "during": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 7.9555511474609375,
+          "medianElapsedMs": 1233.1860065460205,
+          "tokenUsageReported": 0
+        },
+        "after": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 7.820606231689453,
+          "medianElapsedMs": 1120.3713417053223,
+          "tokenUsageReported": 0
+        }
+      },
+      "performance": {
+        "requests": 20,
+        "answered": 20,
+        "failures": {},
+        "firstRequestMs": 369.358208,
+        "p50LatencyMs": 358.917291,
+        "p95LatencyMs": 810.9378749999996,
+        "requestsPerSecond": 2.40224571538457,
+        "fixtureSha256": "723d45b7e41e0a944bf4c19bf8a70eab6567ee57ddde7c833f5d909afe31c076"
+      },
+      "quality": {
+        "calibration": {
+          "selected": 4,
+          "answered": 4,
+          "abstained": 0,
+          "coverage": 1,
+          "threshold": 0.5,
+          "tp": 3,
+          "fp": 0,
+          "tn": 1,
+          "fn": 0,
+          "precision": 1,
+          "recall": 1,
+          "f1": 1,
+          "falsePromotionRate": 0,
+          "falseVetoRate": 0,
+          "falseDiscoveryRate": 0,
+          "brier": 0.08783098138799081,
+          "calibrationError": 0.24914545166521204,
+          "falseVetoRateWithRejectFallback": 0
+        },
+        "test": {
+          "selected": 12,
+          "answered": 12,
+          "abstained": 0,
+          "coverage": 1,
+          "threshold": 0.5,
+          "tp": 3,
+          "fp": 1,
+          "tn": 8,
+          "fn": 0,
+          "precision": 0.75,
+          "recall": 1,
+          "f1": 0.8571428571428571,
+          "falsePromotionRate": 0.1111111111111111,
+          "falseVetoRate": 0,
+          "falseDiscoveryRate": 0.25,
+          "brier": 0.0507600583197246,
+          "calibrationError": 0.062300980680074815,
+          "falseVetoRateWithRejectFallback": 0
+        }
+      },
+      "calibrationOnlyThresholdFit": {
+        "threshold": 0.58,
+        "heldOut": {
+          "selected": 12,
+          "answered": 12,
+          "abstained": 0,
+          "coverage": 1,
+          "threshold": 0.58,
+          "tp": 2,
+          "fp": 0,
+          "tn": 9,
+          "fn": 1,
+          "precision": 1,
+          "recall": 0.6666666666666666,
+          "f1": 0.8,
+          "falsePromotionRate": 0,
+          "falseVetoRate": 0.3333333333333333,
+          "falseDiscoveryRate": 0,
+          "brier": 0.0507600583197246,
+          "calibrationError": 0.062300980680074815,
+          "falseVetoRateWithRejectFallback": 0.3333333333333333
+        }
+      }
+    },
+    {
+      "path": "docs/benchmarks/results/system-one-judges-2026-11-12-z13-npu-test/runs/nano-public-close-20261113T011022Z",
+      "status": {
+        "status": "aborted",
+        "expected": 120,
+        "attempted": 0,
+        "answered": 0,
+        "admissionFloorIgnored": true,
+        "authority": "none",
+        "gufoDuringProbesOverlappingCandidate": [],
+        "coexistenceStatus": "incomplete",
+        "qualityAcceptance": false,
+        "guard": {
+          "status": "aborted",
+          "model": "nano",
+          "admissionFloorIgnored": true,
+          "authority": "none",
+          "startedAt": 1794532226.0357614,
+          "command": [
+            "/home/alex/DevStorage/penumbra-system-one-npu-test-20261112/runtime/flm",
+            "serve",
+            "--decision",
+            "d3:nano",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "52625",
+            "--pmode",
+            "default",
+            "--quiet"
+          ],
+          "gufoPid": 791917,
+          "runtimeOutput": "suppressed: FLM --quiet still prints request bodies; use typed client errors and resource/exit diagnostics",
+          "npuUtilization": "not available from inspected unprivileged counters",
+          "reason": "OSError: [Errno 98] Address already in use",
+          "elapsedSeconds": 3.345299046486616e-05,
+          "endedAt": 1794532226.0357969,
+          "gufoPidAfter": 791917,
+          "runtimeExitCode": null
+        }
+      },
+      "resources": null,
+      "gufo": {
+        "before": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 7.407426834106445,
+          "medianElapsedMs": 1100.419521331787,
+          "tokenUsageReported": 0
+        },
+        "during": null,
+        "after": null
+      }
+    },
+    {
+      "path": "docs/benchmarks/results/system-one-judges-2026-11-12-z13-npu-test/runs/nano-public-close-20261113T011331Z",
+      "status": {
+        "status": "completed_runtime_replay",
+        "expected": 120,
+        "attempted": 120,
+        "answered": 120,
+        "admissionFloorIgnored": true,
+        "authority": "none",
+        "gufoDuringProbesOverlappingCandidate": [
+          0,
+          1,
+          2
+        ],
+        "coexistenceStatus": "observed_overlap_not_acceptance",
+        "qualityAcceptance": false,
+        "guard": {
+          "status": "stopped",
+          "model": "nano",
+          "admissionFloorIgnored": true,
+          "authority": "none",
+          "startedAt": 1794532415.0869465,
+          "command": [
+            "/home/alex/DevStorage/penumbra-system-one-npu-test-20261112/runtime/flm",
+            "serve",
+            "--decision",
+            "d3:nano",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "52625",
+            "--pmode",
+            "default",
+            "--quiet"
+          ],
+          "gufoPid": 791917,
+          "runtimeOutput": "suppressed: FLM --quiet still prints request bodies; use typed client errors and resource/exit diagnostics",
+          "npuUtilization": "not available from inspected unprivileged counters",
+          "runtimePid": 1022794,
+          "reason": null,
+          "elapsedSeconds": 43.04051919502672,
+          "endedAt": 1794532458.1274703,
+          "gufoPidAfter": 791917,
+          "runtimeExitCode": -15
+        }
+      },
+      "resources": {
+        "samples": 43,
+        "sampledSpanSeconds": 42.00981688499451,
+        "runtimeRssMedianBytes": 1262202880,
+        "runtimeRssPeakBytes": 1739337728,
+        "sampledCgroupPeakBytes": 2623377408,
+        "availableMinBytes": 19165810688,
+        "swapGrowthBytes": 0,
+        "swapoutBytes": 0,
+        "memoryFullAvg10Max": 0.0,
+        "gufoHealthFailureSamples": 0,
+        "maxReadableThermalZoneC": 71.0,
+        "cgroupAverageCpuCores": 1.4861311862156708,
+        "cgroupThrottledUsecDelta": 777,
+        "gpuBusyMaxPercent": 97,
+        "npuUtilizationPercent": null,
+        "caveat": "One-Hz samples include startup/cleanup; accounting includes guardian/page cache and may omit driver/shared allocations. Do not equate cgroup or RSS with total physical NPU footprint or Mac unified memory."
+      },
+      "gufo": {
+        "before": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 6.464481353759766,
+          "medianElapsedMs": 1080.9905529022217,
+          "tokenUsageReported": 0
+        },
+        "during": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 8.06427001953125,
+          "medianElapsedMs": 1228.8239002227783,
+          "tokenUsageReported": 0
+        },
+        "after": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 6.349325180053711,
+          "medianElapsedMs": 1097.6505279541016,
+          "tokenUsageReported": 0
+        }
+      },
+      "performance": {
+        "requests": 120,
+        "answered": 120,
+        "failures": {},
+        "firstRequestMs": 387.090416,
+        "p50LatencyMs": 298.99604200000067,
+        "p95LatencyMs": 371.0541659999999,
+        "requestsPerSecond": 3.240915145687922,
+        "fixtureSha256": "9c55208df52d0048138d8a85c6e05133552ea6c4fbe2ce35b185710adbbbf127"
+      },
+      "quality": {
+        "calibration": {
+          "selected": 19,
+          "answered": 19,
+          "abstained": 0,
+          "coverage": 1,
+          "threshold": 0.5,
+          "tp": 9,
+          "fp": 0,
+          "tn": 5,
+          "fn": 5,
+          "precision": 1,
+          "recall": 0.6428571428571429,
+          "f1": 0.782608695652174,
+          "falsePromotionRate": 0,
+          "falseVetoRate": 0.35714285714285715,
+          "falseDiscoveryRate": 0,
+          "brier": 0.17839519318869498,
+          "calibrationError": 0.2909168325977977,
+          "falseVetoRateWithRejectFallback": 0.35714285714285715
+        },
+        "test": {
+          "selected": 101,
+          "answered": 101,
+          "abstained": 0,
+          "coverage": 1,
+          "threshold": 0.5,
+          "tp": 58,
+          "fp": 0,
+          "tn": 35,
+          "fn": 8,
+          "precision": 1,
+          "recall": 0.8787878787878788,
+          "f1": 0.9354838709677419,
+          "falsePromotionRate": 0,
+          "falseVetoRate": 0.12121212121212122,
+          "falseDiscoveryRate": 0,
+          "brier": 0.08340835359160738,
+          "calibrationError": 0.21087403279480268,
+          "falseVetoRateWithRejectFallback": 0.12121212121212122
+        }
+      },
+      "calibrationOnlyThresholdFit": {
+        "threshold": 0.28,
+        "heldOut": {
+          "selected": 101,
+          "answered": 101,
+          "abstained": 0,
+          "coverage": 1,
+          "threshold": 0.28,
+          "tp": 64,
+          "fp": 0,
+          "tn": 35,
+          "fn": 2,
+          "precision": 1,
+          "recall": 0.9696969696969697,
+          "f1": 0.9846153846153847,
+          "falsePromotionRate": 0,
+          "falseVetoRate": 0.030303030303030304,
+          "falseDiscoveryRate": 0,
+          "brier": 0.08340835359160738,
+          "calibrationError": 0.21087403279480268,
+          "falseVetoRateWithRejectFallback": 0.030303030303030304
+        }
+      }
+    },
+    {
+      "path": "docs/benchmarks/results/system-one-judges-2026-11-12-z13-npu-test/runs/nano-public-default-20261113T010908Z",
+      "status": {
+        "status": "partial_runtime_replay",
+        "expected": 120,
+        "attempted": 120,
+        "answered": 116,
+        "admissionFloorIgnored": true,
+        "authority": "none",
+        "gufoDuringProbesOverlappingCandidate": [
+          0,
+          1,
+          2
+        ],
+        "coexistenceStatus": "observed_overlap_not_acceptance",
+        "qualityAcceptance": false,
+        "guard": {
+          "status": "stopped",
+          "model": "nano",
+          "admissionFloorIgnored": true,
+          "authority": "none",
+          "startedAt": 1794532151.9677722,
+          "command": [
+            "/home/alex/DevStorage/penumbra-system-one-npu-test-20261112/runtime/flm",
+            "serve",
+            "--decision",
+            "d3:nano",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "52625",
+            "--pmode",
+            "default",
+            "--quiet"
+          ],
+          "gufoPid": 791917,
+          "runtimeOutput": "suppressed: FLM --quiet still prints request bodies; use typed client errors and resource/exit diagnostics",
+          "npuUtilization": "not available from inspected unprivileged counters",
+          "runtimePid": 1022299,
+          "reason": null,
+          "elapsedSeconds": 42.033713581971824,
+          "endedAt": 1794532194.0014904,
+          "gufoPidAfter": 791917,
+          "runtimeExitCode": -15
+        }
+      },
+      "resources": {
+        "samples": 42,
+        "sampledSpanSeconds": 41.005637884140015,
+        "runtimeRssMedianBytes": 1263149056.0,
+        "runtimeRssPeakBytes": 1740013568,
+        "sampledCgroupPeakBytes": 2623131648,
+        "availableMinBytes": 19094753280,
+        "swapGrowthBytes": 0,
+        "swapoutBytes": 0,
+        "memoryFullAvg10Max": 0.0,
+        "gufoHealthFailureSamples": 0,
+        "maxReadableThermalZoneC": 71.0,
+        "cgroupAverageCpuCores": 1.4898516192484113,
+        "cgroupThrottledUsecDelta": 13630,
+        "gpuBusyMaxPercent": 97,
+        "npuUtilizationPercent": null,
+        "caveat": "One-Hz samples include startup/cleanup; accounting includes guardian/page cache and may omit driver/shared allocations. Do not equate cgroup or RSS with total physical NPU footprint or Mac unified memory."
+      },
+      "gufo": {
+        "before": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 6.449222564697266,
+          "medianElapsedMs": 1083.3611488342285,
+          "tokenUsageReported": 0
+        },
+        "during": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 8.996963500976562,
+          "medianElapsedMs": 1229.980230331421,
+          "tokenUsageReported": 0
+        },
+        "after": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 8.081912994384766,
+          "medianElapsedMs": 1098.6297130584717,
+          "tokenUsageReported": 0
+        }
+      },
+      "performance": {
+        "requests": 120,
+        "answered": 116,
+        "failures": {
+          "transport": 4
+        },
+        "firstRequestMs": 387.19012499999997,
+        "p50LatencyMs": 298.8488749999997,
+        "p95LatencyMs": 376.7767080000003,
+        "requestsPerSecond": 3.338823057923991,
+        "fixtureSha256": "9c55208df52d0048138d8a85c6e05133552ea6c4fbe2ce35b185710adbbbf127"
+      },
+      "quality": {
+        "calibration": {
+          "selected": 19,
+          "answered": 17,
+          "abstained": 2,
+          "coverage": 0.8947368421052632,
+          "threshold": 0.5,
+          "tp": 8,
+          "fp": 0,
+          "tn": 4,
+          "fn": 5,
+          "precision": 1,
+          "recall": 0.6153846153846154,
+          "f1": 0.7619047619047619,
+          "falsePromotionRate": 0,
+          "falseVetoRate": 0.38461538461538464,
+          "falseDiscoveryRate": 0,
+          "brier": 0.198703720524954,
+          "calibrationError": 0.3191465654635363,
+          "falseVetoRateWithRejectFallback": 0.42857142857142855
+        },
+        "test": {
+          "selected": 101,
+          "answered": 99,
+          "abstained": 2,
+          "coverage": 0.9801980198019802,
+          "threshold": 0.5,
+          "tp": 57,
+          "fp": 0,
+          "tn": 34,
+          "fn": 8,
+          "precision": 1,
+          "recall": 0.8769230769230769,
+          "f1": 0.9344262295081968,
+          "falsePromotionRate": 0,
+          "falseVetoRate": 0.12307692307692308,
+          "falseDiscoveryRate": 0,
+          "brier": 0.08439972361923477,
+          "calibrationError": 0.21220894560376471,
+          "falseVetoRateWithRejectFallback": 0.13636363636363635
+        }
+      },
+      "calibrationOnlyThresholdFit": {
+        "threshold": 0.28,
+        "heldOut": {
+          "selected": 101,
+          "answered": 99,
+          "abstained": 2,
+          "coverage": 0.9801980198019802,
+          "threshold": 0.28,
+          "tp": 63,
+          "fp": 0,
+          "tn": 34,
+          "fn": 2,
+          "precision": 1,
+          "recall": 0.9692307692307692,
+          "f1": 0.984375,
+          "falsePromotionRate": 0,
+          "falseVetoRate": 0.03076923076923077,
+          "falseDiscoveryRate": 0,
+          "brier": 0.08439972361923477,
+          "calibrationError": 0.21220894560376471,
+          "falseVetoRateWithRejectFallback": 0.045454545454545456
+        }
+      }
+    },
+    {
+      "path": "docs/benchmarks/results/system-one-judges-2026-11-12-z13-npu-test/runs/nano-reviewed-20261113T010507Z",
+      "status": {
+        "status": "partial_runtime_replay",
+        "expected": 120,
+        "attempted": 120,
+        "answered": 114,
+        "admissionFloorIgnored": true,
+        "authority": "none",
+        "gufoDuringProbesOverlappingCandidate": [
+          0,
+          1,
+          2
+        ],
+        "coexistenceStatus": "observed_overlap_not_acceptance",
+        "qualityAcceptance": false,
+        "guard": {
+          "status": "stopped",
+          "model": "nano",
+          "admissionFloorIgnored": true,
+          "authority": "none",
+          "startedAt": 1794531911.5807831,
+          "command": [
+            "/home/alex/DevStorage/penumbra-system-one-npu-test-20261112/runtime/flm",
+            "serve",
+            "--decision",
+            "d3:nano",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "52625",
+            "--pmode",
+            "default",
+            "--quiet"
+          ],
+          "gufoPid": 791917,
+          "runtimeOutput": "suppressed: FLM --quiet still prints request bodies; use typed client errors and resource/exit diagnostics",
+          "npuUtilization": "not available from inspected unprivileged counters",
+          "runtimePid": 1021807,
+          "reason": null,
+          "elapsedSeconds": 40.035250707005616,
+          "endedAt": 1794531951.6160383,
+          "gufoPidAfter": 791917,
+          "runtimeExitCode": -15
+        }
+      },
+      "resources": {
+        "samples": 40,
+        "sampledSpanSeconds": 39.00581884384155,
+        "runtimeRssMedianBytes": 1262690304.0,
+        "runtimeRssPeakBytes": 1739579392,
+        "sampledCgroupPeakBytes": 2623365120,
+        "availableMinBytes": 19153797120,
+        "swapGrowthBytes": 0,
+        "swapoutBytes": 0,
+        "memoryFullAvg10Max": 0.0,
+        "gufoHealthFailureSamples": 0,
+        "maxReadableThermalZoneC": 70.0,
+        "cgroupAverageCpuCores": 1.4557797191063289,
+        "cgroupThrottledUsecDelta": 36570,
+        "gpuBusyMaxPercent": 97,
+        "npuUtilizationPercent": null,
+        "caveat": "One-Hz samples include startup/cleanup; accounting includes guardian/page cache and may omit driver/shared allocations. Do not equate cgroup or RSS with total physical NPU footprint or Mac unified memory."
+      },
+      "gufo": {
+        "before": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 6.232023239135742,
+          "medianElapsedMs": 1091.8772220611572,
+          "tokenUsageReported": 0
+        },
+        "during": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 8.414745330810547,
+          "medianElapsedMs": 1232.52534866333,
+          "tokenUsageReported": 0
+        },
+        "after": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 7.206201553344727,
+          "medianElapsedMs": 1100.2328395843506,
+          "tokenUsageReported": 0
+        }
+      },
+      "performance": {
+        "requests": 120,
+        "answered": 114,
+        "failures": {
+          "transport": 6
+        },
+        "firstRequestMs": 386.34625000000005,
+        "p50LatencyMs": 287.21887499999866,
+        "p95LatencyMs": 363.29208300000005,
+        "requestsPerSecond": 3.5229417741698152,
+        "fixtureSha256": "9c55208df52d0048138d8a85c6e05133552ea6c4fbe2ce35b185710adbbbf127"
+      },
+      "quality": {
+        "calibration": {
+          "selected": 19,
+          "answered": 18,
+          "abstained": 1,
+          "coverage": 0.9473684210526315,
+          "threshold": 0.5,
+          "tp": 9,
+          "fp": 0,
+          "tn": 4,
+          "fn": 5,
+          "precision": 1,
+          "recall": 0.6428571428571429,
+          "f1": 0.782608695652174,
+          "falsePromotionRate": 0,
+          "falseVetoRate": 0.35714285714285715,
+          "falseDiscoveryRate": 0,
+          "brier": 0.18824346194647457,
+          "calibrationError": 0.3089433911257543,
+          "falseVetoRateWithRejectFallback": 0.35714285714285715
+        },
+        "test": {
+          "selected": 101,
+          "answered": 96,
+          "abstained": 5,
+          "coverage": 0.9504950495049505,
+          "threshold": 0.5,
+          "tp": 53,
+          "fp": 0,
+          "tn": 35,
+          "fn": 8,
+          "precision": 1,
+          "recall": 0.8688524590163934,
+          "f1": 0.9298245614035088,
+          "falsePromotionRate": 0,
+          "falseVetoRate": 0.13114754098360656,
+          "falseDiscoveryRate": 0,
+          "brier": 0.084108446338388,
+          "calibrationError": 0.20880902465153597,
+          "falseVetoRateWithRejectFallback": 0.19696969696969696
+        }
+      },
+      "calibrationOnlyThresholdFit": {
+        "threshold": 0.28,
+        "heldOut": {
+          "selected": 101,
+          "answered": 96,
+          "abstained": 5,
+          "coverage": 0.9504950495049505,
+          "threshold": 0.28,
+          "tp": 59,
+          "fp": 0,
+          "tn": 35,
+          "fn": 2,
+          "precision": 1,
+          "recall": 0.9672131147540983,
+          "f1": 0.9833333333333333,
+          "falsePromotionRate": 0,
+          "falseVetoRate": 0.03278688524590164,
+          "falseDiscoveryRate": 0,
+          "brier": 0.084108446338388,
+          "calibrationError": 0.20880902465153597,
+          "falseVetoRateWithRejectFallback": 0.10606060606060606
+        }
+      }
+    },
+    {
+      "path": "docs/benchmarks/results/system-one-judges-2026-11-12-z13-npu-test/runs/nano-reviewed-close-20261113T011433Z",
+      "status": {
+        "status": "completed_runtime_replay",
+        "expected": 320,
+        "attempted": 320,
+        "answered": 320,
+        "admissionFloorIgnored": true,
+        "authority": "none",
+        "gufoDuringProbesOverlappingCandidate": [
+          0,
+          1,
+          2
+        ],
+        "coexistenceStatus": "observed_overlap_not_acceptance",
+        "qualityAcceptance": false,
+        "guard": {
+          "status": "stopped",
+          "model": "nano",
+          "admissionFloorIgnored": true,
+          "authority": "none",
+          "startedAt": 1794532477.3066392,
+          "command": [
+            "/home/alex/DevStorage/penumbra-system-one-npu-test-20261112/runtime/flm",
+            "serve",
+            "--decision",
+            "d3:nano",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "52625",
+            "--pmode",
+            "default",
+            "--quiet"
+          ],
+          "gufoPid": 791917,
+          "runtimeOutput": "suppressed: FLM --quiet still prints request bodies; use typed client errors and resource/exit diagnostics",
+          "npuUtilization": "not available from inspected unprivileged counters",
+          "runtimePid": 1023061,
+          "reason": null,
+          "elapsedSeconds": 107.04796089598676,
+          "endedAt": 1794532584.3546042,
+          "gufoPidAfter": 791917,
+          "runtimeExitCode": -15
+        }
+      },
+      "resources": {
+        "samples": 107,
+        "sampledSpanSeconds": 106.02017259597778,
+        "runtimeRssMedianBytes": 1263550464,
+        "runtimeRssPeakBytes": 1740492800,
+        "sampledCgroupPeakBytes": 2623016960,
+        "availableMinBytes": 19120173056,
+        "swapGrowthBytes": 0,
+        "swapoutBytes": 0,
+        "memoryFullAvg10Max": 0.0,
+        "gufoHealthFailureSamples": 0,
+        "maxReadableThermalZoneC": 78.0,
+        "cgroupAverageCpuCores": 1.5261390642759476,
+        "cgroupThrottledUsecDelta": 28625,
+        "gpuBusyMaxPercent": 97,
+        "npuUtilizationPercent": null,
+        "caveat": "One-Hz samples include startup/cleanup; accounting includes guardian/page cache and may omit driver/shared allocations. Do not equate cgroup or RSS with total physical NPU footprint or Mac unified memory."
+      },
+      "gufo": {
+        "before": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 6.900548934936523,
+          "medianElapsedMs": 1100.3007888793945,
+          "tokenUsageReported": 0
+        },
+        "during": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 10.054588317871094,
+          "medianElapsedMs": 1233.8411808013916,
+          "tokenUsageReported": 0
+        },
+        "after": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 7.342100143432617,
+          "medianElapsedMs": 1119.8508739471436,
+          "tokenUsageReported": 0
+        }
+      },
+      "performance": {
+        "requests": 320,
+        "answered": 320,
+        "failures": {},
+        "firstRequestMs": 382.135917,
+        "p50LatencyMs": 310.39995799999997,
+        "p95LatencyMs": 335.28345799999806,
+        "requestsPerSecond": 3.165850755406802,
+        "fixtureSha256": "12cab34541140109ae95d929a62e8cdbe3ee27f8b599432f657905664a9de567"
+      },
+      "quality": {
+        "calibration": {
+          "selected": 19,
+          "answered": 19,
+          "abstained": 0,
+          "coverage": 1,
+          "threshold": 0.5,
+          "tp": 9,
+          "fp": 0,
+          "tn": 5,
+          "fn": 5,
+          "precision": 1,
+          "recall": 0.6428571428571429,
+          "f1": 0.782608695652174,
+          "falsePromotionRate": 0,
+          "falseVetoRate": 0.35714285714285715,
+          "falseDiscoveryRate": 0,
+          "brier": 0.17839519318869498,
+          "calibrationError": 0.2909168325977977,
+          "falseVetoRateWithRejectFallback": 0.35714285714285715
+        },
+        "test": {
+          "selected": 259,
+          "answered": 259,
+          "abstained": 0,
+          "coverage": 1,
+          "threshold": 0.5,
+          "tp": 58,
+          "fp": 0,
+          "tn": 193,
+          "fn": 8,
+          "precision": 1,
+          "recall": 0.8787878787878788,
+          "f1": 0.9354838709677419,
+          "falsePromotionRate": 0,
+          "falseVetoRate": 0.12121212121212122,
+          "falseDiscoveryRate": 0,
+          "brier": 0.0370350767448115,
+          "calibrationError": 0.10084742151671579,
+          "falseVetoRateWithRejectFallback": 0.12121212121212122
+        }
+      },
+      "calibrationOnlyThresholdFit": {
+        "threshold": 0.28,
+        "heldOut": {
+          "selected": 259,
+          "answered": 259,
+          "abstained": 0,
+          "coverage": 1,
+          "threshold": 0.28,
+          "tp": 64,
+          "fp": 5,
+          "tn": 188,
+          "fn": 2,
+          "precision": 0.927536231884058,
+          "recall": 0.9696969696969697,
+          "f1": 0.9481481481481482,
+          "falsePromotionRate": 0.025906735751295335,
+          "falseVetoRate": 0.030303030303030304,
+          "falseDiscoveryRate": 0.07246376811594203,
+          "brier": 0.0370350767448115,
+          "calibrationError": 0.10084742151671579,
+          "falseVetoRateWithRejectFallback": 0.030303030303030304
+        }
+      }
+    },
+    {
+      "path": "docs/benchmarks/results/system-one-judges-2026-11-12-z13-npu-test/runs/nano-t2-close-20261113T011912Z",
+      "status": {
+        "status": "completed_runtime_replay",
+        "expected": 120,
+        "attempted": 120,
+        "answered": 120,
+        "admissionFloorIgnored": true,
+        "authority": "none",
+        "gufoDuringProbesOverlappingCandidate": [
+          0,
+          1,
+          2
+        ],
+        "coexistenceStatus": "observed_overlap_not_acceptance",
+        "qualityAcceptance": false,
+        "guard": {
+          "status": "stopped",
+          "model": "nano",
+          "admissionFloorIgnored": true,
+          "authority": "none",
+          "startedAt": 1794532756.3677282,
+          "command": [
+            "/home/alex/DevStorage/penumbra-system-one-npu-test-20261112/runtime/flm",
+            "serve",
+            "--decision",
+            "d3:nano",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "52625",
+            "--pmode",
+            "default",
+            "--quiet"
+          ],
+          "gufoPid": 791917,
+          "runtimeOutput": "suppressed: FLM --quiet still prints request bodies; use typed client errors and resource/exit diagnostics",
+          "npuUtilization": "not available from inspected unprivileged counters",
+          "runtimePid": 1023923,
+          "reason": null,
+          "elapsedSeconds": 107.07784952997463,
+          "endedAt": 1794532863.4455822,
+          "gufoPidAfter": 791917,
+          "runtimeExitCode": -15
+        }
+      },
+      "resources": {
+        "samples": 107,
+        "sampledSpanSeconds": 106.01815509796143,
+        "runtimeRssMedianBytes": 1304326144,
+        "runtimeRssPeakBytes": 1739010048,
+        "sampledCgroupPeakBytes": 2624032768,
+        "availableMinBytes": 19117387776,
+        "swapGrowthBytes": 0,
+        "swapoutBytes": 0,
+        "memoryFullAvg10Max": 0.0,
+        "gufoHealthFailureSamples": 0,
+        "maxReadableThermalZoneC": 82.0,
+        "cgroupAverageCpuCores": 1.5657994411109308,
+        "cgroupThrottledUsecDelta": 33496,
+        "gpuBusyMaxPercent": 96,
+        "npuUtilizationPercent": null,
+        "caveat": "One-Hz samples include startup/cleanup; accounting includes guardian/page cache and may omit driver/shared allocations. Do not equate cgroup or RSS with total physical NPU footprint or Mac unified memory."
+      },
+      "gufo": {
+        "before": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 6.7920684814453125,
+          "medianElapsedMs": 1094.9909687042236,
+          "tokenUsageReported": 0
+        },
+        "during": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 9.881973266601562,
+          "medianElapsedMs": 1191.1661624908447,
+          "tokenUsageReported": 0
+        },
+        "after": {
+          "samples": 3,
+          "errors": 0,
+          "medianTtftMs": 7.140159606933594,
+          "medianElapsedMs": 1115.7028675079346,
+          "tokenUsageReported": 0
+        }
+      },
+      "performance": {
+        "requests": 120,
+        "answered": 120,
+        "failures": {},
+        "firstRequestMs": 1800.61875,
+        "p50LatencyMs": 833.4246250000015,
+        "p95LatencyMs": 1333.6270829999994,
+        "requestsPerSecond": 1.1855069200545776,
+        "fixtureSha256": "fa2cf7888ec91878c4f3bdf57f42c8a024cd3ca6ed8972bf6656869604780d16"
+      },
+      "quality": {
+        "calibration": null,
+        "test": {
+          "selected": 116,
+          "answered": 116,
+          "abstained": 0,
+          "coverage": 1,
+          "threshold": 0.5,
+          "tp": 92,
+          "fp": 7,
+          "tn": 7,
+          "fn": 10,
+          "precision": 0.9292929292929293,
+          "recall": 0.9019607843137255,
+          "f1": 0.9154228855721394,
+          "falsePromotionRate": 0.5,
+          "falseVetoRate": 0.09803921568627451,
+          "falseDiscoveryRate": 0.0707070707070707,
+          "brier": 0.09526998940029821,
+          "calibrationError": 0.12005208436542149,
+          "falseVetoRateWithRejectFallback": 0.09803921568627451
+        }
+      },
+      "calibrationOnlyThresholdFit": {
+        "threshold": null,
+        "heldOut": null
+      }
+    }
+  ],
+  "historicalBaselines": [
+    {
+      "name": "Granite M4 excerpt",
+      "path": "docs/benchmarks/results/system-one-judges-2026-11-11-production-readiness/granite-reviewed",
+      "quality": {
+        "selected": 259,
+        "answered": 259,
+        "abstained": 0,
+        "coverage": 1,
+        "threshold": 0.5,
+        "tp": 52,
+        "fp": 9,
+        "tn": 184,
+        "fn": 14,
+        "precision": 0.8524590163934426,
+        "recall": 0.7878787878787878,
+        "f1": 0.8188976377952756,
+        "falsePromotionRate": 0.046632124352331605,
+        "falseVetoRate": 0.21212121212121213,
+        "falseDiscoveryRate": 0.14754098360655737,
+        "brier": 0.3820552123552133,
+        "calibrationError": 0.4067567567567562,
+        "falseVetoRateWithRejectFallback": 0.21212121212121213
+      },
+      "fixtureSha256": "12cab34541140109ae95d929a62e8cdbe3ee27f8b599432f657905664a9de567",
+      "p50LatencyMs": 1641.6551669999608,
+      "p95LatencyMs": 1975.6449579999899
+    },
+    {
+      "name": "Nano Q8 M4 excerpt",
+      "path": "docs/benchmarks/results/system-one-judges-2026-11-12-resume/nano-bounded",
+      "quality": {
+        "selected": 259,
+        "answered": 259,
+        "abstained": 0,
+        "coverage": 1,
+        "threshold": 0.5,
+        "tp": 55,
+        "fp": 0,
+        "tn": 193,
+        "fn": 11,
+        "precision": 1,
+        "recall": 0.8333333333333334,
+        "f1": 0.9090909090909091,
+        "falsePromotionRate": 0,
+        "falseVetoRate": 0.16666666666666666,
+        "falseDiscoveryRate": 0,
+        "brier": 0.03727124456370028,
+        "calibrationError": 0.09073510809198189,
+        "falseVetoRateWithRejectFallback": 0.16666666666666666
+      },
+      "fixtureSha256": "12cab34541140109ae95d929a62e8cdbe3ee27f8b599432f657905664a9de567",
+      "p50LatencyMs": 294.3261249999996,
+      "p95LatencyMs": 338.9603749999951
+    },
+    {
+      "name": "Granite M4 complete body",
+      "path": "docs/benchmarks/results/system-one-judges-2026-11-11-production-readiness/t2-granite",
+      "quality": {
+        "selected": 116,
+        "answered": 116,
+        "abstained": 0,
+        "coverage": 1,
+        "threshold": 0.5,
+        "tp": 99,
+        "fp": 13,
+        "tn": 1,
+        "fn": 3,
+        "precision": 0.8839285714285714,
+        "recall": 0.9705882352941176,
+        "f1": 0.9252336448598131,
+        "falsePromotionRate": 0.9285714285714286,
+        "falseVetoRate": 0.029411764705882353,
+        "falseDiscoveryRate": 0.11607142857142858,
+        "brier": 0.11613017241379293,
+        "calibrationError": 0.05853448275862214,
+        "falseVetoRateWithRejectFallback": 0.029411764705882353
+      },
+      "fixtureSha256": "fa2cf7888ec91878c4f3bdf57f42c8a024cd3ca6ed8972bf6656869604780d16",
+      "p50LatencyMs": 2766.5292079999927,
+      "p95LatencyMs": 4139.547791999998
+    },
+    {
+      "name": "Nano Q8 M4 complete body",
+      "path": "docs/benchmarks/results/system-one-judges-2026-11-11-production-readiness/t2-nano",
+      "quality": {
+        "selected": 116,
+        "answered": 116,
+        "abstained": 0,
+        "coverage": 1,
+        "threshold": 0.5,
+        "tp": 95,
+        "fp": 6,
+        "tn": 8,
+        "fn": 7,
+        "precision": 0.9405940594059405,
+        "recall": 0.9313725490196079,
+        "f1": 0.9359605911330049,
+        "falsePromotionRate": 0.42857142857142855,
+        "falseVetoRate": 0.06862745098039216,
+        "falseDiscoveryRate": 0.0594059405940594,
+        "brier": 0.09101685477725191,
+        "calibrationError": 0.12350360213721387,
+        "falseVetoRateWithRejectFallback": 0.06862745098039216
+      },
+      "fixtureSha256": "fa2cf7888ec91878c4f3bdf57f42c8a024cd3ca6ed8972bf6656869604780d16",
+      "p50LatencyMs": 870.4260000000068,
+      "p95LatencyMs": 1282.5820830000011
+    }
+  ],
+  "authorityChanged": false,
+  "admissionFloorIgnoredForTrial": true,
+  "qualityAcceptance": false,
+  "caveats": [
+    "Repeated development/confirmation corpora; no new labels or hidden acceptance set.",
+    "Different hardware, quantization, CPU caps, network and times. Baseline quality paired by frozen inputs; performance is not a simultaneous hardware comparison.",
+    "Gufo probes are three short samples/phase with cache/order effects, not a sustained production SLA.",
+    "Initial reviewed-named120-case run used the public subset; it is not the320-case corpus. Both original errors and corrected runs remain.",
+    "No power/energy or NPU utilization percentage measurement."
+  ]
+}

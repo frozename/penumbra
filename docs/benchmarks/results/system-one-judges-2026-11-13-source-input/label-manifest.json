@@ -1,0 +1,164 @@
+{
+  "method": "Independent AI source labels, frozen before model inference. Same base-model family, not human adjudication or a random population sample. Two reviewers agree on all verdicts and two facts; independent adjudicator reproduced key mechanisms. Historical deployment/timing unverified.",
+  "inputSha256": "db8b69162b862f41b5af81e6e2ba96335c22cadbc23d514370643babb83962e5",
+  "labelSha256": "7175e4adfcded60bd9c1a932ee576026753fd304f2670b7a54ab81b6b4e8d3b1",
+  "counts": {
+    "positive": 1,
+    "negative": 23,
+    "uncertain": 0
+  },
+  "expectedFactInstances": 2,
+  "provenanceSha256": {
+    "review-packet.jsonl": "cbadc317083f62bd4d97c120dcc244f7b9a51d9aeeffcb988aeb8aca27fdebec",
+    "review-a.jsonl": "cbef9a2f2d752a48df2fc49efba5830743a7e8704b08edd08f6c4d40fd615971",
+    "review-b.jsonl": "4db8b8fd2dcafeaf1c7f1b7aca5fa7ab143f86cd5bbcbb180cd9bca4116a2dcc",
+    "labels-adjudicated.jsonl": "7175e4adfcded60bd9c1a932ee576026753fd304f2670b7a54ab81b6b4e8d3b1",
+    "label-adjudication.json": "d1ba177aaf07597ce4e63903c2d65934b1151c4fe638f61754f6e777877294a7"
+  },
+  "labels": [
+    {
+      "caseId": "source-01",
+      "inputSha256": "d6b7cef3f09a08d99844c5edafdc73f57f68d0444fd99ff1efeb790e96d11825",
+      "verdict": "negative",
+      "expectedFactCount": 0
+    },
+    {
+      "caseId": "source-02",
+      "inputSha256": "9e48c24c89d6be146a2c2f723351e8f2a467e46d8143d6b1e6fd69a6501fcdb3",
+      "verdict": "negative",
+      "expectedFactCount": 0
+    },
+    {
+      "caseId": "source-03",
+      "inputSha256": "64316d048a6c8515a47f37b5d5c7ad13e11dedba5f793c7048bd6c21b067bbbf",
+      "verdict": "negative",
+      "expectedFactCount": 0
+    },
+    {
+      "caseId": "source-04",
+      "inputSha256": "3f7dcbd261b37b1858e24098f42213be58305921fa65a027f1e970b27e64f46d",
+      "verdict": "negative",
+      "expectedFactCount": 0
+    },
+    {
+      "caseId": "source-05",
+      "inputSha256": "5df3f4fc628a992c784b2165653192cee26152b7a30ea52e5cd26fecaad4652f",
+      "verdict": "negative",
+      "expectedFactCount": 0
+    },
+    {
+      "caseId": "source-06",
+      "inputSha256": "9ea01d7b61e0ef3c0244294f85ca75915e3c37fc463762f953192638ec6aa5d6",
+      "verdict": "negative",
+      "expectedFactCount": 0
+    },
+    {
+      "caseId": "source-07",
+      "inputSha256": "8d1fd135edb99fc9b4591c6e67affc362930feba8e46d836b0585d8ec4fe5a7c",
+      "verdict": "negative",
+      "expectedFactCount": 0
+    },
+    {
+      "caseId": "source-08",
+      "inputSha256": "80b763448fc21f12826e54cec8403fa33bf3b03408531a69bcfbe63a3b60eab1",
+      "verdict": "negative",
+      "expectedFactCount": 0
+    },
+    {
+      "caseId": "source-09",
+      "inputSha256": "5864195e5732aa52e08b0e87d9ccece9ebf9716fa84de28f791f33e896bffb73",
+      "verdict": "negative",
+      "expectedFactCount": 0
+    },
+    {
+      "caseId": "source-10",
+      "inputSha256": "6bfd3642b9676409f29169dadcf57dc0bd570b846376665daa3ef3fbf4892c94",
+      "verdict": "negative",
+      "expectedFactCount": 0
+    },
+    {
+      "caseId": "source-11",
+      "inputSha256": "8cabac653c0aaf860b56c30f65004265c64c6bb8e655513932dbca3b3fda6f58",
+      "verdict": "negative",
+      "expectedFactCount": 0
+    },
+    {
+      "caseId": "source-12",
+      "inputSha256": "0e5013c7d94de36c298f819e80b220283347ad865f8790c8db794b6cd350784a",
+      "verdict": "negative",
+      "expectedFactCount": 0
+    },
+    {
+      "caseId": "source-13",
+      "inputSha256": "240d0175e2d53973af34111e9cd23d4878abb57e70ff7a8d51713d7d9d719ad7",
+      "verdict": "negative",
+      "expectedFactCount": 0
+    },
+    {
+      "caseId": "source-14",
+      "inputSha256": "d14da4f13d8d33fc9691c607d352f547c20a2a4306171f9a448d94c3e37bfd2a",
+      "verdict": "negative",
+      "expectedFactCount": 0
+    },
+    {
+      "caseId": "source-15",
+      "inputSha256": "f6fb525dcf993aa78ecfe61cdb54d592b408ff861e248f879063e37cf02985bc",
+      "verdict": "negative",
+      "expectedFactCount": 0
+    },
+    {
+      "caseId": "source-16",
+      "inputSha256": "c847473e7c418d3f8c793fbd766fc06a9021035dbf1f9f348bb434bca3189569",
+      "verdict": "negative",
+      "expectedFactCount": 0
+    },
+    {
+      "caseId": "source-17",
+      "inputSha256": "03a3cfd30d2ec9c158ffb392550956610ca2b7b2374c66c86f82801459b63701",
+      "verdict": "negative",
+      "expectedFactCount": 0
+    },
+    {
+      "caseId": "source-18",
+      "inputSha256": "26cd40e99384450f4f11d27defeede30810e37234e6a9bdc81afd6d79e2007dd",
+      "verdict": "negative",
+      "expectedFactCount": 0
+    },
+    {
+      "caseId": "source-19",
+      "inputSha256": "f1b05ea9f2914675abca60641291ffc5058ddc0f84f3a647ba7cac476e7e47ce",
+      "verdict": "negative",
+      "expectedFactCount": 0
+    },
+    {
+      "caseId": "source-20",
+      "inputSha256": "b23edacc430dbc5e3b850086dba766848b323603c22a04a63d6474de1d0e1298",
+      "verdict": "negative",
+      "expectedFactCount": 0
+    },
+    {
+      "caseId": "source-21",
+      "inputSha256": "7a9748c7e7adf80c7c929f3b5d774cb3703868fcfc75be3047a7a3253d6f3d2c",
+      "verdict": "positive",
+      "expectedFactCount": 2
+    },
+    {
+      "caseId": "source-22",
+      "inputSha256": "5ff41ab21ff4844008fd45229ed2c1824a52ad7ffd27417410471bea3504e4a4",
+      "verdict": "negative",
+      "expectedFactCount": 0
+    },
+    {
+      "caseId": "source-23",
+      "inputSha256": "99b3bef56ed6b7ff9b9edf602eb137ba78da435ab6d92115a23ee18b6c14572b",
+      "verdict": "negative",
+      "expectedFactCount": 0
+    },
+    {
+      "caseId": "source-24",
+      "inputSha256": "77137dce9c6ac953b2cec2bafe9b6f65465ccde1966c3c08533fe326d2f16af4",
+      "verdict": "negative",
+      "expectedFactCount": 0
+    }
+  ]
+}

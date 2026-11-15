@@ -1,0 +1,74 @@
+{
+  "observedAt": "2026-11-13T15:14:48.849848+00:00",
+  "method": "Read-only status snapshots after CI and availability checks. No model inference or service mutation.",
+  "mini": {
+    "health": "ok",
+    "judgeRuntimeHealth": "ok",
+    "supervisorPid": 590,
+    "plistSha256": "b52d90c7f32eead8d1ddc233ba7059621fad866f9e5403ad8454387da731999d",
+    "liveAgentsSha256": "b9c14e2f4c480cd0c4823bc5b21401f8564cb02d80d173e49d2c0ed189524db9",
+    "models": [
+      {
+        "id": "d3-nano-eval",
+        "state": "unloaded"
+      },
+      {
+        "id": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+        "state": "sleeping"
+      }
+    ],
+    "processes": [
+      {
+        "pid": 590,
+        "ppid": 1,
+        "rssKiB": 97008
+      },
+      {
+        "pid": 5989,
+        "ppid": 590,
+        "rssKiB": 134544
+      }
+    ],
+    "aggregateRssMiB": 226.125,
+    "ephemeralQwenPortOpen": false,
+    "rssCaveat": "Discrete idle snapshot, not physical footprint or peak. Shared pages may be counted twice."
+  },
+  "kapitsa": {
+    "state": "Running",
+    "pid": 39656,
+    "samePid": true,
+    "osHeadroomMeasured": false
+  },
+  "gufo": {
+    "gufoPid": 791917,
+    "sameProcessAlive": true,
+    "executable": "/home/alex/DevStorage/llamactl-z13/gufo-v0.26.0/gufo-78d74185",
+    "health": {
+      "status": "ok"
+    },
+    "slots": [
+      {
+        "id": 0,
+        "is_processing": false
+      },
+      {
+        "id": 1,
+        "is_processing": false
+      },
+      {
+        "id": 2,
+        "is_processing": false
+      }
+    ],
+    "memory": {
+      "MemTotal": 134155739136,
+      "MemAvailable": 21891039232,
+      "SwapTotal": 8589930496,
+      "SwapFree": 8588795904
+    }
+  },
+  "productionGenerationRolesChanged": false,
+  "newPromotionOrVetoAuthority": false,
+  "qualityAccepted": false,
+  "capacityCaveat": "Health, unchanged PIDs and idle slots do not establish coding priority, peak memory or load isolation."
+}

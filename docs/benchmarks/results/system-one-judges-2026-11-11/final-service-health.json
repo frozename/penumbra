@@ -1,0 +1,43 @@
+{
+  "capturedAt": "2026-11-11T21:53:33.287004+00:00",
+  "services": {
+    "granite": {
+      "httpStatus": 200,
+      "body": {
+        "status": "ok"
+      }
+    },
+    "embeddings": {
+      "httpStatus": 200,
+      "body": {
+        "status": "ok"
+      }
+    },
+    "penumbra": {
+      "httpStatus": 200,
+      "body": {
+        "status": "ok",
+        "version": "0.0.0",
+        "reviewBacklog": {
+          "open_lanes_count": 138,
+          "open_boundary_lanes_count": 0,
+          "oldest_open_lane_age_ms": 85831882
+        },
+        "lagMs": 7.198375001549721,
+        "llmRoleFloors": {
+          "ok": true,
+          "violations": []
+        },
+        "t2Promotion": {
+          "enabled": true,
+          "reason": "judge_configured",
+          "judge_env": "PENUMBRA_JUDGE_BASE_URL",
+          "empty_extraction_streak": 7313,
+          "healthy": false
+        }
+      }
+    }
+  },
+  "temporaryCandidatePortOpen": false,
+  "interpretation": "HTTP availability verified; the daemon T2 promotion subcheck is unhealthy (extraction streak). This experiment does not establish its onset or cause and did not change that path."
+}

@@ -1,0 +1,13 @@
+{
+  "baselineSeconds": 30,
+  "maxReplaySeconds": 900,
+  "cooldownSeconds": 35,
+  "maxAttempts": 20,
+  "minIntervalMs": 30000,
+  "admissionBytes": 5905580032,
+  "reserveBytes": 2147483648,
+  "maxSwapGrowthAndOutBytes": 268435456,
+  "criticalMaxAgeSeconds": 2.5,
+  "method": "Historical read-only replay; no production feature flags, restarts or authority changes",
+  "memoryLimit": "Sampled observer admission, not a kernel reservation or indefinite residency guarantee"
+}

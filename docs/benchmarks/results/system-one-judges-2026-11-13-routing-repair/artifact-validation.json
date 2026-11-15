@@ -1,0 +1,15 @@
+{
+  "status": "passed",
+  "calls": 416,
+  "uniqueReviewedQueryPairs": 39,
+  "historicalTextPublished": false,
+  "rawReplaySha256": {
+    "r1/serial": "d3728c3e602b61aa1c81cf4d3a1860d83d74349b259ecf8454c59cd91502596c",
+    "r1/burst": "0222e3ce1416d75bfc06637da05be009100d91fac748563eb4b85682e105b810",
+    "r2/serial": "68d672a35b50f7d0f12279f8ff3764803125617382a21ad984ff195ff14e0562",
+    "r2/burst": "b1e664616285eaa1e57be8952da4a22f9bb197ce3231aa1f5d362f0f90cad12b"
+  },
+  "finalOutputLabelsSha256": "3e1438a5bc8ca62ce25dfeb2ba987b679898d6fdc0331017c727a813858665d2",
+  "candidateFreezeSha256": "a3359cf4e40333c76ba741a848b8d3df18fbf5a8cf775e64e2cce33b1bb496a9",
+  "scope": "Integrity and complete exact-pair coverage, not quality acceptance or a deployment."
+}

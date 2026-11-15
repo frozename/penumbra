@@ -1,0 +1,15 @@
+{
+  "completedProfiles": [
+    "granite-source",
+    "z13-source",
+    "granite-legacy"
+  ],
+  "omitted": [
+    {
+      "profile": "macbook-source",
+      "rows": 0,
+      "reason": "Memory-reserve guard aborted before first completed response. No quality result; raw initialized record and sensor/lifecycle evidence retained."
+    }
+  ],
+  "caseRunRows": 72
+}

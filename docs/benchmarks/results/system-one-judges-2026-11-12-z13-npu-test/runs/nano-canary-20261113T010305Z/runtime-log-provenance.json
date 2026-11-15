@@ -1,0 +1,6 @@
+{
+  "reason": "FLM --quiet still logs full HTTP bodies. Raw canary log retained privately; subsequent runtime stdout/stderr suppressed, preserving guard/resource/client-error diagnostics.",
+  "sha256": "b670ff9f3b4a8d0f0acb19d215c9c74fa7e955a38407ee35052691a29c6f978d",
+  "bytes": 37469,
+  "privateRawPath": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/z13-npu-execution/nano-canary-20261113T010305Z-runtime.log"
+}

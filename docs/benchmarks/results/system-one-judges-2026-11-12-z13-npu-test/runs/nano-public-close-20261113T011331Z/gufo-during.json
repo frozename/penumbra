@@ -1,0 +1,42 @@
+{
+  "model": "Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
+  "rows": [
+    {
+      "index": 0,
+      "startedAt": 1794532420.3918417,
+      "endedAt": 1794532421.6206656,
+      "ttftMs": 9.773969650268555,
+      "elapsedMs": 1228.8239002227783,
+      "completionTokens": null,
+      "effectiveTokensPerSecond": null,
+      "error": null,
+      "synthetic": true,
+      "contentLogged": false
+    },
+    {
+      "index": 1,
+      "startedAt": 1794532421.6206832,
+      "endedAt": 1794532423.0697188,
+      "ttftMs": 7.756710052490234,
+      "elapsedMs": 1449.03564453125,
+      "completionTokens": null,
+      "effectiveTokensPerSecond": null,
+      "error": null,
+      "synthetic": true,
+      "contentLogged": false
+    },
+    {
+      "index": 2,
+      "startedAt": 1794532423.0697346,
+      "endedAt": 1794532424.2878857,
+      "ttftMs": 8.06427001953125,
+      "elapsedMs": 1218.1510925292969,
+      "completionTokens": null,
+      "effectiveTokensPerSecond": null,
+      "error": null,
+      "synthetic": true,
+      "contentLogged": false
+    }
+  ],
+  "caveat": "Three descriptive samples; cache/order effects uncontrolled. Throughput unavailable without server token usage."
+}

@@ -1,0 +1,47 @@
+[
+  {
+    "attempt": "initial",
+    "sourceCommit": "431409e3e54f93818076074d4269f14f04204e4c",
+    "status": "interrupted",
+    "exitCode": null,
+    "scope": "interrupted for current registry integration",
+    "rawLogSha256": "56c061d56733fcb0cca0a57464f90eb6290e3502c8a05a03630a2c327c86946b",
+    "runtimeRestored": true
+  },
+  {
+    "attempt": ".retry",
+    "sourceCommit": "ffdb1b5a9289b1f38d23e0196b88f94646a63264",
+    "status": "interrupted",
+    "exitCode": null,
+    "scope": "failed health-route fixture; interrupted before source correction",
+    "rawLogSha256": "72080bbab5e0f8bf42e03ce0ffaf26539617463bcb4523e990d6a5a855b9497e",
+    "runtimeRestored": true
+  },
+  {
+    "attempt": ".final",
+    "sourceCommit": "1ec08a656e92aa5f470af1a25109b2741546a474",
+    "status": "interrupted",
+    "exitCode": null,
+    "scope": "interrupted for reproduced endpoint eligibility defect",
+    "rawLogSha256": "ad36b83b05d2e4ce23dbe63d0833c14c0c8193865aae37edfebc9e7816cb8951",
+    "runtimeRestored": true
+  },
+  {
+    "attempt": ".validated",
+    "sourceCommit": "ccccb49f8bb1a646c802f3da54a1d6cd5c7a168a",
+    "status": "failed",
+    "exitCode": 1,
+    "scope": "complete failure: unrelated console harness401",
+    "rawLogSha256": "425ca31cb93dc277c23a5c3eb16f9f88942b126d2fcd9886b764441a00b544b8",
+    "runtimeRestored": true
+  },
+  {
+    "attempt": ".verification",
+    "sourceCommit": "ccccb49f8bb1a646c802f3da54a1d6cd5c7a168a",
+    "status": "passed",
+    "exitCode": 0,
+    "scope": "complete clean validation",
+    "rawLogSha256": "1eb949be38805e51e1f3aa9fd623140bcbbec77322271f387d1692ca5299a440",
+    "runtimeRestored": true
+  }
+]

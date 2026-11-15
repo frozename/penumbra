@@ -1,0 +1,18 @@
+[
+  {
+    "ts": 1794589297.8563998,
+    "kind": "lock_and_idle_preflight_passed",
+    "sourceCommit": "afae3ec9194dccc05860f0edd0347195b6bf4d27",
+    "pid": 32365
+  },
+  {
+    "ts": 1794589297.859411,
+    "kind": "authorized_mini_runtime_paused",
+    "otherInferenceServicesChanged": false
+  },
+  {
+    "ts": 1794589972.950826,
+    "kind": "ci_finished",
+    "exitCode": 0
+  }
+]

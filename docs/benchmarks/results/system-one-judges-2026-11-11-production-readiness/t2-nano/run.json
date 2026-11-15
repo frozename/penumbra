@@ -1,0 +1,2785 @@
+{
+  "schemaVersion": 1,
+  "status": "executed",
+  "config": {
+    "protocol": "systemone",
+    "promotionQuestionSet": "direct",
+    "baseUrl": "http://127.0.0.1:18944",
+    "model": "d3-nano-eval",
+    "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+    "hardware": "Mac mini M4 16 GiB; shared control plane; Granite paused with user authorization",
+    "runtime": "llama.cpp 2cbe0ec429b849a88664e0f62388fc92a5abd699; Metal; threads=2; slots=1; batch/ubatch=8192; offline text only; old production P4 SQL remains a measured health confound; http-only versioned installation, OpenSSL disabled",
+    "quantization": "Q8_0, no mmproj",
+    "contextTokens": 8192,
+    "timeoutMs": 5000,
+    "maxRequestBytes": 65536,
+    "allowRemote": false
+  },
+  "concurrency": 1,
+  "repeats": 1,
+  "startedAt": "2026-11-12T00:29:24.077Z",
+  "elapsedMs": 101699.682875,
+  "fixtureSha256": "fa2cf7888ec91878c4f3bdf57f42c8a024cd3ca6ed8972bf6656869604780d16",
+  "rows": [
+    {
+      "caseId": "t2:004d2467b3b57973baa109a1",
+      "iteration": 0,
+      "inputSha256": "ee109bec6260e163c74a38edcbcdaed0e319501ee63c1e8340df58a481abe5c6",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 304.1272920000047,
+      "startedOffsetMs": 41874.844,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.033386462225253676
+        }
+      },
+      "usage": {
+        "inputTokens": 270,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:00745c58569aa8b10ec768db",
+      "iteration": 0,
+      "inputSha256": "e204520b7c060e524f5dc1cf8dbd4900da537ece5b8b1ae0c7fe5f8f29c2b97f",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 893.3370420000001,
+      "startedOffsetMs": 6846.552417,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9337127434223558
+        }
+      },
+      "usage": {
+        "inputTokens": 839,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:00ba0f6703f5c2ccd3b00fca",
+      "iteration": 0,
+      "inputSha256": "9198c587323cc35af04f43f3cb6ec6b1dca008ce7de65b52a7d088ee4c52caea",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 765.4394579999971,
+      "startedOffsetMs": 18955.487042,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.6633425362438764
+        }
+      },
+      "usage": {
+        "inputTokens": 728,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:01b68bdcae8e4abd54c20770",
+      "iteration": 0,
+      "inputSha256": "9b1aee0d7498af49f6e95bcb0e865af0a35164c62aa8dbb8362461c78d82d0dc",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1349.214165999998,
+      "startedOffsetMs": 49645.789209,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8130990247873001
+        }
+      },
+      "usage": {
+        "inputTokens": 1252,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:01c61c125ca63188eef3f36b",
+      "iteration": 0,
+      "inputSha256": "06762ebbf15ee350658d622a5efbf77c5ef1b506501d6f68c90be3b8cc9650df",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 880.9591660000006,
+      "startedOffsetMs": 59220.296209,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9745141113544961
+        }
+      },
+      "usage": {
+        "inputTokens": 822,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:02632f4219f42b56d8ae1bbc",
+      "iteration": 0,
+      "inputSha256": "96c01cdd9b7fbd142e681dd6fe7e801fc6dba75e6c0bb38f77553503f116195a",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1062.653166,
+      "startedOffsetMs": 7739.894959,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9209242341227374
+        }
+      },
+      "usage": {
+        "inputTokens": 1016,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:02f9e18717d125a6cfaa5de0",
+      "iteration": 0,
+      "inputSha256": "5f06910cc82fc4855911cbcf94f1a7d5b667abaa8aa7fa9fe185404cd384edb2",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 994.2562089999992,
+      "startedOffsetMs": 13163.278875,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.953386929077278
+        }
+      },
+      "usage": {
+        "inputTokens": 944,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:03847ea5cc8f12967a5f7f0e",
+      "iteration": 0,
+      "inputSha256": "db97468cd9f813d716330f6c6c4f849e744b192d37ac8ec42a416687e4146321",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 638.9388340000005,
+      "startedOffsetMs": 44429.18025,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.33569720237859185
+        }
+      },
+      "usage": {
+        "inputTokens": 594,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:03f8d75aade5061bf9e18143",
+      "iteration": 0,
+      "inputSha256": "2ba33d7a163086ba509460539db71d58ffa4b086c5538af6f2e5646b6f66a5b4",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1221.5837909999973,
+      "startedOffsetMs": 45068.121709,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9562369198793899
+        }
+      },
+      "usage": {
+        "inputTokens": 1127,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:041aabe226d1aeb045f4039d",
+      "iteration": 0,
+      "inputSha256": "38648f1b830067fb03389db4f16951d17cde68ed50768f3aa8b1656437efd032",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 732.7837079999954,
+      "startedOffsetMs": 42615.060917,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.7118786583890696
+        }
+      },
+      "usage": {
+        "inputTokens": 674,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:04634fd3ef0d426ee5ebb47f",
+      "iteration": 0,
+      "inputSha256": "fe3dd4dd56d26ea989a1a057fc9fc449ebc944f30ca2fdfcb7facc0d83716e45",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 802.3650420000001,
+      "startedOffsetMs": 1265.26825,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9083900644301569
+        }
+      },
+      "usage": {
+        "inputTokens": 798,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:04f11baa57a02810d14883d0",
+      "iteration": 0,
+      "inputSha256": "310a2d1b6624e7ae8537280accf10451646984e6eb00fe201e270c2693b39113",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1043.3512920000067,
+      "startedOffsetMs": 47492.400499999996,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9836699856567291
+        }
+      },
+      "usage": {
+        "inputTokens": 971,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:055330ab8d9f9071d5ae0c6f",
+      "iteration": 0,
+      "inputSha256": "84c224568be4ce61551958421edcd58e61dd4337559286d34b43184c42f70f66",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 764.7893330000006,
+      "startedOffsetMs": 54301.351334,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.612081218647421
+        }
+      },
+      "usage": {
+        "inputTokens": 713,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:056c5955e050776411170e84",
+      "iteration": 0,
+      "inputSha256": "a8e2147b567d5311449160bdc21815b51a854f929ddc3fda675ddec3b4bdaeeb",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 968.256292,
+      "startedOffsetMs": 15371.340999999999,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.7687431910395237
+        }
+      },
+      "usage": {
+        "inputTokens": 910,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:069dbecedf76ea0ebe15a8b0",
+      "iteration": 0,
+      "inputSha256": "2e4ae333c6593f90850df117a4eaf7f2095f9d22906ba8e9592fac1e4feacb1b",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 632.291667000005,
+      "startedOffsetMs": 46860.105666999996,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.6633789537936073
+        }
+      },
+      "usage": {
+        "inputTokens": 586,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:070e0bb6316f3f9179f22de2",
+      "iteration": 0,
+      "inputSha256": "31cd2db2d5a0322f664d954781c20c007c5d8e5084544a28dc7a4e69a4ba4391",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 930.0519160000003,
+      "startedOffsetMs": 27245.704334,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9129647258985424
+        }
+      },
+      "usage": {
+        "inputTokens": 874,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:0731a6c8cde9afccedf26e0e",
+      "iteration": 0,
+      "inputSha256": "7313cdc8bdebfb4dfac60416ef2803816ab78b4527a18a8653554e1f01395eeb",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 274.437208000003,
+      "startedOffsetMs": 54026.911292,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.7264170802640042
+        }
+      },
+      "usage": {
+        "inputTokens": 256,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:07ace121d42fcfcd6f3e1a92",
+      "iteration": 0,
+      "inputSha256": "c7167acc55fb038e45d965165f4ec663e26b811968d795538889fa560373ddfe",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1211.5451670000039,
+      "startedOffsetMs": 35649.366417,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.909711368333206
+        }
+      },
+      "usage": {
+        "inputTokens": 1133,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:08a712397a42cd2b15b7cbc2",
+      "iteration": 0,
+      "inputSha256": "ae38a5dbad40f84d4dda19855b966662cd81e54f5dbddbc51650e77d0bcc622f",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 667.5633329999982,
+      "startedOffsetMs": 71360.166584,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.6682737811089555
+        }
+      },
+      "usage": {
+        "inputTokens": 628,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:0922a59a670cb6b46c740b3a",
+      "iteration": 0,
+      "inputSha256": "0875446a035cc78d9554cfc88fc755e0759f74cce462e77b244d099eee5c8532",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 512.7157080000002,
+      "startedOffsetMs": 2067.639542,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.917990134987583
+        }
+      },
+      "usage": {
+        "inputTokens": 502,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:0932ecb73e06ed890b7dd612",
+      "iteration": 0,
+      "inputSha256": "962d8e3e93c4559144026005af3e20425dd2cd992423913a075caf7726acc491",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 531.09375,
+      "startedOffsetMs": 26444.294667,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.3331020540518686
+        }
+      },
+      "usage": {
+        "inputTokens": 502,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:0934623194e41d91e16ac8ef",
+      "iteration": 0,
+      "inputSha256": "2fadc3bf2bd8003f8ec6fbe73b0362c854511c288df5d8797f9d6b5e79c8dea5",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 272.44412499999453,
+      "startedOffsetMs": 73771.418292,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.18297092409357388
+        }
+      },
+      "usage": {
+        "inputTokens": 251,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:0984abe95d18e7e5ad5b8c87",
+      "iteration": 0,
+      "inputSha256": "1c59fd9a91079769acd80ae3f57916bcbeff15284d42a1cfcbe280d0884e3c13",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 599.9248329999973,
+      "startedOffsetMs": 64512.713292,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.17038192132135896
+        }
+      },
+      "usage": {
+        "inputTokens": 568,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:098b2a292750bdd6973db509",
+      "iteration": 0,
+      "inputSha256": "2d8edd9105cf724f4bf8bba2f3f60987ca97e679ee935c8919077cfd569b2ff8",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 839.6349169999885,
+      "startedOffsetMs": 88700.676917,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8633865481785709
+        }
+      },
+      "usage": {
+        "inputTokens": 786,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:09a5a609b3abeb3b17263740",
+      "iteration": 0,
+      "inputSha256": "fb3baaee210ce0d3ff732e9ed03e7a5e5c0023cf8a60c1c6900ba6a7e3a8b01f",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 771.7257079999981,
+      "startedOffsetMs": 100927.625334,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9182683470663118
+        }
+      },
+      "usage": {
+        "inputTokens": 713,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:09d38c2dbf52bb6d21b755ad",
+      "iteration": 0,
+      "inputSha256": "f5d8ceef01c9e2213dd73ab1d9d2c441fd103f60521d15abe5511b89c4430d10",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 800.8009170000005,
+      "startedOffsetMs": 55664.881667,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8809367881702423
+        }
+      },
+      "usage": {
+        "inputTokens": 767,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:0a0b984bc9db1938e9366a76",
+      "iteration": 0,
+      "inputSha256": "168f39d9400ca0bf1a83e6d7165b15646e55aeb4bdb426555850e8d924741d12",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 936.304041000003,
+      "startedOffsetMs": 51268.953209,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8618900467168862
+        }
+      },
+      "usage": {
+        "inputTokens": 880,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:0a15c157c8ce67378aad0ab9",
+      "iteration": 0,
+      "inputSha256": "33ef287d3e308bc473ac4a4a14e215079d9952db33b6501a5e3f5a231d321bd8",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1143.8941250000025,
+      "startedOffsetMs": 32139.716375,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9307903731319729
+        }
+      },
+      "usage": {
+        "inputTokens": 1082,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:0a4c60cf58a5b76cc402758c",
+      "iteration": 0,
+      "inputSha256": "db998d69b7da4a0df2d853925711fa131f59823002faf6be43ba2e1d779c5f8b",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1043.1631669999915,
+      "startedOffsetMs": 75994.997625,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.942431535971682
+        }
+      },
+      "usage": {
+        "inputTokens": 978,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:0aa107eb5dcf343b9acab954",
+      "iteration": 0,
+      "inputSha256": "cd70cdc4f2683acc14e7f3bdb8be2d0ae63833bf92e3db4fc683af5550a401ea",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1014.2857090000034,
+      "startedOffsetMs": 85692.565,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9554614288322161
+        }
+      },
+      "usage": {
+        "inputTokens": 949,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:0ae13d077db3d10bbd84d027",
+      "iteration": 0,
+      "inputSha256": "21e48fc39a466296e862db2fd5bfa045fd359da3401c65ee619227878ef402a1",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 436.0847500000018,
+      "startedOffsetMs": 42178.973084,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.6124561340842186
+        }
+      },
+      "usage": {
+        "inputTokens": 403,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:0b727233fd42ac9fd0e16690",
+      "iteration": 0,
+      "inputSha256": "f84f1075fb1d0cf4bbca84e3e3b6fef2f50fe5fb5148251d4d91a64d156ed542",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1183.5174160000024,
+      "startedOffsetMs": 87111.068584,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9216406047183948
+        }
+      },
+      "usage": {
+        "inputTokens": 1106,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:0bb0c372ac53f2af425605ae",
+      "iteration": 0,
+      "inputSha256": "0e05386f3b2d8a0bfef26cc0c413272609f8187bd0165199c72be2a1b5fb2827",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 599.4307499999995,
+      "startedOffsetMs": 74043.8645,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.595934464174341
+        }
+      },
+      "usage": {
+        "inputTokens": 564,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:0cc735d76acc93b828fde49a",
+      "iteration": 0,
+      "inputSha256": "0b925104f7763de40cedd9dc17960b4013ff340e4989f6af325415a4f516120b",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 771.5732910000079,
+      "startedOffsetMs": 74919.143709,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.43735291803940934
+        }
+      },
+      "usage": {
+        "inputTokens": 711,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:0ce41d8e161c5f18f3578057",
+      "iteration": 0,
+      "inputSha256": "08abcb32011c6f490a468b76ee7231d053069b91117b4d7848f4427ae5ced259",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1073.4097500000062,
+      "startedOffsetMs": 68511.462625,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9233780938392623
+        }
+      },
+      "usage": {
+        "inputTokens": 1008,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:0d201a7faf33448fa521b7bd",
+      "iteration": 0,
+      "inputSha256": "6394a3cd6406834049ef9cd5813a09fbc9bc2b065c1542fe0931d88b6579ced7",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1084.3739579999965,
+      "startedOffsetMs": 79027.728959,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8980606385463435
+        }
+      },
+      "usage": {
+        "inputTokens": 1001,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:0d3ffaeeabaac057b3e57834",
+      "iteration": 0,
+      "inputSha256": "38c4b076c41ec803378ff15b0b4bc3c96b77f70289746e0175db152869aab8b3",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 275.81820799999696,
+      "startedOffsetMs": 40291.089709,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.704565458909046
+        }
+      },
+      "usage": {
+        "inputTokens": 254,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:0e69a0fece9c94328b7af9ec",
+      "iteration": 0,
+      "inputSha256": "8e6b7c91f83ea69a127b5db7867949ac285379052f5a17bbc8bd5c106455e189",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 786.5875830000004,
+      "startedOffsetMs": 6059.960417,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8676323891090434
+        }
+      },
+      "usage": {
+        "inputTokens": 742,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:0e6ca30488153c6928ff49f5",
+      "iteration": 0,
+      "inputSha256": "70c7d66f8f30764792f95faeded9d64a1a8efa3fc0ec372ce84ee4558a794ab0",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 847.8461249999964,
+      "startedOffsetMs": 84844.716667,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.6737545606822017
+        }
+      },
+      "usage": {
+        "inputTokens": 791,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:0ed11fd9529af82e7f5fa3eb",
+      "iteration": 0,
+      "inputSha256": "9036af51e223bf03e6e04eeffab4226f3f4d77eae7df3406734db1a24a4a29c3",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1166.953958,
+      "startedOffsetMs": 11996.320709,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9512168871950808
+        }
+      },
+      "usage": {
+        "inputTokens": 1091,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:0ef8ca67580fd269cad7058c",
+      "iteration": 0,
+      "inputSha256": "dd695b2ff4cf7a90821c219faec3eee1385c81fe5501741d02d34f520a295d1d",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1146.0119589999958,
+      "startedOffsetMs": 58074.2805,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9066042789315372
+        }
+      },
+      "usage": {
+        "inputTokens": 1064,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:0f5fb15239bf58bc57182749",
+      "iteration": 0,
+      "inputSha256": "2c80f1d086e49e6baadc35bee16d019133e5d354e28fbe4958294949aaf82e7b",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 503.944542000012,
+      "startedOffsetMs": 94023.13775,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8967522139831443
+        }
+      },
+      "usage": {
+        "inputTokens": 464,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:1170dabcf8f166373f556953",
+      "iteration": 0,
+      "inputSha256": "8f36d9e4f87d7dd65fe4b0bf177ac222d917574839616402f748fb5ae88fab61",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 583.3348750000005,
+      "startedOffsetMs": 4411.399959,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8265431366915645
+        }
+      },
+      "usage": {
+        "inputTokens": 562,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:1414d64313e0d17c7415ecdf",
+      "iteration": 0,
+      "inputSha256": "527847e32fcccdadab52dda9e95413e4d932c5ee740bb27722895d71d8bedfaf",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 865.1059999999998,
+      "startedOffsetMs": 23735.387542,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8653236949880453
+        }
+      },
+      "usage": {
+        "inputTokens": 810,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:1419b0120998967b2fbca121",
+      "iteration": 0,
+      "inputSha256": "13cea2beea45f5cd724bbc01e903d32c6674ad0aaa08b8a4303f6792439890c6",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1345.9414579999975,
+      "startedOffsetMs": 22389.441209,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.5903041677759293
+        }
+      },
+      "usage": {
+        "inputTokens": 1274,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:142828760c2774bd172974c0",
+      "iteration": 0,
+      "inputSha256": "68cb2de3d7647099a291080ae5b8a31d8c6b5f239c4b6451e108f2bee6ca8daf",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 565.9646250000005,
+      "startedOffsetMs": 41034.458417,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.6841758334737138
+        }
+      },
+      "usage": {
+        "inputTokens": 518,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:1538655a1701e683411a98d3",
+      "iteration": 0,
+      "inputSha256": "99378d195db9d4146bde489d9b16250ebcde20ecc97c078a22137f5f31c229d3",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1128.7436670000006,
+      "startedOffsetMs": 8802.552791999999,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.906798544481206
+        }
+      },
+      "usage": {
+        "inputTokens": 1057,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:154b33566bd9447c411f0d31",
+      "iteration": 0,
+      "inputSha256": "5ba528e556eca0630582af8b502d9f229579f4dff64fe4cc62785bf323ac5788",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1048.0511249999981,
+      "startedOffsetMs": 92036.011959,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9610270726545869
+        }
+      },
+      "usage": {
+        "inputTokens": 990,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:158f997a922653b17fd89ae6",
+      "iteration": 0,
+      "inputSha256": "ea09c44416c51be2b2ec081f1f0cef0526bd80abb1c77b5232b84ea65d167d2c",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1069.0986249999987,
+      "startedOffsetMs": 33881.162417,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9495139297399103
+        }
+      },
+      "usage": {
+        "inputTokens": 999,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:1668846a4945d237eb767881",
+      "iteration": 0,
+      "inputSha256": "7d603d283e56f3264069193175edd3c8a17a06c69bd2c7db5b7fec16f36db00e",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 597.5462920000064,
+      "startedOffsetMs": 33283.613124999996,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.2927899680857349
+        }
+      },
+      "usage": {
+        "inputTokens": 550,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:16db05446d725139190a512c",
+      "iteration": 0,
+      "inputSha256": "d4d76d5b7b0750ade95ebfa21a118a36ebb650f03de05c3adca19456916061fa",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1168.9032499999994,
+      "startedOffsetMs": 10827.413375,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8975878642130936
+        }
+      },
+      "usage": {
+        "inputTokens": 1109,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:16f14d8b5361a5050cb6fb6d",
+      "iteration": 0,
+      "inputSha256": "83e2a2049e39017352da93982d5ad703a4c559adce1987c02349de061907f1fc",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 939.0689169999969,
+      "startedOffsetMs": 93084.065875,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8035248357081384
+        }
+      },
+      "usage": {
+        "inputTokens": 870,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:1840f495b677fd56b6016bbe",
+      "iteration": 0,
+      "inputSha256": "6914f061387c63ef7b65536c282065c145c9649bd8979beb4681835bb7517152",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1109.7705419999984,
+      "startedOffsetMs": 70250.392875,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9478650366216799
+        }
+      },
+      "usage": {
+        "inputTokens": 1044,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:192d5240e4c3d1a56f3c3cda",
+      "iteration": 0,
+      "inputSha256": "4aea11105af09d8ac688b888ec689f12140b7eb3742b8691fa91326afdf7b9b8",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1276.9579999999987,
+      "startedOffsetMs": 17678.523459,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.7226451609319716
+        }
+      },
+      "usage": {
+        "inputTokens": 1211,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:1a789883bb8c53cda3a9240a",
+      "iteration": 0,
+      "inputSha256": "531d8776a429857cfeab9471f369895e27e99eda3138c549613089e9caba167b",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1281.9228330000042,
+      "startedOffsetMs": 38341.056709,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9758869590901581
+        }
+      },
+      "usage": {
+        "inputTokens": 1194,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:1ad10dc2815fe55b79f9adff",
+      "iteration": 0,
+      "inputSha256": "1c689d094798c7e76397a50bf5a176bdc874c8067f5b653fc6f2711838e62670",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 896.1079590000008,
+      "startedOffsetMs": 9931.3,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8651010377379684
+        }
+      },
+      "usage": {
+        "inputTokens": 836,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:1b5c01a82cb124a54ac2e138",
+      "iteration": 0,
+      "inputSha256": "bf3584daccc4a24a6de60e5c98cc61e4630d99949023ee041c9c3e5c0d8f7026",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 804.3865839999999,
+      "startedOffsetMs": 56465.685124999996,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9796405784548405
+        }
+      },
+      "usage": {
+        "inputTokens": 766,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:1b78ce99379bc22f5ed4b5c6",
+      "iteration": 0,
+      "inputSha256": "a0ca9fb9337d6d33822679b913ad3b78cff361d549cf52b327bf06e2048a97ae",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1218.6211250000051,
+      "startedOffsetMs": 96788.248834,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9552810531304222
+        }
+      },
+      "usage": {
+        "inputTokens": 1130,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:1c2a8c5011e41afff29b6b8c",
+      "iteration": 0,
+      "inputSha256": "39f5e6dd03d39c472da1d449885688eab5d8e24ebacdf876c29ef9ac8193267a",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1091.370167,
+      "startedOffsetMs": 3057.072917,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.6064624934552397
+        }
+      },
+      "usage": {
+        "inputTokens": 1060,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:1c391c2e731ff7f3aba8803e",
+      "iteration": 0,
+      "inputSha256": "51d4a7cbc5de4e7956da61ff9d6f888752adf9af77c3b5bc7f1f047ea8270d65",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 870.4260000000068,
+      "startedOffsetMs": 65112.640333999996,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.4843967573073608
+        }
+      },
+      "usage": {
+        "inputTokens": 830,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:1c6c155ec6cb83f33bb7fff3",
+      "iteration": 0,
+      "inputSha256": "dac09152e71705aae5a26d9e99a54c54a672b667206ec9247428ea70a4d43fb5",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1016.5370000000003,
+      "startedOffsetMs": 30288.297542,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.47346702537628504
+        }
+      },
+      "usage": {
+        "inputTokens": 954,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:1c9e78a4b6519b350540352c",
+      "iteration": 0,
+      "inputSha256": "64173fcab7c398e74d51d83aad6047cb53cad73f196cc7c5c27f719a0ce5a609",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 598.7358329999988,
+      "startedOffsetMs": 55066.142959,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.7859433339290461
+        }
+      },
+      "usage": {
+        "inputTokens": 551,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:1e93d4a1956e271ec279b6d1",
+      "iteration": 0,
+      "inputSha256": "e369307f27d6a250d26e9f3f3a32f1885d6d56afdce841190fdbe32efd14a0b6",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1282.5820830000011,
+      "startedOffsetMs": 29005.672458999998,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.6522379553097706
+        }
+      },
+      "usage": {
+        "inputTokens": 1189,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:1e984d6fd8da06d3b6c4f42c",
+      "iteration": 0,
+      "inputSha256": "543637764851f4f6e86973b64e04a67ffe981e49ef9220b6806ac436f6a503ea",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1110.0311250000013,
+      "startedOffsetMs": 48535.755084,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9030872411092822
+        }
+      },
+      "usage": {
+        "inputTokens": 1032,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:1eba47d170b9f53a87883a86",
+      "iteration": 0,
+      "inputSha256": "b51c439af46fbad0aa9e89a02ef10febfe53c78605fa299b111053c8ff3bf8a3",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 275.8421660000022,
+      "startedOffsetMs": 74643.298709,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8830747883685169
+        }
+      },
+      "usage": {
+        "inputTokens": 255,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:1f85d75fe51d7b62420a138d",
+      "iteration": 0,
+      "inputSha256": "21f7a34a16c3f516afcfc32e5eb0322f10622c79bae7157a9bbb37d86da49e09",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 507.43925000001036,
+      "startedOffsetMs": 100420.183167,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.661361368819016
+        }
+      },
+      "usage": {
+        "inputTokens": 475,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:218d923065e6d0455d2ffd47",
+      "iteration": 0,
+      "inputSha256": "adfa1926bd8df31537ef6b58b4695b3f39a3a49ef1461eb2a9e084cbade009d1",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 262.93908399999964,
+      "startedOffsetMs": 4148.4485,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.6934986996253184
+        }
+      },
+      "usage": {
+        "inputTokens": 253,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:2231791bfd6f0caa0acfa499",
+      "iteration": 0,
+      "inputSha256": "3577dd17387a8debf16d5c9f45cc71106d0ed3520e3021507f942361e19ce515",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 304.2763750000013,
+      "startedOffsetMs": 75690.719334,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.178295877024478
+        }
+      },
+      "usage": {
+        "inputTokens": 273,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:2578e0698a102689ff35577e",
+      "iteration": 0,
+      "inputSha256": "c0cce7a8d46c92fd05cbdf8aa2b24e5e056324ad46e0c4968ed77ac0968d300a",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 305.9885420000064,
+      "startedOffsetMs": 67093.753375,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8661356083346979
+        }
+      },
+      "usage": {
+        "inputTokens": 286,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:259f5a62f8fde004c14d5ace",
+      "iteration": 0,
+      "inputSha256": "60bf598632a614f14d9640bebf3cc42468ea4268e9244b637f1b611ed6595fef",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 274.41616699999577,
+      "startedOffsetMs": 41600.425875,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8606162046909859
+        }
+      },
+      "usage": {
+        "inputTokens": 255,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:2833f781afaf544ec958208b",
+      "iteration": 0,
+      "inputSha256": "4534ca913c420ec92897e74bb02931b8a10ff54c380f6ab62520f0222217fff9",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 467.54412500000035,
+      "startedOffsetMs": 40566.911042,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9149312442699056
+        }
+      },
+      "usage": {
+        "inputTokens": 424,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:2f7aac93b323d33b6b003fa1",
+      "iteration": 0,
+      "inputSha256": "82870162de9e106426324eeaf65b144dc1882c40db1f43e080a6af934d1f93de",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 273.9435830000002,
+      "startedOffsetMs": 50995.006667,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.5490591131118223
+        }
+      },
+      "usage": {
+        "inputTokens": 253,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:3c56224fc8d99dccc1fe0994",
+      "iteration": 0,
+      "inputSha256": "937c78c62722ebf116ad33c66e51bae03254b781b41799dd95550d9fa9bfa833",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 494.77124999999796,
+      "startedOffsetMs": 20789.501042,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.7228481102014013
+        }
+      },
+      "usage": {
+        "inputTokens": 453,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:3c5c9b236a3fe65ae80ceda5",
+      "iteration": 0,
+      "inputSha256": "9779b16efd51c503bc6399e14b18bac71c5c5ba486208eeaa77048e5dc99b396",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 804.2026249999981,
+      "startedOffsetMs": 57270.075209,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8686764974722295
+        }
+      },
+      "usage": {
+        "inputTokens": 766,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:3e88a997d9766b27bdf3a864",
+      "iteration": 0,
+      "inputSha256": "5d5f32b6c265559f6546849696bc342ec27f8b948155240a34b13d83fb92d8b7",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1154.1382499999963,
+      "startedOffsetMs": 52872.770292,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9312806708994156
+        }
+      },
+      "usage": {
+        "inputTokens": 1078,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:3eed39fa65566fb26bed4d31",
+      "iteration": 0,
+      "inputSha256": "82877dbf35b3ad5ae97a83d96511a0799817f196fb9c67b40403faa2c363b4f0",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1142.4830000000075,
+      "startedOffsetMs": 94527.08475,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9143686350929293
+        }
+      },
+      "usage": {
+        "inputTokens": 1057,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:453427a5459e130bbc26391c",
+      "iteration": 0,
+      "inputSha256": "b13615f6b5ba0a617efd04ad5cec05abd1e47288c8b17c3569a45eca71e97855",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1118.6763329999958,
+      "startedOffsetMs": 95669.570042,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8986936089467419
+        }
+      },
+      "usage": {
+        "inputTokens": 1054,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:45f9e22c8580ed865b867670",
+      "iteration": 0,
+      "inputSha256": "9fd1dbf8b1d0981c91dac829db4bbf16fc81e927f9ef7bd00035ad365be5cdae",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 270.3062080000018,
+      "startedOffsetMs": 26975.393541999998,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9638359644734484
+        }
+      },
+      "usage": {
+        "inputTokens": 246,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:4c5483ef543e38dc3602f110",
+      "iteration": 0,
+      "inputSha256": "12eb47d97585466371ac81d542abe8e042ab8945189b0bc6b826bb69f99a1530",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 705.0165419999976,
+      "startedOffsetMs": 60547.33425,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9458519919926014
+        }
+      },
+      "usage": {
+        "inputTokens": 641,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:4c7786650455b385a9beadbe",
+      "iteration": 0,
+      "inputSha256": "f4cef1c0daa3548f327e1a4acb36642566c4e4c31fbecc117bbdf15010a50042",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1120.1332910000056,
+      "startedOffsetMs": 82194.639209,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.941273228915133
+        }
+      },
+      "usage": {
+        "inputTokens": 1040,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:5e7e5f56468fb7afe8933ec3",
+      "iteration": 0,
+      "inputSha256": "8c5149eb84d9d27cbca7066e3989ec12ba77198958dbcdfd326eec9968edad5b",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 668.104416000002,
+      "startedOffsetMs": 39622.982459,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8219856231799936
+        }
+      },
+      "usage": {
+        "inputTokens": 613,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:62da4f0543bee220384720c1",
+      "iteration": 0,
+      "inputSha256": "efc8b57cf3585ad9960f64a5862a071774112d12a80bb21a08d6d9f73187b98a",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1213.794958999999,
+      "startedOffsetMs": 14157.54125,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9710523080607933
+        }
+      },
+      "usage": {
+        "inputTokens": 1143,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:6371aa104014f5e1e17f0d16",
+      "iteration": 0,
+      "inputSha256": "467f6637fac9165dba172708bb9219843dd345274098d0680dc172a265e3c5f1",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1111.7148330000055,
+      "startedOffsetMs": 67399.744209,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9321363719869178
+        }
+      },
+      "usage": {
+        "inputTokens": 1054,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:6c29a02c51621b01fa04576b",
+      "iteration": 0,
+      "inputSha256": "e8c9387b0fa58bebf53c836963d888fc13f2561f9132e2c0fc08a90147303280",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 667.5037500000035,
+      "startedOffsetMs": 52205.26025,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9373384007588746
+        }
+      },
+      "usage": {
+        "inputTokens": 636,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:6daa149535642349ce68f0f7",
+      "iteration": 0,
+      "inputSha256": "31b055866e14f291bb9c770468cb09260e82e1a0b13730863a7346f5c9b38bef",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1065.2132499999998,
+      "startedOffsetMs": 4994.7431670000005,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8529431354152939
+        }
+      },
+      "usage": {
+        "inputTokens": 1015,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:7b5bb48bba15abe8d0c29db1",
+      "iteration": 0,
+      "inputSha256": "3ee33f77af8ccc3d9c0d3a73db1f44810b4d73f265aa79516ab98b9bd5777819",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 904.3555839999972,
+      "startedOffsetMs": 63608.354625,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.620755658856471
+        }
+      },
+      "usage": {
+        "inputTokens": 852,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:814000612f8c0b4f7d284d2c",
+      "iteration": 0,
+      "inputSha256": "7bb7deef07831543e52034162c139339ad41834a73fe8557e5267889ed4a31d1",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 406.08470799999486,
+      "startedOffsetMs": 88294.589792,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9149373306404109
+        }
+      },
+      "usage": {
+        "inputTokens": 373,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:82919f1347a578addb01b978",
+      "iteration": 0,
+      "inputSha256": "540a1d995602083f75131d4b9296040fffe45671d47ff4b490e9c12c2e133a99",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 403.3386670000036,
+      "startedOffsetMs": 37937.714917,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.4737440089935013
+        }
+      },
+      "usage": {
+        "inputTokens": 366,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:84fa1a35a1aa10b1d44787a2",
+      "iteration": 0,
+      "inputSha256": "002dfe32dc4809026ac1b5607acabdecfb30fbf1228cbfaa7bcecef10e45eb0d",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1139.7015000000029,
+      "startedOffsetMs": 62468.650209,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9395008095508456
+        }
+      },
+      "usage": {
+        "inputTokens": 1057,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:85d2db98ccaeba941fb5d582",
+      "iteration": 0,
+      "inputSha256": "3cecf594beeaaf2d15ecf2a9dc783f31a4ccdb8f688e5d424e8fc785d9b9c1cf",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1241.9534580000036,
+      "startedOffsetMs": 72529.462584,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9763228773933447
+        }
+      },
+      "usage": {
+        "inputTokens": 1159,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:879226c0aa8b22c043f8301f",
+      "iteration": 0,
+      "inputSha256": "0d03f3e8c5f108cf01abcadf728c1260f4e2a802745b97eb520032c6e0a5610d",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 446.0659169999999,
+      "startedOffsetMs": 60101.26175,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.850016653136446
+        }
+      },
+      "usage": {
+        "inputTokens": 412,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:8958dcbeff04a579c9e4d97d",
+      "iteration": 0,
+      "inputSha256": "d4bf00abefaf2cf32acb132a7b54914a82a1df8d641b6453b327f60f9d7e1489",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 667.6744999999937,
+      "startedOffsetMs": 80516.631875,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.5203351799889703
+        }
+      },
+      "usage": {
+        "inputTokens": 614,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:8f166f926a6c4f6457beb43e",
+      "iteration": 0,
+      "inputSha256": "6b3bd8b1c6a5dd089e40b29f5f62f97b9fa28c39ec63f3304ca5dc41f656eabb",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 665.5153750000027,
+      "startedOffsetMs": 69584.876125,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.34277668072580153
+        }
+      },
+      "usage": {
+        "inputTokens": 628,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:90667ddf011ad01513bd9002",
+      "iteration": 0,
+      "inputSha256": "a2a50316fe01a054544732a7ec15ce511a1815454f2c4657f651e87857d8a421",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 736.2177079999965,
+      "startedOffsetMs": 77038.163042,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.5424263640848288
+        }
+      },
+      "usage": {
+        "inputTokens": 703,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:9186854bd7b366fde1b3b1ac",
+      "iteration": 0,
+      "inputSha256": "eab1951653d31e15c60cdf55ace7cfe3e595ca50cd736234666b8a82fd7b995c",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1081.3296249999985,
+      "startedOffsetMs": 43347.847125,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9718438549100658
+        }
+      },
+      "usage": {
+        "inputTokens": 1020,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:95d2da0c718f4869d2225b09",
+      "iteration": 0,
+      "inputSha256": "6b2686588ffb45c4a99d719cf020a58f00b80c360eed318d49a2f9c8e9dd6d7e",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1076.7978750000038,
+      "startedOffsetMs": 36860.914749999996,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9427813378214035
+        }
+      },
+      "usage": {
+        "inputTokens": 1014,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:9bfb2d33b86495bbeabd0f0c",
+      "iteration": 0,
+      "inputSha256": "13ddbe3ac90fbf3a63f0f962cd957854c60d4cf391dbb3042e3322e068d10cc1",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 404.2124590000021,
+      "startedOffsetMs": 86706.8535,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9131765222785152
+        }
+      },
+      "usage": {
+        "inputTokens": 360,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:9e200f8a4cc075a9cd5f45cc",
+      "iteration": 0,
+      "inputSha256": "7645abeed019da812c3797ec8ecde490db8eb33e4d3298d406ea99103e7163cd",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1264.8450830000002,
+      "startedOffsetMs": 0.4190420000000046,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9694770146657488
+        }
+      },
+      "usage": {
+        "inputTokens": 1247,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:a445c3919cccd3d54339beaa",
+      "iteration": 0,
+      "inputSha256": "ad68c6ad95436f17e33c84627fec5b4fd121946e922c2615814b6a797b55ad63",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1411.994292000003,
+      "startedOffsetMs": 24600.498499999998,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.6854586490337377
+        }
+      },
+      "usage": {
+        "inputTokens": 1319,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:a52f574599e1137ec23b666d",
+      "iteration": 0,
+      "inputSha256": "7db2020f475f3788a06a9eb890c7e13178fed3fb5a0e5192cb5ce38a887f8d87",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1338.9158749999988,
+      "startedOffsetMs": 16339.602959,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.6096889366291713
+        }
+      },
+      "usage": {
+        "inputTokens": 1249,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:b050c00938f2379f0133a4bb",
+      "iteration": 0,
+      "inputSha256": "bf6ac72b656a5afc012bbfdb5dfc0b8c45d5b3854abc8d1f30d0bb992c6ac62c",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1105.1609590000007,
+      "startedOffsetMs": 21284.2765,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.918862729483491
+        }
+      },
+      "usage": {
+        "inputTokens": 1055,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:b631905ed16f5813d24073c4",
+      "iteration": 0,
+      "inputSha256": "63f9fa310c316cac4bb406dfcdf2f180159e079d5cb3f4f6c5fa93ea029632cf",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 404.5227920000034,
+      "startedOffsetMs": 80112.105667,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.7540394610745065
+        }
+      },
+      "usage": {
+        "inputTokens": 369,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:b8564ddeee719c83fb3d514f",
+      "iteration": 0,
+      "inputSha256": "aee644b33159e6f1b6a3fd1488fa4b9f6a2188522a6fe2503d891ebd30f0e5db",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1216.293375000001,
+      "startedOffsetMs": 61252.353624999996,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9771709773670085
+        }
+      },
+      "usage": {
+        "inputTokens": 1143,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:be11a7970b888283cfbdcab6",
+      "iteration": 0,
+      "inputSha256": "e5a5eee845dc2fbe56db931fbacc9561d036214f83169e5acb02b4a6659441b2",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1363.1570000000065,
+      "startedOffsetMs": 99057.02325,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.7229145934300782
+        }
+      },
+      "usage": {
+        "inputTokens": 1259,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:c4114f6633f88ae34d99cdef",
+      "iteration": 0,
+      "inputSha256": "64ce57a7950ed5d9761568e2d79e9a916ad9991934942fe5e4a08ee425aae4a0",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1110.6780830000062,
+      "startedOffsetMs": 65983.069542,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.97097739438716
+        }
+      },
+      "usage": {
+        "inputTokens": 1041,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:c6f81edececa93e40b1eafbc",
+      "iteration": 0,
+      "inputSha256": "f74e956d69988e45740c5e0972dc96a06c2038b27f49c2a922a728855a75ec94",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1408.202250000002,
+      "startedOffsetMs": 89540.315,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.5403471575316073
+        }
+      },
+      "usage": {
+        "inputTokens": 1312,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:c88f57b0b70034c5e418a97d",
+      "iteration": 0,
+      "inputSha256": "18c7dd09113012bbf38f56c721b5fdbf030d583f7f3ce027b3ef7c06c7cf18c0",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1122.5033330000006,
+      "startedOffsetMs": 83722.210542,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9126567224911963
+        }
+      },
+      "usage": {
+        "inputTokens": 1054,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:caf85dc72d922889758c4a30",
+      "iteration": 0,
+      "inputSha256": "ec5ee9823e07e92c63beccf4e6a408ffa8006bd693bf6f737d19693821bb2a94",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1068.5647499999977,
+      "startedOffsetMs": 19720.932334,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.7941925168217647
+        }
+      },
+      "usage": {
+        "inputTokens": 1000,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:d10b0e8f47d59c37e70d6d0f",
+      "iteration": 0,
+      "inputSha256": "d703136ef515319ea80c41cf319e80fff0f722393ef06359707766e649513b21",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1010.3274999999994,
+      "startedOffsetMs": 81184.309042,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.794871472538095
+        }
+      },
+      "usage": {
+        "inputTokens": 929,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:d49e56950f1888db43d43537",
+      "iteration": 0,
+      "inputSha256": "53fc6424596a8ea07faa233027b9915fe7fc59abc0e813545dcb2ec57648e8a3",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 501.7273750000022,
+      "startedOffsetMs": 72027.732167,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.20684569839486505
+        }
+      },
+      "usage": {
+        "inputTokens": 474,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:d9fd4e33cde05b73a9124f9e",
+      "iteration": 0,
+      "inputSha256": "cf095707186c80e911874144571746bc3b3128ed0687412c80787845b00d1acc",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 829.9007500000007,
+      "startedOffsetMs": 28175.76575,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9111263603482942
+        }
+      },
+      "usage": {
+        "inputTokens": 778,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:dbbafe848dd05a85962f011d",
+      "iteration": 0,
+      "inputSha256": "5c3b9a2319f8a76d411d634baf45734a18f4216e3c2f7980c80b6dacb3e2f680",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1050.1447500000068,
+      "startedOffsetMs": 98006.872542,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9456081381434193
+        }
+      },
+      "usage": {
+        "inputTokens": 982,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:dfe54898e0537985d7c8577c",
+      "iteration": 0,
+      "inputSha256": "7eeca6d8e05dbbb7041fcd20bc6358cbc2f41657fb03dd3af72a5fba64943e40",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 476.70891699999993,
+      "startedOffsetMs": 2580.358625,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.41924503205574787
+        }
+      },
+      "usage": {
+        "inputTokens": 453,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:e2fa40c8b317419dd8799bfb",
+      "iteration": 0,
+      "inputSha256": "b970d397c76f6274d273b1d1f9e492d65ca2ca898ccf910b19d05a692b7d19af",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 834.8620410000003,
+      "startedOffsetMs": 31304.842459,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.8750817879587987
+        }
+      },
+      "usage": {
+        "inputTokens": 776,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:e8b8623a3ac4cfc2a5cb95f9",
+      "iteration": 0,
+      "inputSha256": "316ff414ba208734dd0f7f2855ed6be1a528d9c81e3380b6d72507c2184cbdd3",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1087.4889170000097,
+      "startedOffsetMs": 90948.519542,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9029604654293568
+        }
+      },
+      "usage": {
+        "inputTokens": 1013,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:ee60aa35f79e47fe12a2ea7e",
+      "iteration": 0,
+      "inputSha256": "c146ead66d322fc5dd36a3d16c2ccacdf4c80760cf9ecfbd82d3eb53620644d5",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 1253.341292000012,
+      "startedOffsetMs": 77774.385042,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9740706706610099
+        }
+      },
+      "usage": {
+        "inputTokens": 1167,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:f2d748b3f68b8f4217883900",
+      "iteration": 0,
+      "inputSha256": "36f1f95674e10d5c8f678aac2320c14ae686211ecaa4c4dca889a1c9c24f3f9f",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 570.392958000004,
+      "startedOffsetMs": 46289.710333999996,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.9277059737643885
+        }
+      },
+      "usage": {
+        "inputTokens": 528,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:f35b132c1ffc0bc088e434f5",
+      "iteration": 0,
+      "inputSha256": "7a7466aee5ac1e9c8f9b1d81fa2b5d1e225372b1f455575108439f15c515d521",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 699.0997920000009,
+      "startedOffsetMs": 34950.264125,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.5920217987894024
+        }
+      },
+      "usage": {
+        "inputTokens": 661,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:f9bd5feff248885cec399016",
+      "iteration": 0,
+      "inputSha256": "993dec9bdf0b827c10027120ec51d7379256352782c297ffc78a7b57a9535592",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 407.43274999999267,
+      "startedOffsetMs": 83314.7755,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.22315941414551896
+        }
+      },
+      "usage": {
+        "inputTokens": 372,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    },
+    {
+      "caseId": "t2:ff0a421bb5b02506a7c8b62b",
+      "iteration": 0,
+      "inputSha256": "98d094559b557f60270b37ce59c5928b6d27f91bbf128db8e9a35ec41b47d1d2",
+      "model": "d3-nano-eval",
+      "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+      "mode": "shadow",
+      "applied": false,
+      "latencyMs": 431.7934580000001,
+      "startedOffsetMs": 26012.497417,
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.708174537095662
+        }
+      },
+      "usage": {
+        "inputTokens": 392,
+        "outputTokens": 0
+      },
+      "error": null,
+      "probabilitySource": "native"
+    }
+  ]
+}

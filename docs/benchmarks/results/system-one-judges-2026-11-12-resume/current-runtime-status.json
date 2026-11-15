@@ -1,0 +1,107 @@
+{
+  "ts": 1794481081.1028721,
+  "health": {
+    "status": "ok",
+    "version": "0.0.0",
+    "reviewBacklog": {
+      "open_lanes_count": 90,
+      "open_boundary_lanes_count": 0,
+      "oldest_open_lane_age_ms": 88233803
+    },
+    "lagMs": 4.751708999974653,
+    "llmRoleFloors": {
+      "ok": true,
+      "violations": []
+    },
+    "t2Promotion": {
+      "enabled": true,
+      "reason": "judge_configured",
+      "judge_env": "PENUMBRA_JUDGE_BASE_URL",
+      "empty_extraction_streak": 7382,
+      "healthy": false
+    }
+  },
+  "controlPlaneSupervision": {
+    "daemon": {
+      "registered": false
+    },
+    "worker": {
+      "registered": false
+    }
+  },
+  "temporaryManualProcesses": {
+    "daemon": {
+      "pid": 52447,
+      "command": [
+        "/Users/aimastermind/.bun/bin/bun",
+        "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/production-readiness/deployment/4fe01decbb52/source/packages/cli/bin/penumbra.ts",
+        "start",
+        "--port",
+        "51257"
+      ]
+    },
+    "worker": {
+      "pid": 52582,
+      "command": [
+        "/Users/aimastermind/.bun/bin/bun",
+        "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/production-readiness/deployment/4fe01decbb52/source/packages/agentchat/bin/agentchat-worker.ts",
+        "--concurrency=1"
+      ]
+    }
+  },
+  "inferenceSupervision": {
+    "registered": true,
+    "pid": 51379
+  },
+  "models": [
+    {
+      "id": "d3-nano-eval",
+      "status": "sleeping"
+    },
+    {
+      "id": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+      "status": "unloaded"
+    }
+  ],
+  "inferenceProcesses": [
+    {
+      "pid": 51379,
+      "ppid": 1,
+      "rssBytes": 99991552,
+      "physicalFootprintLines": [
+        "Physical footprint:         37.3M",
+        "Physical footprint (peak):  117.9M"
+      ]
+    },
+    {
+      "pid": 51392,
+      "ppid": 51379,
+      "rssBytes": 154714112,
+      "physicalFootprintLines": [
+        "Physical footprint:         48.7M",
+        "Physical footprint (peak):  219.7M"
+      ]
+    }
+  ],
+  "aggregateInferenceRssBytes": 254705664,
+  "plists": {
+    "daemon": {
+      "sha256": "67011208af338f9fefcfd9626eae7fc92bdca1fae49512421e5573a8b095f285",
+      "sourceEntry": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/production-readiness/deployment/4fe01decbb52/source/packages/cli/bin/penumbra.ts",
+      "judgeBaseUrl": "http://127.0.0.1:7944",
+      "localShadow": "false (default)",
+      "existingHostedPromotionMode": "veto"
+    },
+    "worker": {
+      "sha256": "dfde516743e5e0d30e50464b4c09d8e86dee497893aaf51602b767820ca14b71",
+      "sourceEntry": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/production-readiness/deployment/4fe01decbb52/source/packages/agentchat/bin/agentchat-worker.ts",
+      "judgeBaseUrl": "http://127.0.0.1:7944",
+      "localShadow": "false (default)",
+      "existingHostedPromotionMode": null
+    }
+  },
+  "authorityChanged": false,
+  "nativeDaemonShadowActivated": false,
+  "productionGraniteRouteActivated": false,
+  "status": "Awaiting Bun OS external-file access for supervised control-plane recovery and staged Granite route repair. Original large Granite process stopped; no weights currently loaded."
+}

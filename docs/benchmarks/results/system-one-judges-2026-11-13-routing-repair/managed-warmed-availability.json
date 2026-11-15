@@ -1,0 +1,54 @@
+{
+  "method": "One fixed synthetic managed Q8 availability request after CI, no private input/queue/cache/authority/role changes. Wait for natural autosleep; discrete RSS snapshot, not quality, physical footprint or sustained-load proof.",
+  "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+  "coldManagedRequestMs": 3027.7029587887228,
+  "passed": true,
+  "models": [
+    {
+      "id": "d3-nano-eval",
+      "state": "unloaded"
+    },
+    {
+      "id": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+      "state": "sleeping"
+    }
+  ],
+  "processes": [
+    {
+      "pid": 23608,
+      "ppid": 1,
+      "rssKiB": 121616
+    },
+    {
+      "pid": 23825,
+      "ppid": 23608,
+      "rssKiB": 133440
+    }
+  ],
+  "aggregateWarmedIdleRssMiB": 249.078125,
+  "allMiniLlamaProcesses": [
+    {
+      "pid": 23608,
+      "ppid": 1,
+      "rssKiB": 121616
+    },
+    {
+      "pid": 23825,
+      "ppid": 23608,
+      "rssKiB": 133440
+    },
+    {
+      "pid": 32818,
+      "ppid": 1,
+      "rssKiB": 4944
+    },
+    {
+      "pid": 60792,
+      "ppid": 1,
+      "rssKiB": 16368
+    }
+  ],
+  "plistUnchanged": true,
+  "daemonHealth": "ok",
+  "applied": false
+}

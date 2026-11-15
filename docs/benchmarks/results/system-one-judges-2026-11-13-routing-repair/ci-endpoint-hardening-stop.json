@@ -1,0 +1,8 @@
+{
+  "at": "2026-11-13T22:18:53.237257+00:00",
+  "action": "stop exact owned wrapper before source hardening",
+  "pid": 51335,
+  "reason": "Read-only regression demonstrates 10.0.0.1evil incorrectly qualifies as LAN via parseInt; tighten numeric octets before TEST",
+  "sourceModifiedDuringCI": false,
+  "testInferenceStarted": false
+}

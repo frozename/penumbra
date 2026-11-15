@@ -1,0 +1,28 @@
+{
+  "status": "aborted",
+  "model": "nano",
+  "admissionFloorIgnored": true,
+  "authority": "none",
+  "startedAt": 1794532226.0357614,
+  "command": [
+    "/home/alex/DevStorage/penumbra-system-one-npu-test-20261112/runtime/flm",
+    "serve",
+    "--decision",
+    "d3:nano",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "52625",
+    "--pmode",
+    "default",
+    "--quiet"
+  ],
+  "gufoPid": 791917,
+  "runtimeOutput": "suppressed: FLM --quiet still prints request bodies; use typed client errors and resource/exit diagnostics",
+  "npuUtilization": "not available from inspected unprivileged counters",
+  "reason": "OSError: [Errno 98] Address already in use",
+  "elapsedSeconds": 3.345299046486616e-05,
+  "endedAt": 1794532226.0357969,
+  "gufoPidAfter": 791917,
+  "runtimeExitCode": null
+}

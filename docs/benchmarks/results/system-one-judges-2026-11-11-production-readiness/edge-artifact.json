@@ -1,0 +1,11 @@
+{
+  "model": "vllm-sr/d3-edge",
+  "upstreamRevision": "bee5e872f75b9c5d1405767bf244a6948b95c0af",
+  "ggufRepo": "ggml-org/vllm-d3-edge-GGUF",
+  "ggufRevision": "e59a4bd76e00c243e08f01182f55fd1893142d95",
+  "filename": "vllm-d3-edge-Q8_0.gguf",
+  "bytes": 806232480,
+  "sha256": "bdffd3a44a2535d8672d3ca7cf110c61bf1fe95788a3d249f18b3310cc0f85cd",
+  "license": "Apache-2.0, upstream LICENSE previously verified; no weights redistributed",
+  "status": "downloaded, not yet benchmarked"
+}

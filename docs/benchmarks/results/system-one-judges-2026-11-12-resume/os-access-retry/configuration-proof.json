@@ -1,0 +1,29 @@
+{
+  "at": 1794482022.455779,
+  "scope": "After OS grant: supervised4fe source; only existing Granite endpoint changed; all model IDs/roles/quorum/thresholds and pre-existing hosted veto unchanged",
+  "plists": {
+    "daemon": {
+      "sha256": "66fcaa4e24aa4efc15f6ec6a9656690fecb5a1d3fe43bc4c68c337a3fdcbd0ca",
+      "judgeBaseUrl": "http://127.0.0.1:18944",
+      "judgeModel": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+      "localShadow": "false (default)",
+      "existingHostedPromotionMode": "veto",
+      "runAtLoad": true,
+      "keepAlive": true
+    },
+    "worker": {
+      "sha256": "02f2e535ac9914146df75a7397429c02ee2d683bddcc0e6fd4e56cb45dd0f699",
+      "judgeBaseUrl": "http://127.0.0.1:18944",
+      "judgeModel": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+      "localShadow": "false (default)",
+      "existingHostedPromotionMode": null,
+      "runAtLoad": true,
+      "keepAlive": {
+        "Crashed": true,
+        "SuccessfulExit": false
+      }
+    }
+  },
+  "oldManualPidsGone": true,
+  "nativeAuthorityActivated": false
+}

@@ -1,0 +1,83 @@
+{
+  "observedAt": "2026-11-13T20:32:45.738645+00:00",
+  "method": "Read-only status snapshots after complete frozen rewriter comparisons and strict native/incumbent availability controls. No model inference or service mutation.",
+  "mini": {
+    "health": "ok",
+    "judgeRuntimeHealth": "ok",
+    "supervisorPid": 90577,
+    "plistSha256": "b52d90c7f32eead8d1ddc233ba7059621fad866f9e5403ad8454387da731999d",
+    "liveAgentsSha256": "b9c14e2f4c480cd0c4823bc5b21401f8564cb02d80d173e49d2c0ed189524db9",
+    "models": [
+      {
+        "id": "d3-nano-eval",
+        "state": "unloaded"
+      },
+      {
+        "id": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+        "state": "sleeping"
+      }
+    ],
+    "processes": [
+      {
+        "pid": 90577,
+        "ppid": 1,
+        "rssKiB": 120592
+      },
+      {
+        "pid": 91051,
+        "ppid": 90577,
+        "rssKiB": 133680
+      }
+    ],
+    "aggregateRssMiB": 248.3125,
+    "ephemeralEvaluationPortOpen": false,
+    "rssCaveat": "Discrete idle snapshot, not physical footprint or peak. Shared pages may be counted twice."
+  },
+  "kapitsa": {
+    "state": "Running",
+    "pid": 39656,
+    "samePid": true,
+    "rpcIncludesOsHeadroom": false,
+    "postStudyOsSample": {
+      "at": "2026-11-13T20:32:45.709622+00:00",
+      "freePlusInactiveBytes": 20464812032,
+      "pressureLevel": 1,
+      "health": {
+        "status": "ok"
+      },
+      "establishedConnections": 0
+    }
+  },
+  "gufo": {
+    "gufoPid": 791917,
+    "sameProcessAlive": true,
+    "executable": "/home/alex/DevStorage/llamactl-z13/gufo-v0.26.0/gufo-78d74185",
+    "health": {
+      "status": "ok"
+    },
+    "slots": [
+      {
+        "id": 0,
+        "is_processing": false
+      },
+      {
+        "id": 1,
+        "is_processing": false
+      },
+      {
+        "id": 2,
+        "is_processing": false
+      }
+    ],
+    "memory": {
+      "MemTotal": 134155739136,
+      "MemAvailable": 21897879552,
+      "SwapTotal": 8589930496,
+      "SwapFree": 8588795904
+    }
+  },
+  "productionGenerationRolesChanged": false,
+  "newPromotionOrVetoAuthority": false,
+  "qualityAccepted": false,
+  "capacityCaveat": "Health, unchanged PIDs and idle slots do not establish coding priority, peak memory or load isolation."
+}

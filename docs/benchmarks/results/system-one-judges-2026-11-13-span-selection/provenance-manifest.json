@@ -1,0 +1,7 @@
+{
+  "method": "Read-only T0 event metadata re-rendered through the actual source reader, exact input hash checked. Agent-response extents are eligible; agent-prompt extents remain context only. No role labels parsed from text to grant eligibility. Controlled dialogue is a declared synthetic premise. No gold label or model result used. Implementation parent received only counts/hashes, not held-out bodies.",
+  "cases": 45,
+  "unavailable": 0,
+  "metadataSha256": "5a205ea190072857c20f5b22f80f895e2444d6b1479b9fab5822e7b8ccff1398",
+  "heldoutInputSha256": "96dbd5b33190a15441490834d6687f306f556c5175324fa2fcbc9380d37eda50"
+}

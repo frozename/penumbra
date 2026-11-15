@@ -1,0 +1,12 @@
+{
+  "pausedAtEpoch": 1794446775.976227,
+  "reason": "Explicit user stop for now",
+  "nativeRuntimeStopped": true,
+  "graniteRestoredPid": 49430,
+  "graniteOriginalCommandVerified": true,
+  "graniteHealthStatus": 200,
+  "productionAuthorityChanged": false,
+  "completedMiniComparison": "mini-reviewed/run.json:320/320 answered;259 labeled held-out cases;F1.97744,FP2,FN1",
+  "unfinished": "Complete-body t2-mini replay interrupted; no completed summary or quality claim for that run. Resume by a new explicit replay output directory, preserving interrupted artifacts.",
+  "repositoryState": "DraftPR613 points to108e788ad. New research edits and quality-extension artifacts remain in the worktree, not pushed. No further work until user resumes."
+}

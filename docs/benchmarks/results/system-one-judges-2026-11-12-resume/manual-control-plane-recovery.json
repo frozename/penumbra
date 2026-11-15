@@ -1,0 +1,45 @@
+{
+  "ts": 1794480349.850608,
+  "scope": "Temporary manually launched original4fe source/env after direct launchd external-directory startup stalls. Exact original agent/plist bytes retained; launchd jobs unloaded to prevent duplicates. Not supervised-production readiness. No new native authority.",
+  "processes": {
+    "daemon": {
+      "pid": 52447,
+      "command": [
+        "/Users/aimastermind/.bun/bin/bun",
+        "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/production-readiness/deployment/4fe01decbb52/source/packages/cli/bin/penumbra.ts",
+        "start",
+        "--port",
+        "51257"
+      ]
+    },
+    "worker": {
+      "pid": 52582,
+      "command": [
+        "/Users/aimastermind/.bun/bin/bun",
+        "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/production-readiness/deployment/4fe01decbb52/source/packages/agentchat/bin/agentchat-worker.ts",
+        "--concurrency=1"
+      ]
+    }
+  },
+  "health": {
+    "status": "ok",
+    "version": "0.0.0",
+    "reviewBacklog": {
+      "open_lanes_count": 91,
+      "open_boundary_lanes_count": 0,
+      "oldest_open_lane_age_ms": 87503769
+    },
+    "lagMs": 0,
+    "llmRoleFloors": {
+      "ok": true,
+      "violations": []
+    },
+    "t2Promotion": {
+      "enabled": true,
+      "reason": "judge_configured",
+      "judge_env": "PENUMBRA_JUDGE_BASE_URL",
+      "empty_extraction_streak": 7382,
+      "healthy": false
+    }
+  }
+}

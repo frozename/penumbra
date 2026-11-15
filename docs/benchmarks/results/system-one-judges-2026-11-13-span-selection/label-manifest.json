@@ -1,0 +1,339 @@
+{
+  "frozenBeforeInference": true,
+  "independentAIReviewers": 2,
+  "separateAdjudicator": true,
+  "humanLabels": false,
+  "privateSourceCorpusSha256": "96dbd5b33190a15441490834d6687f306f556c5175324fa2fcbc9380d37eda50",
+  "labelSha256": "61f457f41c7896b377d270bb34bfc3676be98b345a0bdad87a942a73a5a8b2fe",
+  "labelAdjudicationSha256": "f558e192abb321b57d62c3cf7e95ebe03aa32719699e419ccdf7258cc0746ee8",
+  "cohorts": {
+    "historical": {
+      "cases": 14,
+      "positive": 5,
+      "negative": 8,
+      "uncertain": 1,
+      "expectedFactInstances": 9
+    },
+    "controlled": {
+      "cases": 24,
+      "positive": 12,
+      "negative": 12,
+      "uncertain": 0,
+      "expectedFactInstances": 12
+    }
+  },
+  "caseHashes": [
+    {
+      "caseId": "bank-003",
+      "kind": "historical",
+      "family": "historical_git_environment_repo_identity",
+      "inputSha256": "da3fe9898afdc9355d6b39efe571cd4b1fe6d1540a98fd3f2ec76006aab0df79",
+      "label": "positive",
+      "expectedFacts": 3
+    },
+    {
+      "caseId": "bank-018",
+      "kind": "historical",
+      "family": "historical_matcher_type_narrowing",
+      "inputSha256": "23970f37ed21ad505170d0e77d97a451c2ea3ee19bf5a6697444cb8d6c36571a",
+      "label": "positive",
+      "expectedFacts": 2
+    },
+    {
+      "caseId": "bank-022",
+      "kind": "historical",
+      "family": "historical_discriminant_literal_widening",
+      "inputSha256": "d765a2be320ca617e2e509c0d054e61158b7c33f18271df2d617a8b37ab76a90",
+      "label": "positive",
+      "expectedFacts": 1
+    },
+    {
+      "caseId": "bank-025",
+      "kind": "historical",
+      "family": "historical_nested_model_sibling_resolution",
+      "inputSha256": "0d80e408ad3ff1c2d761e2f7afde87c2bdd1ec249380ac76ff7cccd7fd3835e5",
+      "label": "positive",
+      "expectedFacts": 2
+    },
+    {
+      "caseId": "bank-040",
+      "kind": "historical",
+      "family": "historical_perl_record_newline_scan",
+      "inputSha256": "36888280ec9671fac4a5fcd9d40b26c524fc3da90906d98602dfbe450b2e7679",
+      "label": "positive",
+      "expectedFacts": 1
+    },
+    {
+      "caseId": "bank-001",
+      "kind": "historical",
+      "family": "historical_task_refiner_role_and_idle_tick",
+      "inputSha256": "08d24d4372f1bd59b50c9c2a46b9094ff9c05e1707b741a17988271936141830",
+      "label": "negative",
+      "expectedFacts": 0
+    },
+    {
+      "caseId": "bank-004",
+      "kind": "historical",
+      "family": "historical_task_refiner_role_and_idle_tick",
+      "inputSha256": "c3228fd17cbd266ed053580c295c8e822c3d9fad9ad64e09f0175a70b7d02e78",
+      "label": "negative",
+      "expectedFacts": 0
+    },
+    {
+      "caseId": "bank-008",
+      "kind": "historical",
+      "family": "historical_quoted_reasoning_prompt_confusion",
+      "inputSha256": "e00d1ac2d14f9848455863bca71e345334f425eece2f8e9b386aafe4daf0759b",
+      "label": "negative",
+      "expectedFacts": 0
+    },
+    {
+      "caseId": "bank-009",
+      "kind": "historical",
+      "family": "historical_mcp_field_inventory_and_status",
+      "inputSha256": "dd1d44ffb0f531368389ef5ef857b2db99bc7659324dd02435cd4ee4b095f316",
+      "label": "negative",
+      "expectedFacts": 0
+    },
+    {
+      "caseId": "bank-017",
+      "kind": "historical",
+      "family": "historical_test_completion_report",
+      "inputSha256": "b6acbbba7ad83963be22cf0bfd712d9decf26f9c9c8e40e7342731d12d7fe750",
+      "label": "negative",
+      "expectedFacts": 0
+    },
+    {
+      "caseId": "bank-030",
+      "kind": "historical",
+      "family": "historical_retracted_formatter_claim",
+      "inputSha256": "af9dabb208ad8810de296dba9bdefe0939b4e48b6631d19ad8dc6475278c3c6d",
+      "label": "negative",
+      "expectedFacts": 0
+    },
+    {
+      "caseId": "bank-036",
+      "kind": "historical",
+      "family": "historical_readiness_implementation_inventory",
+      "inputSha256": "c2fcb9e18f7f228749ad0115c276003d520dfc20282b839b0e16d5d221929c57",
+      "label": "negative",
+      "expectedFacts": 0
+    },
+    {
+      "caseId": "bank-039",
+      "kind": "historical",
+      "family": "historical_editing_doubts_and_status",
+      "inputSha256": "1914945b6d0253f63c4839c15cc6f25c23c4224ee2aba7d83e588bd91215ec58",
+      "label": "negative",
+      "expectedFacts": 0
+    },
+    {
+      "caseId": "bank-023",
+      "kind": "historical",
+      "family": "historical_sqlite_extension_failure_unverified",
+      "inputSha256": "7b85f6040e2c91521cd2dbcff22d822f670fe5bd19406e5b56fb4be1b3585162",
+      "label": "uncertain",
+      "expectedFacts": 0
+    },
+    {
+      "caseId": "controlled-01-p",
+      "kind": "controlled",
+      "family": "controlled_report_order_preference",
+      "inputSha256": "a25d3c673d283452dfb915285703088a4abb4cfcc6e00bced27408a2499139c8",
+      "label": "positive",
+      "expectedFacts": 1
+    },
+    {
+      "caseId": "controlled-01-n",
+      "kind": "controlled",
+      "family": "controlled_report_order_preference",
+      "inputSha256": "093d8e8f20baf40c02d1b654454b470cccf6ec0477c6c50b831d17c58046f422",
+      "label": "negative",
+      "expectedFacts": 0
+    },
+    {
+      "caseId": "controlled-02-p",
+      "kind": "controlled",
+      "family": "controlled_accessibility_preference",
+      "inputSha256": "f119d1ff7a78a2c7e0cc329571c0765d05640e842b42f56b856e5ecf0baf8b31",
+      "label": "positive",
+      "expectedFacts": 1
+    },
+    {
+      "caseId": "controlled-02-n",
+      "kind": "controlled",
+      "family": "controlled_accessibility_preference",
+      "inputSha256": "4b5badab1e97395fdcd6664a8a4d5b461c5294c1f04819111be08c83d647835c",
+      "label": "negative",
+      "expectedFacts": 0
+    },
+    {
+      "caseId": "controlled-03-p",
+      "kind": "controlled",
+      "family": "controlled_raw_normalized_project_decision",
+      "inputSha256": "ca8a8def6e244d974b1075c7d557d9f46448ff5ac7a92675cf32f4a4231d25b5",
+      "label": "positive",
+      "expectedFacts": 1
+    },
+    {
+      "caseId": "controlled-03-n",
+      "kind": "controlled",
+      "family": "controlled_raw_normalized_project_decision",
+      "inputSha256": "93c783be0b0920bf8ff1e6d10f63ba8f6e33e3f6c928904363433f98d175bdda",
+      "label": "negative",
+      "expectedFacts": 0
+    },
+    {
+      "caseId": "controlled-04-p",
+      "kind": "controlled",
+      "family": "controlled_validation_retry_decision",
+      "inputSha256": "171bae1c48ba8cca584357c5c1cc9c036b0e7750241bb22b99980193f3493f74",
+      "label": "positive",
+      "expectedFacts": 1
+    },
+    {
+      "caseId": "controlled-04-n",
+      "kind": "controlled",
+      "family": "controlled_validation_retry_decision",
+      "inputSha256": "8f593862bf588c297cd9291d9a33f41375dd5f6f358e7fade1b2be845c5f2481",
+      "label": "negative",
+      "expectedFacts": 0
+    },
+    {
+      "caseId": "controlled-05-p",
+      "kind": "controlled",
+      "family": "controlled_readiness_body_deadline",
+      "inputSha256": "9fbed67cedb9138479a55ac0c343583a7e4c4c5bc9e2e654bc28bebb135f5f94",
+      "label": "positive",
+      "expectedFacts": 1
+    },
+    {
+      "caseId": "controlled-05-n",
+      "kind": "controlled",
+      "family": "controlled_readiness_body_deadline",
+      "inputSha256": "6f4e840c73897d04b1a91ad26ee38ab2ad99303d01271ff4d909e3e4d2415acf",
+      "label": "negative",
+      "expectedFacts": 0
+    },
+    {
+      "caseId": "controlled-06-p",
+      "kind": "controlled",
+      "family": "controlled_modelhost_extraargs_bind",
+      "inputSha256": "f158e065c76cceeacca0f873c4de3cb5e4cdd23bda11bfa05e97597bfb479c79",
+      "label": "positive",
+      "expectedFacts": 1
+    },
+    {
+      "caseId": "controlled-06-n",
+      "kind": "controlled",
+      "family": "controlled_modelhost_extraargs_bind",
+      "inputSha256": "b687265e05d549d8494c153880e7627471b4c4938209234366af9a79b1e1bb1f",
+      "label": "negative",
+      "expectedFacts": 0
+    },
+    {
+      "caseId": "controlled-07-p",
+      "kind": "controlled",
+      "family": "controlled_zero_request_field_mapping",
+      "inputSha256": "a93bd03220f8777fd18722828323e0725e65e54127a62905a596dc2b30f7a65f",
+      "label": "positive",
+      "expectedFacts": 1
+    },
+    {
+      "caseId": "controlled-07-n",
+      "kind": "controlled",
+      "family": "controlled_zero_request_field_mapping",
+      "inputSha256": "c5ea271fe7057419edaa52518ecd053bb1c22f99e883ada5812fff59e217b902",
+      "label": "negative",
+      "expectedFacts": 0
+    },
+    {
+      "caseId": "controlled-08-p",
+      "kind": "controlled",
+      "family": "controlled_quoted_units_preference_spoof",
+      "inputSha256": "515f53a5093dae7012fa1bced3fb6a7dddf68291dce7070683f89a9c7b1c5bdd",
+      "label": "positive",
+      "expectedFacts": 1
+    },
+    {
+      "caseId": "controlled-08-n",
+      "kind": "controlled",
+      "family": "controlled_quoted_units_preference_spoof",
+      "inputSha256": "37577f035a057d2fcd5211f9331280ff7e2787349fa481d1e0985b5cbe063bca",
+      "label": "negative",
+      "expectedFacts": 0
+    },
+    {
+      "caseId": "controlled-09-p",
+      "kind": "controlled",
+      "family": "controlled_review_scope_role_spoof",
+      "inputSha256": "ce00c6c74415d1b7ec7688f9704258826b9a4f663cc0f191bd4d1333b767192d",
+      "label": "positive",
+      "expectedFacts": 1
+    },
+    {
+      "caseId": "controlled-09-n",
+      "kind": "controlled",
+      "family": "controlled_review_scope_role_spoof",
+      "inputSha256": "74c4eae711400a0cca4d2930c9a677388a60e74cec9199b216db00dc5af31917",
+      "label": "negative",
+      "expectedFacts": 0
+    },
+    {
+      "caseId": "controlled-10-p",
+      "kind": "controlled",
+      "family": "controlled_retracted_measurement_reporting",
+      "inputSha256": "fcfc7077f616a583c34e8fd3a217675b1c8ccc22c3293a21516157960ebb3de6",
+      "label": "positive",
+      "expectedFacts": 1
+    },
+    {
+      "caseId": "controlled-10-n",
+      "kind": "controlled",
+      "family": "controlled_retracted_measurement_reporting",
+      "inputSha256": "e6dcd92b656372e6c55399f40e0d7bed1082934c7ff0e382fb679fd6bfbe44e1",
+      "label": "negative",
+      "expectedFacts": 0
+    },
+    {
+      "caseId": "controlled-11-p",
+      "kind": "controlled",
+      "family": "controlled_long_context_assumption_decision",
+      "inputSha256": "0aa08efdb0ff0987fa6e8e159bec0c652f73014f04738dbe46ba804862f526f8",
+      "label": "positive",
+      "expectedFacts": 1
+    },
+    {
+      "caseId": "controlled-11-n",
+      "kind": "controlled",
+      "family": "controlled_long_context_assumption_decision",
+      "inputSha256": "3e438b847c5a6e6217ef97f3a560daa4441c325841a1873278ba334311c26772",
+      "label": "negative",
+      "expectedFacts": 0
+    },
+    {
+      "caseId": "controlled-12-p",
+      "kind": "controlled",
+      "family": "controlled_long_context_config_cache",
+      "inputSha256": "b023e368572ae65d67b175074e047c042bd986a95209e9a01cd4c71ed49a6142",
+      "label": "positive",
+      "expectedFacts": 1
+    },
+    {
+      "caseId": "controlled-12-n",
+      "kind": "controlled",
+      "family": "controlled_long_context_config_cache",
+      "inputSha256": "8d8498662c3d99c2aa107ca53b99e9e2b81e5bc55edaa0f06bce3e2d833bf940",
+      "label": "negative",
+      "expectedFacts": 0
+    }
+  ],
+  "caveats": [
+    "Purposively enriched historical positives; not population prevalence.",
+    "Fourteen overlength historical candidates omitted intact, never clipped.",
+    "Current source/isolated probes corroborate mechanisms, not historical execution.",
+    "Controlled dialogues are explicit synthetic premises, not human statements.",
+    "No historical family held out from all previous Penumbra tasks is claimed.",
+    "Labels share an AI model family; not human adjudication."
+  ]
+}

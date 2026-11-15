@@ -1,0 +1,12 @@
+{
+  "restoredAtEpoch": 1794431902.873605,
+  "pid": 92255,
+  "originalCommandSha256": "c7f1d9b28097336a92251d090062b22c6178edee8cee927593b0d9dc0c7ce13a",
+  "sameBinaryModelFlags": true,
+  "health": {
+    "status": 200,
+    "body": {
+      "status": "ok"
+    }
+  }
+}

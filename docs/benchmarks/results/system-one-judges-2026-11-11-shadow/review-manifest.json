@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "labelStatus": "awaiting-independent-review",
+  "policy": "Content durability under the incumbent promotion rubric; factual support is separate. Retention and model decisions are not ground truth.",
+  "sampling": "Seeded round-robin by month, character-length band and existing retention; one unique body/session; not a population-weighted estimate.",
+  "seed": "penumbra-independent-review-20261111-v1",
+  "inputRows": 19238,
+  "eligibleUniqueRows": 923,
+  "selected": 200,
+  "excludedPilotHashes": 44,
+  "packetSha256": "bb27af52f5f97f9bdb8cecdc8de368bfbacac12149e8d503bd3293bf26f4ad6f",
+  "strata": [
+    {
+      "stratum": "2026-09:short:retained",
+      "eligible": 22,
+      "selected": 22
+    },
+    {
+      "stratum": "2026-09:short:unretained",
+      "eligible": 66,
+      "selected": 55
+    },
+    {
+      "stratum": "2026-10:short:retained",
+      "eligible": 44,
+      "selected": 44
+    },
+    {
+      "stratum": "2026-10:short:unretained",
+      "eligible": 767,
+      "selected": 55
+    },
+    {
+      "stratum": "2026-11:short:retained",
+      "eligible": 3,
+      "selected": 3
+    },
+    {
+      "stratum": "2026-11:short:unretained",
+      "eligible": 21,
+      "selected": 21
+    }
+  ]
+}

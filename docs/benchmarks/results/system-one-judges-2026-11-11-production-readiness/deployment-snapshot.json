@@ -1,0 +1,10 @@
+{
+  "commit": "4fe01decbb522b850af84d5ac09dfa539dee6857",
+  "snapshot": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/production-readiness/deployment/4fe01decbb52/source",
+  "source": "git archive of committed source; console assets copied from successful CI build",
+  "bunLockSha256": "68db83136fabcbcab51e1723070a31bd2271435e7317d158ab90051759d37fae",
+  "p4SourceSha256": "fd4549ef2c485a3c0ac4c55566892785f683bc11a9ddfab905b227fe0b0f821d",
+  "newJudgeActivation": false,
+  "productionConfigurationChanged": false,
+  "ci": "Full check:ci passed, 7 gates / 0 failures / 4 host-provisioning/advisory skips; existing scripts type-debt floor 8 preserved"
+}

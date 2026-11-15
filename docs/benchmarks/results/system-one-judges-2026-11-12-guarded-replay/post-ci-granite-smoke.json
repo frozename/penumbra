@@ -1,0 +1,29 @@
+{
+  "at": "2026-11-12T12:56:44.149Z",
+  "method": "Actual T2 extraction factory with live user config and synthetic ephemeral input; no database writes; does not establish durable-positive extraction quality",
+  "granite": {
+    "name": "local-granite-3b-q8-http",
+    "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+    "baseUrl": "http://127.0.0.1:18944/v1",
+    "roles": [
+      "memory-refiner",
+      "dreaming-judge",
+      "dreaming-rewriter",
+      "refiner",
+      "brief-synthesizer"
+    ]
+  },
+  "latencyMs": 4595.500292,
+  "result": [],
+  "logs": [
+    [
+      {
+        "count": 1,
+        "names": [
+          "local-granite-3b-q8-http"
+        ]
+      },
+      "t2 promotion: judge pool configured"
+    ]
+  ]
+}

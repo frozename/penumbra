@@ -1,0 +1,62 @@
+{
+  "at": "2026-11-13T15:11:05.175Z",
+  "method": "One native strict-client response then actual incumbent factory with live unchanged configuration and synthetic ephemeral input. No database writes; availability only, not quality acceptance.",
+  "mode": "shadow",
+  "applied": false,
+  "native": {
+    "model": "d3-nano-eval",
+    "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+    "result": {
+      "ok": true,
+      "model": "d3-nano-eval",
+      "answers": {
+        "promote": {
+          "type": "noul",
+          "noul": 0.0018673775486931475
+        }
+      },
+      "usage": {
+        "inputTokens": 245,
+        "outputTokens": 0
+      },
+      "attempts": 1
+    },
+    "diagnostics": [
+      {
+        "model": "d3-nano-eval",
+        "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+        "inputSha256": "32e92bcd2afa937ce4ba1008c7e74609471d9de6539e2b11336ddddb639d06bd",
+        "latencyMs": 2163.240875,
+        "ok": true,
+        "failure": null,
+        "attempts": 1
+      }
+    ]
+  },
+  "incumbent": {
+    "name": "local-granite-3b-q8-http",
+    "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+    "baseUrl": "http://127.0.0.1:18944/v1",
+    "roles": [
+      "memory-refiner",
+      "dreaming-judge",
+      "dreaming-rewriter",
+      "refiner",
+      "brief-synthesizer"
+    ],
+    "latencyMs": 2279.960625,
+    "extracted": [],
+    "logs": [
+      [
+        {
+          "count": 1,
+          "names": [
+            "local-granite-3b-q8-http"
+          ]
+        },
+        "t2 promotion: judge pool configured"
+      ]
+    ]
+  },
+  "productionAuthorityChanged": false
+}

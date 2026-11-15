@@ -1,0 +1,5 @@
+{
+  "pid": 92255,
+  "stoppedAtEpoch": 1794432734.683081,
+  "reason": "temporary validation pause under user authorization; avoid sharing native inference residency with repository-standard 8 GiB typed lint"
+}

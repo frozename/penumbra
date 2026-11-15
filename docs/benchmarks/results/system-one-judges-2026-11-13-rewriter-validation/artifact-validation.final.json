@@ -1,0 +1,12 @@
+{
+  "status": "passed",
+  "parsedJsonOrJsonlFiles": 53,
+  "publishedDecisionRows": 698,
+  "syntheticTextRows": 68,
+  "frozenCandidateHashesVerified": 13,
+  "fullCiSourceAndPackageTreeVerified": true,
+  "confusionAndSemanticCountsIndependentlyRecomputed": true,
+  "nativeBrierIndependentlyRecomputed": true,
+  "historicalTextPublished": false,
+  "scope": "Artifact integrity/count validation, separate from source tests and independent human/AI judgment."
+}

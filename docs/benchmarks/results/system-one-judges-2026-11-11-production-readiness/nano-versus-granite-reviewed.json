@@ -1,0 +1,220 @@
+{
+  "evaluation": "provisional labels; answered common held-out cases only, not population quality",
+  "selected": 259,
+  "commonAnswered": 259,
+  "missing": [],
+  "incumbent": {
+    "selected": 259,
+    "answered": 259,
+    "abstained": 0,
+    "coverage": 1,
+    "threshold": 0.5,
+    "tp": 52,
+    "fp": 9,
+    "tn": 184,
+    "fn": 14,
+    "precision": 0.8524590163934426,
+    "recall": 0.7878787878787878,
+    "f1": 0.8188976377952756,
+    "falsePromotionRate": 0.046632124352331605,
+    "falseVetoRate": 0.21212121212121213,
+    "falseDiscoveryRate": 0.14754098360655737,
+    "brier": 0.3820552123552133,
+    "calibrationError": 0.4067567567567562,
+    "falseVetoRateWithRejectFallback": 0.21212121212121213,
+    "p50LatencyMs": 1656.135083000001,
+    "p95LatencyMs": 1991.6770419999957
+  },
+  "candidate": {
+    "selected": 259,
+    "answered": 259,
+    "abstained": 0,
+    "coverage": 1,
+    "threshold": 0.5,
+    "tp": 55,
+    "fp": 0,
+    "tn": 193,
+    "fn": 11,
+    "precision": 1,
+    "recall": 0.8333333333333334,
+    "f1": 0.9090909090909091,
+    "falsePromotionRate": 0,
+    "falseVetoRate": 0.16666666666666666,
+    "falseDiscoveryRate": 0,
+    "brier": 0.03727124456370028,
+    "calibrationError": 0.09073510809198189,
+    "falseVetoRateWithRejectFallback": 0.16666666666666666,
+    "p50LatencyMs": 299.372292,
+    "p95LatencyMs": 336.2737500000003
+  },
+  "disagreements": [
+    {
+      "caseId": "synthetic:40ffa352d79201afcc5904f4",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "synthetic:24e4f01ef85b41d1c7bc7b18",
+      "expected": true,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "historical:0060ebd1a0668b7ef0930efa",
+      "expected": false,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "historical:eb0f8f8fc8007b097600de0a",
+      "expected": false,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "synthetic:adf5984dd2c51f2d072d5504",
+      "expected": true,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "synthetic:ce451102a48b0a4684319482",
+      "expected": true,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "synthetic:89dea7aa8a2c8ab7746cd515",
+      "expected": true,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "synthetic:4afe12b9aff4eadb192df06d",
+      "expected": true,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "synthetic:1d1cb40ead8c8b33d5bf4553",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "historical:f6630b52d4e390ada1c7ce71",
+      "expected": false,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "historical:7ee8a70f1f64d4331298b98a",
+      "expected": false,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "synthetic:4d9512ff6406158cc8deb433",
+      "expected": false,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "synthetic:6b0e7d515c403d5707d599b0",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "synthetic:fc7427ec23d070f9f3511463",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "synthetic:ec5d0b4f61ac4e9442a4ece8",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "synthetic:d55ecab1eea9b07e7dde0f27",
+      "expected": true,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "synthetic:a7d11afaf1b0d1ba0c5832ed",
+      "expected": true,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "synthetic:9a1c3d8086465c1103fc7a81",
+      "expected": true,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "synthetic:0b4f14f95c878807c4a195c9",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "historical:7e923a8f5be4801752da438c",
+      "expected": false,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "historical:079241412fbe62a0c08dfbbf",
+      "expected": false,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "synthetic:eae839dd960b9a15045888be",
+      "expected": false,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "synthetic:4616872ec7947e33bfa5a076",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "synthetic:685d1e88ee2ce541b7f5fbd6",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "synthetic:91cbcce6d8ae2de1a87e4b1c",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "synthetic:4abe9cacaf3429abeeb9f986",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "synthetic:f93481267eb748e288333bf5",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "synthetic:7772bb077ee1ab4026fb4a85",
+      "expected": false,
+      "incumbent": true,
+      "candidate": false
+    }
+  ]
+}

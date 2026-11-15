@@ -1,0 +1,20 @@
+{
+  "method": "Dedicated launchd router recovery; synthetic control inputs only; no production writes",
+  "events": [
+    {
+      "ts": 1794479918.292,
+      "kind": "start",
+      "pid": 51183
+    },
+    {
+      "ts": 1794479918.297,
+      "kind": "before_restart",
+      "result": {
+        "ok": false,
+        "kind": "transport",
+        "status": null,
+        "attempts": 1
+      }
+    }
+  ]
+}

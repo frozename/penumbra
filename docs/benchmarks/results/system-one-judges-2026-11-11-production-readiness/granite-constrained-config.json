@@ -1,0 +1,13 @@
+{
+  "protocol": "constrained-promotion",
+  "baseUrl": "http://127.0.0.1:8086",
+  "model": "granite-mini-3b",
+  "revision": "resident-granite-4.1-3b-Q8_0; verify file hash in environment.json",
+  "hardware": "Mac mini M4 16 GiB; shared control plane",
+  "runtime": "llama.cpp 97f06e9eedd5190fa9373db5e0a954936e29c4c2 (existing service); fresh original process after restoration; reviewed corpus continuation; unchanged original runtime/model/flags",
+  "quantization": "Q8_0",
+  "contextTokens": 16384,
+  "timeoutMs": 20000,
+  "maxRequestBytes": 100000,
+  "promotionQuestionSet": "direct"
+}

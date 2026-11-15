@@ -1,0 +1,40 @@
+[
+  {
+    "state": "The customer has a receipt.",
+    "expectedSanity": true,
+    "result": {
+      "model": "d3-mini-q4-eval",
+      "answers": {
+        "receipt": {
+          "type": "noul",
+          "noul": 0.9975193662892144
+        }
+      },
+      "usage": {
+        "input_tokens": 97,
+        "output_tokens": 0
+      }
+    },
+    "latencyMs": 372.4556249999997,
+    "method": "API readout sanity/warmup,20s diagnostic budget, not promotion quality or production timeout policy"
+  },
+  {
+    "state": "The customer has no receipt.",
+    "expectedSanity": false,
+    "result": {
+      "model": "d3-mini-q4-eval",
+      "answers": {
+        "receipt": {
+          "type": "noul",
+          "noul": 0.001478796106225931
+        }
+      },
+      "usage": {
+        "input_tokens": 97,
+        "output_tokens": 0
+      }
+    },
+    "latencyMs": 313.0905829999997,
+    "method": "API readout sanity/warmup,20s diagnostic budget, not promotion quality or production timeout policy"
+  }
+]

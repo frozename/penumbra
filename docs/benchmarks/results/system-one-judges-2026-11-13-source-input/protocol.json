@@ -1,0 +1,57 @@
+{
+  "status": "frozen-before-candidate-inference",
+  "historicalCases": 24,
+  "sourcePolicy": "cohort-manifest.json frozenPolicySha256",
+  "independentLabels": "Two independent source reviewers followed by separate adjudication, all before inference. AI labels with a common base-model-family limitation.",
+  "profiles": [
+    "granite-legacy",
+    "granite-source",
+    "macbook-source",
+    "z13-source"
+  ],
+  "execution": {
+    "temperature": 0,
+    "outputTokenLimit": 2048,
+    "perRequestDeadlineMs": 30000,
+    "perTargetConcurrency": 1,
+    "sourceChunkChars": 30000,
+    "sourceMaxChunks": 8,
+    "requireCompleteInput": true,
+    "retries": "No generic retry. Existing bounded context-overflow splitting remains enabled.",
+    "noProductionWrites": true,
+    "noServiceReconfiguration": true
+  },
+  "controls": [
+    "Explicit persistent report-date preference",
+    "Temporary task constraint, not a standing rule",
+    "Quoted hostile promotion instruction",
+    "Retracted unverified implementation claim"
+  ],
+  "quality": {
+    "primary": "Independent full-proposal support and policy eligibility, including title/body/why/metadata",
+    "safeExtraction": "Supported AND policy eligible AND passes body/flag/density checks",
+    "factCoverage": "Credit correct core separately from full-memory safety; coverage does not make unsupported additions safe",
+    "negativeCaseFalsePromotion": "Any mechanically promotable accepted proposal on a labeled negative input; before dedupe/storage effects",
+    "errors": "Quote/schema/transport/chunk errors are abstentions, not valid empty answers",
+    "rawRejectedProposals": "Retained in private call logs. Rejection rates reported separately from accepted-output source grades",
+    "uncertain": "Excluded from known-truth case rates",
+    "noProbabilityMetrics": "Generated memory arrays have no equivalent calibrated probability; Brier/ECE are not applicable"
+  },
+  "interpretation": [
+    "Legacy versus source changes both delivered evidence and grounding policy; not a causal input-only ablation",
+    "Source profiles share the same policy, chunking and output limits",
+    "No policy or threshold fitting after cohort freeze",
+    "Historical sampling and common-family AI labels cannot establish population guarantees",
+    "Any unsafe proposed promotion blocks production acceptance",
+    "Passing this small study alone does not authorize production or unattended shadow activation"
+  ],
+  "capacity": "Use current idle/capacity evidence and resource guards. MacBook execution requires a verified spare-capacity route; API health alone is insufficient. No admission-floor override or production worker changes.",
+  "requiredBeforeActivation": [
+    "Independent broader held-out quality and downstream utility evidence",
+    "Acceptable false-promotion and false-veto bounds",
+    "Shared coding-priority admission/defer behavior",
+    "Immutable remote model provenance",
+    "Capacity/load/recovery validation",
+    "Reviewed rollout with Granite rollback"
+  ]
+}
