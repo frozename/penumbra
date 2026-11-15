@@ -76,6 +76,9 @@ export interface DreamConfig {
   p4QueueMax?: number;
   judgePool?: JudgePoolConfig;
   reembedBatchSize: number;
+  // PENUMBRA_DREAMING_SKIP_PHASES. Only P7 reads it (runCycleP7); P1 to P6 and P8
+  // always run. To keep P4 memory research off, leave
+  // PENUMBRA_DREAMING_REWRITER_ENABLED unset or false.
   skipPhases: Set<string>;
   eventTriggerEnabled: boolean;
   idleMinutes: number;

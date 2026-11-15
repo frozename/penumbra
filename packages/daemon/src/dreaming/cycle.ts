@@ -293,6 +293,8 @@ export async function runDreamCycle(
     if (!(await canAdvance(config, deps)))
       return bail("pressure guard: provider throttled after P3");
 
+    // P4 always runs: skipPhases gates only P7. With the rewriter disabled,
+    // every memory abstains (dream_p4_query_skipped, reason rewriter_disabled).
     await runCycleP4(db, ctx, deps, config);
 
     await runCycleP5(db, ctx, deps, config);
