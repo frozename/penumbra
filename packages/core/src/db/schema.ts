@@ -3,7 +3,8 @@ import { Database } from "bun:sqlite";
 import { ensureControlPlaneIndexes } from "./control-plane-indexes.js";
 
 // 49 = policy-versioned public-search rewrite cache.
-// 48 = covering indexes for control-plane promotion scans, queue counts and activity.
+// 48 = covering indexes for control-plane promotion scans and queue counts (the activity index is
+//      deferred to an operator maintenance window, see DEFERRED_ACTIVITY_INDEX_SQL).
 // 46 = judge_decisions shadow sink for the TypeSafe judge.
 // 45 = t1_rollups promotion_retry_exhausted_at terminal stamp.
 // 44 = t1_rollups promotion livelock columns (unusable excerpt marker, retry backoff).
