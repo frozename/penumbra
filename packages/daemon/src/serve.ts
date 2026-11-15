@@ -17,7 +17,9 @@ import {
   type Services as CoreServices,
   createAaSnapshotStore,
   createJudgeChat,
+  type GenerationRoleSeatRefusedError,
   installGlobalCrashHandlers,
+  type JudgeChatFn,
   ledgerWriteToPerformanceRow,
   type LlmCandidate,
   type LlmServingCandidate,
@@ -439,6 +441,11 @@ function safeLogInfo(services: Services, payload: Record<string, unknown>, msg: 
   // `as unknown as Services`. Cast to unknown first to allow optional access.
   const log = (services as unknown as { log?: { info?: (obj: unknown, m: string) => void } }).log;
   log?.info?.(payload, msg);
+}
+
+function safeLogWarn(services: Services, payload: Record<string, unknown>, msg: string): void {
+  const log = (services as unknown as { log?: { warn?: (obj: unknown, m: string) => void } }).log;
+  log?.warn?.(payload, msg);
 }
 
 function evaluateStartupLlmRoleFloors(opts: ServeOpts, dreamConfig: DreamConfig): void {
@@ -1221,13 +1228,18 @@ export function createDaemonFetchHandler(opts: {
   startTaskLedgerCapture({ services: opts.services, taskEvents, taskWriter });
   const dispatchRefineHandler = ((): ReturnType<typeof makeDispatchRefineRoute> => {
     const cfg = resolveJudgeConfig(process.env, { extraModelEnv: ["PENUMBRA_REFINER_MODEL"] });
-    const candidates = resolveJudgeRoleCandidates(
-      opts.services.agentchatConfig,
-      process.env.PENUMBRA_REFINER_ROLE ?? "refiner",
-      cfg,
-    );
+    const roleTag = process.env.PENUMBRA_REFINER_ROLE ?? "refiner";
+    const candidates = resolveJudgeRoleCandidates(opts.services, "dispatch-refine", roleTag, cfg);
     const [primaryCandidate, ...fallbackCandidates] = candidates;
-    if (!primaryCandidate) throw new Error("dispatch-refine has no configured LLM candidate");
+    // Every refiner seat was refused at resolution: keep the daemon up and fail
+    // each refine request (502 refiner_upstream_failed), as an over-cap seat did
+    // per request before the role check existed.
+    if (!primaryCandidate) {
+      return makeDispatchRefineRoute({
+        chat: disabledGenerationRoleChat(roleTag),
+        model: cfg.model,
+      });
+    }
     // The refiner may use a reasoning model (e.g. lfm2) that emits a long
     // chain-of-thought before the answer, so it needs a larger ceiling than the
     // fast classification judge's 30s default. Configurable via
@@ -1252,6 +1264,7 @@ export function createDaemonFetchHandler(opts: {
       provider: primaryCandidate.provider,
       auth: primaryCandidate.auth,
       candidateName: primaryCandidate.name,
+      options: primaryCandidate.options,
       fallbackCandidates,
       activeBiases: () => readRoutingBiases(opts.services.db),
       fetchFn: opts.llmFetchFn,
@@ -1732,39 +1745,45 @@ function createEfficacyJobRunnerEntry(
   opts: ServeOpts,
 ): ReturnType<typeof createMemoryEfficacyJobRunner> {
   const cfg = resolveJudgeConfig();
-  const candidates = resolveJudgeRoleCandidates(
-    opts.services.agentchatConfig,
-    process.env.PENUMBRA_JUDGE_ROLE ?? "memory-refiner",
-    cfg,
-  );
+  const roleTag = process.env.PENUMBRA_JUDGE_ROLE ?? "memory-refiner";
+  const candidates = resolveJudgeRoleCandidates(opts.services, "memory-efficacy", roleTag, cfg);
   const [primaryCandidate, ...fallbackCandidates] = candidates;
-  if (!primaryCandidate) throw new Error("memory-efficacy has no configured LLM candidate");
-  opts.services.log.info(
-    {
-      component: "memory-efficacy",
+  let judgeChat: JudgeChatFn;
+  if (primaryCandidate) {
+    opts.services.log.info(
+      {
+        component: "memory-efficacy",
+        baseUrl: primaryCandidate.baseUrl,
+        model: primaryCandidate.model,
+        usedDefaultBaseUrl: cfg.usedDefaultBaseUrl,
+        usedDefaultModel: cfg.usedDefaultModel,
+      },
+      "memory-efficacy: judge endpoint resolved",
+    );
+    judgeChat = createJudgeChat({
       baseUrl: primaryCandidate.baseUrl,
-      model: primaryCandidate.model,
-      usedDefaultBaseUrl: cfg.usedDefaultBaseUrl,
-      usedDefaultModel: cfg.usedDefaultModel,
-    },
-    "memory-efficacy: judge endpoint resolved",
-  );
-  const judgeChat = createJudgeChat({
-    baseUrl: primaryCandidate.baseUrl,
-    provider: primaryCandidate.provider,
-    auth: primaryCandidate.auth,
-    candidateName: primaryCandidate.name,
-    fallbackCandidates,
-    activeBiases: () => readRoutingBiases(opts.services.db),
-    onOutcome: (outcome) => {
-      recordJudgeOutcome(opts.services.db, "memory.efficacy_judge", outcome);
-    },
-  });
+      provider: primaryCandidate.provider,
+      auth: primaryCandidate.auth,
+      candidateName: primaryCandidate.name,
+      options: primaryCandidate.options,
+      fallbackCandidates,
+      activeBiases: () => readRoutingBiases(opts.services.db),
+      onOutcome: (outcome) => {
+        recordJudgeOutcome(opts.services.db, "memory.efficacy_judge", outcome);
+      },
+    });
+  } else {
+    // Every efficacy seat was refused at resolution: keep the daemon up. Each
+    // judge call rejects with the refusal; classifyFindings catches it per batch
+    // (console.warn "batch failed"), so efficacy jobs complete with classified=0
+    // instead of failing.
+    judgeChat = disabledGenerationRoleChat(roleTag);
+  }
   return createMemoryEfficacyJobRunner({
     db: opts.services.db,
     services: opts.services,
     judgeChat,
-    model: primaryCandidate.model,
+    model: primaryCandidate?.model ?? cfg.model,
     intervalMs: 5000,
     pressureGuardEnabled:
       process.env.PENUMBRA_MEMORY_EFFICACY_PRESSURE_GUARD === "1" ||
@@ -1773,14 +1792,32 @@ function createEfficacyJobRunnerEntry(
   });
 }
 
+/**
+ * Resolves the efficacy and refiner seats. A seat refused for the generation
+ * maxTokens cap is dropped with a warning naming the role, so one bad seat
+ * cannot abort serve() startup. The remaining seats serve in order, which is
+ * what the per-request candidate fallback did with that seat before the role
+ * check existed. If every role seat is refused the result is empty, and the
+ * caller wires a chat that fails each request instead of the legacy endpoint.
+ */
 function resolveJudgeRoleCandidates(
-  agentchatConfig: CoreServices["agentchatConfig"],
+  services: Services,
+  component: string,
   roleTag: string,
   legacy: ResolvedJudgeConfig,
 ): LlmCandidate[] {
-  return resolveRoleLlmCandidates({
+  const refused: GenerationRoleSeatRefusedError[] = [];
+  const candidates = resolveRoleLlmCandidates({
     roleTag,
-    agentchatConfig: agentchatConfig ?? {},
+    agentchatConfig: services.agentchatConfig ?? {},
+    onSeatRefused: (refusal) => {
+      refused.push(refusal);
+      safeLogWarn(
+        services,
+        { component, roleTag, agent: refusal.agentName, err: refusal.message },
+        `${component}: dropped a seat refused for generation role "${roleTag}"`,
+      );
+    },
     fallbackCandidates: [
       {
         name: legacy.model,
@@ -1791,6 +1828,23 @@ function resolveJudgeRoleCandidates(
       },
     ],
   });
+  if (candidates.length === 0 && refused.length > 0) {
+    safeLogWarn(
+      services,
+      { component, roleTag, refusedAgents: refused.map((refusal) => refusal.agentName) },
+      `${component}: generation role "${roleTag}" disabled: every seat was refused`,
+    );
+  }
+  return candidates;
+}
+
+function disabledGenerationRoleChat(roleTag: string): JudgeChatFn {
+  return (): Promise<string> =>
+    Promise.reject(
+      new Error(
+        `generation role "${roleTag}" is disabled: every seat was refused for options.maxTokens over the generation transport cap`,
+      ),
+    );
 }
 
 function recordJudgeOutcome(

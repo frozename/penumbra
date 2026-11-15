@@ -1,5 +1,7 @@
 import type { ConfigBundle } from "@penumbra/config";
 
+import type { LocalPromotionShadowConfig } from "./local-promotion-shadow-runtime.js";
+
 import { type P1InputContract, resolveP1InputContract } from "./p1-input.js";
 
 export const DEFAULT_DREAMING_AUTO_PROMOTE_MIN_JUDGES = 2;
@@ -74,6 +76,9 @@ export interface DreamConfig {
   p4QueueMax?: number;
   judgePool?: JudgePoolConfig;
   reembedBatchSize: number;
+  // PENUMBRA_DREAMING_SKIP_PHASES. Only P7 reads it (runCycleP7); P1 to P6 and P8
+  // always run. To keep P4 memory research off, leave
+  // PENUMBRA_DREAMING_REWRITER_ENABLED unset or false.
   skipPhases: Set<string>;
   eventTriggerEnabled: boolean;
   idleMinutes: number;
@@ -101,6 +106,7 @@ export interface DreamConfig {
   phaseCostEstimatesUsd?: DreamPhaseCostEstimatesUsd;
   typesafeJudgePromotion?: "off" | "shadow" | "veto";
   typesafeEnv?: TypesafeEnvSlice;
+  localPromotionShadow?: LocalPromotionShadowConfig;
 }
 
 // Local typed view of the dreaming slice of EnvConfig (config-refactor F16):
@@ -162,6 +168,19 @@ interface DreamingEnvSlice {
   PENUMBRA_TYPESAFE_MODEL: string;
   PENUMBRA_TYPESAFE_TIMEOUT_MS: number;
   PENUMBRA_TYPESAFE_JUDGE_PROMOTION: "off" | "shadow" | "veto";
+  PENUMBRA_LOCAL_JUDGE_SHADOW: unknown;
+  PENUMBRA_LOCAL_JUDGE_BASE_URL: string;
+  PENUMBRA_LOCAL_JUDGE_MODEL?: string;
+  PENUMBRA_LOCAL_JUDGE_REVISION?: string;
+}
+
+function localShadowConfig(env: DreamingEnvSlice): LocalPromotionShadowConfig | undefined {
+  if (env.PENUMBRA_LOCAL_JUDGE_SHADOW !== true) return undefined;
+  const model = env.PENUMBRA_LOCAL_JUDGE_MODEL?.trim();
+  const revision = env.PENUMBRA_LOCAL_JUDGE_REVISION?.trim();
+  if (!model || !revision)
+    throw new Error("Local judge shadow requires explicit model and revision");
+  return { baseUrl: env.PENUMBRA_LOCAL_JUDGE_BASE_URL, model, revision };
 }
 
 // Fail closed: only the exact literals shadow/veto arm a Jev lane; anything
@@ -185,7 +204,6 @@ function typesafeEnvSlice(env: DreamingEnvSlice): TypesafeEnvSlice {
 
 export function buildDreamingConfig(bundle: ConfigBundle): DreamConfig {
   const env = bundle.env as unknown as DreamingEnvSlice;
-  const t2PromotionMinEventsRaw = env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS;
   const skipPhases = new Set(
     env.PENUMBRA_DREAMING_SKIP_PHASES.split(",")
       .map((p) => p.trim())
@@ -258,7 +276,7 @@ export function buildDreamingConfig(bundle: ConfigBundle): DreamConfig {
     perCycleResearchUsd: env.PENUMBRA_DREAMING_PER_CYCLE_RESEARCH_USD,
     linkAutoThreshold: env.PENUMBRA_DREAMING_LINK_AUTO_THRESHOLD,
     p1BatchSize: nonNegIntOr(env.PENUMBRA_DREAMING_P1_BATCH_SIZE ?? env.PENUMBRA_DREAMING_P, 10),
-    t2PromotionMinEvents: nonNegIntOr(t2PromotionMinEventsRaw, 5),
+    t2PromotionMinEvents: nonNegIntOr(env.PENUMBRA_DREAMING_T2_PROMOTION_MIN_EVENTS, 5),
     p1InputContract: resolveP1InputContract(env.PENUMBRA_DREAMING_P1_INPUT_CONTRACT),
     retireAutoThreshold: env.PENUMBRA_DREAMING_RETIRE_AUTO_THRESHOLD,
     contentQualityThreshold: env.PENUMBRA_DREAMING_CONTENT_QUALITY_THRESHOLD,
@@ -305,5 +323,6 @@ export function buildDreamingConfig(bundle: ConfigBundle): DreamConfig {
     },
     typesafeJudgePromotion: resolveTypesafeJudgePromotion(env.PENUMBRA_TYPESAFE_JUDGE_PROMOTION),
     typesafeEnv: typesafeEnvSlice(env),
+    localPromotionShadow: localShadowConfig(env),
   };
 }

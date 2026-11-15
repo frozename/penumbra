@@ -1,3 +1,4 @@
+import { AgentsConfigSchema, GENERATION_MAX_TOKENS_CAP } from "@penumbra/config";
 import { expect, mock, spyOn, test } from "bun:test";
 
 import * as llmCandidates from "@src/services/llm-candidates.js";
@@ -334,6 +335,107 @@ test("keeps role resolution non-throwing for partial or unrecognized HTTP config
       provider: "unknown",
     },
   ]);
+});
+
+test("refuses a generation role whose HTTP seat carries a maxTokens above the transport cap", () => {
+  const seat = {
+    name: "wide-seat",
+    adapter: "openai-compat-http",
+    api_provider: "local",
+    roles: ["executor"],
+    options: { baseUrl: "http://127.0.0.1:7944/v1", model: "wide", maxTokens: 32_768 },
+  };
+  // A dispatch-only seat loads, and resolving a generation role it does not carry ignores it.
+  const dispatchOnly = AgentsConfigSchema.parse({ agents: [seat] });
+  expect(resolver({ roleTag: "memory-refiner", agentchatConfig: dispatchOnly })).toEqual([]);
+
+  // The same seat assigned to a generation role fails that role's resolution with a clear message.
+  const assigned = AgentsConfigSchema.parse({
+    agents: [{ ...seat, roles: ["executor", "memory-refiner"] }],
+  });
+  expect(() => resolver({ roleTag: "memory-refiner", agentchatConfig: assigned })).toThrow(
+    'agent "wide-seat" cannot serve generation role "memory-refiner": options.maxTokens 32768 is outside 1 to 16384 (the generation transport cap)',
+  );
+
+  // At the cap, and for process adapters (which never use the HTTP transport), resolution succeeds.
+  const atCap = AgentsConfigSchema.parse({
+    agents: [
+      {
+        ...seat,
+        roles: ["memory-refiner"],
+        options: { ...seat.options, maxTokens: GENERATION_MAX_TOKENS_CAP },
+      },
+    ],
+  });
+  expect(
+    resolver({ roleTag: "memory-refiner", agentchatConfig: atCap }).map(({ name }) => name),
+  ).toEqual(["wide-seat"]);
+  expect(() =>
+    resolver({
+      roleTag: "memory-refiner",
+      agentchatConfig: {
+        agents: [
+          {
+            name: "acp-seat",
+            adapter: "stdio-acp",
+            roles: ["memory-refiner"],
+            api_provider: "local",
+            options: { binary: "claude", maxTokens: 32_768 },
+          },
+        ],
+      },
+    }),
+  ).not.toThrow();
+});
+
+test("onSeatRefused drops only the over-cap seat and reports the refusal", () => {
+  const ok = {
+    name: "ok-seat",
+    adapter: "openai-compat-http",
+    roles: ["refiner"],
+    options: { baseUrl: "http://127.0.0.1:7944/v1", model: "ok", maxTokens: 4096 },
+  };
+  const wide = {
+    name: "wide-seat",
+    adapter: "openai-compat-http",
+    roles: ["refiner"],
+    options: { baseUrl: "http://127.0.0.1:7945/v1", model: "wide", maxTokens: 32_768 },
+  };
+  const refusals: llmCandidates.GenerationRoleSeatRefusedError[] = [];
+  const candidates = resolver({
+    roleTag: "refiner",
+    agentchatConfig: { agents: [wide, ok] },
+    onSeatRefused: (err) => refusals.push(err),
+  });
+  expect(candidates.map(({ name }) => name)).toEqual(["ok-seat"]);
+  expect(refusals).toHaveLength(1);
+  expect(refusals[0]).toBeInstanceOf(llmCandidates.GenerationRoleSeatRefusedError);
+  expect(refusals[0]?.agentName).toBe("wide-seat");
+  expect(refusals[0]?.roleTag).toBe("refiner");
+  expect(refusals[0]?.message).toBe(
+    'agent "wide-seat" cannot serve generation role "refiner": options.maxTokens 32768 is outside 1 to 16384 (the generation transport cap)',
+  );
+
+  // Every seat refused: no seats remain and the legacy fallback is not substituted.
+  const fallback: llmCandidates.RoleLlmCandidate = {
+    name: "legacy",
+    baseUrl: "http://127.0.0.1:7944",
+    model: "legacy",
+    provider: "local",
+    auth: { source: "none" },
+  };
+  const none = resolver({
+    roleTag: "refiner",
+    agentchatConfig: { agents: [wide] },
+    fallbackCandidates: [fallback],
+    onSeatRefused: () => undefined,
+  });
+  expect(none).toEqual([]);
+
+  // Without the callback the refusal still throws, as every other caller expects.
+  expect(() => resolver({ roleTag: "refiner", agentchatConfig: { agents: [wide, ok] } })).toThrow(
+    llmCandidates.GenerationRoleSeatRefusedError,
+  );
 });
 
 test("uses the supplied legacy candidate when no seat carries the role", () => {

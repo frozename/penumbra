@@ -18,11 +18,14 @@ try {
 }
 
 const tempDirs: string[] = [];
+const ORIGINAL_CONFIG_DIR = process.env.PENUMBRA_CONFIG_DIR;
 
 afterEach(() => {
   delete process.env.PENUMBRA_DAEMON_HOST;
   delete process.env.PENUMBRA_JUDGE_BASE_URL;
   delete process.env.PENUMBRA_REFINER_MODEL;
+  if (ORIGINAL_CONFIG_DIR === undefined) delete process.env.PENUMBRA_CONFIG_DIR;
+  else process.env.PENUMBRA_CONFIG_DIR = ORIGINAL_CONFIG_DIR;
   mock.restore();
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
@@ -246,6 +249,141 @@ test("dispatch refiner fails over from a dead role-resolved local seat and recor
       model: "sakana-rewriter",
       host: "api.sakana.ai",
     });
+  } finally {
+    services.supervisor.stopAll();
+    services.db.close();
+  }
+});
+
+function overCapSeat(
+  name: string,
+  role: string,
+  port: number,
+): {
+  name: string;
+  adapter: string;
+  roles: string[];
+  options: { baseUrl: string; model: string; maxTokens: number };
+} {
+  return {
+    name,
+    adapter: "openai-compat-http",
+    roles: [role],
+    options: { baseUrl: `http://127.0.0.1:${String(port)}/v1`, model: name, maxTokens: 32_768 },
+  };
+}
+
+function isolateAgentchatConfigDir(): void {
+  // The T2 pool reads agents.yaml from disk; point it at an empty dir so these
+  // tests never read the operator roster.
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-serve-cfg-"));
+  tempDirs.push(dir);
+  process.env.PENUMBRA_CONFIG_DIR = dir;
+}
+
+test("serve boots when every efficacy and refiner seat is over the generation maxTokens cap", async () => {
+  isolateAgentchatConfigDir();
+  const services = makeServices();
+  services.agentchatConfig = {
+    agents: [
+      overCapSeat("efficacy-wide", "memory-refiner", 7951),
+      overCapSeat("refiner-wide", "refiner", 7952),
+    ],
+  };
+  spyOn(Bun, "serve").mockImplementation(
+    () => ({ port: 65531, stop: mock(() => undefined) }) as unknown as ReturnType<typeof Bun.serve>,
+  );
+  spyOn(services.supervisor, "stopAll").mockImplementation(() => undefined);
+  spyOn(services.supervisor, "startAll").mockResolvedValue(undefined);
+  const warn = spyOn(services.log, "warn");
+
+  const handle = serve({ services, token: "test-token", port: 0 });
+  try {
+    const messages = warn.mock.calls.map((call) => String(call[1]));
+    expect(messages).toContain(
+      'memory-efficacy: generation role "memory-refiner" disabled: every seat was refused',
+    );
+    expect(messages).toContain(
+      'dispatch-refine: generation role "refiner" disabled: every seat was refused',
+    );
+  } finally {
+    await handle.stop();
+    services.db.close();
+  }
+});
+
+test("dispatch refiner drops an over-cap seat and serves from the remaining seat", async () => {
+  isolateAgentchatConfigDir();
+  const services = makeServices();
+  services.agentchatConfig = {
+    agents: [
+      overCapSeat("refiner-wide", "refiner", 7953),
+      {
+        name: "refiner-ok",
+        adapter: "openai-compat-http",
+        roles: ["refiner"],
+        options: { baseUrl: "http://127.0.0.1:7954/v1", model: "refiner-ok", maxTokens: 4096 },
+      },
+    ],
+  };
+  const warn = spyOn(services.log, "warn");
+  const fetchMock = mock(
+    (): Promise<Response> =>
+      Promise.resolve(
+        new Response(JSON.stringify({ choices: [{ message: { content: "Refined prompt." } }] }), {
+          status: 200,
+        }),
+      ),
+  );
+  const handler = createDaemonFetchHandler({
+    services,
+    token: "test-token",
+    allowRemote: true,
+    llmFetchFn: fetchMock as unknown as typeof fetch,
+  });
+  try {
+    const response = await handler(
+      new Request("http://localhost/dispatch/refine", {
+        method: "POST",
+        headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+        body: JSON.stringify({ message: "Original dispatch prompt" }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url] = fetchMock.mock.calls[0] as unknown as [string];
+    expect(url.startsWith("http://127.0.0.1:7954")).toBe(true);
+    expect(warn.mock.calls.map((call) => String(call[1]))).toContain(
+      'dispatch-refine: dropped a seat refused for generation role "refiner"',
+    );
+  } finally {
+    services.supervisor.stopAll();
+    services.db.close();
+  }
+});
+
+test("dispatch refiner fails each request when every refiner seat is over the cap", async () => {
+  isolateAgentchatConfigDir();
+  const services = makeServices();
+  services.agentchatConfig = { agents: [overCapSeat("refiner-wide", "refiner", 7955)] };
+  const fetchMock = mock((): Promise<Response> => Promise.resolve(new Response("{}")));
+  const handler = createDaemonFetchHandler({
+    services,
+    token: "test-token",
+    allowRemote: true,
+    llmFetchFn: fetchMock as unknown as typeof fetch,
+  });
+  try {
+    const response = await handler(
+      new Request("http://localhost/dispatch/refine", {
+        method: "POST",
+        headers: { authorization: "Bearer test-token", "content-type": "application/json" },
+        body: JSON.stringify({ message: "Original dispatch prompt" }),
+      }),
+    );
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "refiner_upstream_failed" });
+    expect(fetchMock).not.toHaveBeenCalled();
   } finally {
     services.supervisor.stopAll();
     services.db.close();

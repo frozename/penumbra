@@ -430,6 +430,55 @@ describe("createDreamingJudgePoolFromAgentchat", () => {
     }
   });
 
+  it("loads a roster whose dispatch-only seat exceeds the generation maxTokens cap", () => {
+    writeConfig(
+      [
+        `  - name: dispatch-seat\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - executor\n    options:\n      baseUrl: http://localhost:3333/v1\n      maxTokens: 32768`,
+        `  - name: judge-1\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:1111/v1`,
+        `  - name: judge-2\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:2222/v1`,
+      ].join("\n"),
+    );
+    const saved = process.env["PENUMBRA_CONFIG_DIR"];
+    process.env["PENUMBRA_CONFIG_DIR"] = tmpConfigPath;
+    try {
+      expect(createDreamingJudgePoolFromAgentchat()).not.toBeNull();
+    } finally {
+      if (saved === undefined) delete process.env["PENUMBRA_CONFIG_DIR"];
+      else process.env["PENUMBRA_CONFIG_DIR"] = saved;
+    }
+  });
+
+  it("refuses the judge pool when a dreaming-judge seat exceeds the generation maxTokens cap", () => {
+    writeConfig(
+      [
+        `  - name: judge-1\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:1111/v1\n      maxTokens: 32768`,
+        `  - name: judge-2\n    adapter: openai-compat-http\n    api_provider: local\n    roles:\n      - dreaming-judge\n    options:\n      baseUrl: http://localhost:2222/v1`,
+      ].join("\n"),
+    );
+    const saved = process.env["PENUMBRA_CONFIG_DIR"];
+    process.env["PENUMBRA_CONFIG_DIR"] = tmpConfigPath;
+    const warnings: unknown[][] = [];
+    try {
+      const pool = createDreamingJudgePoolFromAgentchat({
+        log: {
+          warn: (...args: unknown[]) => {
+            warnings.push(args);
+          },
+        },
+      });
+      expect(pool).toBeNull();
+      expect(warnings).toHaveLength(1);
+      const [fields] = warnings[0] as [{ err: Error; roleTag: string }];
+      expect(fields.roleTag).toBe("dreaming-judge");
+      expect(fields.err.message).toBe(
+        'agent "judge-1" cannot serve generation role "dreaming-judge": options.maxTokens 32768 is outside 1 to 16384 (the generation transport cap)',
+      );
+    } finally {
+      if (saved === undefined) delete process.env["PENUMBRA_CONFIG_DIR"];
+      else process.env["PENUMBRA_CONFIG_DIR"] = saved;
+    }
+  });
+
   it("respects PENUMBRA_DREAMING_JUDGE_ROLE env override", () => {
     writeConfig(
       [

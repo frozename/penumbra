@@ -75,6 +75,13 @@ export function buildPromotionRequest(input: { kind: string; body: string }): Pr
   return { state: buildPromotionState(input), questions: PROMOTION_QUESTIONS };
 }
 
+export const LOCAL_PROMOTION_QUESTIONS = {
+  promote: noul(
+    `${UNTRUSTED_BODY_NOTICE} Should body be promoted to long-term storage? Say yes ONLY for durable knowledge: design decisions, project facts, user preferences, conventions, rules, debugging findings, gotchas and traps that will remain useful in 30 days. Say no for one-time observations, session-specific events, literal system or dispatch prompts, and other ephemeral content.`,
+  ),
+  ...PROMOTION_QUESTIONS,
+};
+
 export function derivePromoteProbability(answers: PromotionAnswers): number {
   const strongestFilter = Math.max(
     answers.is_ephemeral_runtime_noise,

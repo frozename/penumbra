@@ -21,6 +21,7 @@ export interface LlamactlNodeInventory {
   fingerprint?: string;
   token?: string;
   healthy?: boolean;
+  kind?: "gateway";
 }
 
 export interface LlamactlModelInventory {
@@ -50,11 +51,23 @@ export interface CollectLlamactlInventoryOpts {
   ) => Promise<{ ok: boolean; stdout: string; stderr: string }>;
   proxyBaseUrl?: string;
   timeoutMs?: number;
+  includeLocalGateways?: boolean;
+  includeCatalog?: boolean;
 }
 
 interface KubeConfigShape {
+  apiVersion?: unknown;
+  currentContext?: unknown;
   clusters?: {
     name?: unknown;
+    nodes?: {
+      name?: unknown;
+      kind?: unknown;
+      endpoint?: unknown;
+      certificate?: unknown;
+      certificateFingerprint?: unknown;
+      cloud?: { provider?: unknown; baseUrl?: unknown; apiKeyRef?: unknown };
+    }[];
     cluster?: {
       server?: unknown;
       "certificate-authority-data"?: unknown;
@@ -64,15 +77,22 @@ interface KubeConfigShape {
       extensions?: { name?: unknown; extension?: Record<string, unknown> }[];
     };
   }[];
-  contexts?: { name?: unknown; context?: { cluster?: unknown; user?: unknown } }[];
-  users?: { name?: unknown; user?: { token?: unknown } }[];
+  contexts?: {
+    name?: unknown;
+    cluster?: unknown;
+    user?: unknown;
+    context?: { cluster?: unknown; user?: unknown };
+  }[];
+  users?: { name?: unknown; token?: unknown; user?: { token?: unknown } }[];
 }
 
 function resolveKubeconfigCandidates(env: Record<string, string | undefined>): string[] {
-  const devStorage =
-    env.DEV_STORAGE && env.DEV_STORAGE.length > 0 ? env.DEV_STORAGE : join(homedir(), "DevStorage");
-  const home = env.HOME && env.HOME.length > 0 ? env.HOME : homedir();
-  return [join(devStorage, "config"), join(home, ".llamactl", "config")];
+  if (env.LLAMACTL_CONFIG?.trim()) return [env.LLAMACTL_CONFIG.trim()];
+  const home = env.HOME?.trim();
+  const storage = env.DEV_STORAGE?.trim();
+  return [
+    join(storage?.length ? storage : join(home?.length ? home : homedir(), ".llamactl"), "config"),
+  ];
 }
 
 function decodeCertificatePem(value: unknown): string | undefined {
@@ -102,13 +122,78 @@ function isAgentCluster(
   return kind === undefined || kind === "agent";
 }
 
-function parseKubeconfigNodes(raw: string): LlamactlNodeInventory[] {
+function parseKubeconfigNodes(raw: string, includeLocalGateways: boolean): LlamactlNodeInventory[] {
   const parsed = parseYaml(raw) as KubeConfigShape | null;
+  if (parsed?.apiVersion === "llamactl/v1")
+    return parseCurrentRegistryNodes(parsed, includeLocalGateways);
   const contextsByCluster = collectContextsByCluster(parsed);
   const tokensByUser = collectTokensByUser(parsed);
   return (parsed?.clusters ?? []).flatMap((entry) =>
     parseKubeconfigNode(entry, contextsByCluster, tokensByUser),
   );
+}
+
+function parseCurrentRegistryNodes(
+  parsed: KubeConfigShape,
+  includeLocalGateways: boolean,
+): LlamactlNodeInventory[] {
+  const context = parsed.contexts?.find((entry) => entry.name === parsed.currentContext);
+  const cluster = parsed.clusters?.find((entry) => entry.name === context?.cluster);
+  if (!context || !cluster) return [];
+  const token = parsed.users?.find((entry) => entry.name === context.user)?.token;
+  return (cluster.nodes ?? []).flatMap((node): LlamactlNodeInventory[] => {
+    if (typeof node.name !== "string") return [];
+    if (node.cloud) return parseCurrentLocalGateway(node, includeLocalGateways);
+    if (
+      (node.kind !== undefined && node.kind !== "agent") ||
+      typeof node.endpoint !== "string" ||
+      !/^https?:\/\//.test(node.endpoint)
+    )
+      return [];
+    return [
+      {
+        name: node.name,
+        endpoint: node.endpoint,
+        ...(typeof node.certificate === "string" ? { certificatePem: node.certificate } : {}),
+        ...(typeof node.certificateFingerprint === "string"
+          ? { fingerprint: node.certificateFingerprint }
+          : {}),
+        ...(typeof token === "string" ? { token } : {}),
+      },
+    ];
+  });
+}
+
+function parseCurrentLocalGateway(
+  node: NonNullable<NonNullable<KubeConfigShape["clusters"]>[number]["nodes"]>[number],
+  enabled: boolean,
+): LlamactlNodeInventory[] {
+  const cloud = node.cloud;
+  if (
+    !enabled ||
+    !cloud ||
+    typeof node.name !== "string" ||
+    typeof cloud.baseUrl !== "string" ||
+    (node.kind !== undefined && node.kind !== "gateway" && node.kind !== "cloud") ||
+    cloud.provider !== "openai-compatible" ||
+    cloud.apiKeyRef !== undefined
+  )
+    return [];
+  try {
+    const url = new URL(cloud.baseUrl);
+    if (
+      !["http:", "https:"].includes(url.protocol) ||
+      !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    )
+      return [];
+    return [{ name: node.name, endpoint: cloud.baseUrl, kind: "gateway" }];
+  } catch {
+    return [];
+  }
 }
 
 function collectContextsByCluster(parsed: KubeConfigShape | null): Map<string, string> {
@@ -265,30 +350,66 @@ export async function collectLlamactlInventory(
   const timeoutMs = opts.timeoutMs ?? 5_000;
   const messages: string[] = [];
 
-  const nodes = readInventoryNodes(env, exists, readFile, messages);
-
-  const healthyNodes = await Promise.all(
-    nodes.map((node) => probeNodeHealth(node, fetchImpl, timeoutMs)),
-  );
-
-  const servedEntries = await readServedEntries(
-    opts.proxyBaseUrl ?? env.PENUMBRA_LLAMACTL_PROXY_BASE_URL ?? DEFAULT_PROXY_BASE_URL,
-    fetchImpl,
-    timeoutMs,
+  const nodes = readInventoryNodes(
+    env,
+    exists,
+    readFile,
     messages,
+    opts.includeLocalGateways === true,
   );
 
-  const catalog = await readOptionalCatalog(opts.execFile);
-  const models = appendModels(servedEntries, healthyNodes);
+  const [healthyNodes, gateways, servedEntries, catalog] = await Promise.all([
+    Promise.all(
+      nodes
+        .filter((node) => node.kind !== "gateway")
+        .map((node) => probeNodeHealth(node, fetchImpl, timeoutMs)),
+    ),
+    Promise.all(
+      nodes
+        .filter((node) => node.kind === "gateway")
+        .map((node) => probeLocalGateway(node, fetchImpl, timeoutMs, messages)),
+    ),
+    readServedEntries(
+      opts.proxyBaseUrl ?? env.PENUMBRA_LLAMACTL_PROXY_BASE_URL ?? DEFAULT_PROXY_BASE_URL,
+      fetchImpl,
+      timeoutMs,
+      messages,
+    ),
+    opts.includeCatalog === false ? Promise.resolve(undefined) : readOptionalCatalog(opts.execFile),
+  ]);
+  const models = [
+    ...appendModels(servedEntries, healthyNodes),
+    ...gateways.flatMap((gateway) => gateway.models),
+  ];
   const status: LlamactlInventory["status"] =
     models.length > 0 ? (messages.length > 0 ? "partial" : "ok") : "unavailable";
   return {
     status,
     messages,
-    nodes: healthyNodes,
+    nodes: [...healthyNodes, ...gateways.map((gateway) => gateway.node)],
     models,
     ...(catalog ? { catalog } : {}),
   };
+}
+
+async function probeLocalGateway(
+  node: LlamactlNodeInventory,
+  fetchImpl: ServedModelsFetch,
+  timeoutMs: number,
+  messages: string[],
+): Promise<{ node: LlamactlNodeInventory; models: LlamactlModelInventory[] }> {
+  try {
+    const entries = await fetchServedModelEntries(node.endpoint, {
+      fetch: fetchImpl,
+      timeoutMs,
+      redirect: "error",
+    });
+    const healthyNode = { ...node, healthy: true };
+    return { node: healthyNode, models: appendModels(entries, [healthyNode]) };
+  } catch {
+    messages.push(`registered local catalog unavailable: ${node.name}`);
+    return { node: { ...node, healthy: false }, models: [] };
+  }
 }
 
 function readInventoryNodes(
@@ -296,6 +417,7 @@ function readInventoryNodes(
   exists: (path: string) => boolean,
   readFile: (path: string) => string,
   messages: string[],
+  includeLocalGateways: boolean,
 ): LlamactlNodeInventory[] {
   const path = resolveKubeconfigCandidates(env).find((candidate) => exists(candidate));
   if (!path) {
@@ -303,7 +425,7 @@ function readInventoryNodes(
     return [];
   }
   try {
-    return parseKubeconfigNodes(readFile(path));
+    return parseKubeconfigNodes(readFile(path), includeLocalGateways);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     messages.push(`kubeconfig parse failed: ${message}`);
