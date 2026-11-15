@@ -1,6 +1,11 @@
 export type ServedModelsFetch = (
   input: string,
-  init?: { headers?: Record<string, string>; signal?: AbortSignal; tls?: { ca: string } },
+  init?: {
+    headers?: Record<string, string>;
+    signal?: AbortSignal;
+    tls?: { ca: string };
+    redirect?: "error" | "manual" | "follow";
+  },
 ) => Promise<Response>;
 
 export interface FetchServedModelsOpts {
@@ -8,6 +13,7 @@ export interface FetchServedModelsOpts {
   timeoutMs?: number;
   bearerToken?: string;
   caPem?: string;
+  redirect?: "error" | "manual" | "follow";
 }
 
 export interface ServedModelEntry {
@@ -25,11 +31,17 @@ export function servedModelsUrl(baseUrl: string): string {
 function buildProbeInit(
   opts: FetchServedModelsOpts,
   signal: AbortSignal,
-): { signal: AbortSignal; headers?: { authorization: string }; tls?: { ca: string } } {
+): {
+  signal: AbortSignal;
+  headers?: { authorization: string };
+  tls?: { ca: string };
+  redirect?: "error" | "manual" | "follow";
+} {
   return {
     signal,
     ...(opts.bearerToken ? { headers: { authorization: `Bearer ${opts.bearerToken}` } } : {}),
     ...(opts.caPem ? { tls: { ca: opts.caPem } } : {}),
+    ...(opts.redirect ? { redirect: opts.redirect } : {}),
   };
 }
 

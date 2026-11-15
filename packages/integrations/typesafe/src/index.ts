@@ -12,6 +12,12 @@ export {
   type TypesafeSettings,
 } from "./config.js";
 export {
+  createLocalDecisionClient,
+  type DecisionDiagnostic,
+  type LocalDecisionOptions,
+} from "./local-decision.js";
+export {
+  buildEfficacyQuestions,
   createJevEfficacyClassifier,
   type CreateJevEfficacyClassifierOptions,
   JEV_EFFICACY_MODEL,
@@ -21,6 +27,7 @@ export {
 export { choice, noul, score } from "./questions.js";
 export * from "./questions/promotion.js";
 export {
+  buildTaskProfileQuestions,
   createJevTaskProfileJudge,
   type CreateJevTaskProfileJudgeOptions,
   JEV_TASK_PROFILE_MODEL,

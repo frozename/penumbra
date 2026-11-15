@@ -3,7 +3,14 @@
 import type { AgentChatConfig } from "@penumbra/config";
 import type { Embedder, Services, T2MemoryExtraction } from "@penumbra/core";
 
-import { buildT2EmbedText, resolveRoleLlmCandidates, T2Promotion } from "@penumbra/core";
+import {
+  buildT2EmbedText,
+  resolveLlmCandidateSelection,
+  resolveLlmHttpOptions,
+  resolveRoleLlmCandidates,
+  T2MemoryExtractionSchema,
+  T2Promotion,
+} from "@penumbra/core";
 
 import { loadAgentChatConfig, resolveAgentChatConfigPath } from "../agentchat-config.js";
 import {
@@ -15,6 +22,7 @@ import {
   JudgeError,
   type JudgePool,
 } from "./t2-judge-pool.js";
+import { buildSourceExtractionPrompt, validateSourceExtraction } from "./t2-source-extraction.js";
 
 export class OverflowExhaustedError extends Error {
   override readonly name = "OverflowExhaustedError";
@@ -58,6 +66,22 @@ Transcript:
 {{TRANSCRIPT}}
 `.trim();
 
+export function buildT2ExtractionPrompt(transcript: string): string {
+  return process.env.PENUMBRA_T2_SOURCE_TRANSCRIPT === "1"
+    ? buildSourceExtractionPrompt(T2_PROMOTION_PROMPT, transcript)
+    : T2_PROMOTION_PROMPT.replace("{{TRANSCRIPT}}", () => transcript);
+}
+
+export function parseT2ExtractionResponse(
+  content: string,
+  transcript: string,
+): T2MemoryExtraction[] {
+  const memories = parseJudgeResponse(content);
+  return process.env.PENUMBRA_T2_SOURCE_TRANSCRIPT === "1"
+    ? validateSourceExtraction(memories, transcript)
+    : memories;
+}
+
 export interface PromotionWorkerOpts {
   services: Services;
   delayHours: number;
@@ -91,6 +115,7 @@ export interface ChunkedJudgeOpts {
   concurrency?: number;
   /** When true, rethrow the last error if every chunk fails with a non-overflow error. Default false. */
   failWhenAllChunksFail?: boolean;
+  requireCompleteInput?: boolean;
   /** Optional callback invoked after chunking with metadata for the caller. */
   onChunkInfo?: (info: {
     chunksJudged: number;
@@ -152,11 +177,15 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts): T2PromotionW
       },
     };
   }
+  const sourceTranscript = process.env.PENUMBRA_T2_SOURCE_TRANSCRIPT === "1";
   const judge = wrapJudgeWithChunking({
     judge: rawJudge,
     log: opts.services.log,
     embedder: opts.services.embedder,
     failWhenAllChunksFail: true,
+    ...(sourceTranscript
+      ? { maxCharsPerChunk: 30_000, maxChunks: 8, concurrency: 1, requireCompleteInput: true }
+      : {}),
   });
 
   const t2 = new T2Promotion({
@@ -166,6 +195,7 @@ export function createT2PromotionWorker(opts: PromotionWorkerOpts): T2PromotionW
     uuid: opts.services.uuid,
     llm: judge,
     log: opts.services.log,
+    ...(sourceTranscript ? { sourceTranscript: true, maxTranscriptChars: 240_000 } : {}),
   });
 
   const minEvents = opts.minEvents ?? 5;
@@ -283,7 +313,8 @@ function rethrowUnknown(err: unknown): never {
 function createJudgeWithRetry(
   opts: ChunkedJudgeOpts,
 ): (chunk: string, depth: number) => Promise<T2MemoryExtraction[]> {
-  const failWhenAllChunksFail = opts.failWhenAllChunksFail ?? false;
+  const failWhenAllChunksFail =
+    opts.requireCompleteInput === true || opts.failWhenAllChunksFail === true;
   /* eslint-disable sonarjs/cognitive-complexity -- Preserve the existing overflow retry policy while grandfathering its pre-existing complexity. */
   const retryAfterOverflow = async (
     chunk: string,
@@ -404,6 +435,7 @@ async function judgeAcrossChunks(
   log: ChunkedJudgeLogger | undefined,
   concurrency?: number,
   failWhenAllChunksFail?: boolean,
+  requireCompleteInput?: boolean,
 ): Promise<T2MemoryExtraction[]> {
   if (concurrency && concurrency > 1) {
     const results = Array.from({ length: chunks.length }, (): T2MemoryExtraction[] | null => null);
@@ -428,6 +460,10 @@ async function judgeAcrossChunks(
     };
     const workers = Array.from({ length: Math.min(concurrency, chunks.length) }, () => worker());
     await Promise.all(workers);
+    if (requireCompleteInput) {
+      const error = errors.find((e) => e !== null);
+      if (error !== undefined) rethrowUnknown(error);
+    }
     if (failWhenAllChunksFail && errors.every((e) => e !== null)) {
       const nonOverflow = errors.find(
         (e) => !(e instanceof OverflowExhaustedError) && !isContextOverflow(e),
@@ -453,6 +489,7 @@ async function judgeAcrossChunks(
       for (const memory of memories) out.push(memory);
       allFailed = false;
     } catch (err) {
+      if (requireCompleteInput) rethrowUnknown(err);
       if (err instanceof OverflowExhaustedError) {
         overflowExhausted = true;
       } else if (!isContextOverflow(err)) {
@@ -487,7 +524,11 @@ export function wrapJudgeWithChunking(
       try {
         finalMemories = await judgeWithRetry(transcript, 0);
       } catch (err) {
-        if (err instanceof OverflowExhaustedError && !opts.failWhenAllChunksFail) {
+        if (
+          err instanceof OverflowExhaustedError &&
+          !opts.failWhenAllChunksFail &&
+          !opts.requireCompleteInput
+        ) {
           finalMemories = [];
         } else {
           throw err;
@@ -501,6 +542,7 @@ export function wrapJudgeWithChunking(
       let truncated = false;
       let chunksDropped = 0;
       if (opts.maxChunks && opts.maxChunks > 0 && chunks.length > opts.maxChunks) {
+        if (opts.requireCompleteInput) throw new Error("source transcript exceeds chunk budget");
         const headCount = Math.min(2, opts.maxChunks);
         const tailCount = opts.maxChunks - headCount;
         chunksDropped = chunks.length - opts.maxChunks;
@@ -527,6 +569,7 @@ export function wrapJudgeWithChunking(
         opts.log,
         opts.concurrency,
         opts.failWhenAllChunksFail,
+        opts.requireCompleteInput,
       );
       opts.onChunkInfo?.({ chunksJudged: chunks.length, truncated, totalChunks, chunksDropped });
     }
@@ -735,7 +778,13 @@ export function parseJudgeResponse(content: string): T2MemoryExtraction[] {
       isContextOverflow: false,
     });
   }
-  return extractions as T2MemoryExtraction[];
+  const validated = T2MemoryExtractionSchema.array().safeParse(extractions);
+  if (!validated.success) {
+    throw new JudgeError("t2 judge memories failed schema validation", {
+      isContextOverflow: false,
+    });
+  }
+  return validated.data;
 }
 
 export function createDefaultLLMJudge(
@@ -750,7 +799,7 @@ export function createDefaultLLMJudge(
   return async (transcript: string): Promise<T2MemoryExtraction[]> => {
     const timeoutMs = getJudgeTimeoutMs();
     try {
-      const prompt = T2_PROMOTION_PROMPT.replace("{{TRANSCRIPT}}", transcript);
+      const prompt = buildT2ExtractionPrompt(transcript);
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (token) headers["Authorization"] = `Bearer ${token}`;
 
@@ -793,7 +842,7 @@ export function createDefaultLLMJudge(
           isContextOverflow: false,
         });
       }
-      return parseJudgeResponse(content);
+      return parseT2ExtractionResponse(content, transcript);
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "TimeoutError") {
         const msg = `judge default timed out after ${String(timeoutMs)}ms`;
@@ -838,27 +887,36 @@ function createJudgePoolFromAgentchat(
   const cfg = loadAgentChatConfigSafe(services, configDir);
   if (!cfg) return null;
 
-  const roleTag = process.env.PENUMBRA_JUDGE_ROLE ?? "memory-refiner";
-  const judges: JudgeEntry[] = resolveRoleLlmCandidates({ roleTag, agentchatConfig: cfg }).map(
-    (candidate) => {
-      const requestExtras = extractT2JudgeRequestExtras(candidate.options);
-      return {
-        name: candidate.name,
-        baseUrl: candidate.baseUrl,
-        apiKey: candidate.auth.source === "bearer" ? candidate.auth.token : "",
-        model: candidate.model,
-        caPath: candidate.caPath,
-        ...(requestExtras ? { requestExtras } : {}),
-      };
-    },
-  );
+  const roleTag =
+    process.env.PENUMBRA_T2_EXTRACTION_ROLE ?? process.env.PENUMBRA_JUDGE_ROLE ?? "memory-refiner";
+  const candidates = resolveRoleLlmCandidates({ roleTag, agentchatConfig: cfg });
+  const judges: JudgeEntry[] = candidates.map((candidate) => {
+    const requestExtras = extractT2JudgeRequestExtras(candidate.options);
+    const transport = resolveLlmHttpOptions(candidate.options, {
+      maxTokens: 16_384,
+      timeoutMs: getJudgeTimeoutMs(),
+    });
+    return {
+      name: candidate.name,
+      baseUrl: candidate.baseUrl,
+      apiKey: candidate.auth.source === "bearer" ? candidate.auth.token : "",
+      model: candidate.model,
+      caPath: candidate.caPath,
+      timeoutMs: transport.timeoutMs,
+      ...(candidate.options?.["maxTokens"] !== undefined ? { maxTokens: transport.maxTokens } : {}),
+      ...(requestExtras ? { requestExtras } : {}),
+    };
+  });
   if (judges.length === 0) return null;
 
   const pool = createJudgePool({
     judges,
+    candidateSelection: resolveLlmCandidateSelection(
+      candidates[0]?.options?.["candidateSelection"],
+    ),
     log: services.log,
-    promptBuilder: (transcript) => T2_PROMOTION_PROMPT.replace("{{TRANSCRIPT}}", transcript),
-    parseResponse: parseJudgeResponse,
+    promptBuilder: buildT2ExtractionPrompt,
+    parseResponse: parseT2ExtractionResponse,
   });
   onPool(pool);
   services.log.info(

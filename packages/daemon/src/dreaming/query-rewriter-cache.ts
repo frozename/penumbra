@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
 
+import { REWRITE_POLICY_VERSION } from "./rewrite-query-policy.js";
+
 export type RewriteVerdict = { kind: "query"; query: string } | { kind: "skip"; reason: string };
 
 export interface RewriteCacheRow {
@@ -67,18 +69,20 @@ function getRewriteCacheStatements(db: Database): RewriteCacheStatements | null 
         WHERE t2_memory_id = ?
           AND memory_updated_at_ms = ?
           AND model = ?
+          AND policy_version = ?
           AND expires_at > ?`,
     ),
     set: db.prepare(
       `INSERT INTO dream_query_rewrites(
-       t2_memory_id, memory_updated_at_ms, verdict_kind, query, reason, model, expires_at, created_at
+       t2_memory_id, memory_updated_at_ms, verdict_kind, query, reason, model, policy_version, expires_at, created_at
       ) VALUES (
-       ?, ?, ?, ?, ?, ?, ?, ?
+       ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
       ON CONFLICT(t2_memory_id, memory_updated_at_ms, model) DO UPDATE SET
         verdict_kind=excluded.verdict_kind,
         query=excluded.query,
         reason=excluded.reason,
+        policy_version=excluded.policy_version,
         model=excluded.model,
         expires_at=excluded.expires_at,
         created_at=excluded.created_at`,
@@ -100,7 +104,13 @@ export function getRewriteForMemory(opts: RewriteCacheOpts): RewriteCacheRow | n
   const statements = getRewriteCacheStatements(opts.db);
   if (!statements) return null;
   const { get } = statements;
-  const row = get.get(opts.t2_memory_id, opts.memory_updated_at_ms, opts.model, opts.now_ms) as
+  const row = get.get(
+    opts.t2_memory_id,
+    opts.memory_updated_at_ms,
+    opts.model,
+    REWRITE_POLICY_VERSION,
+    opts.now_ms,
+  ) as
     | {
         verdict_kind: string;
         query: string | null;
@@ -170,6 +180,7 @@ export function setRewriteForMemory(opts: {
     query,
     reason,
     opts.model,
+    REWRITE_POLICY_VERSION,
     expiresAt,
     createdAt,
   );

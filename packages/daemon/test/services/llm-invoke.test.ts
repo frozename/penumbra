@@ -288,6 +288,9 @@ test("request payload includes model, messages, temperature default, and respons
   expect(url).toBe("http://127.0.0.1:8083/v1/chat/completions");
   const body = JSON.parse(init.body as string) as unknown;
   expect(body).toEqual({
+    max_tokens: 4096,
+    stream: false,
+    n: 1,
     model: "granite-4.1-3b",
     messages,
     temperature: 0,

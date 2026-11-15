@@ -16,6 +16,11 @@ const CANONICAL_PROVIDER_MESSAGE =
 // This strict key union is the universal option gate for every adapter.
 // Unknown adapters skip adapter-specific refinement, but still cannot introduce
 // option keys that are absent from this schema.
+// The generation transport (core resolveLlmHttpOptions) refuses a maxTokens above this per request.
+// maxTokens stays a general openai-compat-http option here, so a dispatch-only seat may exceed it;
+// core resolveRoleLlmCandidates refuses a seat over the cap when it resolves a generation role.
+export const GENERATION_MAX_TOKENS_CAP = 16_384;
+
 export const AgentOptionsSchema = z.strictObject({
   agent: z.string().optional(),
   agentName: z.string().optional(),
@@ -32,6 +37,7 @@ export const AgentOptionsSchema = z.strictObject({
   binary: z.string().optional(),
   bootTimeoutMs: z.number().int().optional(),
   caPath: z.string().optional(),
+  candidateSelection: z.enum(["ordered", "round-robin"]).optional(),
   capturePort: z.unknown().optional(),
   claudeCodeAllowedTools: z.array(z.string()).optional(),
   claudeCodeDisallowedTools: z.array(z.string()).optional(),
@@ -176,6 +182,7 @@ export const ADAPTER_SPECIFIC_OPTION_KEYS = {
     "extraBody",
     "maxTokens",
     "requestExtras",
+    "candidateSelection",
     "systemPrompt",
   ],
   "opencode-acp": [

@@ -130,3 +130,95 @@ it("never selects models served by cloud gateway nodes", async () => {
   );
   expect(survivors).toEqual([]);
 });
+
+for (const mode of ["missing", "throws", "unavailable", "empty"] as const) {
+  it(`abstains when rewriter inventory is ${mode}`, async () => {
+    const local = candidate({
+      name: "local-seat",
+      baseUrl: "http://127.0.0.1:18944/v1",
+      model: "granite-local",
+    });
+    const hosted = candidate({
+      name: "hosted-seat",
+      baseUrl: "https://api.example.com/v1",
+      model: "hosted-model",
+    });
+    const inventory: DreamingRewriterInventory | undefined =
+      mode === "missing"
+        ? undefined
+        : {
+            collect: (): Promise<LlamactlInventory> => {
+              if (mode === "throws") return Promise.reject(new Error("unavailable"));
+              return Promise.resolve({
+                status: mode === "unavailable" ? "unavailable" : "ok",
+                messages: [],
+                nodes: [],
+                models: [],
+              });
+            },
+          };
+    const survivors = await resolveRewriterCandidatesAgainstInventory({
+      candidates: [local, hosted],
+      inventory,
+    });
+    expect(survivors).toEqual([]);
+  });
+}
+
+it("rejects credential-bearing and non-HTTP candidate URLs before inference", async () => {
+  const candidates = [
+    "http://user:secret@127.0.0.1:18944/v1",
+    "file://localhost/model",
+    "ftp://192.168.1.5/model",
+  ].map((baseUrl) => candidate({ name: "invalid", baseUrl, model: "granite-local" }));
+  expect(await resolveAgainstInventory(candidates, [{ id: "granite-local" }])).toEqual([]);
+});
+
+it("does not authorize memory research through an experimental model", async () => {
+  const local = candidate({
+    name: "local",
+    baseUrl: "http://127.0.0.1:18944/v1",
+    model: "granite",
+  });
+  expect(await resolveAgainstInventory([local], [{ id: "granite", experimental: true }])).toEqual(
+    [],
+  );
+});
+
+it("rejects DNS hostnames with private-IP numeric prefixes in candidates and inventory", async () => {
+  const local = candidate({ name: "mini", baseUrl: "http://127.0.0.1:18944/v1", model: "granite" });
+  for (const host of ["10.0.0.1evil", "192.168.1.2junk", "172.16.0.3suffix", "127.0.0.1e0"]) {
+    const invalid = candidate({ ...local, baseUrl: `http://${host}/v1` });
+    expect(await resolveAgainstInventory([invalid], [{ id: "granite" }])).toEqual([]);
+    expect(
+      await resolveAgainstInventory(
+        [local],
+        [{ id: "granite", node: { name: "invalid", endpoint: `http://${host}/v1` } }],
+      ),
+    ).toEqual([]);
+  }
+});
+
+it("binds a registered loopback catalog to its configured endpoint", async () => {
+  const direct = candidate({
+    name: "mini",
+    baseUrl: "http://127.0.0.1:18944/v1",
+    model: "granite",
+  });
+  const other = candidate({
+    name: "other",
+    baseUrl: "http://127.0.0.1:18999/v1",
+    model: "granite",
+  });
+  const proxy = candidate({ name: "proxy", baseUrl: "http://127.0.0.1:7944/v1", model: "granite" });
+  const selected = await resolveAgainstInventory(
+    [direct, other, proxy],
+    [
+      {
+        id: "granite",
+        node: { name: "mini", kind: "gateway", endpoint: "http://127.0.0.1:18944", healthy: true },
+      },
+    ],
+  );
+  expect(selected).toEqual([direct]);
+});

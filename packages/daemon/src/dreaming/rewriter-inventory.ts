@@ -9,7 +9,6 @@ import {
 
 export const DREAMING_REWRITER_INVENTORY_TTL_MS = 60_000;
 export const DREAMING_REWRITER_INVENTORY_TIMEOUT_MS = 1_000;
-export const DREAMING_REWRITER_LOCAL_SECONDARY_MODEL = "lfm2-generator";
 
 const CLOUD_GATEWAY_NODE_NAMES = new Set([
   "anthropic-direct",
@@ -51,7 +50,11 @@ export function createCachedDreamingRewriterInventory(
       if (defaultInventoryCache && checkedAtMs - defaultInventoryCache.checkedAtMs < ttlMs) {
         return defaultInventoryCache.inventory;
       }
-      const inventory = await collect({ timeoutMs });
+      const inventory = await collect({
+        timeoutMs,
+        includeLocalGateways: true,
+        includeCatalog: false,
+      });
       defaultInventoryCache = { checkedAtMs, inventory };
       return inventory;
     },
@@ -67,7 +70,7 @@ export async function resolveRewriterCandidatesAgainstInventory(opts: {
   inventory?: DreamingRewriterInventory;
   log?: Logger;
 }): Promise<LlmCandidate[]> {
-  if (!opts.inventory || opts.candidates.length === 0) return opts.candidates;
+  if (!opts.inventory || opts.candidates.length === 0) return [];
 
   let inventory: LlamactlInventory;
   try {
@@ -75,17 +78,17 @@ export async function resolveRewriterCandidatesAgainstInventory(opts: {
   } catch (err) {
     opts.log?.warn(
       { err },
-      "dreaming: failed to collect llamactl inventory; using configured rewriter candidates",
+      "dreaming: failed to collect llamactl inventory; abstaining from memory research",
     );
-    return opts.candidates;
+    return [];
   }
 
   if (inventory.status === "unavailable" || inventory.models.length === 0) {
     opts.log?.warn(
       { messages: inventory.messages },
-      "dreaming: llamactl inventory unavailable; using configured rewriter candidates",
+      "dreaming: llamactl inventory unavailable; abstaining from memory research",
     );
-    return opts.candidates;
+    return [];
   }
 
   return opts.candidates.filter((candidate) =>
@@ -94,9 +97,25 @@ export async function resolveRewriterCandidatesAgainstInventory(opts: {
 }
 
 function modelServesCandidate(model: LlamactlModelInventory, candidate: LlmCandidate): boolean {
+  if (model.experimental === true) return false;
   if (!isLocalOrLanCandidate(candidate)) return false;
   if (!isLocalOrLanInventoryModel(model)) return false;
+  if (
+    model.node?.kind === "gateway" &&
+    (model.node.healthy !== true ||
+      catalogBase(model.node.endpoint) !== catalogBase(candidate.baseUrl))
+  )
+    return false;
   return modelAliases(candidate.model).has(model.id);
+}
+
+function catalogBase(baseUrl: string): string | null {
+  try {
+    const url = new URL(baseUrl);
+    return url.origin + url.pathname.replace(/\/+$/, "").replace(/\/v1$/, "");
+  } catch {
+    return null;
+  }
 }
 
 function modelAliases(model: string): Set<string> {
@@ -108,7 +127,15 @@ function modelAliases(model: string): Set<string> {
 
 function isLocalOrLanCandidate(candidate: LlmCandidate): boolean {
   try {
-    return isLocalOrLanHost(new URL(candidate.baseUrl).hostname);
+    const url = new URL(candidate.baseUrl);
+    return (
+      ["http:", "https:"].includes(url.protocol) &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash &&
+      isLocalOrLanHost(url.hostname)
+    );
   } catch {
     return false;
   }
@@ -129,8 +156,10 @@ function isLocalOrLanHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replaceAll("[", "").replaceAll("]", "");
   if (host === "localhost" || host === "::1") return true;
   if (host.endsWith(".local")) return true;
-  const parts = host.split(".").map((part) => Number.parseInt(part, 10));
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part))) return false;
+  const octets = host.split(".");
+  if (octets.length !== 4 || octets.some((part) => !/^\d{1,3}$/.test(part))) return false;
+  const parts = octets.map(Number);
+  if (parts.some((part) => part > 255)) return false;
   const [a = 0, b = 0] = parts;
   if (a === 10) return true;
   if (a === 127) return true;

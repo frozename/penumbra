@@ -9,6 +9,8 @@ export interface JudgeEntry {
   model: string;
   caPath?: string;
   requestExtras?: Record<string, unknown>;
+  maxTokens?: number;
+  timeoutMs?: number;
 }
 
 type JudgeLogFn = (...a: unknown[]) => void;
@@ -20,6 +22,7 @@ export interface JudgePoolLogger {
 }
 
 export interface JudgePoolOpts {
+  candidateSelection?: "ordered" | "round-robin";
   judges: JudgeEntry[];
   log: JudgePoolLogger;
   fetch?: typeof fetch;
@@ -27,7 +30,7 @@ export interface JudgePoolOpts {
   maxTokens?: number;
   unhealthyAfter?: number;
   promptBuilder: (transcript: string) => string;
-  parseResponse: (rawContent: string) => T2MemoryExtraction[];
+  parseResponse: (rawContent: string, transcript: string) => T2MemoryExtraction[];
 }
 
 export interface JudgePool {
@@ -233,7 +236,12 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
     }
   }
 
-  async function invokeJudge(judge: JudgeState, prompt: string): Promise<T2MemoryExtraction[]> {
+  async function invokeJudge(
+    judge: JudgeState,
+    prompt: string,
+    transcript: string,
+  ): Promise<T2MemoryExtraction[]> {
+    const effectiveTimeoutMs = Math.min(timeoutMs, judge.timeoutMs ?? timeoutMs);
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (judge.apiKey) headers.Authorization = `Bearer ${judge.apiKey}`;
     const url = buildJudgeUrl(judge.baseUrl);
@@ -245,10 +253,13 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
         max_tokens: maxTokens,
         temperature: 0,
         ...(judge.requestExtras ?? {}),
+        ...(judge.maxTokens !== undefined
+          ? { max_tokens: Math.min(maxTokens, judge.maxTokens) }
+          : {}),
         model: judge.model,
         messages: [{ role: "user", content: prompt }],
       }),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: AbortSignal.timeout(effectiveTimeoutMs),
     };
     if (judge.caPem) init.tls = { ca: judge.caPem };
     let res: Response;
@@ -256,7 +267,7 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
       res = await fetchImpl(url, init);
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "TimeoutError") {
-        throw new Error(`judge ${judge.name} timed out after ${String(timeoutMs)}ms`);
+        throw new Error(`judge ${judge.name} timed out after ${String(effectiveTimeoutMs)}ms`);
       }
       throw err;
     }
@@ -271,11 +282,11 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
       });
     }
     const json = (await res.json()) as JudgeResponse;
-    return opts.parseResponse(extractJudgeContent(judge, json));
+    return opts.parseResponse(extractJudgeContent(judge, json), transcript);
   }
 
   // eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve the existing retry and health policy while changing only cursor advancement.
-  async function tryEachJudge(prompt: string): Promise<T2MemoryExtraction[]> {
+  async function tryEachJudge(prompt: string, transcript: string): Promise<T2MemoryExtraction[]> {
     let lastError: unknown;
     const attempted = new Set<number>();
     let result: T2MemoryExtraction[] | undefined;
@@ -283,8 +294,8 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
       let idx: number | undefined;
       if (attempts === 0) {
         // Advance the shared cursor exactly once per invocation; retries use attempted only.
-        idx = nextIndex;
-        nextIndex = (nextIndex + 1) % judges.length;
+        idx = opts.candidateSelection === "ordered" ? 0 : nextIndex;
+        if (opts.candidateSelection !== "ordered") nextIndex = (nextIndex + 1) % judges.length;
       } else {
         for (let i = 0; i < judges.length; i++) {
           if (!attempted.has(i)) {
@@ -298,7 +309,7 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
       const judge = judges[idx];
       if (!judge || judge.unhealthy) continue;
       try {
-        result = await invokeJudge(judge, prompt);
+        result = await invokeJudge(judge, prompt, transcript);
         break;
       } catch (err) {
         lastError = err;
@@ -320,7 +331,7 @@ export function createJudgePool(opts: JudgePoolOpts): JudgePool {
     async invoke(transcript: string): Promise<T2MemoryExtraction[]> {
       if (judges.length === 0) throw new Error("all judges unhealthy this tick");
       const prompt = opts.promptBuilder(transcript);
-      return await tryEachJudge(prompt);
+      return await tryEachJudge(prompt, transcript);
     },
     resetTickHealth(): void {
       for (const judge of judges) {
