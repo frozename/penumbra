@@ -1,0 +1,27 @@
+[
+  {
+    "at": "2026-11-13T14:57:43.238191+00:00",
+    "kind": "waiting_for_existing_heavy_job_lock"
+  },
+  {
+    "at": "2026-11-13T14:57:43.451073+00:00",
+    "kind": "admitted",
+    "gufoPid": 791917,
+    "availableBytes": 21898231808,
+    "processingSlots": 0,
+    "existingSensorSha256": "997023b3e9235f455867f024f7a06376b09733998f002ee291c76eb0e3ee183a",
+    "composedSensorSha256": "8f03efc5efb93f8bbf9acbbac0582f737cb6b429b3d52234f906bade41753a16",
+    "guardSha256": "032fd9398b939652ca1061cfb511c43e7a2c6e3dd857f46d04b8ef651c84d237",
+    "caveat": "Reuse existing Linux telemetry and guard functions, with the normal20GiB floor and stop on observed shared processing. Polling is not global coding-priority reservation."
+  },
+  {
+    "at": "2026-11-13T15:00:34.478863+00:00",
+    "kind": "replay_finished",
+    "exitCode": 0
+  },
+  {
+    "at": "2026-11-13T15:00:34.481514+00:00",
+    "kind": "finished_without_service_mutation",
+    "note": "Stopped only owned evaluation and SSH sensor processes. Gufo was neither stopped nor reconfigured."
+  }
+]

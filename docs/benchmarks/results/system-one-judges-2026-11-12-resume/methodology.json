@@ -1,0 +1,79 @@
+{
+  "scope": "November12 continuation; quality and operational scenarios kept separate; no new candidate authority",
+  "scenarios": [
+    {
+      "name": "Mini complete-body confirmation",
+      "requests": 120,
+      "nativeContext": 8192,
+      "output": "t2-mini-resumed",
+      "resourceScope": "dedicated Mini PID RSS"
+    },
+    {
+      "name": "Experimental router lifecycle/concurrency",
+      "config": "local-judges.experimental-8k.ini",
+      "rootProcess": "router-nano-process.json",
+      "outputs": [
+        "router-operations.json",
+        "router-concurrency.json"
+      ],
+      "resourceScope": "router plus direct children RSS; selected vmmap physical footprints"
+    },
+    {
+      "name": "Managed root recovery",
+      "config": "local-judges.managed-8k.ini",
+      "output": "managed-runtime-smoke.json",
+      "readinessIncludes": "warm-cache launchd restart, not cold-machine startup"
+    },
+    {
+      "name": "Bounded Nano replay",
+      "config": "local-judges.ini",
+      "requests": 320,
+      "output": "nano-bounded",
+      "resourceScope": "router plus direct children aggregate RSS/ps CPU; GPU is host-wide",
+      "script": "run-bounded-replay.executed.py"
+    },
+    {
+      "name": "Paced historical observer",
+      "config": "local-judges.ini",
+      "requests": 5,
+      "intervalMs": 45000,
+      "output": "paced-historical",
+      "script": "run-paced-historical.executed.py",
+      "incumbent": "stored hash-matched ballots, not contemporaneous inference or labels"
+    },
+    {
+      "name": "Oversized input",
+      "config": "local-judges.ini",
+      "output": "bounded-context-rejection.json",
+      "nativeTokenCount": 6495,
+      "outcome": "HTTP500 server abstention; no retry/no truncation"
+    },
+    {
+      "name": "Proposed production Granite route",
+      "status": "not_run; cutover rolled back; waiting on OS access",
+      "script": "production-route-smoke.ts"
+    }
+  ],
+  "scriptNote": "Current replay driver copies add sys.dont_write_bytecode=True after execution to avoid cache litter. The .executed.py copies reconstruct exact executed versions by removing only that added line.",
+  "configs": [
+    {
+      "file": "local-judges.ini",
+      "sha256": "223fe48f1fe69a8f10a4f02be05dab7ecfae34f47e9a7d3283366af96bc387bf"
+    },
+    {
+      "file": "local-judges.experimental-8k.ini",
+      "sha256": "0528fb94d2264b916b1401da4130d1dbe5ccdc5d117c8299b96ae4094330a8ac"
+    },
+    {
+      "file": "local-judges.managed-8k.ini",
+      "sha256": "df9c9f286560bb1079e067fe696c74e008f9943804f7fb249a3bce843ce3a547"
+    }
+  ],
+  "qualityLimits": [
+    "Independently dispatched AI reviews share a base model family",
+    "Historical320 development corpus contains42 uncertain inputs and synthetic positive supplement",
+    "Complete-body120 corpus has4 uncertain and only14 negative cases",
+    "No retraining or held-out threshold adjustment",
+    "Source truth and downstream utility not established by decision probability"
+  ]
+}

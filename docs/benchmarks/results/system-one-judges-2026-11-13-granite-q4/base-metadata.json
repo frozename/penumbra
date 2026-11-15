@@ -1,0 +1,12 @@
+{
+  "id": "ibm-granite/granite-4.1-3b",
+  "sha": "c0650403e44e78ec0262dab1c90914c65b196c4e",
+  "license": "apache-2.0",
+  "files": [
+    {
+      "rfilename": "README.md",
+      "blobId": "9d4aa7b69118a0f9c0c0293a3ba6d8bf56be7775",
+      "size": 32480
+    }
+  ]
+}

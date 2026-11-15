@@ -1,0 +1,43 @@
+[
+  {
+    "at": "2026-11-13T20:11:18.792929+00:00",
+    "kind": "lock_acquired",
+    "replica": false,
+    "sourceCommit": "26dec40f0474f606f50c7d7c428fda5809ddba0e",
+    "indexSourceSha256": "47e7c5487166b636b49c33488c92e1ac5977e17c1e34988cf6a5faa141862cc3"
+  },
+  {
+    "at": "2026-11-13T20:12:19.483479+00:00",
+    "kind": "maintenance_admitted",
+    "health": {
+      "status": 200,
+      "wallMs": 5.680124973878264,
+      "lagMs": 4.827000007033348
+    }
+  },
+  {
+    "at": "2026-11-13T20:12:19.600611+00:00",
+    "kind": "phase_completed",
+    "phase": "before",
+    "reportSha256": "b86fbf55a6da3ad14218b90a0ed11993dded2e5ce3e11a680e370d8bb0c28cc0",
+    "ddlMs": null,
+    "healthSamples": [
+      {
+        "status": 200,
+        "wallMs": 5.924625089392066,
+        "lagMs": 4.827000007033348
+      }
+    ]
+  },
+  {
+    "at": "2026-11-13T20:12:20.827466+00:00",
+    "kind": "aborted",
+    "reason": "Control health wall guard refused maintenance: 3"
+  },
+  {
+    "at": "2026-11-13T20:12:20.829314+00:00",
+    "kind": "owned_child_stopped",
+    "signal": "SIGKILL",
+    "uncommittedDdlRollsBack": true
+  }
+]

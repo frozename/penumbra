@@ -1,0 +1,112 @@
+[
+  {
+    "at": "2026-11-13T19:55:05.114486+00:00",
+    "kind": "lock_acquired",
+    "replica": true,
+    "sourceCommit": "bae43823c3ded1187ee7c7f65aeda9975002652f",
+    "indexSourceSha256": "47e7c5487166b636b49c33488c92e1ac5977e17c1e34988cf6a5faa141862cc3"
+  },
+  {
+    "at": "2026-11-13T19:55:05.342809+00:00",
+    "kind": "phase_completed",
+    "phase": "before",
+    "reportSha256": "33d1ee99679ba791b1baba3c24ca8c4a807ada95940a9880af461220fd055e9a",
+    "ddlMs": null,
+    "healthSamples": [
+      {
+        "status": 200,
+        "wallMs": 17.286833841353655,
+        "lagMs": 4.8006250113248825
+      },
+      {
+        "status": 200,
+        "wallMs": 2.665582811459899,
+        "lagMs": 4.8006250113248825
+      }
+    ]
+  },
+  {
+    "at": "2026-11-13T19:55:05.568358+00:00",
+    "kind": "phase_completed",
+    "phase": 0,
+    "reportSha256": "90b14ef5534e738d62a1469f37519367b994e632eec27ec819e848378175a19e",
+    "ddlMs": 119.318125,
+    "healthSamples": [
+      {
+        "status": 200,
+        "wallMs": 3.050333121791482,
+        "lagMs": 4.8006250113248825
+      },
+      {
+        "status": 200,
+        "wallMs": 4.083625040948391,
+        "lagMs": 4.8006250113248825
+      }
+    ]
+  },
+  {
+    "at": "2026-11-13T19:55:05.674785+00:00",
+    "kind": "phase_completed",
+    "phase": 1,
+    "reportSha256": "f74a0070067cce392b09356db3b0565591f90cff8add4f00d0066af3fc58c3f3",
+    "ddlMs": 0.020500000000000185,
+    "healthSamples": [
+      {
+        "status": 200,
+        "wallMs": 3.9892499335110188,
+        "lagMs": 4.8006250113248825
+      }
+    ]
+  },
+  {
+    "at": "2026-11-13T19:55:05.791187+00:00",
+    "kind": "phase_completed",
+    "phase": 2,
+    "reportSha256": "571bd91ac0a86e9cf3e460eb1d102d870e88f8f17253b4ddd41e2847a367961e",
+    "ddlMs": 23.735958999999998,
+    "healthSamples": [
+      {
+        "status": 200,
+        "wallMs": 4.153166897594929,
+        "lagMs": 4.8006250113248825
+      }
+    ]
+  },
+  {
+    "at": "2026-11-13T19:55:05.907100+00:00",
+    "kind": "phase_completed",
+    "phase": 3,
+    "reportSha256": "0f6411089091be9429b75720e38a7386bebbaef91caccd9107f61cbf7a4d907b",
+    "ddlMs": 0.41508399999999845,
+    "healthSamples": [
+      {
+        "status": 200,
+        "wallMs": 3.9522498846054077,
+        "lagMs": 4.8006250113248825
+      }
+    ]
+  },
+  {
+    "at": "2026-11-13T19:55:06.023860+00:00",
+    "kind": "phase_completed",
+    "phase": "after",
+    "reportSha256": "fa643943fb5d5ea95dc7e1ab5c1aad54eef268dfc3878380da247f87c6059e7c",
+    "ddlMs": null,
+    "healthSamples": [
+      {
+        "status": 200,
+        "wallMs": 4.2262079659849405,
+        "lagMs": 4.8006250113248825
+      }
+    ]
+  },
+  {
+    "at": "2026-11-13T19:55:06.024440+00:00",
+    "kind": "index_maintenance_complete",
+    "productionRestarted": false,
+    "modelRoutingChanged": false,
+    "dataRowsChanged": 0,
+    "liveSchemaStampChanged": false,
+    "rollback": "DROP INDEX only the four exact new index names, individually; do not migrate or downgrade metadata."
+  }
+]

@@ -1,0 +1,100 @@
+{
+  "evaluation": "provisional labels; answered common held-out cases only, not population quality",
+  "selected": 34,
+  "commonAnswered": 34,
+  "missing": [],
+  "incumbent": {
+    "selected": 34,
+    "answered": 34,
+    "abstained": 0,
+    "coverage": 1,
+    "threshold": 0.5,
+    "tp": 10,
+    "fp": 4,
+    "tn": 15,
+    "fn": 5,
+    "precision": 0.7142857142857143,
+    "recall": 0.6666666666666666,
+    "f1": 0.6896551724137931,
+    "falsePromotionRate": 0.21052631578947367,
+    "falseVetoRate": 0.3333333333333333,
+    "falseDiscoveryRate": 0.2857142857142857,
+    "brier": 0.31379117647058824,
+    "calibrationError": 0.2726470588235295,
+    "falseVetoRateWithRejectFallback": 0.3333333333333333,
+    "p50LatencyMs": 1679.0104169999977,
+    "p95LatencyMs": 12676.194416999992
+  },
+  "candidate": {
+    "selected": 34,
+    "answered": 34,
+    "abstained": 0,
+    "coverage": 1,
+    "threshold": 0.5,
+    "tp": 12,
+    "fp": 2,
+    "tn": 17,
+    "fn": 3,
+    "precision": 0.8571428571428571,
+    "recall": 0.8,
+    "f1": 0.8275862068965517,
+    "falsePromotionRate": 0.10526315789473684,
+    "falseVetoRate": 0.2,
+    "falseDiscoveryRate": 0.14285714285714285,
+    "brier": 0.1297517336473403,
+    "calibrationError": 0.12234037392792692,
+    "falseVetoRateWithRejectFallback": 0.2,
+    "p50LatencyMs": 306.45654100000047,
+    "p95LatencyMs": 7174.499415999999
+  },
+  "disagreements": [
+    {
+      "caseId": "syn-gotcha",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "syn-failed-test",
+      "expected": false,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "syn-long-lived-dispatch",
+      "expected": false,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "syn-injection-json",
+      "expected": false,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "syn-license-intent",
+      "expected": true,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "syn-negated-preference",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "syn-file-tree-output",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "syn-long-injection",
+      "expected": false,
+      "incumbent": true,
+      "candidate": false
+    }
+  ]
+}

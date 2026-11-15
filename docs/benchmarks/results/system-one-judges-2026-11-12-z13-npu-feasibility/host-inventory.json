@@ -1,0 +1,71 @@
+{
+  "at": "2026-11-12T23:43:24.805846+00:00",
+  "method": "Read-only files/process/package inventory; no runtime initialization, inference, install, module load, configuration change or restart.",
+  "kernel": "7.0.0-42-generic",
+  "osRelease": "PRETTY_NAME=\"Ubuntu 24.04.5 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nVERSION=\"24.04.5 LTS (Noble Numbat)\"\nVERSION_CODENAME=noble\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=noble\nLOGO=ubuntu-logo",
+  "cpu": "AMD RYZEN AI MAX+ 395 w/ Radeon 8060S",
+  "memory": {
+    "MemTotalBytes": 134155739136,
+    "MemAvailableBytes": 21908549632,
+    "SwapTotalBytes": 8589930496,
+    "SwapFreeBytes": 8588484608
+  },
+  "admissionFloorBytes": 21474836480,
+  "availableAboveAdmissionBytes": 433713152,
+  "amdxdnaLoaded": true,
+  "accelDevices": [
+    "/dev/accel/accel0"
+  ],
+  "npu": {
+    "vendor": "0x1022",
+    "device": "0x17f0",
+    "revision": "0x11",
+    "fw_version": "1.1.2.65",
+    "vbnv": "RyzenAI-npu5",
+    "power/runtime_status": "suspended"
+  },
+  "npuDeviceAccess": {
+    "read": true,
+    "write": true
+  },
+  "memlockBytes": [
+    -1,
+    -1
+  ],
+  "binariesInSshPath": {
+    "flm": null,
+    "lemonade-server": null,
+    "xrt-smi": null,
+    "xbutil": null
+  },
+  "standardRuntimePaths": [],
+  "packages": {
+    "exitCode": 1,
+    "stdout": "",
+    "stderr": "dpkg-query: no packages found matching libxrt*\ndpkg-query: no packages found matching xrt*\ndpkg-query: no packages found matching *amdxdna*\ndpkg-query: no packages found matching *fastflow*\ndpkg-query: no packages found matching *lemonade*"
+  },
+  "npuOpenersVisibleToSshUser": [
+    {
+      "pid": 791917,
+      "comm": "gufo-78d74185",
+      "executable": "/home/alex/DevStorage/llamactl-z13/gufo-v0.26.0/gufo-78d74185",
+      "devices": [
+        {
+          "device": "/dev/accel/accel0",
+          "fdinfo": "pos:\t0\nflags:\t02100002\nmnt_id:\t30\nino:\t1191"
+        }
+      ]
+    }
+  ],
+  "listening": {
+    "exitCode": 0,
+    "stdout": "State  Recv-Q Send-Q Local Address:Port  Peer Address:PortProcess                                   \nLISTEN 0      128        127.0.0.1:14873      0.0.0.0:*    users:((\"ssh\",pid=2245,fd=4))            \nLISTEN 0      16         127.0.0.1:8080       0.0.0.0:*    users:((\"gufo-78d74185\",pid=791917,fd=3))\nLISTEN 0      4096   127.0.0.53%lo:53         0.0.0.0:*                                             \nLISTEN 0      4096      127.0.0.54:53         0.0.0.0:*                                             \nLISTEN 0      4096         0.0.0.0:22         0.0.0.0:*                                             \nLISTEN 0      512          0.0.0.0:7843       0.0.0.0:*    users:((\"bun\",pid=825078,fd=6))          \nLISTEN 0      4096            [::]:22            [::]:*",
+    "stderr": ""
+  },
+  "caveats": [
+    "A single availability sample is not sustained spare capacity.",
+    "An open NPU descriptor is not evidence of an active hardware context or measured NPU utilization.",
+    "No runtime in the searched paths/packages does not exclude a custom installation elsewhere.",
+    "Negative memlock values denote unlimited."
+  ]
+}

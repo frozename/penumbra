@@ -1,0 +1,35 @@
+[
+  {
+    "ts": 1794477900.253759,
+    "kind": "granite_paused_authorized",
+    "pid": 49430
+  },
+  {
+    "ts": 1794477900.258668,
+    "kind": "post_pause_memory",
+    "availableFreeInactiveBytes": 5440454656,
+    "swapUsedBytes": 1219619717.12,
+    "swapoutBytes": 118310289408,
+    "osMemoryPressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 69%"
+  },
+  {
+    "ts": 1794477903.600629,
+    "kind": "native_started",
+    "name": "mini",
+    "pid": 42560,
+    "startupMs": 3339.613914489746
+  },
+  {
+    "ts": 1794478174.707861,
+    "kind": "completed_quality_replays"
+  },
+  {
+    "ts": 1794478174.718894,
+    "kind": "granite_left_nonresident_authorized",
+    "rollbackMetadata": "/Users/aimastermind/work/penumbra-system-one-judges/docs/benchmarks/results/system-one-judges-2026-11-11-production-readiness/granite-original-launch.json"
+  },
+  {
+    "ts": 1794478174.723511,
+    "kind": "finished_with_native_stopped_granite_nonresident"
+  }
+]

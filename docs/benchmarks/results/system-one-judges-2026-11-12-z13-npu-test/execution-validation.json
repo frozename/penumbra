@@ -1,0 +1,50 @@
+{
+  "at": "2026-11-13T01:37:16.947598+00:00",
+  "baseCommit": "ffc88e28e9bc21f71403df7ab72846a8bb68665a",
+  "experimentalWorkingTreeModified": true,
+  "pythonGuardTests": {
+    "passed": 15,
+    "failed": 0
+  },
+  "focusedBunTests": {
+    "passed": 21,
+    "failed": 0,
+    "assertions": 54,
+    "files": [
+      "scripts/system-one-judge-bench.test.ts",
+      "packages/integrations/typesafe/test/local-decision.test.ts"
+    ]
+  },
+  "bashSyntax": "passed",
+  "pythonSourcesParsed": 7,
+  "jsonFilesParsed": 103,
+  "jsonlRowsParsed": 1618,
+  "unavailableRawArtifacts": [
+    {
+      "path": "docs/benchmarks/results/system-one-judges-2026-11-12-z13-npu-test/runs/nano-public-close-20261113T011022Z/api-readiness.json",
+      "reason": "Original empty API-readiness artifact from retained aborted/no-exposure startup; not a valid JSON measurement"
+    }
+  ],
+  "missingLocalLinks": [],
+  "runtimeLogsAreFixedNotices": true,
+  "trialStatusCounts": {
+    "completed_runtime_replay": 6,
+    "interrupted": 1,
+    "aborted": 1,
+    "partial_runtime_replay": 2
+  },
+  "experimentalSourceSha256": {
+    "gufo_probe.py": "b03458673185b58fbe4bd48a6a7c0229c4e8813f124120029478eb493d6474e7",
+    "guarded_runtime.py": "997023b3e9235f455867f024f7a06376b09733998f002ee291c76eb0e3ee183a",
+    "trial_guard.py": "032fd9398b939652ca1061cfb511c43e7a2c6e3dd857f46d04b8ef651c84d237",
+    "replay.ts": "0d304a47856e93907fc119f4bb60ff7e4e74c6b81d41242510d2f1faff054831",
+    "summarize.py": "fbc35a56c994823339d5af3e6d474cc053b196211bc02f61c8923a10d18dc62e",
+    "run.sh": "79ba0753663aac78f0e92412b85a7cb205b59317b2b220403e43560c1766d283",
+    "guard_test.py": "7ea5f2b437ad7b69ca03203e92231f087ac30919e2e536f134b963b3e3ad7564",
+    "stage.py": "fa6ffe40b6285e6daee5d497ae4dc7bc321faefd5c5c85f8dadfb5cb1fc83687",
+    "analyze.py": "ffd5521d266a3ad1841d9db51530be55c16c450ff08284d4e9429053282eb24a"
+  },
+  "fullCi": "Not rerun; production packages/scripts/root configuration unchanged from prior recorded CI source. Focused tests and executed experiments are scoped separately.",
+  "preFormatSourceSha256": {},
+  "sourceHashScope": "Final experimental files at validation; replay.ts formatting-only change after inference is separately hashed. Bench/model/runtime pins and per-run flags/inputs are retained; production packages/scripts unchanged."
+}

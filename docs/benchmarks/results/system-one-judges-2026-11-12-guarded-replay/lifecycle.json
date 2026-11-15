@@ -1,0 +1,46 @@
+[
+  {
+    "ts": 1794485960.4417632,
+    "kind": "start",
+    "routerPid": 51379,
+    "plan": {
+      "baselineSeconds": 30,
+      "maxReplaySeconds": 900,
+      "cooldownSeconds": 35,
+      "maxAttempts": 20,
+      "minIntervalMs": 30000,
+      "admissionBytes": 5905580032,
+      "reserveBytes": 2147483648,
+      "maxSwapGrowthAndOutBytes": 268435456,
+      "criticalMaxAgeSeconds": 2.5,
+      "method": "Historical read-only replay; no production feature flags, restarts or authority changes",
+      "memoryLimit": "Sampled observer admission, not a kernel reservation or indefinite residency guarantee"
+    }
+  },
+  {
+    "ts": 1794485990.640176,
+    "kind": "replay_started",
+    "deadlineEpochMs": 1794486890640
+  },
+  {
+    "ts": 1794486890.856538,
+    "kind": "observer_finished",
+    "exitCode": 0,
+    "outcome": "partial_runtime_replay"
+  },
+  {
+    "ts": 1794486926.156838,
+    "kind": "native_only_unloaded",
+    "response": {
+      "success": true
+    }
+  },
+  {
+    "ts": 1794486926.162573,
+    "kind": "finished",
+    "aborted": false,
+    "abortReason": null,
+    "servicesAndAuthorityUnchanged": true,
+    "samplerStopped": true
+  }
+]

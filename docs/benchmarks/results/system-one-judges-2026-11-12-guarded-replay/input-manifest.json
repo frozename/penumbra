@@ -1,0 +1,126 @@
+{
+  "selectedAt": "2026-11-12T12:19:52.536Z",
+  "source": "Existing historical audit rows, read-only, exact body SHA matched, reused development/operational evidence; not hidden acceptance data",
+  "cases": [
+    {
+      "decisionId": "b5a8533c-c6eb-41c5-9827-88ee122ab787",
+      "subjectId": "04670beb-305d-44ae-9a1e-e15c84010d8c",
+      "historicalAt": "2026-11-12T11:50:58.041Z",
+      "inputSha256": "fbe4b79f6dbdc585b1774d553a6a95cc85c7d1df28dc58955e25f7b12760a796"
+    },
+    {
+      "decisionId": "87fd3e59-e203-4630-97c2-0765ee245996",
+      "subjectId": "085ca76d-b4d5-43ff-be38-f840e4bf106a",
+      "historicalAt": "2026-11-12T11:50:55.268Z",
+      "inputSha256": "2f885ce658f845e4d457186f6d869f6ef947286701eb42574f799831dc557cf8"
+    },
+    {
+      "decisionId": "97e93730-83e7-4f59-9db7-cdf6f3b969ca",
+      "subjectId": "c5c1e730-c7ff-415f-984d-03bc58c7c158",
+      "historicalAt": "2026-11-12T10:40:25.936Z",
+      "inputSha256": "3a130a50235d113c680ddd102ec1f5255826dcf55c1f646018065f3641053920"
+    },
+    {
+      "decisionId": "ccf50375-751c-48fb-bb41-65053e2eaefd",
+      "subjectId": "69837ea7-d487-4859-a48e-2f23260bece1",
+      "historicalAt": "2026-11-12T10:14:22.514Z",
+      "inputSha256": "4dd97e94c05b4ccccae20bcb4427ce08cf67c1142512496394acbfbf0c963b0f"
+    },
+    {
+      "decisionId": "30d97d3e-cc0f-4add-84f0-07e635705463",
+      "subjectId": "aecb87cf-2b10-4134-81f4-d2fb0a07e61f",
+      "historicalAt": "2026-11-12T09:47:47.567Z",
+      "inputSha256": "1b2918ba891c56e0c1a7b330f7994d1980a72bea7050e3e248b570038b5ba999"
+    },
+    {
+      "decisionId": "511df679-20a7-4bef-9721-51b58e941598",
+      "subjectId": "0f3b015f-024c-4162-9dd8-67be781c95fc",
+      "historicalAt": "2026-11-11T18:42:29.675Z",
+      "inputSha256": "9c4336619d85fb5d4cc677ceff249fc85b7e6ae46eafd8d7d7c7a6a04fbaec48"
+    },
+    {
+      "decisionId": "bd16e57b-8849-40c0-922b-1a55e2e06a41",
+      "subjectId": "8ea8ffe9-0cfb-41eb-b710-00cbdb139601",
+      "historicalAt": "2026-11-10T18:42:30.320Z",
+      "inputSha256": "1caa0662887a9c7cd33c15dc008cb453b610901767ab5b1437c0b45743b1672c"
+    },
+    {
+      "decisionId": "48dbba88-00dd-4bfb-9da5-cfea464880a6",
+      "subjectId": "550eaabe-51ff-41d1-91cf-35a8a6fa147b",
+      "historicalAt": "2026-11-10T11:32:03.317Z",
+      "inputSha256": "ea3444f1294e245236c7517df041f78bf7de2ad8ea09bb4a9d69e7afaf8476f0"
+    },
+    {
+      "decisionId": "477722d3-81c1-4ba4-a48c-d6b7b5780ce1",
+      "subjectId": "523f9389-386e-44ef-a6b4-826b0e12eb6c",
+      "historicalAt": "2026-11-10T06:38:24.996Z",
+      "inputSha256": "5bdef95a3e0485a6976f35f546e0450ba7fe33b91d31d2c76f2b3e2acc914b92"
+    },
+    {
+      "decisionId": "d069ac62-2a00-4e1a-9f93-b79e29afef64",
+      "subjectId": "12e1c0ee-4ec4-47f5-9199-2e2079909426",
+      "historicalAt": "2026-11-10T05:47:34.546Z",
+      "inputSha256": "deb6bea7d38b300f71454404ac072795b9cb0cff006fcb4ff5582b21818c6d6a"
+    },
+    {
+      "decisionId": "42643d7c-5842-40fd-8427-34a2ffb35458",
+      "subjectId": "548df266-9ed1-4723-bd45-9f39e67e1ed2",
+      "historicalAt": "2026-11-09T02:57:50.176Z",
+      "inputSha256": "c03547f2fec913978d20da6918f44ae633462400562c4f2a320630d6934b2840"
+    },
+    {
+      "decisionId": "1a5e46a9-275a-4ced-bd99-5b7a42b0a343",
+      "subjectId": "db929e7e-8301-4f78-993c-3c427f0b0962",
+      "historicalAt": "2026-11-09T02:47:08.227Z",
+      "inputSha256": "4e160e44bb10cd8a591dfe37e6ec178bed271b676314cdad77c11250b1e0c8c8"
+    },
+    {
+      "decisionId": "8ffef51f-f572-401d-876a-30cea63c9c8a",
+      "subjectId": "043e023b-aeda-449a-9bdc-1938171cf729",
+      "historicalAt": "2026-11-09T01:47:11.105Z",
+      "inputSha256": "64756e36776a1628550573762897bb350993c2de9b7d00bde8c4f8a5bc1c5aad"
+    },
+    {
+      "decisionId": "dc6a31b2-3d3f-4a8d-86e7-51603e86ef3d",
+      "subjectId": "5d82bd22-ef4b-4fea-b7ab-1334ba19bd5a",
+      "historicalAt": "2026-11-07T01:21:54.347Z",
+      "inputSha256": "e2a12c2ee4a77ef7b33de0dc30a937317d6cd7a745b9aa84d19ca7a9c0e0e4eb"
+    },
+    {
+      "decisionId": "3bf9f929-db9b-403c-8c7b-f485a21bb832",
+      "subjectId": "47e7de08-22b2-4440-a303-b565f64a9849",
+      "historicalAt": "2026-11-06T11:21:25.671Z",
+      "inputSha256": "fcbf8bf693addd811c120bc61a794ef6206860d1f6faae112f9b80dfac07e91d"
+    },
+    {
+      "decisionId": "7ee252d9-d9fd-4a3d-89af-f176fdc06fb6",
+      "subjectId": "d5ae8b35-0d38-4e75-8b32-6e1ae5ef2491",
+      "historicalAt": "2026-11-05T09:33:31.985Z",
+      "inputSha256": "e81651a94fc8603a5f63ba182c64daa7edf1f353be4a578b69876585cd183f48"
+    },
+    {
+      "decisionId": "38f18fe3-0588-4365-99bb-0998890c4088",
+      "subjectId": "8039a949-7966-4641-9803-d4102cc34de1",
+      "historicalAt": "2026-11-04T00:18:21.239Z",
+      "inputSha256": "dafc310e139bb0c0d964c56c87748fe0ee1152a28bb4945286bfc3e43cfab2df"
+    },
+    {
+      "decisionId": "b8c8f6f5-e83f-4f5f-9ed4-dc0bbe1d1b2e",
+      "subjectId": "c248062b-a95d-4018-a5e4-18d96e16da51",
+      "historicalAt": "2026-11-03T22:32:04.456Z",
+      "inputSha256": "78bb15b6020f46e2358fc7dcb2d27a6b72426a75569d89444102abae414311c8"
+    },
+    {
+      "decisionId": "80513721-5dad-4d2a-bda5-9cd4e33dcf70",
+      "subjectId": "9b4e5826-0d22-499c-ad5a-797fb4def682",
+      "historicalAt": "2026-11-03T21:33:09.757Z",
+      "inputSha256": "986bffb32e59f49457b548d65dbc57ee92c992447d7326e6892e93637ab05c34"
+    },
+    {
+      "decisionId": "da798e17-3daa-4e39-a3cf-c4be6c5d1f3c",
+      "subjectId": "49bc209a-c6f5-4150-bc69-d496ea8880f5",
+      "historicalAt": "2026-11-03T20:03:06.384Z",
+      "inputSha256": "c9c718002100b8a7396dc68eefddc0425296e282265daef2253ad60f4a765aad"
+    }
+  ]
+}

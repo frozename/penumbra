@@ -1,0 +1,23 @@
+{
+  "run": "docs/benchmarks/results/system-one-judges-2026-11-11/d3-isolated-c1/run.json",
+  "samples": 121,
+  "intervalStart": 1794430649.559,
+  "intervalEnd": 1794430782.8589716,
+  "peakSampledRssBytes": 3013050368,
+  "medianSampledRssBytes": 3010560000,
+  "psCpuPercentMedian": 1.6,
+  "psCpuPercentPeak": 18.3,
+  "swapStartBytes": 1755714682.88,
+  "swapEndBytes": 1747326074.88,
+  "swapGrowthBytes": 0.0,
+  "swapinsDelta": 56,
+  "swapoutsDelta": 0,
+  "healthTimeoutOrFailureCount": 10,
+  "healthWallP50Ms": 4.561666981317103,
+  "healthWallP95Ms": 2002.5104160886258,
+  "maxReportedDaemonLagMs": 10754.609500005841,
+  "systemGpuInUseBytesPeak": 3346399232,
+  "systemGpuAllocatedBytesPeak": 5014159360,
+  "systemGpuUtilizationPercentMedian": 99,
+  "limitations": "1 Hz sampled RSS is not total unified-memory ownership; GPU counters are system-wide. ps CPU is a decaying process metric. /health lagMs is a rolling maximum, not request latency. Other host activity is uncontrolled."
+}

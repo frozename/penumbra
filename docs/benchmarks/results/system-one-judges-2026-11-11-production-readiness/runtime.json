@@ -1,0 +1,23 @@
+{
+  "binary": "/Volumes/AI-DATA/maestro/inference/system-one-llama/2cbe0ec-http-only/bin/llama-server",
+  "sha256": "a9990314838bafcbaa2601c41a375eb764489084ff2469b0770a7d47a33da104",
+  "sourceCommit": "2cbe0ec429b849a88664e0f62388fc92a5abd699",
+  "openssl": false,
+  "version": "version: 0.9.0-dev (build 1, commit 2cbe0ec)\nbuilt with AppleClang 17.0.0.17000604 for Darwin arm64",
+  "build": "Metal; Release; examples/tests/curl/UI disabled; OpenSSL disabled; two build jobs; install RPATH @loader_path and @loader_path/../lib",
+  "linkedLibraries": [
+    "/Volumes/AI-DATA/maestro/inference/system-one-llama/2cbe0ec-http-only/bin/llama-server:",
+    "\t@rpath/libllama-server-impl.dylib (compatibility version 0.0.0, current version 0.0.0)",
+    "\t@rpath/libllama-common.0.dylib (compatibility version 0.0.0, current version 0.0.0)",
+    "\t@rpath/libmtmd.0.dylib (compatibility version 0.0.0, current version 0.0.0)",
+    "\t@rpath/libllama.0.dylib (compatibility version 0.0.0, current version 0.0.0)",
+    "\t@rpath/libggml.0.dylib (compatibility version 0.0.0, current version 0.29.0)",
+    "\t@rpath/libggml-cpu.0.dylib (compatibility version 0.0.0, current version 0.29.0)",
+    "\t@rpath/libggml-blas.0.dylib (compatibility version 0.0.0, current version 0.29.0)",
+    "\t@rpath/libggml-metal.0.dylib (compatibility version 0.0.0, current version 0.29.0)",
+    "\t@rpath/libggml-base.0.dylib (compatibility version 0.0.0, current version 0.29.0)",
+    "\t/usr/lib/libc++.1.dylib (compatibility version 1.0.0, current version 2000.67.0)",
+    "\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1356.0.0)"
+  ],
+  "firstInstallAttempt": "Install before building unused tools failed; full target build and normal CMake install then succeeded"
+}

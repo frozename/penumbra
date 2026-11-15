@@ -1,0 +1,15 @@
+{
+  "implementationCiCommit": "f6d4e797c0d8a51002c2318e14cf85e74347fbee",
+  "comparisonScopes": [
+    "packages",
+    "scripts",
+    "package.json",
+    "bun.lock",
+    "tsconfig.json",
+    "eslint.config.js"
+  ],
+  "changedImplementationPaths": [],
+  "fullCi": "Existing recorded7pass0fail4skip,16676 passing test executions; no rerun for documentation/results-only continuation",
+  "newValidation": "Executed model replays, strict native controls, bounded-context abstention, lifecycle/concurrency/recovery rehearsals, TypeSafe package typecheck",
+  "experimentalDriverScope": "New docs/results scripts are outside the prior fullCI attestation. The earlier production-route smoke was not_run after rollback; os-access-retry/production-route-smoke.ts subsequently executed successfully against the actual configured T2 factory after user OS grant. Only the synthetic ephemeral control is validated."
+}

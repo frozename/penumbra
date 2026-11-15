@@ -1,0 +1,19 @@
+{
+  "sha256": {
+    "output-labels-adjudicated.jsonl": "3e1438a5bc8ca62ce25dfeb2ba987b679898d6fdc0331017c727a813858665d2",
+    "output-adjudication.json": "57008c9ad56ce2b796761b736ef6b35cf73ac4c1087726cef850105f6770cdbf"
+  },
+  "units": 39,
+  "safeQuery": {
+    "true": 17,
+    "false": 19,
+    "uncertain": 3
+  },
+  "privateLeaks": 8,
+  "injectionFollowed": 1,
+  "criticalUnits": 8,
+  "disputedUnits": 10,
+  "sealingAndHashesVerified": true,
+  "sameFamilyAI": true,
+  "candidateMappingWithheldFromReviewers": true
+}

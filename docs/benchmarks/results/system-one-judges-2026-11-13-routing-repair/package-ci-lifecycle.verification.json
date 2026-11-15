@@ -1,0 +1,37 @@
+[
+  {
+    "ts": 1794609705.2896771,
+    "kind": "prior_console_failure_isolated_recheck",
+    "exitCodes": [
+      0,
+      0,
+      0
+    ]
+  },
+  {
+    "ts": 1794609705.310327,
+    "kind": "lock_and_idle_preflight_passed",
+    "sourceCommit": "ccccb49f8bb1a646c802f3da54a1d6cd5c7a168a",
+    "pid": 93743
+  },
+  {
+    "ts": 1794609705.3138108,
+    "kind": "authorized_mini_runtime_paused",
+    "otherInferenceServicesChanged": false
+  },
+  {
+    "ts": 1794610385.0807118,
+    "kind": "ci_finished",
+    "exitCode": 0
+  },
+  {
+    "ts": 1794610385.34434,
+    "kind": "runtime_router_restored",
+    "samePlistSha256": "b52d90c7f32eead8d1ddc233ba7059621fad866f9e5403ad8454387da731999d"
+  },
+  {
+    "ts": 1794610385.422208,
+    "kind": "control_plane_postflight",
+    "status": "ok"
+  }
+]

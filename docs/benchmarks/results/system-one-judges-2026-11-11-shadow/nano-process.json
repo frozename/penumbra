@@ -1,0 +1,33 @@
+{
+  "pid": 42653,
+  "startedAtEpoch": 1794434921.5922382,
+  "command": [
+    "/tmp/penumbra-systemone-llama/build/bin/llama-server",
+    "-m",
+    "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/models/vllm-d3-nano-Q8_0.gguf",
+    "--alias",
+    "d3-nano-eval",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "18944",
+    "--ctx-size",
+    "8192",
+    "--batch-size",
+    "8192",
+    "--ubatch-size",
+    "8192",
+    "--parallel",
+    "1",
+    "--threads",
+    "2",
+    "--threads-batch",
+    "2",
+    "--gpu-layers",
+    "99",
+    "--no-mmproj",
+    "--offline",
+    "--metrics"
+  ],
+  "nice": 10
+}

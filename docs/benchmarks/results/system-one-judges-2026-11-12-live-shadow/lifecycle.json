@@ -1,0 +1,42 @@
+[
+  {
+    "ts": 1794484846.325717,
+    "kind": "start",
+    "routerPid": 51379,
+    "baselineSeconds": 60,
+    "liveSeconds": 900
+  },
+  {
+    "ts": 1794484906.981204,
+    "kind": "live_phase_started",
+    "since": "2026-11-12T12:01:46.981070Z",
+    "deadlineEpochMs": 1794485806981
+  },
+  {
+    "ts": 1794485566.346869,
+    "kind": "live_phase_ended"
+  },
+  {
+    "ts": 1794485601.739244,
+    "kind": "native_unload_response",
+    "error": "HTTPError"
+  },
+  {
+    "ts": 1794485601.741455,
+    "kind": "finished",
+    "aborted": false,
+    "abortReason": null,
+    "phase": "cooldown",
+    "modelStatuses": [
+      {
+        "id": "d3-nano-eval",
+        "status": "unloaded"
+      },
+      {
+        "id": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+        "status": "loaded"
+      }
+    ],
+    "servicesAndAuthorityChanged": false
+  }
+]

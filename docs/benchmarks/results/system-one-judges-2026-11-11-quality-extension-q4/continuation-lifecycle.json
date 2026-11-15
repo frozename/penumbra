@@ -1,0 +1,31 @@
+[
+  {
+    "ts": 1794446212.6735911,
+    "kind": "granite_paused_authorized",
+    "pid": 4119
+  },
+  {
+    "ts": 1794446212.682688,
+    "kind": "post_pause_memory",
+    "availableFreeInactiveBytes": 4402593792,
+    "swapUsedBytes": 1652618690.56,
+    "swapoutBytes": 118096216064,
+    "osMemoryPressure": "The system has 17179869184 (1048576 pages with a page size of 16384).\nSystem-wide memory free percentage: 54%"
+  },
+  {
+    "ts": 1794446212.683168,
+    "kind": "extension_failed_or_aborted",
+    "reason": "RuntimeError: not enough reclaimable headroom for artifact plus1.5GiB working/reserve budget"
+  },
+  {
+    "ts": 1794446213.22843,
+    "kind": "granite_restored_verified",
+    "pid": 10743,
+    "sameOriginalCommand": true,
+    "startupMs": 544.9752807617188
+  },
+  {
+    "ts": 1794446213.228679,
+    "kind": "finished_with_granite_restored"
+  }
+]

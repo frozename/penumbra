@@ -1,0 +1,91 @@
+{
+  "activation": [
+    {
+      "ts": 1794477690.272682,
+      "kind": "preflight_passed",
+      "authorityChanged": false,
+      "inferenceServicesChanged": false
+    },
+    {
+      "ts": 1794477743.402046,
+      "kind": "activated_verified",
+      "pids": {
+        "daemon": 42135,
+        "worker": 42231
+      },
+      "authorityChanged": false
+    }
+  ],
+  "plists": {
+    "daemon": {
+      "sha256": "67011208af338f9fefcfd9626eae7fc92bdca1fae49512421e5573a8b095f285",
+      "sourceEntry": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/production-readiness/deployment/4fe01decbb52/source/packages/cli/bin/penumbra.ts",
+      "localShadowEnabled": "unset"
+    },
+    "worker": {
+      "sha256": "dfde516743e5e0d30e50464b4c09d8e86dee497893aaf51602b767820ca14b71",
+      "sourceEntry": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/production-readiness/deployment/4fe01decbb52/source/packages/agentchat/bin/agentchat-worker.ts",
+      "localShadowEnabled": "unset"
+    }
+  },
+  "liveP4PhasesAfterActivation": [
+    {
+      "time": "2026-11-12T10:03:23.038Z",
+      "phase": "P4",
+      "cycleId": "3b7fd57d-03d4-4f22-b475-d71688674126",
+      "durationMs": 416
+    },
+    {
+      "time": "2026-11-12T10:08:23.883Z",
+      "phase": "P4",
+      "cycleId": "4924cbf3-9199-4911-92ad-9c892a8f50f4",
+      "durationMs": 508
+    },
+    {
+      "time": "2026-11-12T10:14:22.530Z",
+      "phase": "P4",
+      "cycleId": "df9e1a23-8def-45d6-afde-44ce90d26e0c",
+      "durationMs": 55
+    },
+    {
+      "time": "2026-11-12T10:19:23.779Z",
+      "phase": "P4",
+      "cycleId": "84a98b81-328d-4810-8338-425d3ebef230",
+      "durationMs": 506
+    },
+    {
+      "time": "2026-11-12T10:25:22.993Z",
+      "phase": "P4",
+      "cycleId": "feeac55d-4c57-4de1-af7e-9adabb043fab",
+      "durationMs": 510
+    },
+    {
+      "time": "2026-11-12T10:30:23.146Z",
+      "phase": "P4",
+      "cycleId": "b27e25e0-40f2-42c7-907c-8dbf3d8984e2",
+      "durationMs": 472
+    }
+  ],
+  "health": {
+    "status": "ok",
+    "version": "0.0.0",
+    "reviewBacklog": {
+      "open_lanes_count": 92,
+      "open_boundary_lanes_count": 0,
+      "oldest_open_lane_age_ms": 86691765
+    },
+    "lagMs": 10.744084000121802,
+    "llmRoleFloors": {
+      "ok": true,
+      "violations": []
+    },
+    "t2Promotion": {
+      "enabled": true,
+      "reason": "judge_configured",
+      "judge_env": "PENUMBRA_JUDGE_BASE_URL",
+      "empty_extraction_streak": 7382,
+      "healthy": false
+    }
+  },
+  "scope": "Immutable CI-verified 4fe source activated; only source path changed. Judge authority/routes unchanged. First attempt failed bootstrap and was recovered before retry. No inference-service configuration changed in this source cutover."
+}

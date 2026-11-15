@@ -1,0 +1,88 @@
+{
+  "evaluation": "provisional labels; answered common held-out cases only, not population quality",
+  "selected": 116,
+  "commonAnswered": 116,
+  "missing": [],
+  "incumbent": {
+    "selected": 116,
+    "answered": 116,
+    "abstained": 0,
+    "coverage": 1,
+    "threshold": 0.5,
+    "tp": 95,
+    "fp": 6,
+    "tn": 8,
+    "fn": 7,
+    "precision": 0.9405940594059405,
+    "recall": 0.9313725490196079,
+    "f1": 0.9359605911330049,
+    "falsePromotionRate": 0.42857142857142855,
+    "falseVetoRate": 0.06862745098039216,
+    "falseDiscoveryRate": 0.0594059405940594,
+    "brier": 0.09101685477725191,
+    "calibrationError": 0.12350360213721387,
+    "falseVetoRateWithRejectFallback": 0.06862745098039216,
+    "p50LatencyMs": 865.1059999999998,
+    "p95LatencyMs": 1276.9579999999987
+  },
+  "candidate": {
+    "selected": 116,
+    "answered": 116,
+    "abstained": 0,
+    "coverage": 1,
+    "threshold": 0.5,
+    "tp": 92,
+    "fp": 7,
+    "tn": 7,
+    "fn": 10,
+    "precision": 0.9292929292929293,
+    "recall": 0.9019607843137255,
+    "f1": 0.9154228855721394,
+    "falsePromotionRate": 0.5,
+    "falseVetoRate": 0.09803921568627451,
+    "falseDiscoveryRate": 0.0707070707070707,
+    "brier": 0.09526998940029821,
+    "calibrationError": 0.12005208436542149,
+    "falseVetoRateWithRejectFallback": 0.09803921568627451,
+    "p50LatencyMs": 827.76741700001,
+    "p95LatencyMs": 1291.1346249999988
+  },
+  "disagreements": [
+    {
+      "caseId": "t2:dfe54898e0537985d7c8577c",
+      "expected": false,
+      "incumbent": false,
+      "candidate": true
+    },
+    {
+      "caseId": "t2:a52f574599e1137ec23b666d",
+      "expected": true,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "t2:1e93d4a1956e271ec279b6d1",
+      "expected": true,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "t2:f35b132c1ffc0bc088e434f5",
+      "expected": true,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "t2:0ae13d077db3d10bbd84d027",
+      "expected": true,
+      "incumbent": true,
+      "candidate": false
+    },
+    {
+      "caseId": "t2:1c391c2e731ff7f3aba8803e",
+      "expected": true,
+      "incumbent": false,
+      "candidate": true
+    }
+  ]
+}

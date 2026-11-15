@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "status": "not_run",
+  "config": {
+    "protocol": "systemone",
+    "promotionQuestionSet": "direct",
+    "baseUrl": "http://127.0.0.1:18945",
+    "model": "d3-lite",
+    "revision": "FastFlowLM/D3-Lite-NPU2@51563157b724a1bf69c5c177e000dd7038acd63c",
+    "hardware": "Z13 Ryzen AI MAX+395,128GB; Gufo remains active; trial bypasses20GiB admission floor by explicit user instruction",
+    "runtime": "FastFlowLM1.0.12 cce7e5bb7d56af182b5051c12253175a86957b73 portable XRT; NPU-accelerated with CPU short attention; CPUQuota200%, MemoryHigh4GiB/Max6GiB, swap0; loopback via SSH; actual runtime context32768, frozen short inputs; vision not invoked",
+    "quantization": "Q4_K/GPTQ NPU q4nx package; exact pinned package, not Mac Q8 parity",
+    "contextTokens": 32768,
+    "timeoutMs": 5000,
+    "maxRequestBytes": 16384,
+    "allowRemote": false
+  },
+  "concurrency": 1,
+  "repeats": 1,
+  "startedAt": "2026-11-13T00:22:54.205Z",
+  "elapsedMs": 0.08387499999999193,
+  "fixtureSha256": "9c55208df52d0048138d8a85c6e05133552ea6c4fbe2ce35b185710adbbbf127",
+  "rows": []
+}

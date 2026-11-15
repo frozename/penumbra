@@ -1,0 +1,51 @@
+[
+  {
+    "ts": 1794443064.8166668,
+    "kind": "granite_paused_authorized",
+    "pid": 25651
+  },
+  {
+    "ts": 1794443076.26206,
+    "kind": "native_started",
+    "name": "d1q4-new",
+    "pid": 48550,
+    "startupMs": 11443.641185760498
+  },
+  {
+    "ts": 1794443363.972956,
+    "kind": "native_started",
+    "name": "nano-t2",
+    "pid": 50572,
+    "startupMs": 2152.005910873413
+  },
+  {
+    "ts": 1794443569.37999,
+    "kind": "native_crash_injected",
+    "signal": "SIGKILL",
+    "process": "dedicated experiment only"
+  },
+  {
+    "ts": 1794443570.0795991,
+    "kind": "native_started",
+    "name": "nano-recovered",
+    "pid": 52052,
+    "startupMs": 546.3910102844238
+  },
+  {
+    "ts": 1794443571.480155,
+    "kind": "post_restart_inference_verified",
+    "answered": 1
+  },
+  {
+    "ts": 1794443572.3313978,
+    "kind": "granite_restored_verified",
+    "pid": 52066,
+    "sameOriginalCommand": true,
+    "startupMs": 846.900224685669
+  },
+  {
+    "ts": 1794443572.333142,
+    "kind": "finished",
+    "graniteRestorationBeforeSamplerCleanup": true
+  }
+]

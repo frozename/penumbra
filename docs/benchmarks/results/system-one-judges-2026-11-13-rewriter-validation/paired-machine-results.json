@@ -1,0 +1,283 @@
+{
+  "method": "First repetition primary; distinct cohorts; answered-only confusion/F1 plus all-definite accuracy and explicit errors. Quantiles use linear interpolation. Gate-eligible text is before search dispatch. Process-cold startup follows artifact hashing and is not disk-cold. No query-JSON probabilities invented. Semantic labels are exact-pair model-blind AI reviews, not human evidence.",
+  "models": [
+    {
+      "run": "rewriter-q8-indexed",
+      "model": {
+        "id": "granite",
+        "baseUrl": "http://127.0.0.1:18945/v1",
+        "model": "granite-q8-rewriter-eval",
+        "maxTokens": 512,
+        "timeoutMs": 30000
+      },
+      "cohorts": {
+        "cached-current": {
+          "n": 15,
+          "definiteLabels": 14,
+          "uncertainLabels": 1,
+          "answeredDefinite": 14,
+          "errors": 0,
+          "tp": 1,
+          "fp": 0,
+          "fn": 5,
+          "tn": 8,
+          "precision": 1.0,
+          "recall": 0.16666666666666666,
+          "f1": 0.2857142857142857,
+          "allDefiniteAccuracy": 0.6428571428571429,
+          "strictContractViolations": 0
+        },
+        "controlled": {
+          "n": 16,
+          "definiteLabels": 16,
+          "uncertainLabels": 0,
+          "answeredDefinite": 16,
+          "errors": 0,
+          "tp": 7,
+          "fp": 1,
+          "fn": 1,
+          "tn": 7,
+          "precision": 0.875,
+          "recall": 0.875,
+          "f1": 0.875,
+          "allDefiniteAccuracy": 0.875,
+          "strictContractViolations": 0
+        },
+        "enriched-public": {
+          "n": 16,
+          "definiteLabels": 16,
+          "uncertainLabels": 0,
+          "answeredDefinite": 16,
+          "errors": 0,
+          "tp": 9,
+          "fp": 0,
+          "fn": 7,
+          "tn": 0,
+          "precision": 1.0,
+          "recall": 0.5625,
+          "f1": 0.72,
+          "allDefiniteAccuracy": 0.5625,
+          "strictContractViolations": 1
+        },
+        "sampled-current": {
+          "n": 64,
+          "definiteLabels": 59,
+          "uncertainLabels": 5,
+          "answeredDefinite": 59,
+          "errors": 0,
+          "tp": 5,
+          "fp": 10,
+          "fn": 6,
+          "tn": 38,
+          "precision": 0.3333333333333333,
+          "recall": 0.45454545454545453,
+          "f1": 0.38461538461538464,
+          "allDefiniteAccuracy": 0.7288135593220338,
+          "strictContractViolations": 0
+        }
+      },
+      "serial": {
+        "requests": 222,
+        "p50Ms": 945.3525414999895,
+        "p95Ms": 1324.0866000000055,
+        "wallSeconds": 219.503,
+        "requestsPerSecond": 1.0113756987376028,
+        "observedOverProductionFiveSecondDeadline": 0,
+        "errors": 0,
+        "finishReasons": {
+          "stop": 222
+        }
+      },
+      "burst": {
+        "requests": 16,
+        "p50Ms": 1892.8528125000157,
+        "p95Ms": 2107.076427500004,
+        "wallSeconds": 15.304,
+        "requestsPerSecond": 1.0454783063251438,
+        "observedOverProductionFiveSecondDeadline": 0,
+        "errors": 0,
+        "finishReasons": {
+          "stop": 16
+        }
+      },
+      "resources": {
+        "samples": 249,
+        "peakRssBytes": 4479467520,
+        "medianRssBytes": 4479188992,
+        "maxHealthWallMs": 17.612250056117773,
+        "maxDaemonTrailingMinuteLagMs": 7.412915989756584,
+        "healthFailures": 0,
+        "swapGrowthBytes": 0.0,
+        "minimumFreePlusInactiveBytes": 3943301120,
+        "rawSha256": "033276a4c044933a3824bfbdbc7204c1be76fab70c08f01b2436772363dc6970",
+        "segments": {
+          "serial": {
+            "samples": 217,
+            "medianRssBytes": 4479188992.0,
+            "peakRssBytes": 4479418368
+          },
+          "burst": {
+            "samples": 15,
+            "medianRssBytes": 4479467520.0,
+            "peakRssBytes": 4479467520
+          },
+          "residentIdle": {
+            "seconds": 10.013999938964844,
+            "samples": 10,
+            "medianRssBytes": 4479221760.0
+          }
+        },
+        "cpuPercent": {
+          "median": 34.5,
+          "max": 56.1
+        },
+        "systemGpuUtilizationPercent": {
+          "median": 97.0,
+          "max": 99
+        }
+      },
+      "stableValidDecisions": 111,
+      "stabilityDenominator": 111,
+      "rawSha256": "99f3f085ac5a66678d58dbfd54b6634030ece246e10d0f925de38d6e42eec052"
+    },
+    {
+      "run": "rewriter-q4-indexed-v2",
+      "model": {
+        "id": "graniteq4",
+        "baseUrl": "http://127.0.0.1:18945/v1",
+        "model": "granite-q4-rewriter-eval",
+        "maxTokens": 512,
+        "timeoutMs": 30000
+      },
+      "cohorts": {
+        "cached-current": {
+          "n": 15,
+          "definiteLabels": 14,
+          "uncertainLabels": 1,
+          "answeredDefinite": 14,
+          "errors": 0,
+          "tp": 2,
+          "fp": 0,
+          "fn": 4,
+          "tn": 8,
+          "precision": 1.0,
+          "recall": 0.3333333333333333,
+          "f1": 0.5,
+          "allDefiniteAccuracy": 0.7142857142857143,
+          "strictContractViolations": 0
+        },
+        "controlled": {
+          "n": 16,
+          "definiteLabels": 16,
+          "uncertainLabels": 0,
+          "answeredDefinite": 16,
+          "errors": 0,
+          "tp": 7,
+          "fp": 2,
+          "fn": 1,
+          "tn": 6,
+          "precision": 0.7777777777777778,
+          "recall": 0.875,
+          "f1": 0.8235294117647058,
+          "allDefiniteAccuracy": 0.8125,
+          "strictContractViolations": 0
+        },
+        "enriched-public": {
+          "n": 16,
+          "definiteLabels": 16,
+          "uncertainLabels": 0,
+          "answeredDefinite": 16,
+          "errors": 0,
+          "tp": 3,
+          "fp": 0,
+          "fn": 13,
+          "tn": 0,
+          "precision": 1.0,
+          "recall": 0.1875,
+          "f1": 0.3157894736842105,
+          "allDefiniteAccuracy": 0.1875,
+          "strictContractViolations": 0
+        },
+        "sampled-current": {
+          "n": 64,
+          "definiteLabels": 59,
+          "uncertainLabels": 5,
+          "answeredDefinite": 59,
+          "errors": 0,
+          "tp": 4,
+          "fp": 6,
+          "fn": 7,
+          "tn": 42,
+          "precision": 0.4,
+          "recall": 0.36363636363636365,
+          "f1": 0.38095238095238093,
+          "allDefiniteAccuracy": 0.7796610169491526,
+          "strictContractViolations": 1
+        }
+      },
+      "serial": {
+        "requests": 222,
+        "p50Ms": 733.8240210000004,
+        "p95Ms": 905.649385449998,
+        "wallSeconds": 161.977,
+        "requestsPerSecond": 1.3705649567531193,
+        "observedOverProductionFiveSecondDeadline": 0,
+        "errors": 0,
+        "finishReasons": {
+          "stop": 222
+        }
+      },
+      "burst": {
+        "requests": 16,
+        "p50Ms": 1381.3797290000075,
+        "p95Ms": 1818.7860412499867,
+        "wallSeconds": 11.573,
+        "requestsPerSecond": 1.3825282986261125,
+        "observedOverProductionFiveSecondDeadline": 0,
+        "errors": 0,
+        "finishReasons": {
+          "stop": 16
+        }
+      },
+      "resources": {
+        "samples": 186,
+        "peakRssBytes": 2959507456,
+        "medianRssBytes": 2959294464.0,
+        "maxHealthWallMs": 128.67929111234844,
+        "maxDaemonTrailingMinuteLagMs": 27.901790991425514,
+        "healthFailures": 0,
+        "swapGrowthBytes": 199229.44000005722,
+        "minimumFreePlusInactiveBytes": 5112233984,
+        "rawSha256": "8228456881a0e09760b085f08ca9c0fe4a95829fe20b1f6f7c0ef597c08d75f0",
+        "segments": {
+          "serial": {
+            "samples": 160,
+            "medianRssBytes": 2959286272.0,
+            "peakRssBytes": 2959474688
+          },
+          "burst": {
+            "samples": 11,
+            "medianRssBytes": 2959507456.0,
+            "peakRssBytes": 2959507456
+          },
+          "residentIdle": {
+            "seconds": 10.013999938964844,
+            "samples": 10,
+            "medianRssBytes": 2959343616.0
+          }
+        },
+        "cpuPercent": {
+          "median": 32.45,
+          "max": 52.9
+        },
+        "systemGpuUtilizationPercent": {
+          "median": 97.0,
+          "max": 100
+        }
+      },
+      "stableValidDecisions": 111,
+      "stabilityDenominator": 111,
+      "rawSha256": "f5a4de1e02292f131dd81b9fbd4a3c9f408d89c303e8c09fd870a84b4b3aed24"
+    }
+  ]
+}

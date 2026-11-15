@@ -1,0 +1,33 @@
+{
+  "typecheck": {
+    "command": "bun run typecheck",
+    "exitCode": 0
+  },
+  "typedLint": {
+    "command": "NODE_OPTIONS=--max-old-space-size=8192 bunx eslint packages/integrations/typesafe/src packages/integrations/typesafe/test/local-decision.test.ts packages/daemon/src/dreaming/local-promotion-shadow.ts packages/daemon/test/local-promotion-shadow.test.ts scripts/system-one-judge*.ts --fix --max-warnings=0",
+    "exitCode": 0,
+    "note": "2 GiB and 3 GiB caps exhausted the Node heap; final repository-standard 8 GiB check passed with Granite temporarily stopped"
+  },
+  "tests": {
+    "command": "bun test packages/integrations/typesafe/test scripts/system-one-judge-metrics.test.ts scripts/system-one-judge-bench.test.ts packages/daemon/test/local-promotion-shadow.test.ts packages/daemon/test/dreaming/typesafe-judge-seat.test.ts packages/daemon/test/dreaming/deps.test.ts packages/daemon/test/workers/t2-judge-pool-classify.test.ts scripts/typesafe-shadow-eval.test.ts scripts/jev-profile-replay.test.ts scripts/jev-efficacy-replay.test.ts",
+    "passed": 268,
+    "failed": 0,
+    "files": 20,
+    "assertions": 980
+  },
+  "pythonSyntax": "AST parsed; both samplers also executed against recorded runs",
+  "notRun": [
+    "full CI parity/merge gate",
+    "long-duration residency and energy/thermal study",
+    "MacBook/Strix inference",
+    "other candidate inference",
+    "independent human adjudication",
+    "production shadow deployment"
+  ],
+  "envLint": {
+    "changedPathsStrict": "passed; no raw PENUMBRA env reads",
+    "repositoryAdvisory": "exit 0 with 1346 existing raw-env reads; not introduced by these files"
+  },
+  "syncExecLint": "passed for daemon source",
+  "diffCheck": "passed after trimming text-log trailing whitespace"
+}

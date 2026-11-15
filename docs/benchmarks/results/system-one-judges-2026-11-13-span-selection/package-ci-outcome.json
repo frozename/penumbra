@@ -1,0 +1,23 @@
+{
+  "sourceCommit": "afae3ec9194dccc05860f0edd0347195b6bf4d27",
+  "command": "bun run check:ci",
+  "ciExitCode": 0,
+  "ciSummary": "7passed,0failed,4skipped",
+  "passingTestExecutions": 16725,
+  "testSummaries": 15,
+  "rawLogSha256": "67c03d3f04e294ec16e4a03ab79bf7a333930d65eff138a69d732d3534cc2cd2",
+  "rawLogPath": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261113-span-selection/check-ci.log",
+  "wrapperExitCode": 1,
+  "wrapperFailure": "Three-second control-plane health timeout after successful runtime bootstrap/readiness; lifecycle raw retained. No clean-wrapper pass claimed.",
+  "followup": "Independent live check returned status ok with last-reported event-loop lag19328ms, subsequent Q4canary restored exact plist and healthy daemon. Preserve transient responsiveness blocker, do not attribute cause to inference.",
+  "experimentalHelpers": "CI root test shard executed the three selector-version Bun test files (18 tests total). Docs benchmark helpers remain outside strict lint/typecheck; Python tests and live lifecycle paths have separate checks.",
+  "productionAuthorityChanged": false,
+  "testedSelectorFilesSha256": {
+    "span-selector.v1.ts": "9fed57c09811044bb4a6c4c2ac8353423f157bc1d727fc04f8b59610a79c57a3",
+    "span-selector.ts": "0cc57534a1a9fa94bab399680f9c449040f2b60765ea12d448779730c6e61cdf",
+    "span-selector.v2.test.ts": "46b70167476cc1f60e6b45bebd7b0e8ee8e6c9846a90018d67e0ad60d2fdab89",
+    "span-selector.v1.test.ts": "dc4320799b883ef9046c2c9c52d22777b2197f9e0b6e5069f1c69c13c229b8ea",
+    "span-selector.v2.ts": "9406da3592cbe41d3dce17057d9993a66b5c8697ec5207b4d1705f33d6bbaeab",
+    "span-selector.test.ts": "2716ea5eb14aadde331b4816c74db3e11c0a41805b861c407ed12f2f7146a53f"
+  }
+}

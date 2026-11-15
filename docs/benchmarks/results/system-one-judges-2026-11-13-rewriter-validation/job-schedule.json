@@ -1,0 +1,8 @@
+{
+  "at": "2026-11-13T19:04:35.164960+00:00",
+  "action": "Deferred owned queued CI retry before execution to complete paired Q8 baseline retry first",
+  "pid": 10119,
+  "noCiStepStarted": true,
+  "productionServicesChanged": false,
+  "reason": "Initial Q8 replay stopped on observed1660ms daemon health response and994ms trailing lag, without swap growth or memory breach; retain partial run and retry unchanged protocol once."
+}

@@ -1,0 +1,24 @@
+{
+  "pid": 50974,
+  "label": "dev.penumbra.local-judges",
+  "command": [
+    "/Users/aimastermind/.local/share/penumbra/inference/system-one-llama/2cbe0ec-http-only/bin/llama-server",
+    "--models-preset",
+    "/Users/aimastermind/.config/penumbra/inference/local-judges-2cbe0ec.ini",
+    "--models-max",
+    "1",
+    "--models-memory-margin",
+    "2048",
+    "--host",
+    "127.0.0.1",
+    "--port",
+    "18944",
+    "--offline",
+    "--metrics"
+  ],
+  "startedAtEpoch": 1794479877.088556,
+  "plistSha256": "fdb7cd18dc1ea02f6dddb9f15431554fb149ea4994cd00c6a50427c4c8cd0998",
+  "productionRoutingChanged": false,
+  "authorityChanged": false,
+  "internalServingCopies": true
+}

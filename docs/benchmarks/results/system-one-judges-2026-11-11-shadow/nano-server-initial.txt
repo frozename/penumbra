@@ -1,0 +1,23 @@
+0.00.085.733 I srv  llama_server: initializing ...
+0.00.085.738 I cmn  common_param: common_params_print_info: verbosity = 3 (adjust with the `-lv N` CLI arg)
+0.00.088.009 W srv  server_setup: security: no API key is set and CORS allows all origins (see https://github.com/ggml-org/llama.cpp/pull/25655)
+0.00.090.038 I srv    load_model: loading model '/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/models/vllm-d3-nano-Q8_0.gguf'
+0.02.018.729 I cmn          init: llama threadpool init, n_threads = 2
+0.02.055.635 I srv          init: decision model type: vllm-d3
+0.02.082.077 I srv    load_model: initializing, n_slots = 1, n_ctx_slot = 8192, kv_unified = 'false'
+0.02.082.104 I srv    load_model: decision model: prompt cache disabled by default, use `--cache-ram N` to enable it
+0.02.085.189 I srv  server_run_i: model loaded
+0.02.085.195 I srv  server_on_li: listening on http://127.0.0.1:18944
+0.33.302.358 I slot get_availabl: id  0 | task -1 | selected slot by LRU, n_tokens = 0, t_last = -1
+0.33.302.362 I slot launch_slot_: id  0 | task 0 | processing task, is_child = 0
+0.33.587.747 I slot      release: id  0 | task 0 | stop processing: n_tokens = 270, truncated = 0
+1.03.297.752 I slot get_availabl: id  0 | task -1 | selected slot by LCP similarity, f_sim_best = 0.388 (> 0.100 thold), f_keep = 0.385
+1.03.297.757 I slot launch_slot_: id  0 | task 2 | processing task, is_child = 0
+1.03.576.229 I slot      release: id  0 | task 2 | stop processing: n_tokens = 268, truncated = 0
+1.33.299.469 I slot get_availabl: id  0 | task -1 | selected slot by LCP similarity, f_sim_best = 0.385 (> 0.100 thold), f_keep = 0.388
+1.33.299.472 I slot launch_slot_: id  0 | task 4 | processing task, is_child = 0
+1.33.577.315 I slot      release: id  0 | task 4 | stop processing: n_tokens = 270, truncated = 0
+2.03.300.563 I slot get_availabl: id  0 | task -1 | selected slot by LCP similarity, f_sim_best = 0.366 (> 0.100 thold), f_keep = 0.378
+2.03.300.566 I slot launch_slot_: id  0 | task 6 | processing task, is_child = 0
+2.03.579.001 I slot      release: id  0 | task 6 | stop processing: n_tokens = 279, truncated = 0
+2.14.045.358 I srv    operator(): operator(): cleaning up before exit...

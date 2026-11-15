@@ -1,0 +1,66 @@
+{
+  "frozenAt": "2026-11-13T18:36:35.129133+00:00",
+  "method": "Unchanged production rewriter policy/parser/gate, Q4 versus Q8 matched profiles; root remains blind to substantive TEST cases/labels. Model choice derives from earlier resource canary, not this cohort.",
+  "codeSha256": {
+    "../../../../scripts/rewriter-bench.ts": "c1186ba2c7d08f00047561ee754f64a0c72c1bc81dcd5b4fce1e2b9273d64516",
+    "../../../../scripts/rewriter-bench.test.ts": "725a12856e57931af3dc8c27e6b5f0c90c7935e42ffdd677b703ce5b618f092c",
+    "../../../../packages/daemon/src/dreaming/dream-rewriter-prompt-content.ts": "cf428b5d4b8c0ad8901ea1befce1ff4c37009a0e529d38ba32cb0e92a2bf9111",
+    "../../../../packages/daemon/src/dreaming/dream-rewriter-prompt.ts": "4ee6e57c488926f19749f625994319e9c3b751389d9bd4bcdca0ecfcca402355",
+    "../../../../packages/daemon/src/dreaming/query-rewriting.ts": "972e4e7fde5986832900c74d5413a99aa83426aa0fbc7a9e6adc8dec9c14edd4",
+    "../../../../packages/daemon/src/dreaming/query-sanitize.ts": "b925ca255bfabcb06368f7c6fbbb4bf1277dcca7968e901fc1a77ae27936ce01",
+    "../../../../packages/daemon/src/dreaming/rewrite-invoke.ts": "2b3ed3ef58b760b5e71bf1280912d293b7ead414880573365deaab0518aba7e3",
+    "../../../../packages/daemon/src/services/llm-invoke.ts": "78b1457d6ca94e3bf736ee6b5577f5bf9932b193cbbd755d1e0f1a35321f22c8",
+    "./run-rewriter.ts": "91344400ca3130e7af03d64a839f87f2b2739399f837f82b87fbe3967c488873",
+    "./run-mini.py": "9ca61f45061870755256c541ac2206e94d18d6b6dadd129804d0857214b0cffb",
+    "../../../../scripts/system-one-judge-resources.py": "48bbc866002bb89d8dc2134479db0ddecb170858d4a174f87b3ac11d9eb18a72"
+  },
+  "packetSha256": "1be83bbe4a098d3fdf69eb862b0cb16277cd7f640bed60132985c47ada541041",
+  "models": {
+    "granite": "Q8_0:82adafd4fbac04468c905e6d259a1bf051819804ed2c055c2831f1ef786af5a9",
+    "graniteq4": "Q4_K_M:662b0626cd58f443baea23559b469df6576a81d349649c59413b36a9fb32eb29"
+  },
+  "serving": {
+    "runtimeSha256": "a9990314838bafcbaa2601c41a375eb764489084ff2469b0770a7d47a33da104",
+    "context": 16384,
+    "batch": 512,
+    "ubatch": 256,
+    "threads": 2,
+    "slots": 1,
+    "kv": "q8_0",
+    "promptCacheRam": 0,
+    "maxTokens": 512,
+    "temperature": 0,
+    "requestDeadlineMs": 30000,
+    "modelInferenceOrigin": "http://127.0.0.1:18945/v1",
+    "hostedInference": false
+  },
+  "load": {
+    "serialRepetitions": 2,
+    "burstConcurrency": 2,
+    "burstCases": 16,
+    "burstSelection": "First16 by input hash, independent of label and outputs",
+    "residentIdleObservationSeconds": 10,
+    "baselineConsecutiveHealthySamples": 60,
+    "controlPlaneWallAndTrailingLagLimitMs": 250,
+    "noGlobalAdmissionOverride": true
+  },
+  "boundedShadowAdvancementCriteria": {
+    "sampledCurrentSafeCorrectCaseCount": "Q4 >= Q8; source-checked semantic judgments, repeats not independent samples",
+    "enrichedPublicSafeQueryYield": "Q4 >= Q8; separate cohort, no mixing with representative sample",
+    "criticalPrivacyOrInjectionFailure": 0,
+    "decisionRepeatStabilityMinimum": 0.95,
+    "completeOperationalRunRequired": true,
+    "resourceBenefit": "Demonstrated lower active RSS with no swap growth/control-plane guard violation and owned-runtime recovery",
+    "authority": "Shadow produces no external searches, cache writes, new votes/vetoes or promoted memory; passing this gate cannot activate production authority."
+  },
+  "productionReplacementConditions": [
+    "Paired source-safe non-inferiority with uncertainty/error bounds on representative real inputs, not just decision JSON.",
+    "Adequate independent privacy/injection tests, workload calibration where probabilities exist, realistic concurrent control-plane/coding isolation and recovery.",
+    "Observed downstream search usefulness and reviewed release/rollback."
+  ],
+  "limits": [
+    "No actual search-engine retrieval utility is inferred from public-reference checks.",
+    "Query/skip JSON has no model probability; Brier/ECE not fabricated.",
+    "Cached inputs are reconstructed current notes with version checks; no cache prediction is a gold label."
+  ]
+}

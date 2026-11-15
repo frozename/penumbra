@@ -1,0 +1,24 @@
+import {createHash} from "node:crypto";
+import {existsSync,mkdirSync,readFileSync} from "node:fs";
+import {join} from "node:path";
+import {parseBenchCases,parseBenchConfig,runBenchmark} from "../../../../scripts/rewriter-bench.ts";
+
+const args=process.argv.slice(2),flag=(name:string)=>args[args.indexOf(name)+1];
+const target=flag("--target"),out=flag("--out");
+if(!args.includes("--live")||!args.includes("--out")||!["granite","graniteq4"].includes(target)||existsSync(out))throw new Error("Explicit live target and fresh output directory required");
+const privateRoot="/Volumes/AI-DATA/maestro/bench/system-one-judges-20261113-rewriter-validation";
+const sha=(value:Buffer|string)=>createHash("sha256").update(value).digest("hex");
+const freeze=JSON.parse(readFileSync(new URL("./candidate-freeze.json",import.meta.url),"utf8"));
+for(const [path,digest]of Object.entries(freeze.codeSha256))if(sha(readFileSync(new URL(path,import.meta.url)))!==digest)throw new Error("Frozen candidate source changed: "+path);
+const manifest=JSON.parse(readFileSync(new URL("./test-manifest.json",import.meta.url),"utf8"));
+const text=readFileSync(privateRoot+"/fixtures.jsonl","utf8");
+if(sha(text)!==manifest.fixtureSha256||sha(readFileSync(privateRoot+"/labels-adjudicated.jsonl"))!==manifest.labelSha256)throw new Error("Independent frozen fixture/label mismatch");
+const cases=parseBenchCases(text);
+if(cases.length!==manifest.cases)throw new Error("Incomplete frozen fixture set");
+mkdirSync(out,{mode:0o700});
+const model={id:target,model:target==="granite"?"granite-q8-rewriter-eval":"granite-q4-rewriter-eval",baseUrl:"http://127.0.0.1:18945/v1",maxTokens:512,timeoutMs:30000};
+await runBenchmark(parseBenchConfig({models:[model],repetitions:2,concurrency:1}),cases,join(out,"serial"),sha(text));
+console.log(JSON.stringify({phase:"resident-idle-start",milliseconds:10000}));
+await Bun.sleep(10000);
+const burst=cases.toSorted((a,b)=>sha(JSON.stringify({title:a.title,body_first_200:a.body_first_200})).localeCompare(sha(JSON.stringify({title:b.title,body_first_200:b.body_first_200})))).slice(0,16);
+await runBenchmark(parseBenchConfig({models:[model],repetitions:1,concurrency:2}),burst,join(out,"burst"),sha(burst.map(c=>JSON.stringify(c)).join("\n")+"\n"));

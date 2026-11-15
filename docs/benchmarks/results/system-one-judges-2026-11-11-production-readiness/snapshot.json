@@ -1,0 +1,15 @@
+{
+  "snapshotType": "Consistent read transaction copying full t2_memories/dream_actions rows and original indexes; unrelated tables and vector payloads excluded",
+  "sourceMode": "production opened read-only; no writes or index changes",
+  "snapshotPath": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261111/production-readiness/control-plane-snapshot.sqlite",
+  "startedAtEpoch": 1794437613.041528,
+  "completedAtEpoch": 1794437613.537947,
+  "elapsedSeconds": 0.49641895294189453,
+  "bytes": 35053568,
+  "mode": "0o600",
+  "tableCounts": {
+    "t2_memories": 2952,
+    "dream_actions": 67554
+  },
+  "earlierAttempt": "Full 5.3 GiB hot backup exceeded its 120-second bound and rolled back to an empty destination; replaced only that empty file"
+}

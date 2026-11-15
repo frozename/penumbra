@@ -1,0 +1,456 @@
+{
+  "retrievedAtEpoch": 1794445535.461505,
+  "candidates": [
+    {
+      "repo": "ggml-org/vllm-d3-mini-GGUF",
+      "revision": "8b29fd3b87373ea85fa59cc2f26251c1591d771a",
+      "declaredLicense": "apache-2.0",
+      "files": [
+        {
+          "name": ".gitattributes",
+          "size": 1830,
+          "lfs": null
+        },
+        {
+          "name": ".src_sha",
+          "size": 49,
+          "lfs": null
+        },
+        {
+          "name": "README.md",
+          "size": 546,
+          "lfs": null
+        },
+        {
+          "name": "convert.log",
+          "size": 262206,
+          "lfs": null
+        },
+        {
+          "name": "mmproj-vllm-d3-mini-BF16.gguf",
+          "size": 675569280,
+          "lfs": {
+            "sha256": "56c2ef9f10da54543b4670a1a466befc723b58da408322dd32fb42450d4170da",
+            "size": 675569280,
+            "pointerSize": 134
+          }
+        },
+        {
+          "name": "mmproj-vllm-d3-mini-Q8_0.gguf",
+          "size": 366894720,
+          "lfs": {
+            "sha256": "bb79ba9f091df890684388f559f3145649007b5715d03760f99b767de41d9eda",
+            "size": 366894720,
+            "pointerSize": 134
+          }
+        },
+        {
+          "name": "vllm-d3-mini-BF16.gguf",
+          "size": 9695793664,
+          "lfs": {
+            "sha256": "7c194cf32e606653eae1028d0d6978eb8af8020960fb221d09d1d3dd98e540cd",
+            "size": 9695793664,
+            "pointerSize": 135
+          }
+        },
+        {
+          "name": "vllm-d3-mini-Q4_K_M.gguf",
+          "size": 3707523584,
+          "lfs": {
+            "sha256": "1e5e5a87dd6903b6d8585331eee94a2f01d5069e369b143e1dceb9de51ba2902",
+            "size": 3707523584,
+            "pointerSize": 135
+          }
+        },
+        {
+          "name": "vllm-d3-mini-Q8_0.gguf",
+          "size": 5157835264,
+          "lfs": {
+            "sha256": "a4639297e407dd58d28dd2d23d112f853d0a78d13cbe86cdb644d23c8a84e62f",
+            "size": 5157835264,
+            "pointerSize": 135
+          }
+        }
+      ],
+      "documents": {
+        "README.md": {
+          "sha256": "1e5966bc48b0a7c9ba458d7c2d32c6390e23bcf4482970de5d374815360b75c2",
+          "bytes": 546
+        }
+      }
+    },
+    {
+      "repo": "vllm-sr/d3-mini",
+      "revision": "df99bf4ca4418bc6908ee68e9b7479af1f3b8800",
+      "declaredLicense": "apache-2.0",
+      "files": [
+        {
+          "name": ".eval_results/safeagents-judge-bench.yaml",
+          "size": 1123,
+          "lfs": null
+        },
+        {
+          "name": ".eval_results/vllm-sr__d3-mini.yaml",
+          "size": 1111,
+          "lfs": null
+        },
+        {
+          "name": ".gitattributes",
+          "size": 1809,
+          "lfs": null
+        },
+        {
+          "name": "LICENSE",
+          "size": 11357,
+          "lfs": null
+        },
+        {
+          "name": "MODEL_MANIFEST.json",
+          "size": 11687,
+          "lfs": null
+        },
+        {
+          "name": "NOTICE",
+          "size": 104,
+          "lfs": null
+        },
+        {
+          "name": "README.md",
+          "size": 17368,
+          "lfs": null
+        },
+        {
+          "name": "assets/banner.png",
+          "size": 2230848,
+          "lfs": {
+            "sha256": "6cd59713317ce9a2311131b88d4e66a096fb0844507cc2a4eb2c7a00e79663e3",
+            "size": 2230848,
+            "pointerSize": 132
+          }
+        },
+        {
+          "name": "assets/example-receipt.png",
+          "size": 65918,
+          "lfs": null
+        },
+        {
+          "name": "assets/example-video.mp4",
+          "size": 26300,
+          "lfs": null
+        },
+        {
+          "name": "assets/index-areas.png",
+          "size": 123898,
+          "lfs": {
+            "sha256": "a10f3b942c7c4554e02c704082414b77a1aef558cdc7943dc7598a995954f017",
+            "size": 123898,
+            "pointerSize": 131
+          }
+        },
+        {
+          "name": "assets/index-pareto.png",
+          "size": 208267,
+          "lfs": {
+            "sha256": "485497b5a3903cf2bf71a1d9643f7cbd2c13e2611ed4aca822b770e5f01be6e8",
+            "size": 208267,
+            "pointerSize": 131
+          }
+        },
+        {
+          "name": "assets/serving-throughput.png",
+          "size": 171037,
+          "lfs": {
+            "sha256": "6de8aed94d2c74d5ecea8bc15a4694e3beedb551fb755a93b3fa2298e4eda991",
+            "size": 171037,
+            "pointerSize": 131
+          }
+        },
+        {
+          "name": "chat_template.jinja",
+          "size": 7756,
+          "lfs": null
+        },
+        {
+          "name": "config.json",
+          "size": 3090,
+          "lfs": null
+        },
+        {
+          "name": "d3_engine.py",
+          "size": 4413,
+          "lfs": null
+        },
+        {
+          "name": "d3_fast.py",
+          "size": 22331,
+          "lfs": null
+        },
+        {
+          "name": "d3_format.py",
+          "size": 7008,
+          "lfs": null
+        },
+        {
+          "name": "d3_kernels.py",
+          "size": 16129,
+          "lfs": null
+        },
+        {
+          "name": "d3_runtime.py",
+          "size": 95505,
+          "lfs": null
+        },
+        {
+          "name": "d3_server.py",
+          "size": 17705,
+          "lfs": null
+        },
+        {
+          "name": "decision_config.json",
+          "size": 5502,
+          "lfs": null
+        },
+        {
+          "name": "merges.txt",
+          "size": 3353259,
+          "lfs": null
+        },
+        {
+          "name": "model-00001-of-00002.safetensors",
+          "size": 4973332144,
+          "lfs": {
+            "sha256": "60621cb8c3f90e634b98f0ffaf609159ee2c450630386f09dd5f7fd7938d7598",
+            "size": 4973332144,
+            "pointerSize": 135
+          }
+        },
+        {
+          "name": "model-00002-of-00002.safetensors",
+          "size": 4105283936,
+          "lfs": {
+            "sha256": "6189569fbe9245030d7ffb0b60a52268b7386e7a85a57aee1274a5178c1cc53d",
+            "size": 4105283936,
+            "pointerSize": 135
+          }
+        },
+        {
+          "name": "model.safetensors.index.json",
+          "size": 61898,
+          "lfs": null
+        },
+        {
+          "name": "modeling_d3.py",
+          "size": 12079,
+          "lfs": null
+        },
+        {
+          "name": "pipeline_d3.py",
+          "size": 2936,
+          "lfs": null
+        },
+        {
+          "name": "preprocessor_config.json",
+          "size": 390,
+          "lfs": null
+        },
+        {
+          "name": "readout.safetensors",
+          "size": 2611280,
+          "lfs": {
+            "sha256": "d570665c1da72cb9fca7ad7b23a25720eb691362694dd69d4c80c17d7656ed55",
+            "size": 2611280,
+            "pointerSize": 132
+          }
+        },
+        {
+          "name": "requirements.txt",
+          "size": 723,
+          "lfs": null
+        },
+        {
+          "name": "tokenizer.json",
+          "size": 12807982,
+          "lfs": {
+            "sha256": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+            "size": 12807982,
+            "pointerSize": 133
+          }
+        },
+        {
+          "name": "tokenizer_config.json",
+          "size": 16710,
+          "lfs": null
+        },
+        {
+          "name": "video_preprocessor_config.json",
+          "size": 385,
+          "lfs": null
+        },
+        {
+          "name": "vocab.json",
+          "size": 6722759,
+          "lfs": null
+        }
+      ],
+      "documents": {
+        "LICENSE": {
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "bytes": 11357
+        },
+        "NOTICE": {
+          "sha256": "1b1c0d9508ca9703a5f7eabfc70800676e167ad1de1e72ac69f4b9cab1b9272b",
+          "bytes": 104
+        },
+        "README.md": {
+          "sha256": "57e4fcc4c67283573ee1bd201bb87b0ea9b123d0a6938116fcb3dc7294686b43",
+          "bytes": 17368
+        },
+        "config.json": {
+          "sha256": "8f5f404a71ecc53c4ff26fc42cb4c778ffacfb4c9623f5e2d51245166d6b5057",
+          "bytes": 3090
+        },
+        "decision_config.json": {
+          "sha256": "588bc0ac7644479b9adde0498d80b6fb7c576388992564ac67599c05d29add07",
+          "bytes": 5502
+        }
+      }
+    },
+    {
+      "repo": "ggml-org/vllm-d3-flash-GGUF",
+      "revision": "1307737011b75c2d1f389243484296d9d6c54a4f",
+      "declaredLicense": "apache-2.0",
+      "files": [
+        {
+          "name": ".gitattributes",
+          "size": 1835,
+          "lfs": null
+        },
+        {
+          "name": ".src_sha",
+          "size": 49,
+          "lfs": null
+        },
+        {
+          "name": "README.md",
+          "size": 550,
+          "lfs": null
+        },
+        {
+          "name": "convert.log",
+          "size": 273167,
+          "lfs": null
+        },
+        {
+          "name": "mmproj-vllm-d3-flash-BF16.gguf",
+          "size": 921704992,
+          "lfs": {
+            "sha256": "a01bb68a801a0d793fd4b510feb237d247eff60557f807fe84f1c3196c473947",
+            "size": 921704992,
+            "pointerSize": 134
+          }
+        },
+        {
+          "name": "mmproj-vllm-d3-flash-Q8_0.gguf",
+          "size": 624229792,
+          "lfs": {
+            "sha256": "0291125ad889adb09a0097cc7ba081ce2cfbd2eaf4f253160559da14de93e14c",
+            "size": 624229792,
+            "pointerSize": 134
+          }
+        },
+        {
+          "name": "vllm-d3-flash-BF16.gguf",
+          "size": 17920698880,
+          "lfs": {
+            "sha256": "21fc8dbd2cb3ed85115f461d8342ec11050bc2854a07345f9163b9edaec1e313",
+            "size": 17920698880,
+            "pointerSize": 136
+          }
+        },
+        {
+          "name": "vllm-d3-flash-Q4_K_M.gguf",
+          "size": 6603024896,
+          "lfs": {
+            "sha256": "b8753da41b5170a884528940e4403d1a6bdef78de674f11b22358aeceea7750f",
+            "size": 6603024896,
+            "pointerSize": 135
+          }
+        },
+        {
+          "name": "vllm-d3-flash-Q8_0.gguf",
+          "size": 9527503360,
+          "lfs": {
+            "sha256": "c973672171ed0eec5fdc5928e13004368331cca7b61cc2f0f7e8734bfbd10ba7",
+            "size": 9527503360,
+            "pointerSize": 135
+          }
+        }
+      ],
+      "documents": {
+        "README.md": {
+          "sha256": "7ba338e9904a8669853e289ff15b85074b12222aa9c996155f38a48ccda7f133",
+          "bytes": 550
+        }
+      }
+    },
+    {
+      "repo": "perplexity-ai/pplx-decider-flash-gguf-v1.2",
+      "revision": "2514d5f0b7fbbe1ee1bfec9ffb5801a60289b4cc",
+      "declaredLicense": "apache-2.0",
+      "files": [
+        {
+          "name": ".gitattributes",
+          "size": 1655,
+          "lfs": null
+        },
+        {
+          "name": "LICENSE",
+          "size": 11544,
+          "lfs": null
+        },
+        {
+          "name": "NOTICE",
+          "size": 132,
+          "lfs": null
+        },
+        {
+          "name": "README.md",
+          "size": 14169,
+          "lfs": null
+        },
+        {
+          "name": "decider-flash-v1.2-q8_0.gguf",
+          "size": 5157837472,
+          "lfs": {
+            "sha256": "ffb27ade8976765b0e6943a0b7f5f3fd0f7042d45ad90256a76d608bcd3942c2",
+            "size": 5157837472,
+            "pointerSize": 135
+          }
+        },
+        {
+          "name": "mmproj-decider-flash-v1.2-f16.gguf",
+          "size": 672423040,
+          "lfs": {
+            "sha256": "b2459e42a5f12c9ecbc81742a91cb93b6bbe5082297b4aa9578d453ddcbecfab",
+            "size": 672423040,
+            "pointerSize": 134
+          }
+        }
+      ],
+      "documents": {
+        "LICENSE": {
+          "sha256": "bbedc3fda3305820b977265f01b8619d87570a6739de3a5582c3464840f1e57a",
+          "bytes": 11544
+        },
+        "NOTICE": {
+          "sha256": "381fb81e814716a5ef8e5eae26a08607d052cf12f019dba9da9e81298ef5cb75",
+          "bytes": 132
+        },
+        "README.md": {
+          "sha256": "04c994d3e5196b344e550ba1df4026035cf048e47346a75d29118be78841246f",
+          "bytes": 14169
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "at": 1794529324.153927,
+  "taskRuntimeActive": false,
+  "taskUnits": "",
+  "listening": "State  Recv-Q Send-Q Local Address:Port  Peer Address:PortProcess                                   \nLISTEN 0      128        127.0.0.1:14873      0.0.0.0:*    users:((\"ssh\",pid=2245,fd=4))            \nLISTEN 0      16         127.0.0.1:8080       0.0.0.0:*    users:((\"gufo-78d74185\",pid=791917,fd=3))\nLISTEN 0      4096   127.0.0.53%lo:53         0.0.0.0:*                                             \nLISTEN 0      4096      127.0.0.54:53         0.0.0.0:*                                             \nLISTEN 0      4096         0.0.0.0:22         0.0.0.0:*                                             \nLISTEN 0      512          0.0.0.0:7843       0.0.0.0:*    users:((\"bun\",pid=825078,fd=6))          \nLISTEN 0      4096            [::]:22            [::]:*",
+  "gufoHealth": {
+    "httpStatus": 200,
+    "models": {
+      "object": "list",
+      "data": [
+        {
+          "id": "Qwen3.8-Flash-Next-UD-Q4_K_XL-00001-of-00004.gguf",
+          "object": "model",
+          "created": 1794529324,
+          "owned_by": "gufo",
+          "context_length": 131072,
+          "architecture": {
+            "input_modalities": [
+              "text"
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "allocatedDiskBytes": 3033747456,
+  "scriptsSha256": {
+    "trial_guard.py": "11e7b37801f0b14eff60a6ab2755f121133c6f73f0138e83c6ec29a8c71e7042",
+    "guarded_runtime.py": "4d0493f0fc56ced42d7ced671e10a86d42221873f16da47ebdb852b8c4383ae5",
+    "stage.py": "fa6ffe40b6285e6daee5d497ae4dc7bc321faefd5c5c85f8dadfb5cb1fc83687",
+    "gufo_probe.py": "b03458673185b58fbe4bd48a6a7c0229c4e8813f124120029478eb493d6474e7"
+  },
+  "admissionFloorIgnoredForTrial": true,
+  "globalAdmissionConfigChanged": false,
+  "npuInferenceExecuted": false,
+  "npuPowerState": "suspended"
+}

@@ -1,0 +1,37 @@
+{
+  "status": "validated-inactive-proposal-not-applied",
+  "originalAgentsSha256": "b9c14e2f4c480cd0c4823bc5b21401f8564cb02d80d173e49d2c0ed189524db9",
+  "stagedAgentsSha256": "5d3b4368204e0938d2db652bcda83c6c2f10b4c48bac16b2529ef881b45fe4ea",
+  "privateStagedDir": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261113-generation/staged-inactive-config",
+  "newSeats": [
+    "system-one-kapitsa-generator-eval",
+    "system-one-kapitsa-rewriter-eval",
+    "system-one-gufo-generator-eval",
+    "system-one-gufo-rewriter-eval"
+  ],
+  "allNewRolesEmpty": true,
+  "existingAgentRolesAndOptionsUnchanged": true,
+  "liveConfigurationBytesUnchanged": true,
+  "productionAuthorityChanged": false,
+  "activationReady": false,
+  "futureActivationRequires": [
+    "Source-supported and policy-eligible extraction on independent held-out inputs",
+    "Shared coding-priority admission and fresh worker capacity/impact evidence",
+    "Candidate artifact provenance and recovery acceptance",
+    "Reviewed release and per-workload activation"
+  ],
+  "roleIsolationPlan": {
+    "t2RoleEnv": "PENUMBRA_T2_EXTRACTION_ROLE=memory-extractor",
+    "keepLegacyClassifierRole": "memory-refiner",
+    "keepPromotionBallotRole": "dreaming-judge",
+    "intendedGeneratorRoles": [
+      "memory-extractor",
+      "brief-synthesizer",
+      "refiner"
+    ],
+    "intendedRewriterRoles": [
+      "dreaming-rewriter"
+    ],
+    "note": "Plan only. No role assignment or environment changes applied; promotion/veto authority stays unchanged."
+  }
+}

@@ -1,0 +1,170 @@
+{
+  "method": "Dedicated launchd router recovery; synthetic control inputs only; no production writes",
+  "events": [
+    {
+      "ts": 1794479927.521,
+      "kind": "start",
+      "pid": 51183
+    },
+    {
+      "ts": 1794479928.273,
+      "kind": "before_restart",
+      "result": {
+        "ok": true,
+        "model": "d3-nano-eval",
+        "answers": {
+          "durable": {
+            "type": "noul",
+            "noul": 0.8038815663858081
+          },
+          "category": {
+            "type": "choice",
+            "choice": "decision",
+            "probabilities": {
+              "decision": 0.9996801274227503,
+              "progress": 0.00031987257724987666
+            },
+            "confidence": 0.9958248058190611
+          },
+          "quality": {
+            "type": "score",
+            "score": 1.6975587319761787,
+            "legend": {
+              "0": "No rationale",
+              "1": "Vague rationale",
+              "2": "Specific rationale"
+            },
+            "probabilities": {
+              "0": 0.06752839098112112,
+              "1": 0.16738448606157916,
+              "2": 0.7650871229572997
+            },
+            "confidence": 0.3755209448154454
+          }
+        },
+        "usage": {
+          "inputTokens": 335,
+          "outputTokens": 0
+        },
+        "attempts": 1
+      }
+    },
+    {
+      "ts": 1794479928.299,
+      "kind": "injected_root_failure",
+      "pid": 51183,
+      "oldChildren": [
+        51232
+      ]
+    },
+    {
+      "ts": 1794479928.301,
+      "kind": "while_down",
+      "result": {
+        "ok": false,
+        "kind": "transport",
+        "status": null,
+        "attempts": 1
+      }
+    },
+    {
+      "ts": 1794479928.564,
+      "kind": "root_recovered",
+      "pid": 51239,
+      "readinessMs": 262.81120899999996
+    },
+    {
+      "ts": 1794479929.334,
+      "kind": "after_restart",
+      "result": {
+        "ok": true,
+        "model": "d3-nano-eval",
+        "answers": {
+          "durable": {
+            "type": "noul",
+            "noul": 0.8038815663858081
+          },
+          "category": {
+            "type": "choice",
+            "choice": "decision",
+            "probabilities": {
+              "decision": 0.9996801274227503,
+              "progress": 0.00031987257724987666
+            },
+            "confidence": 0.9958248058190611
+          },
+          "quality": {
+            "type": "score",
+            "score": 1.6975587319761787,
+            "legend": {
+              "0": "No rationale",
+              "1": "Vague rationale",
+              "2": "Specific rationale"
+            },
+            "probabilities": {
+              "0": 0.06752839098112112,
+              "1": 0.16738448606157916,
+              "2": 0.7650871229572997
+            },
+            "confidence": 0.3755209448154454
+          }
+        },
+        "usage": {
+          "inputTokens": 335,
+          "outputTokens": 0
+        },
+        "attempts": 1
+      }
+    },
+    {
+      "ts": 1794479929.334,
+      "kind": "old_children",
+      "remaining": []
+    },
+    {
+      "ts": 1794479940.485,
+      "kind": "granite_after_restart",
+      "status": 200,
+      "raw": {
+        "choices": [
+          {
+            "finish_reason": "stop",
+            "index": 0,
+            "message": {
+              "role": "assistant",
+              "content": "{\n  \"ok\": true\n}"
+            }
+          }
+        ],
+        "created": 1794479940,
+        "model": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+        "system_fingerprint": "b1-2cbe0ec",
+        "object": "chat.completion",
+        "usage": {
+          "completion_tokens": 9,
+          "prompt_tokens": 17,
+          "total_tokens": 26,
+          "prompt_tokens_details": {
+            "cached_tokens": 0
+          }
+        },
+        "id": "chatcmpl-8qhL0rAfItOB89ov4JF0sQx0A45V2pxs",
+        "timings": {
+          "cache_n": 0,
+          "prompt_n": 17,
+          "prompt_ms": 82.243,
+          "prompt_per_token_ms": 4.837823529411764,
+          "prompt_per_second": 206.70452196539523,
+          "predicted_n": 9,
+          "predicted_ms": 290.937,
+          "predicted_per_token_ms": 36.367125,
+          "predicted_per_second": 27.497361971835826
+        }
+      }
+    },
+    {
+      "ts": 1794479940.486,
+      "kind": "complete"
+    }
+  ]
+}

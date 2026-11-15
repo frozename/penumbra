@@ -1,0 +1,61 @@
+{
+  "status": "executed",
+  "config": {
+    "protocol": "systemone",
+    "promotionQuestionSet": "direct",
+    "baseUrl": "http://127.0.0.1:18944",
+    "model": "d1-3b-eval",
+    "revision": "LiquidAI/d1-3B-GGUF@bb1e436ea78eb96a3f1acb6da865f70c2fbeb563/d1-3B-Q4_K_M.gguf",
+    "hardware": "Mac mini M4 16 GiB; shared control plane; Granite paused with user authorization",
+    "runtime": "llama.cpp 2cbe0ec429b849a88664e0f62388fc92a5abd699; Metal; threads=2; slots=1; batch/ubatch=8192; offline text only; old production P4 SQL remains a measured health confound; http-only versioned installation, OpenSSL disabled",
+    "quantization": "Q4_K_M, no mmproj",
+    "contextTokens": 8192,
+    "timeoutMs": 5000,
+    "maxRequestBytes": 65536,
+    "allowRemote": false
+  },
+  "fixtureSha256": "fa2cf7888ec91878c4f3bdf57f42c8a024cd3ca6ed8972bf6656869604780d16",
+  "firstRequestMs": 2114.796583,
+  "requests": 120,
+  "answered": 120,
+  "failures": {},
+  "p50LatencyMs": 1358.8973750000005,
+  "p95LatencyMs": 2104.942833000001,
+  "requestsPerSecond": 0.7449382493525903,
+  "quality": {
+    "calibration": {},
+    "test": {
+      "promote": {
+        "selected": 116,
+        "answered": 116,
+        "abstained": 0,
+        "coverage": 1,
+        "threshold": 0.5,
+        "tp": 99,
+        "fp": 8,
+        "tn": 6,
+        "fn": 3,
+        "precision": 0.9252336448598131,
+        "recall": 0.9705882352941176,
+        "f1": 0.9473684210526315,
+        "falsePromotionRate": 0.5714285714285714,
+        "falseVetoRate": 0.029411764705882353,
+        "falseDiscoveryRate": 0.07476635514018691,
+        "brier": 0.08967813979302654,
+        "calibrationError": 0.10622251386186592,
+        "falseVetoRateWithRejectFallback": 0.029411764705882353
+      }
+    }
+  },
+  "thresholdFit": {
+    "method": "calibration-only grid, max observed false-promotion rate 0.02; provisional labels",
+    "threshold": null,
+    "heldOut": null
+  },
+  "directThresholdFit": {
+    "threshold": null,
+    "heldOut": null
+  },
+  "authority": "none; mode=shadow, applied=false; no production database opened",
+  "qualityUses": "first iteration only; repeats are performance samples, not independent labels"
+}

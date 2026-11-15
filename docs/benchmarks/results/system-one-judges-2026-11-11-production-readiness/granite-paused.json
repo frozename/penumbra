@@ -1,0 +1,6 @@
+{
+  "pid": 47355,
+  "pausedAtEpoch": 1794438062.576967,
+  "originalCommandSha256": "c7f1d9b28097336a92251d090062b22c6178edee8cee927593b0d9dc0c7ce13a",
+  "reason": "authorized pause for full validation and next local-model experiments"
+}

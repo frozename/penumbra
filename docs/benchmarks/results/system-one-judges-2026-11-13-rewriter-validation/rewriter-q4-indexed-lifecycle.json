@@ -1,0 +1,12 @@
+[
+  {
+    "at": "2026-11-13T20:19:11.164372+00:00",
+    "kind": "waiting_for_existing_heavy_job_lock",
+    "target": "graniteq4"
+  },
+  {
+    "at": "2026-11-13T20:19:11.181024+00:00",
+    "kind": "aborted",
+    "reason": "[Errno 48] Address already in use"
+  }
+]

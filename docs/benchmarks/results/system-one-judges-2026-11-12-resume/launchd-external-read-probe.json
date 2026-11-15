@@ -1,0 +1,13 @@
+{
+  "method": "Read-only launchd probe, internal working directory then one external package.json read; no service/data/config writes",
+  "stdout": "internal cwd ready\n",
+  "stderr": "",
+  "finishedExternalRead": false,
+  "observedState": [
+    "state = running",
+    "pid = 52816",
+    "last exit code = (never exited)",
+    "state = active",
+    "state = active"
+  ]
+}

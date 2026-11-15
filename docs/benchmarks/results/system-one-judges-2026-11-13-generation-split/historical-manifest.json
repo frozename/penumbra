@@ -1,0 +1,158 @@
+{
+  "method": "Read-only production SELECT; invoke actual T2Promotion transcript construction/truncation in a two-table in-memory capture database; sentinel failure writes only to in-memory DB. Latest pre-November10 rollups, up to8 unique inputs per length stratum from600, exclude current System One study content before inference. Not population-random or unseen future data.",
+  "counts": {
+    "short": 8,
+    "medium": 8,
+    "long": 8
+  },
+  "cases": 24,
+  "excludedStudyContent": 0,
+  "privatePath": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261113-generation/historical.jsonl",
+  "inputSha256": "b1a9a7c46e3aef09042665de80a08bc06cdc22be98e75ffeb34d18254f539313",
+  "caseHashes": [
+    {
+      "id": "historical-01",
+      "sha256": "3dce8e03b972b923066e3bc0af59779a936776b9070cc58f9ffcef2eb6cca12c",
+      "stratum": "long",
+      "chars": 14476
+    },
+    {
+      "id": "historical-02",
+      "sha256": "d80e828655ec902e2e9e4f293213dd06cb644fc47a0a10d0112b7b0b879eb96a",
+      "stratum": "short",
+      "chars": 1805
+    },
+    {
+      "id": "historical-03",
+      "sha256": "410d6f44f641bb5c1a150f07425ee1257a2a96d7c2cb8850a522761a83ccbe4d",
+      "stratum": "short",
+      "chars": 1272
+    },
+    {
+      "id": "historical-04",
+      "sha256": "ff55ca7b154b05f950a313e4a0b24b253ff89ecc38609c7de139b89a6abc4ec4",
+      "stratum": "short",
+      "chars": 693
+    },
+    {
+      "id": "historical-05",
+      "sha256": "3daffe21a097bf977d89fd7d48c4b38b9cfabf608c8ac16e3d6fe378c6788277",
+      "stratum": "short",
+      "chars": 1006
+    },
+    {
+      "id": "historical-06",
+      "sha256": "ce1efd8ffc5683b91356cb069b5def9322442f1edd3763b07dbb9075fb1c8b28",
+      "stratum": "short",
+      "chars": 721
+    },
+    {
+      "id": "historical-07",
+      "sha256": "75f19a9163d999ae7cca517cc7d0138d5a0af3b3857f0fe9c09f0bafe78e6283",
+      "stratum": "short",
+      "chars": 892
+    },
+    {
+      "id": "historical-08",
+      "sha256": "be624d91a799ee9d7f6bbe64b8fd39ac00a9f72ea9ff7e272bd9bd76279a7843",
+      "stratum": "short",
+      "chars": 749
+    },
+    {
+      "id": "historical-09",
+      "sha256": "d7346bb1c15158cb7d39152b12b1f07555688cf077530d3cbcd5a9b3cb1faf1e",
+      "stratum": "short",
+      "chars": 902
+    },
+    {
+      "id": "historical-10",
+      "sha256": "9e79896aa128152a0965ed27b2a5185a9d362fb6a74bde942337036dceec6298",
+      "stratum": "long",
+      "chars": 9454
+    },
+    {
+      "id": "historical-11",
+      "sha256": "2819308e84f6c3c91f0d5606f07080501cc3695b3122ff92332aad9b76196382",
+      "stratum": "medium",
+      "chars": 2845
+    },
+    {
+      "id": "historical-12",
+      "sha256": "6432b374394d08b7ca40259f81018fd6407871c28b74cda785b1da15a8d52dea",
+      "stratum": "medium",
+      "chars": 3374
+    },
+    {
+      "id": "historical-13",
+      "sha256": "30dbf740a39c326543c42475a3920d0d964aa808fd47c7453e42690ec06b6a81",
+      "stratum": "long",
+      "chars": 16017
+    },
+    {
+      "id": "historical-14",
+      "sha256": "e67d4739ee3c1796aa419b08a12e86a6e0819dd3afbe0b8375844833c4145a77",
+      "stratum": "medium",
+      "chars": 6999
+    },
+    {
+      "id": "historical-15",
+      "sha256": "32bfb6ae5ff2d65296d2234fea3826e20ccd2769766ef3ead64e8df38ab72ddd",
+      "stratum": "medium",
+      "chars": 2169
+    },
+    {
+      "id": "historical-16",
+      "sha256": "9a56ef6f0b3f15be1eaf9ee847d367dba2c242ce5066091b99cb21b757c76df9",
+      "stratum": "medium",
+      "chars": 4078
+    },
+    {
+      "id": "historical-17",
+      "sha256": "5b35b3951abeb01fa232a6d106777d2b2c43c9734df0beae227b01f11c28be41",
+      "stratum": "medium",
+      "chars": 2578
+    },
+    {
+      "id": "historical-18",
+      "sha256": "316bb523a39f0ca29d9b9a175c50507ca303b08203289d94f21e3ca27ea673b4",
+      "stratum": "medium",
+      "chars": 2555
+    },
+    {
+      "id": "historical-19",
+      "sha256": "cc772fc340adf7032206d92dedcc6a88b4943e3551fc09a9e9a94229b59c807b",
+      "stratum": "medium",
+      "chars": 2980
+    },
+    {
+      "id": "historical-20",
+      "sha256": "fe74766dbdf54d86e5ff858cc6f20c88b190069af32320536f8c386ef64f114b",
+      "stratum": "long",
+      "chars": 19443
+    },
+    {
+      "id": "historical-21",
+      "sha256": "37cd43ea6d7d6aee8ecbcb9892b1d73e12a385e0b02aaaa9965a46ccb863685a",
+      "stratum": "long",
+      "chars": 12109
+    },
+    {
+      "id": "historical-22",
+      "sha256": "38c2cc290da4b82eb3b0e37e2d564404c7272f36669edc3354e9e88d4c647484",
+      "stratum": "long",
+      "chars": 10476
+    },
+    {
+      "id": "historical-23",
+      "sha256": "320dde2f7ee283165e274d9efffbbb34c29e93030be064325bdcb806ab704c75",
+      "stratum": "long",
+      "chars": 16017
+    },
+    {
+      "id": "historical-24",
+      "sha256": "c8e836c3b3bad26dcfe891836407d6ce0ce3dfcc4c603bf41a01a0f7a6677c53",
+      "stratum": "long",
+      "chars": 16017
+    }
+  ]
+}

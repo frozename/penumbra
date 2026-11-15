@@ -1,0 +1,14 @@
+[
+  {
+    "run": "rewriter-q8-indexed",
+    "exitCode": 0
+  },
+  {
+    "run": "rewriter-q4-indexed",
+    "exitCode": 1
+  },
+  {
+    "run": "rewriter-nano-indexed",
+    "exitCode": 2
+  }
+]

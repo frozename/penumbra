@@ -1,0 +1,61 @@
+{
+  "status": "executed",
+  "config": {
+    "protocol": "systemone",
+    "promotionQuestionSet": "direct",
+    "baseUrl": "http://127.0.0.1:18944",
+    "model": "d3-mini-q4-eval",
+    "revision": "ggml-org/vllm-d3-mini-GGUF@8b29fd3b87373ea85fa59cc2f26251c1591d771a/vllm-d3-mini-Q4_K_M.gguf",
+    "hardware": "Mac mini M4 16 GiB; shared control plane; Granite paused with user authorization",
+    "runtime": "llama.cpp2cbe0ec Metal HTTP-only; threads2; slots1;ctx/batch/ubatch8192; production P4 corrected source4fe01decb; no overlapping CI/build from this task",
+    "quantization": "Q4_K_M, no mmproj",
+    "contextTokens": 8192,
+    "timeoutMs": 5000,
+    "maxRequestBytes": 65536,
+    "allowRemote": false
+  },
+  "fixtureSha256": "fa2cf7888ec91878c4f3bdf57f42c8a024cd3ca6ed8972bf6656869604780d16",
+  "firstRequestMs": 3127.8315,
+  "requests": 120,
+  "answered": 120,
+  "failures": {},
+  "p50LatencyMs": 2317.7182500000017,
+  "p95LatencyMs": 3439.136541999993,
+  "requestsPerSecond": 0.44421223188326603,
+  "quality": {
+    "calibration": {},
+    "test": {
+      "promote": {
+        "selected": 116,
+        "answered": 116,
+        "abstained": 0,
+        "coverage": 1,
+        "threshold": 0.5,
+        "tp": 87,
+        "fp": 5,
+        "tn": 9,
+        "fn": 15,
+        "precision": 0.9456521739130435,
+        "recall": 0.8529411764705882,
+        "f1": 0.8969072164948454,
+        "falsePromotionRate": 0.35714285714285715,
+        "falseVetoRate": 0.14705882352941177,
+        "falseDiscoveryRate": 0.05434782608695652,
+        "brier": 0.11282094225042602,
+        "calibrationError": 0.1718240710704532,
+        "falseVetoRateWithRejectFallback": 0.14705882352941177
+      }
+    }
+  },
+  "thresholdFit": {
+    "method": "calibration-only grid, max observed false-promotion rate 0.02; provisional labels",
+    "threshold": null,
+    "heldOut": null
+  },
+  "directThresholdFit": {
+    "threshold": null,
+    "heldOut": null
+  },
+  "authority": "none; mode=shadow, applied=false; no production database opened",
+  "qualityUses": "first iteration only; repeats are performance samples, not independent labels"
+}

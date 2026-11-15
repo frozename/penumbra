@@ -1,0 +1,17 @@
+{
+  "reason": "Direct launchd native process stalls opening external-volume executable/weights; internal staged copies remove external file-open dependency without changing permissions. Source artifacts retained. No production routing changed.",
+  "artifacts": [
+    {
+      "source": "/Volumes/AI-MODELS/llama.cpp/models/granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+      "servedPath": "/Users/aimastermind/.local/share/penumbra/inference/models/granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+      "sha256": "82adafd4fbac04468c905e6d259a1bf051819804ed2c055c2831f1ef786af5a9",
+      "bytes": 3619691840
+    },
+    {
+      "source": "/Volumes/AI-MODELS/llama.cpp/models/vllm-d3-nano-GGUF/vllm-d3-nano-Q8_0.gguf",
+      "servedPath": "/Users/aimastermind/.local/share/penumbra/inference/models/vllm-d3-nano-GGUF/vllm-d3-nano-Q8_0.gguf",
+      "sha256": "a4d7563d9622a4c34cc7276a3381c3e27a25bbf8d4c0f5ee2f1404fc89ce2ab9",
+      "bytes": 2552358496
+    }
+  ]
+}

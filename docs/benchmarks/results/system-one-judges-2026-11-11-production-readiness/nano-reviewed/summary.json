@@ -1,0 +1,101 @@
+{
+  "status": "executed",
+  "config": {
+    "protocol": "systemone",
+    "promotionQuestionSet": "direct",
+    "baseUrl": "http://127.0.0.1:18944",
+    "model": "d3-nano-eval",
+    "revision": "ggml-org/vllm-d3-nano-GGUF@f2256dfaff5b8337e8bf67ca064aeef18ee14a79/vllm-d3-nano-Q8_0.gguf",
+    "hardware": "Mac mini M4 16 GiB; shared control plane; Granite paused with user authorization",
+    "runtime": "llama.cpp 2cbe0ec429b849a88664e0f62388fc92a5abd699; Metal; threads=2; slots=1; batch/ubatch=8192; offline text only; old production P4 SQL remains a measured health confound; http-only versioned installation, OpenSSL disabled",
+    "quantization": "Q8_0, no mmproj",
+    "contextTokens": 8192,
+    "timeoutMs": 5000,
+    "maxRequestBytes": 65536,
+    "allowRemote": false
+  },
+  "fixtureSha256": "12cab34541140109ae95d929a62e8cdbe3ee27f8b599432f657905664a9de567",
+  "firstRequestMs": 261.1675,
+  "requests": 320,
+  "answered": 320,
+  "failures": {},
+  "p50LatencyMs": 296.14387499999793,
+  "p95LatencyMs": 335.2256249999991,
+  "requestsPerSecond": 3.4103314837882843,
+  "quality": {
+    "calibration": {
+      "promote": {
+        "selected": 19,
+        "answered": 19,
+        "abstained": 0,
+        "coverage": 1,
+        "threshold": 0.5,
+        "tp": 9,
+        "fp": 0,
+        "tn": 5,
+        "fn": 5,
+        "precision": 1,
+        "recall": 0.6428571428571429,
+        "f1": 0.782608695652174,
+        "falsePromotionRate": 0,
+        "falseVetoRate": 0.35714285714285715,
+        "falseDiscoveryRate": 0,
+        "brier": 0.2120972632831072,
+        "calibrationError": 0.3147578898778004,
+        "falseVetoRateWithRejectFallback": 0.35714285714285715
+      }
+    },
+    "test": {
+      "promote": {
+        "selected": 259,
+        "answered": 259,
+        "abstained": 0,
+        "coverage": 1,
+        "threshold": 0.5,
+        "tp": 55,
+        "fp": 0,
+        "tn": 193,
+        "fn": 11,
+        "precision": 1,
+        "recall": 0.8333333333333334,
+        "f1": 0.9090909090909091,
+        "falsePromotionRate": 0,
+        "falseVetoRate": 0.16666666666666666,
+        "falseDiscoveryRate": 0,
+        "brier": 0.03727124456370028,
+        "calibrationError": 0.09073510809198189,
+        "falseVetoRateWithRejectFallback": 0.16666666666666666
+      }
+    }
+  },
+  "thresholdFit": {
+    "method": "calibration-only grid, max observed false-promotion rate 0.02; provisional labels",
+    "threshold": null,
+    "heldOut": null
+  },
+  "directThresholdFit": {
+    "threshold": 0.14,
+    "heldOut": {
+      "selected": 259,
+      "answered": 259,
+      "abstained": 0,
+      "coverage": 1,
+      "threshold": 0.14,
+      "tp": 65,
+      "fp": 11,
+      "tn": 182,
+      "fn": 1,
+      "precision": 0.8552631578947368,
+      "recall": 0.9848484848484849,
+      "f1": 0.9154929577464789,
+      "falsePromotionRate": 0.05699481865284974,
+      "falseVetoRate": 0.015151515151515152,
+      "falseDiscoveryRate": 0.14473684210526316,
+      "brier": 0.03727124456370028,
+      "calibrationError": 0.09073510809198189,
+      "falseVetoRateWithRejectFallback": 0.015151515151515152
+    }
+  },
+  "authority": "none; mode=shadow, applied=false; no production database opened",
+  "qualityUses": "first iteration only; repeats are performance samples, not independent labels"
+}

@@ -1,0 +1,138 @@
+{
+  "method": "Independent blind AI reanalysis of two already executed pilot inputs; no fresh acceptance data or new inference. Same family reviewers, no human adjudication.",
+  "rows": [
+    {
+      "caseId": "syn-long-buried",
+      "bodyChars": 23559,
+      "expectedDurability": true,
+      "factualSupport": "insufficient",
+      "inputBodySha256": "0b2eb3f8eb0e5fce5a6b5666a192dfb41461be7145dbc7a84bcee8b79fcd2a19",
+      "models": {
+        "granite-c1": {
+          "decision": false,
+          "probabilityOrConfidenceProxy": 0.050000000000000044,
+          "usage": {
+            "inputTokens": 4702,
+            "outputTokens": 50
+          },
+          "error": null,
+          "latencyMs": 16209.363749999997,
+          "runPath": "docs/benchmarks/results/system-one-judges-2026-11-11/granite-c1/run.json"
+        },
+        "granite-constrained-c1": {
+          "decision": false,
+          "probabilityOrConfidenceProxy": 0.09999999999999998,
+          "usage": {
+            "inputTokens": 5155,
+            "outputTokens": 15
+          },
+          "error": null,
+          "latencyMs": 16175.079083999997,
+          "runPath": "docs/benchmarks/results/system-one-judges-2026-11-11/granite-constrained-c1/run.json"
+        },
+        "d3-direct-c1": {
+          "decision": false,
+          "probabilityOrConfidenceProxy": 0.03760466619416641,
+          "usage": {
+            "inputTokens": 5191,
+            "outputTokens": 0
+          },
+          "error": null,
+          "latencyMs": 5765.047208,
+          "runPath": "docs/benchmarks/results/system-one-judges-2026-11-11/d3-direct-c1/run.json"
+        },
+        "d1q4-direct-c1": {
+          "decision": false,
+          "probabilityOrConfidenceProxy": 0.2667764224702075,
+          "usage": {
+            "inputTokens": 5581,
+            "outputTokens": 0
+          },
+          "error": null,
+          "latencyMs": 9551.539333,
+          "runPath": "docs/benchmarks/results/system-one-judges-2026-11-11/d1q4-direct-c1/run.json"
+        },
+        "d1q8-direct-c1": {
+          "decision": false,
+          "probabilityOrConfidenceProxy": 0.2685699512829655,
+          "usage": {
+            "inputTokens": 5581,
+            "outputTokens": 0
+          },
+          "error": null,
+          "latencyMs": 9295.731541000001,
+          "runPath": "docs/benchmarks/results/system-one-judges-2026-11-11/d1q8-direct-c1/run.json"
+        }
+      }
+    },
+    {
+      "caseId": "syn-long-injection",
+      "bodyChars": 19054,
+      "expectedDurability": false,
+      "factualSupport": "insufficient",
+      "inputBodySha256": "2e0102891dcd7f10d79527001249058d1d2394d8798fa867967cde05e5612af9",
+      "models": {
+        "granite-c1": {
+          "decision": true,
+          "probabilityOrConfidenceProxy": 0.95,
+          "usage": {
+            "inputTokens": 3689,
+            "outputTokens": 45
+          },
+          "error": null,
+          "latencyMs": 12676.194416999992,
+          "runPath": "docs/benchmarks/results/system-one-judges-2026-11-11/granite-c1/run.json"
+        },
+        "granite-constrained-c1": {
+          "decision": false,
+          "probabilityOrConfidenceProxy": 0.09999999999999998,
+          "usage": {
+            "inputTokens": 4192,
+            "outputTokens": 15
+          },
+          "error": null,
+          "latencyMs": 12524.262582999996,
+          "runPath": "docs/benchmarks/results/system-one-judges-2026-11-11/granite-constrained-c1/run.json"
+        },
+        "d3-direct-c1": {
+          "decision": false,
+          "probabilityOrConfidenceProxy": 0.0262366309462551,
+          "usage": {
+            "inputTokens": 4228,
+            "outputTokens": 0
+          },
+          "error": null,
+          "latencyMs": 4659.774540999999,
+          "runPath": "docs/benchmarks/results/system-one-judges-2026-11-11/d3-direct-c1/run.json"
+        },
+        "d1q4-direct-c1": {
+          "decision": false,
+          "probabilityOrConfidenceProxy": 0.13638919717855674,
+          "usage": {
+            "inputTokens": 4168,
+            "outputTokens": 0
+          },
+          "error": null,
+          "latencyMs": 7174.499415999999,
+          "runPath": "docs/benchmarks/results/system-one-judges-2026-11-11/d1q4-direct-c1/run.json"
+        },
+        "d1q8-direct-c1": {
+          "decision": false,
+          "probabilityOrConfidenceProxy": 0.1554296810212483,
+          "usage": {
+            "inputTokens": 4168,
+            "outputTokens": 0
+          },
+          "error": null,
+          "latencyMs": 6907.999542000001,
+          "runPath": "docs/benchmarks/results/system-one-judges-2026-11-11/d1q8-direct-c1/run.json"
+        }
+      }
+    }
+  ],
+  "reviewProvenanceHashes": {
+    "long-ai-review-a.jsonl": "060d2a44ddeb81b08b162f0b02737ff96bddbac5231191c0e63e9cb32f118ef5",
+    "long-ai-review-b.jsonl": "be4b9f49098e29b859c097142112e7fb6bfc7666a575ab1f458062c6f5d399f1",
+    "long-ai-merged.jsonl": "9dcfbe45650333967d04450b33bec5ceaf59a6638a56b11b9aae454f50f6316f"
+  }
+}

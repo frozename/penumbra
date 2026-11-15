@@ -1,0 +1,22 @@
+[
+  {
+    "at": "2026-11-13T15:04:07.600394+00:00",
+    "kind": "waiting_for_existing_heavy_job_lock"
+  },
+  {
+    "at": "2026-11-13T15:04:07.729336+00:00",
+    "kind": "admitted",
+    "modelPid": 39656,
+    "freePlusInactiveBytes": 20524941312,
+    "memoryPressureLevel": 1,
+    "establishedClientConnections": 0,
+    "existingSamplerSha256": "48bbc866002bb89d8dc2134479db0ddecb170858d4a174f87b3ac11d9eb18a72",
+    "composedSensorSha256": "43736e35412441bfc114d6705422a4f93ef8213f0ca0b68a5ed049122e20a916",
+    "capacityCaveat": "Normal pressure and free-plus-inactive memory are current snapshots. TCP polling is a contention heuristic, not shared coding-priority reservation. Existing swap is retained; growth and new swap-outs are guarded. RSS excludes some unified GPU allocations."
+  },
+  {
+    "at": "2026-11-13T15:04:08.784060+00:00",
+    "kind": "finished_without_service_mutation",
+    "note": "Stopped only owned evaluation and SSH sensor processes. Kapitsa was neither stopped nor reconfigured."
+  }
+]

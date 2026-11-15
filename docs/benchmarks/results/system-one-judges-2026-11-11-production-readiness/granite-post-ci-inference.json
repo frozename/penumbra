@@ -1,0 +1,10 @@
+{
+  "observedAtEpoch": 1794444833.9875782,
+  "pid": 91558,
+  "httpStatus": 200,
+  "validCompletion": true,
+  "model": "granite-mini-3b",
+  "latencyMs": 285.134708,
+  "source": "Post-final-CI original-command restoration smoke; not a quality sample or included in benchmark throughput",
+  "requestSha256": "b2512521d9b3d062861ed9fea48bd8f523d1e8438813f0e807f8b18f86ce1ae2"
+}

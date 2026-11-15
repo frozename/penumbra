@@ -1,0 +1,28 @@
+{
+  "daemon": {
+    "path": "/Users/aimastermind/Library/LaunchAgents/dev.penumbra.daemon.plist",
+    "sha256": "66fcaa4e24aa4efc15f6ec6a9656690fecb5a1d3fe43bc4c68c337a3fdcbd0ca"
+  },
+  "worker": {
+    "path": "/Users/aimastermind/Library/LaunchAgents/dev.penumbra.worker.plist",
+    "sha256": "02f2e535ac9914146df75a7397429c02ee2d683bddcc0e6fd4e56cb45dd0f699"
+  },
+  "local-judges": {
+    "path": "/Users/aimastermind/Library/LaunchAgents/dev.penumbra.local-judges.plist",
+    "sha256": "b52d90c7f32eead8d1ddc233ba7059621fad866f9e5403ad8454387da731999d"
+  },
+  "nano": {
+    "path": "/Users/aimastermind/.local/share/penumbra/inference/models/vllm-d3-nano-GGUF/vllm-d3-nano-Q8_0.gguf",
+    "sha256": "a4d7563d9622a4c34cc7276a3381c3e27a25bbf8d4c0f5ee2f1404fc89ce2ab9",
+    "bytes": 2552358496
+  },
+  "runtime": {
+    "path": "/Users/aimastermind/.local/share/penumbra/inference/system-one-llama/2cbe0ec-http-only/bin/llama-server",
+    "sha256": "a9990314838bafcbaa2601c41a375eb764489084ff2469b0770a7d47a33da104",
+    "bytes": 33472
+  },
+  "preset": {
+    "path": "/Users/aimastermind/.config/penumbra/inference/local-judges-2cbe0ec.ini",
+    "sha256": "223fe48f1fe69a8f10a4f02be05dab7ecfae34f47e9a7d3283366af96bc387bf"
+  }
+}

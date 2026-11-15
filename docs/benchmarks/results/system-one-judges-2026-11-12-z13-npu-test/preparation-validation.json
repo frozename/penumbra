@@ -1,0 +1,26 @@
+{
+  "status": "prepared_not_executed",
+  "tests": {
+    "command": "python3 -m unittest discover -s docs/benchmarks/results/system-one-judges-2026-11-12-z13-npu-test -p *_test.py",
+    "passed": 13,
+    "failed": 0,
+    "redBeforeGreen": "Missing guard module, then missing coexistence helper; both corrected before the final13-pass run."
+  },
+  "bashSyntax": "passed",
+  "pythonSourcesParsed": 6,
+  "jsonFilesParsed": 14,
+  "dryRunArtifacts": 3,
+  "localLinks": "passed",
+  "stagedScriptHashesMatch": true,
+  "sourceSha256": {
+    "gufo_probe.py": "b03458673185b58fbe4bd48a6a7c0229c4e8813f124120029478eb493d6474e7",
+    "guarded_runtime.py": "4d0493f0fc56ced42d7ced671e10a86d42221873f16da47ebdb852b8c4383ae5",
+    "trial_guard.py": "11e7b37801f0b14eff60a6ab2755f121133c6f73f0138e83c6ec29a8c71e7042",
+    "summarize.py": "fbc35a56c994823339d5af3e6d474cc053b196211bc02f61c8923a10d18dc62e",
+    "guard_test.py": "980c8c5c21fb3757dfad454e6865284a98a05b73c7f330e6391c72e3f1d1fe42",
+    "stage.py": "fa6ffe40b6285e6daee5d497ae4dc7bc321faefd5c5c85f8dadfb5cb1fc83687"
+  },
+  "npuInferenceExecuted": false,
+  "productionPackageSourceChanged": false,
+  "fullCi": "Not rerun: changes limited to docs/results and isolated experimental drivers. Existing CI attestation remains scoped to its recorded production source."
+}

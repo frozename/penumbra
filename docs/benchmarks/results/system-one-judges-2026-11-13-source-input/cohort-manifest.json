@@ -1,0 +1,269 @@
+{
+  "method": "Read-only production SELECT; actual T2Promotion source and unchanged summary-first inputs captured in memory before inference. Exclude every previous generation-cohort session. SHA256-seeded session order among latest1500 pre-November7 rollups; eight cases per delivered source-length stratum, maximum60k chars. No population-random or future-data claim.",
+  "cases": 24,
+  "counts": {
+    "short": 8,
+    "medium": 8,
+    "long": 8
+  },
+  "excluded": {
+    "previousSession": 0,
+    "duplicate": 0,
+    "budget": 0,
+    "studyContent": 0,
+    "empty": 10
+  },
+  "privatePath": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261113-source-input/historical.jsonl",
+  "inputSha256": "db8b69162b862f41b5af81e6e2ba96335c22cadbc23d514370643babb83962e5",
+  "frozenPolicySha256": "1a620dc160754f9359a0fd62cdfde9303306455a2e361092afbf801657a521b3",
+  "sourceMode": {
+    "sourceTranscript": true,
+    "maxTranscriptChars": 240000,
+    "maxCharsPerChunk": 30000,
+    "maxChunks": 8,
+    "requireCompleteInput": true,
+    "concurrency": 1
+  },
+  "caseHashes": [
+    {
+      "id": "source-01",
+      "sha256": "d6b7cef3f09a08d99844c5edafdc73f57f68d0444fd99ff1efeb790e96d11825",
+      "legacySha256": "756ced3fdac9fa9d0add09b5a0612d708fe049b4ce9a5da861117f806ef0b54a",
+      "stratum": "medium",
+      "chars": 10577,
+      "legacyChars": 1283,
+      "eventCount": 9,
+      "summaries240": 3
+    },
+    {
+      "id": "source-02",
+      "sha256": "9e48c24c89d6be146a2c2f723351e8f2a467e46d8143d6b1e6fd69a6501fcdb3",
+      "legacySha256": "1191c9dc0fa8110159e94bce53dd184e5208dad37e06495218137cbd877baf81",
+      "stratum": "medium",
+      "chars": 13482,
+      "legacyChars": 1262,
+      "eventCount": 6,
+      "summaries240": 4
+    },
+    {
+      "id": "source-03",
+      "sha256": "64316d048a6c8515a47f37b5d5c7ad13e11dedba5f793c7048bd6c21b067bbbf",
+      "legacySha256": "e0ee99a01640a3869a55c531e8d8beb5de1d4c4b7b54df1f0f875354cf33df2c",
+      "stratum": "long",
+      "chars": 17759,
+      "legacyChars": 1181,
+      "eventCount": 7,
+      "summaries240": 3
+    },
+    {
+      "id": "source-04",
+      "sha256": "3f7dcbd261b37b1858e24098f42213be58305921fa65a027f1e970b27e64f46d",
+      "legacySha256": "c0d321894334eeda35549811d6c36cf57e6386f7029ea336e128714738e36d2b",
+      "stratum": "short",
+      "chars": 2659,
+      "legacyChars": 498,
+      "eventCount": 2,
+      "summaries240": 2
+    },
+    {
+      "id": "source-05",
+      "sha256": "5df3f4fc628a992c784b2165653192cee26152b7a30ea52e5cd26fecaad4652f",
+      "legacySha256": "9a7116ceda35545424d4ccd5d9c16f187968dc03db1bf8f97f7215b8651614c7",
+      "stratum": "medium",
+      "chars": 15215,
+      "legacyChars": 1166,
+      "eventCount": 6,
+      "summaries240": 4
+    },
+    {
+      "id": "source-06",
+      "sha256": "9ea01d7b61e0ef3c0244294f85ca75915e3c37fc463762f953192638ec6aa5d6",
+      "legacySha256": "5aeb8899db658f5dc0eb5490aaf97e8572fd2469ec8b49d56c78421e4bc6d1d7",
+      "stratum": "medium",
+      "chars": 12868,
+      "legacyChars": 1802,
+      "eventCount": 13,
+      "summaries240": 3
+    },
+    {
+      "id": "source-07",
+      "sha256": "8d1fd135edb99fc9b4591c6e67affc362930feba8e46d836b0585d8ec4fe5a7c",
+      "legacySha256": "ccd4cbe155d21653b1d81d09b97350f652013c206e6c5e48464e61ff86a758b5",
+      "stratum": "medium",
+      "chars": 5592,
+      "legacyChars": 881,
+      "eventCount": 5,
+      "summaries240": 3
+    },
+    {
+      "id": "source-08",
+      "sha256": "80b763448fc21f12826e54cec8403fa33bf3b03408531a69bcfbe63a3b60eab1",
+      "legacySha256": "c651834db15252a9eb171264ebd21f47ca8705c13cfb310078ddd40982ac7b7d",
+      "stratum": "medium",
+      "chars": 10250,
+      "legacyChars": 1535,
+      "eventCount": 10,
+      "summaries240": 4
+    },
+    {
+      "id": "source-09",
+      "sha256": "5864195e5732aa52e08b0e87d9ccece9ebf9716fa84de28f791f33e896bffb73",
+      "legacySha256": "4e2af4d91b6f8b8c27862a0944cc9e50c651bd780967f98a3d1dfc621d8ebdc2",
+      "stratum": "short",
+      "chars": 1881,
+      "legacyChars": 263,
+      "eventCount": 2,
+      "summaries240": 1
+    },
+    {
+      "id": "source-10",
+      "sha256": "6bfd3642b9676409f29169dadcf57dc0bd570b846376665daa3ef3fbf4892c94",
+      "legacySha256": "633116c2beb169887844709f84374d05c6e0bc3c553e7e785678eadf4b13d7da",
+      "stratum": "medium",
+      "chars": 9387,
+      "legacyChars": 1029,
+      "eventCount": 6,
+      "summaries240": 2
+    },
+    {
+      "id": "source-11",
+      "sha256": "8cabac653c0aaf860b56c30f65004265c64c6bb8e655513932dbca3b3fda6f58",
+      "legacySha256": "7720a014a80ab143bc395908c333f8c3a234396a3b91afb736f600287601a286",
+      "stratum": "long",
+      "chars": 22620,
+      "legacyChars": 1344,
+      "eventCount": 11,
+      "summaries240": 3
+    },
+    {
+      "id": "source-12",
+      "sha256": "0e5013c7d94de36c298f819e80b220283347ad865f8790c8db794b6cd350784a",
+      "legacySha256": "cd3e4baf8373d22d136eb6f85a4ee2e536cf99056bcd5b38b07f979700e036b8",
+      "stratum": "long",
+      "chars": 28828,
+      "legacyChars": 3252,
+      "eventCount": 31,
+      "summaries240": 4
+    },
+    {
+      "id": "source-13",
+      "sha256": "240d0175e2d53973af34111e9cd23d4878abb57e70ff7a8d51713d7d9d719ad7",
+      "legacySha256": "1f1a2f67577cd5560ca8e4d23d8e1a17a123dfda1776e4de270504dc0480c659",
+      "stratum": "short",
+      "chars": 2478,
+      "legacyChars": 263,
+      "eventCount": 2,
+      "summaries240": 1
+    },
+    {
+      "id": "source-14",
+      "sha256": "d14da4f13d8d33fc9691c607d352f547c20a2a4306171f9a448d94c3e37bfd2a",
+      "legacySha256": "1ca2ab2ca2bd3625158f913f811b6dc91a8974413aa4ccbd9a8170292de8b6bc",
+      "stratum": "long",
+      "chars": 41986,
+      "legacyChars": 1242,
+      "eventCount": 11,
+      "summaries240": 3
+    },
+    {
+      "id": "source-15",
+      "sha256": "f6fb525dcf993aa78ecfe61cdb54d592b408ff861e248f879063e37cf02985bc",
+      "legacySha256": "437da373772a8f46f72048d20b2441e749c0b871805690336d4b3f180132e4bc",
+      "stratum": "long",
+      "chars": 20564,
+      "legacyChars": 2421,
+      "eventCount": 19,
+      "summaries240": 3
+    },
+    {
+      "id": "source-16",
+      "sha256": "c847473e7c418d3f8c793fbd766fc06a9021035dbf1f9f348bb434bca3189569",
+      "legacySha256": "79cd68d25c1efbc49656706d3168ad20015b752282d3167e3dc2ee79054f8669",
+      "stratum": "medium",
+      "chars": 15584,
+      "legacyChars": 1248,
+      "eventCount": 8,
+      "summaries240": 3
+    },
+    {
+      "id": "source-17",
+      "sha256": "03a3cfd30d2ec9c158ffb392550956610ca2b7b2374c66c86f82801459b63701",
+      "legacySha256": "d49884e608fd601c0459e3b1cea01545fe13afade69bf65dacf0be53afbcfe8e",
+      "stratum": "short",
+      "chars": 2505,
+      "legacyChars": 263,
+      "eventCount": 2,
+      "summaries240": 1
+    },
+    {
+      "id": "source-18",
+      "sha256": "26cd40e99384450f4f11d27defeede30810e37234e6a9bdc81afd6d79e2007dd",
+      "legacySha256": "d38d17c8737c9430493b8f42a2965c05d093a689143af2a335485a16f2d6cc02",
+      "stratum": "long",
+      "chars": 24807,
+      "legacyChars": 2352,
+      "eventCount": 18,
+      "summaries240": 4
+    },
+    {
+      "id": "source-19",
+      "sha256": "f1b05ea9f2914675abca60641291ffc5058ddc0f84f3a647ba7cac476e7e47ce",
+      "legacySha256": "4a8f84226ec1763606503afd24936ec9cecbd7f2f3464238425a2a4952cac1c9",
+      "stratum": "long",
+      "chars": 31323,
+      "legacyChars": 3695,
+      "eventCount": 26,
+      "summaries240": 8
+    },
+    {
+      "id": "source-20",
+      "sha256": "b23edacc430dbc5e3b850086dba766848b323603c22a04a63d6474de1d0e1298",
+      "legacySha256": "7c4875bc1965326aa2d163f95438e11c7a2a0e3b5a6d8fdea579b4f1d10b7cfc",
+      "stratum": "short",
+      "chars": 2121,
+      "legacyChars": 499,
+      "eventCount": 2,
+      "summaries240": 2
+    },
+    {
+      "id": "source-21",
+      "sha256": "7a9748c7e7adf80c7c929f3b5d774cb3703868fcfc75be3047a7a3253d6f3d2c",
+      "legacySha256": "4efa3d6d578e9a9b45d847da6e8ab93fe47fed254640d9f1709d7bc5b5a1b01e",
+      "stratum": "long",
+      "chars": 26642,
+      "legacyChars": 5751,
+      "eventCount": 33,
+      "summaries240": 11
+    },
+    {
+      "id": "source-22",
+      "sha256": "5ff41ab21ff4844008fd45229ed2c1824a52ad7ffd27417410471bea3504e4a4",
+      "legacySha256": "728d9bce271a722d53c8d2c5f44575f26bcefa45195fe4b05a4bf676f088235d",
+      "stratum": "short",
+      "chars": 3924,
+      "legacyChars": 263,
+      "eventCount": 2,
+      "summaries240": 1
+    },
+    {
+      "id": "source-23",
+      "sha256": "99b3bef56ed6b7ff9b9edf602eb137ba78da435ab6d92115a23ee18b6c14572b",
+      "legacySha256": "5cf7fbadddbdd48bf88031e2fdfc8d5e14024e9f2ff99bd1165ea100e08b7079",
+      "stratum": "short",
+      "chars": 3471,
+      "legacyChars": 499,
+      "eventCount": 2,
+      "summaries240": 2
+    },
+    {
+      "id": "source-24",
+      "sha256": "77137dce9c6ac953b2cec2bafe9b6f65465ccde1966c3c08533fe326d2f16af4",
+      "legacySha256": "5753729a2b859570ea9c8db5389dd5329ff76d50a2c95a5ba8ab69ddb14bfa44",
+      "stratum": "short",
+      "chars": 3646,
+      "legacyChars": 497,
+      "eventCount": 2,
+      "summaries240": 2
+    }
+  ]
+}

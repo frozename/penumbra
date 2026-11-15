@@ -1,0 +1,13 @@
+{
+  "sourceCommit": "26dec40f0474f606f50c7d7c428fda5809ddba0e",
+  "command": "bun run check:ci",
+  "ciExitCode": 0,
+  "rawLogSha256": "46c5a699a017cb966a44a3ec6442e622cf2c8aaab10128b657e8503a686ba91d",
+  "rawLogPath": "/Volumes/AI-DATA/maestro/bench/system-one-judges-20261113-rewriter-validation/check-ci.final.log",
+  "runtimePlistUnchanged": true,
+  "heavyJobLock": "/Users/aimastermind/.penumbra/locks/heavy-job.lock",
+  "status": "passed",
+  "packageTree": "9eddec9a2a5de05803f02e1b41a686a9007205e7",
+  "postflightError": null,
+  "scope": "Fresh full CI on committed configurable rewriter benchmark. Its ten script regression tests are included; docs lifecycle helpers have separate validation."
+}

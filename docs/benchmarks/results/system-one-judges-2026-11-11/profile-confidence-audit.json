@@ -1,0 +1,218 @@
+{
+  "note": "Hypothetical primary-answer acceptance at confidence 0.6, not an applied router or actual full-profile fallback result. Confidence semantics differ by model; calibrate before reuse.",
+  "runs": [
+    {
+      "run": "d3-isolated-c1",
+      "primaryWouldClear06Floor": 8,
+      "selected": 8,
+      "rows": [
+        {
+          "caseId": "profile-0",
+          "expected": "debugging",
+          "selected": "coding",
+          "confidence": 0.6440923528716431,
+          "selectedOptionProbability": 0.6063852162878526,
+          "wouldClearGeneric06Floor": true
+        },
+        {
+          "caseId": "profile-1",
+          "expected": "writing",
+          "selected": "writing",
+          "confidence": 0.9875118506573952,
+          "selectedOptionProbability": 0.9961290597511765,
+          "wouldClearGeneric06Floor": true
+        },
+        {
+          "caseId": "profile-2",
+          "expected": "summarization",
+          "selected": "summarization",
+          "confidence": 0.9608432547055258,
+          "selectedOptionProbability": 0.9847631087491219,
+          "wouldClearGeneric06Floor": true
+        },
+        {
+          "caseId": "profile-3",
+          "expected": "code_review",
+          "selected": "code_review",
+          "confidence": 0.9682740992697635,
+          "selectedOptionProbability": 0.9883472066433248,
+          "wouldClearGeneric06Floor": true
+        },
+        {
+          "caseId": "profile-4",
+          "expected": "research",
+          "selected": "research",
+          "confidence": 0.789884580343928,
+          "selectedOptionProbability": 0.8912531177854551,
+          "wouldClearGeneric06Floor": true
+        },
+        {
+          "caseId": "profile-5",
+          "expected": "architecture",
+          "selected": "architecture",
+          "confidence": 0.9639607103929254,
+          "selectedOptionProbability": 0.9868010647757012,
+          "wouldClearGeneric06Floor": true
+        },
+        {
+          "caseId": "profile-6",
+          "expected": "tool_use",
+          "selected": "tool_use",
+          "confidence": 0.9778260345665923,
+          "selectedOptionProbability": 0.9926763400757194,
+          "wouldClearGeneric06Floor": true
+        },
+        {
+          "caseId": "profile-7",
+          "expected": "coding",
+          "selected": "coding",
+          "confidence": 0.8379769268731299,
+          "selectedOptionProbability": 0.9217233697841218,
+          "wouldClearGeneric06Floor": true
+        }
+      ]
+    },
+    {
+      "run": "d1q4-all-c1",
+      "primaryWouldClear06Floor": 6,
+      "selected": 8,
+      "rows": [
+        {
+          "caseId": "profile-0",
+          "expected": "debugging",
+          "selected": "debugging",
+          "confidence": 0.5744221648887674,
+          "selectedOptionProbability": 0.6098869844813701,
+          "wouldClearGeneric06Floor": false
+        },
+        {
+          "caseId": "profile-1",
+          "expected": "writing",
+          "selected": "writing",
+          "confidence": 0.9202208720165279,
+          "selectedOptionProbability": 0.9268691326818173,
+          "wouldClearGeneric06Floor": true
+        },
+        {
+          "caseId": "profile-2",
+          "expected": "summarization",
+          "selected": "summarization",
+          "confidence": 0.9183932998361717,
+          "selectedOptionProbability": 0.9251938581831574,
+          "wouldClearGeneric06Floor": true
+        },
+        {
+          "caseId": "profile-3",
+          "expected": "code_review",
+          "selected": "code_review",
+          "confidence": 0.916663708099044,
+          "selectedOptionProbability": 0.9236083990907903,
+          "wouldClearGeneric06Floor": true
+        },
+        {
+          "caseId": "profile-4",
+          "expected": "research",
+          "selected": "analysis",
+          "confidence": 0.3429144441763397,
+          "selectedOptionProbability": 0.39767157382831136,
+          "wouldClearGeneric06Floor": false
+        },
+        {
+          "caseId": "profile-5",
+          "expected": "architecture",
+          "selected": "architecture",
+          "confidence": 0.8993074822925715,
+          "selectedOptionProbability": 0.9076985254348572,
+          "wouldClearGeneric06Floor": true
+        },
+        {
+          "caseId": "profile-6",
+          "expected": "tool_use",
+          "selected": "tool_use",
+          "confidence": 0.961847796928625,
+          "selectedOptionProbability": 0.9650271471845729,
+          "wouldClearGeneric06Floor": true
+        },
+        {
+          "caseId": "profile-7",
+          "expected": "coding",
+          "selected": "coding",
+          "confidence": 0.8870621468379112,
+          "selectedOptionProbability": 0.8964736346014186,
+          "wouldClearGeneric06Floor": true
+        }
+      ]
+    },
+    {
+      "run": "d1q8-all-c1",
+      "primaryWouldClear06Floor": 6,
+      "selected": 8,
+      "rows": [
+        {
+          "caseId": "profile-0",
+          "expected": "debugging",
+          "selected": "debugging",
+          "confidence": 0.5792707541232576,
+          "selectedOptionProbability": 0.6143315246129861,
+          "wouldClearGeneric06Floor": false
+        },
+        {
+          "caseId": "profile-1",
+          "expected": "writing",
+          "selected": "writing",
+          "confidence": 0.9166970624628141,
+          "selectedOptionProbability": 0.9236389739242463,
+          "wouldClearGeneric06Floor": true
+        },
+        {
+          "caseId": "profile-2",
+          "expected": "summarization",
+          "selected": "summarization",
+          "confidence": 0.9145601763187776,
+          "selectedOptionProbability": 0.9216801616255461,
+          "wouldClearGeneric06Floor": true
+        },
+        {
+          "caseId": "profile-3",
+          "expected": "code_review",
+          "selected": "code_review",
+          "confidence": 0.9272695607248389,
+          "selectedOptionProbability": 0.9333304306644357,
+          "wouldClearGeneric06Floor": true
+        },
+        {
+          "caseId": "profile-4",
+          "expected": "research",
+          "selected": "research",
+          "confidence": 0.40230950852107916,
+          "selectedOptionProbability": 0.45211704947765585,
+          "wouldClearGeneric06Floor": false
+        },
+        {
+          "caseId": "profile-5",
+          "expected": "architecture",
+          "selected": "architecture",
+          "confidence": 0.9191919903462301,
+          "selectedOptionProbability": 0.925925991150711,
+          "wouldClearGeneric06Floor": true
+        },
+        {
+          "caseId": "profile-6",
+          "expected": "tool_use",
+          "selected": "tool_use",
+          "confidence": 0.9606520212873616,
+          "selectedOptionProbability": 0.9639310195134148,
+          "wouldClearGeneric06Floor": true
+        },
+        {
+          "caseId": "profile-7",
+          "expected": "coding",
+          "selected": "coding",
+          "confidence": 0.8877516258715809,
+          "selectedOptionProbability": 0.8971056570489491,
+          "wouldClearGeneric06Floor": true
+        }
+      ]
+    }
+  ]
+}

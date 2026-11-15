@@ -1,0 +1,74 @@
+{
+  "runs": {
+    "rewriter-q8-indexed": {
+      "startupMs": 619.969166116789,
+      "recoveryHealthAndRequestMs": 1071.6425839345902,
+      "replayExitCode": 0,
+      "recoverySignal": "SIGKILL, only owned test process",
+      "runtimeRouterRestored": true,
+      "postflightHealth": "ok",
+      "vmmap": {
+        "lines": [
+          "Physical footprint:         820.2M",
+          "Physical footprint (peak):  821.0M"
+        ],
+        "rawSha256": "c9c9730ee5ad86c9263a0068c3439bbc0834f67a6ddc053f0df4c9b4b1a101e2",
+        "scope": "One snapshot during serial replay; distinct from RSS; may perturb individual timings"
+      }
+    },
+    "rewriter-q4-indexed-v2": {
+      "startupMs": 307.6102079357952,
+      "recoveryHealthAndRequestMs": 626.782082952559,
+      "replayExitCode": 0,
+      "recoverySignal": "SIGKILL, only owned test process",
+      "runtimeRouterRestored": true,
+      "postflightHealth": "ok",
+      "vmmap": {
+        "lines": [
+          "Physical footprint:         819.6M",
+          "Physical footprint (peak):  820.5M"
+        ],
+        "rawSha256": "5111f8a4ffc4de7c0a95d71c3fc7dfce9bddb7ecb1fa9ea7a2f256dd4609fe8a",
+        "scope": "One snapshot during serial replay; distinct from RSS; may perturb individual timings"
+      }
+    },
+    "rewriter-nano-indexed-v2": {
+      "startupMs": 405.5094171781093,
+      "recoveryHealthAndRequestMs": 1342.737999977544,
+      "replayExitCode": 0,
+      "recoverySignal": "SIGKILL, only owned test process",
+      "runtimeRouterRestored": true,
+      "postflightHealth": "ok",
+      "stableValidDecisions": 111,
+      "stabilityDenominator": 111
+    }
+  },
+  "thermal": [
+    {
+      "file": "thermal-observation.jsonl",
+      "samples": 31,
+      "startTs": 1794601004.0825138,
+      "endTs": 1794601154.736715,
+      "allCommandsSucceeded": true,
+      "distinctText": [
+        "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded\n"
+      ],
+      "rawSha256": "90c707565c0efdcac784db06b6d9a581cef65ebf40fd09d877af5ba292c86c03",
+      "limits": "Five-second pmset snapshots after first replay began; no continuous temperatures or prolonged thermal certification"
+    },
+    {
+      "file": "thermal-observation.v2.jsonl",
+      "samples": 101,
+      "startTs": 1794601219.971946,
+      "endTs": 1794601722.054417,
+      "allCommandsSucceeded": true,
+      "distinctText": [
+        "Note: No thermal warning level has been recorded\nNote: No performance warning level has been recorded\nNote: No CPU power status has been recorded\n"
+      ],
+      "rawSha256": "3aa14e43b0d2cd3d2c235ba5de371013e581b81cd50c2c84e9bb0073e7076fd7",
+      "limits": "Five-second pmset snapshots after first replay began; no continuous temperatures or prolonged thermal certification"
+    }
+  ],
+  "finalStatus": "final-runtime-status.json",
+  "method": "No new inference, row selection or thresholds in this postprocessing; separate owned recovery controls not counted as quality samples."
+}

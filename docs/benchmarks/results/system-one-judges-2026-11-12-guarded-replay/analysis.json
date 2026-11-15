@@ -1,0 +1,161 @@
+{
+  "status": "partial_runtime_replay",
+  "resourceGuardAborted": false,
+  "attempts": 18,
+  "answered": 17,
+  "failures": [
+    "timeout"
+  ],
+  "latencyP50Ms": 559.4279999999562,
+  "latencyP95Ms": 1570.3279579999798,
+  "candidatePromotions": 0,
+  "allShadowUnapplied": true,
+  "actualQualityLabels": 0,
+  "quorumComparableCases": 11,
+  "cases": [
+    {
+      "subjectId": "04670beb-305d-44ae-9a1e-e15c84010d8c",
+      "candidate": false,
+      "countedIncumbentVotes": 1,
+      "sufficientRecordedQuorum": false,
+      "availableSeatDisagreements": 0
+    },
+    {
+      "subjectId": "085ca76d-b4d5-43ff-be38-f840e4bf106a",
+      "candidate": false,
+      "countedIncumbentVotes": 1,
+      "sufficientRecordedQuorum": false,
+      "availableSeatDisagreements": 0
+    },
+    {
+      "subjectId": "c5c1e730-c7ff-415f-984d-03bc58c7c158",
+      "candidate": false,
+      "countedIncumbentVotes": 0,
+      "sufficientRecordedQuorum": false,
+      "availableSeatDisagreements": 0
+    },
+    {
+      "subjectId": "69837ea7-d487-4859-a48e-2f23260bece1",
+      "candidate": false,
+      "countedIncumbentVotes": 0,
+      "sufficientRecordedQuorum": false,
+      "availableSeatDisagreements": 0
+    },
+    {
+      "subjectId": "aecb87cf-2b10-4134-81f4-d2fb0a07e61f",
+      "candidate": false,
+      "countedIncumbentVotes": 1,
+      "sufficientRecordedQuorum": false,
+      "availableSeatDisagreements": 0
+    },
+    {
+      "subjectId": "0f3b015f-024c-4162-9dd8-67be781c95fc",
+      "candidate": false,
+      "countedIncumbentVotes": 1,
+      "sufficientRecordedQuorum": false,
+      "availableSeatDisagreements": 0
+    },
+    {
+      "subjectId": "8ea8ffe9-0cfb-41eb-b710-00cbdb139601",
+      "candidate": false,
+      "countedIncumbentVotes": 3,
+      "sufficientRecordedQuorum": true,
+      "availableSeatDisagreements": 0
+    },
+    {
+      "subjectId": "550eaabe-51ff-41d1-91cf-35a8a6fa147b",
+      "candidate": false,
+      "countedIncumbentVotes": 3,
+      "sufficientRecordedQuorum": true,
+      "availableSeatDisagreements": 0
+    },
+    {
+      "subjectId": "523f9389-386e-44ef-a6b4-826b0e12eb6c",
+      "candidate": false,
+      "countedIncumbentVotes": 3,
+      "sufficientRecordedQuorum": true,
+      "availableSeatDisagreements": 0
+    },
+    {
+      "subjectId": "12e1c0ee-4ec4-47f5-9199-2e2079909426",
+      "candidate": false,
+      "countedIncumbentVotes": 3,
+      "sufficientRecordedQuorum": true,
+      "availableSeatDisagreements": 0
+    },
+    {
+      "subjectId": "548df266-9ed1-4723-bd45-9f39e67e1ed2",
+      "candidate": false,
+      "countedIncumbentVotes": 3,
+      "sufficientRecordedQuorum": true,
+      "availableSeatDisagreements": 0
+    },
+    {
+      "subjectId": "db929e7e-8301-4f78-993c-3c427f0b0962",
+      "candidate": false,
+      "countedIncumbentVotes": 3,
+      "sufficientRecordedQuorum": true,
+      "availableSeatDisagreements": 0
+    },
+    {
+      "subjectId": "043e023b-aeda-449a-9bdc-1938171cf729",
+      "candidate": false,
+      "countedIncumbentVotes": 3,
+      "sufficientRecordedQuorum": true,
+      "availableSeatDisagreements": 3
+    },
+    {
+      "subjectId": "5d82bd22-ef4b-4fea-b7ab-1334ba19bd5a",
+      "candidate": false,
+      "countedIncumbentVotes": 3,
+      "sufficientRecordedQuorum": true,
+      "availableSeatDisagreements": 0
+    },
+    {
+      "subjectId": "47e7de08-22b2-4440-a303-b565f64a9849",
+      "candidate": false,
+      "countedIncumbentVotes": 3,
+      "sufficientRecordedQuorum": true,
+      "availableSeatDisagreements": 0
+    },
+    {
+      "subjectId": "d5ae8b35-0d38-4e75-8b32-6e1ae5ef2491",
+      "candidate": false,
+      "countedIncumbentVotes": 3,
+      "sufficientRecordedQuorum": true,
+      "availableSeatDisagreements": 3
+    },
+    {
+      "subjectId": "8039a949-7966-4641-9803-d4102cc34de1",
+      "candidate": null,
+      "countedIncumbentVotes": 0,
+      "sufficientRecordedQuorum": false,
+      "availableSeatDisagreements": null
+    },
+    {
+      "subjectId": "c248062b-a95d-4018-a5e4-18d96e16da51",
+      "candidate": false,
+      "countedIncumbentVotes": 3,
+      "sufficientRecordedQuorum": true,
+      "availableSeatDisagreements": 0
+    }
+  ],
+  "criticalSensor": {
+    "samples": 960,
+    "healthFailures": 1,
+    "minAvailableFreeInactiveBytes": 3791912960,
+    "maxSwapGrowthBytes": 0,
+    "maxSwapoutBytes": 0,
+    "admissionWaitSamples": 797,
+    "maxCriticalIntervalMs": 1023.3948230743408
+  },
+  "limitations": [
+    "Historical replay, including reused cases; not contemporary shadow or new quality acceptance",
+    "No labels; no F1/Brier/calibration/ground-truth inference",
+    "Recorded ballots not simultaneous incumbent calls; insufficient quorum is not a NO",
+    "Paced30s minimum; not requests/s capacity",
+    "Other host activity uncontrolled; concurrent aggregate query recorded separately",
+    "Sampled experimental admission is not a kernel memory reservation;1Hz samples can miss peaks",
+    "Full GPU/resource sampling decoupled from critical admission sensor; boundary-spanning samples excluded"
+  ]
+}

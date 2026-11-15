@@ -1,0 +1,12 @@
+{
+  "controlledBackgroundActivity": [
+    {
+      "startedApprox": "2026-11-12T12:20:30Z",
+      "ended": "2026-11-12T12:20:34.764Z",
+      "operation": "Read-only aggregate over71367 T1 rollups for queue diagnostics; no source bodies exported",
+      "wallSecondsApprox": 4.24
+    }
+  ],
+  "otherHostActivity": "Ordinary development/control-plane activity uncontrolled; no build/fullCI from this task overlaps inference",
+  "performanceMeaning": "Paced operational request latencies under shared load; not a capacity-throughput estimate"
+}

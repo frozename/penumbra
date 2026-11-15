@@ -1,0 +1,44 @@
+{
+  "status": "completed_runtime_replay",
+  "expected": 320,
+  "attempted": 320,
+  "answered": 320,
+  "admissionFloorIgnored": true,
+  "authority": "none",
+  "gufoDuringProbesOverlappingCandidate": [
+    0,
+    1,
+    2
+  ],
+  "coexistenceStatus": "observed_overlap_not_acceptance",
+  "qualityAcceptance": false,
+  "guard": {
+    "status": "stopped",
+    "model": "lite",
+    "admissionFloorIgnored": true,
+    "authority": "none",
+    "startedAt": 1794532643.6286347,
+    "command": [
+      "/home/alex/DevStorage/penumbra-system-one-npu-test-20261112/runtime/flm",
+      "serve",
+      "--decision",
+      "d3:lite",
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "52625",
+      "--pmode",
+      "default",
+      "--quiet"
+    ],
+    "gufoPid": 791917,
+    "runtimeOutput": "suppressed: FLM --quiet still prints request bodies; use typed client errors and resource/exit diagnostics",
+    "npuUtilization": "not available from inspected unprivileged counters",
+    "runtimePid": 1023547,
+    "reason": null,
+    "elapsedSeconds": 74.03938599699177,
+    "endedAt": 1794532717.668025,
+    "gufoPidAfter": 791917,
+    "runtimeExitCode": -15
+  }
+}

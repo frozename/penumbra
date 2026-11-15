@@ -1,0 +1,96 @@
+{
+  "at": 1794482114.7878778,
+  "method": "Read-only observation after actual configured T2-factory inference and production cycle; health/model metadata do not wake models",
+  "idleObserved": true,
+  "polls": [
+    {
+      "ts": 1794482113.1957319,
+      "models": [
+        {
+          "id": "d3-nano-eval",
+          "status": "unloaded"
+        },
+        {
+          "id": "granite-4.1-3b-GGUF/granite-4.1-3b-Q8_0.gguf",
+          "status": "sleeping"
+        }
+      ]
+    }
+  ],
+  "inferenceProcesses": [
+    {
+      "pid": 51379,
+      "ppid": 1,
+      "rssBytes": 56508416,
+      "physicalFootprintLines": [
+        "Physical footprint:         38.1M",
+        "Physical footprint (peak):  117.9M"
+      ]
+    },
+    {
+      "pid": 57544,
+      "ppid": 51379,
+      "rssBytes": 108380160,
+      "physicalFootprintLines": [
+        "Physical footprint:         78.7M",
+        "Physical footprint (peak):  819.8M"
+      ]
+    }
+  ],
+  "aggregateInferenceRssBytes": 164888576,
+  "health": {
+    "status": "ok",
+    "version": "0.0.0",
+    "reviewBacklog": {
+      "open_lanes_count": 89,
+      "open_boundary_lanes_count": 0,
+      "oldest_open_lane_age_ms": 88164950
+    },
+    "lagMs": 4.952625000005355,
+    "llmRoleFloors": {
+      "ok": true,
+      "violations": []
+    },
+    "t2Promotion": {
+      "enabled": true,
+      "reason": "judge_configured",
+      "judge_env": "PENUMBRA_JUDGE_BASE_URL",
+      "empty_extraction_streak": 7385,
+      "healthy": false
+    }
+  },
+  "supervision": {
+    "daemon": {
+      "pid": 57483,
+      "registered": true
+    },
+    "worker": {
+      "pid": 57547,
+      "registered": true
+    },
+    "local-judges": {
+      "pid": 51379,
+      "registered": true
+    }
+  },
+  "postRetryP4Phases": [
+    {
+      "time": "2026-11-12T11:13:49.043Z",
+      "phase": "P4",
+      "cycleId": "9968f7fe-c83b-47f7-86f0-50d67b4380dd",
+      "durationMs": 431
+    }
+  ],
+  "nativeShadowEnabled": false,
+  "nativeAuthorityActivated": false,
+  "graniteEndpoint": "http://127.0.0.1:18944/v1",
+  "graniteModelUnchanged": true,
+  "existingHostedJevMode": "veto",
+  "remainingGates": [
+    "Other incumbent seats still404",
+    "Durable-positive extraction semantics",
+    "Hard admission and contemporary bounded daemon shadow",
+    "Independent quality bounds/calibration/downstream utility",
+    "PR review and land"
+  ]
+}
