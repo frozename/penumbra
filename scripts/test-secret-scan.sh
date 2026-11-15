@@ -2,17 +2,19 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "$0")/.." && pwd)
-config="${1:-$repo_root/.gitleaks.toml}"
+config=$(cd "$(dirname "${1:-$repo_root/.gitleaks.toml}")" && pwd)/$(basename "${1:-$repo_root/.gitleaks.toml}")
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/penumbra-secret-scan.XXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 mkdir "$scratch/ignore"
 touch "$scratch/ignore/.gitleaksignore"
 
+# Scan from inside the fixture so findings carry repo-relative paths, the same
+# form the CI history scan reports; root-anchored path exceptions depend on it.
 scan_dir() {
   scan_exit=0
-  gitleaks dir "$scratch/fixture" --config="$config" --redact=100 \
+  (cd "$scratch/fixture" && gitleaks dir . --config="$config" --redact=100 \
     --ignore-gitleaks-allow --gitleaks-ignore-path="$scratch/ignore/.gitleaksignore" \
-    --no-banner --report-format=json --report-path="$scratch/report.json" \
+    --no-banner --report-format=json --report-path="$scratch/report.json") \
     > "$scratch/scanner.log" 2>&1 || scan_exit=$?
 }
 
@@ -65,6 +67,57 @@ printf 'token = "%s"\n' \
   'da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0' > "$fixture"
 scan_dir
 expect_detected 'checksum exception does not apply to another file' generic-api-key
+
+# Benchmark provenance digests: each reviewed SHA-256 is accepted only at the
+# summary file that records it.
+source_input_summary=docs/benchmarks/results/system-one-judges-2026-11-13-source-input/source-extraction-summary.json
+span_selection_summary=docs/benchmarks/results/system-one-judges-2026-11-13-span-selection/span-selection-summary.json
+benchmark_digest_a=\
+'c3fbad315b35abf0cba9596cca62a5380dbd8c6c2a4da6f4bab8069c90a931f4'
+benchmark_digest_b=\
+'3df58875f4c87cf79dbb9d4c1a6b4c2912a4248d3e0d3ca930b068941673cec2'
+
+write_provenance_fixture() {
+  fixture_file "$1"
+  printf '    "%s": "%s",\n' 'output-review-key.json' "$2" > "$fixture"
+}
+
+expect_accepted() {
+  if [ "$scan_exit" -ne 0 ]; then
+    echo "FAIL: $1 must be accepted" >&2
+    cat "$scratch/scanner.log" >&2
+    exit 1
+  fi
+  echo "PASS: $1"
+}
+
+write_provenance_fixture "$source_input_summary" "$benchmark_digest_a"
+scan_dir
+expect_accepted 'reviewed source-input provenance digest'
+
+write_provenance_fixture "$span_selection_summary" "$benchmark_digest_b"
+scan_dir
+expect_accepted 'reviewed span-selection provenance digest'
+
+write_provenance_fixture credentials.txt "$benchmark_digest_a"
+scan_dir
+expect_detected 'source-input digest exception does not apply to another file' generic-api-key
+
+write_provenance_fixture credentials.txt "$benchmark_digest_b"
+scan_dir
+expect_detected 'span-selection digest exception does not apply to another file' generic-api-key
+
+write_provenance_fixture "$span_selection_summary" "$benchmark_digest_a"
+scan_dir
+expect_detected 'source-input digest is not accepted at the span-selection summary' generic-api-key
+
+write_provenance_fixture "$source_input_summary" "$benchmark_digest_b"
+scan_dir
+expect_detected 'span-selection digest is not accepted at the source-input summary' generic-api-key
+
+write_provenance_fixture "vendor/$source_input_summary" "$benchmark_digest_a"
+scan_dir
+expect_detected 'provenance digest exception is anchored at the repository root' generic-api-key
 
 fixture_file credentials.txt
 printf 'token = "%s"\n' "$sentinel" > "$fixture"
