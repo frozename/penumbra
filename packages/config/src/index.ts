@@ -39,6 +39,7 @@ export {
   AgentsConfigSchema,
   allowedKeysFor,
   CARRIER_TOOL_OPTION_KEYS,
+  GENERATION_MAX_TOKENS_CAP,
   refineAgentConfigAdapterOptions,
   UNIVERSAL_OPTION_KEYS,
 } from "./files/agents.js";

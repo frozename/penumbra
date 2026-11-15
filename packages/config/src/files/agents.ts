@@ -16,6 +16,11 @@ const CANONICAL_PROVIDER_MESSAGE =
 // This strict key union is the universal option gate for every adapter.
 // Unknown adapters skip adapter-specific refinement, but still cannot introduce
 // option keys that are absent from this schema.
+// The generation transport (core resolveLlmHttpOptions) refuses anything above this per request;
+// reject it at roster load instead so a bad value never reaches a live judge or rewriter call.
+export const GENERATION_MAX_TOKENS_CAP = 16_384;
+const MAX_TOKENS_MESSAGE = `maxTokens must be an integer from 1 to ${String(GENERATION_MAX_TOKENS_CAP)} (the generation transport cap)`;
+
 export const AgentOptionsSchema = z.strictObject({
   agent: z.string().optional(),
   agentName: z.string().optional(),
@@ -58,7 +63,12 @@ export const AgentOptionsSchema = z.strictObject({
   mcpWriteTools: z.boolean().optional(),
   hostEnvPolicy: z.unknown().optional(),
   inactivityTimeoutMs: z.number().int().positive().optional(),
-  maxTokens: z.number().int().optional(),
+  maxTokens: z
+    .number()
+    .int(MAX_TOKENS_MESSAGE)
+    .min(1, MAX_TOKENS_MESSAGE)
+    .max(GENERATION_MAX_TOKENS_CAP, MAX_TOKENS_MESSAGE)
+    .optional(),
   mcpServers: z.unknown().optional(),
   model: z.string().optional(),
   modelWarmupPrompt: z.string().optional(),

@@ -1,3 +1,5 @@
+import { GENERATION_MAX_TOKENS_CAP } from "@penumbra/config";
+
 function plainObject(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const prototype = Reflect.getPrototypeOf(value);
@@ -42,7 +44,11 @@ export function resolveLlmHttpOptions(
     requestExtras: Object.fromEntries(
       Object.entries(extras ?? {}).filter(([key]) => !RESERVED_FIELDS.has(key)),
     ),
-    maxTokens: positiveInteger(options?.["maxTokens"] ?? defaults.maxTokens, "maxTokens", 16_384),
+    maxTokens: positiveInteger(
+      options?.["maxTokens"] ?? defaults.maxTokens,
+      "maxTokens",
+      GENERATION_MAX_TOKENS_CAP,
+    ),
     timeoutMs: Math.min(
       defaults.timeoutMs,
       positiveInteger(
