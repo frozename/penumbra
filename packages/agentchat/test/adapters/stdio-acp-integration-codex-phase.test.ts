@@ -96,12 +96,17 @@ describe("stdio-acp codex _meta.codex.phase separation (real subprocess)", () =>
       const result = await dispatchOnce(adapter, events);
 
       expect(result.text).toBe("work log.orphan text");
-      expect(warn).toHaveBeenCalledWith(
-        expect.stringContaining("no non-whitespace final_answer text"),
-        expect.anything(),
-      );
-      // The warning carries the handoff id (never message content).
-      expect(String(warn.mock.calls[0]?.[0])).toContain("h-phase");
+      // The drift warning carries the handoff id (never message content). Match
+      // both substrings in ONE call rather than reading calls[0]: an earlier
+      // test that leaves console.warn spied would otherwise own calls[0].
+      const driftWarning = warn.mock.calls.find((call) => {
+        const message = String(call[0]);
+        return (
+          message.includes("no non-whitespace final_answer text") && message.includes("h-phase")
+        );
+      });
+      expect(driftWarning).toBeDefined();
+      expect(driftWarning?.[1]).toEqual(expect.anything());
       // ...and the drift surfaces as a dispatch event, not just a console line.
       expect(events.some((e) => e.kind === "acp.phase.drift" && e.handoff_id === "h-phase")).toBe(
         true,

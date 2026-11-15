@@ -13,6 +13,20 @@ regexes = [
 ]
 
 [[allowlists]]
+description = "Verified SHA-256 provenance digest in the source-input benchmark summary"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^docs/benchmarks/results/system-one-judges-2026-11-13-source-input/source-extraction-summary\.json$''']
+regexes = ['''^c3fbad315b35abf0cba9596cca62a5380dbd8c6c2a4da6f4bab8069c90a931f4$''']
+
+[[allowlists]]
+description = "Verified SHA-256 provenance digest in the span-selection benchmark summary"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^docs/benchmarks/results/system-one-judges-2026-11-13-span-selection/span-selection-summary\.json$''']
+regexes = ['''^3df58875f4c87cf79dbb9d4c1a6b4c2912a4248d3e0d3ca930b068941673cec2$''']
+
+[[allowlists]]
 description = "Literal inert bearer used to test terminal-error redaction"
 targetRules = ["curl-auth-header"]
 condition = "AND"
