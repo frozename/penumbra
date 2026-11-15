@@ -1773,9 +1773,10 @@ function createEfficacyJobRunnerEntry(
       },
     });
   } else {
-    // Every efficacy seat was refused at resolution: keep the daemon up and let
-    // each efficacy job fail with the refusal, as an over-cap seat did per
-    // request before the role check existed.
+    // Every efficacy seat was refused at resolution: keep the daemon up. Each
+    // judge call rejects with the refusal; classifyFindings catches it per batch
+    // (console.warn "batch failed"), so efficacy jobs complete with classified=0
+    // instead of failing.
     judgeChat = disabledGenerationRoleChat(roleTag);
   }
   return createMemoryEfficacyJobRunner({

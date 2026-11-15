@@ -538,7 +538,8 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
   PENUMBRA_DREAMING_SKIP_PHASES: {
     schema: z.string(),
     default: "",
-    description: "Comma-separated dreaming phases to skip.",
+    description:
+      "Comma-separated dreaming phases to skip. Currently only P7 reads it; P1 to P6 and P8 always run.",
   },
   PENUMBRA_DREAMING_EVENT_TRIGGER_ENABLED: {
     schema: Bool,

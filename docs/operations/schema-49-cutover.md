@@ -87,7 +87,10 @@ dispatch-only seats share the option. The cap applies only to an
 over the cap, the daemon refuses that role when it resolves it.
 
 If the daemon plist overrides any of the `PENUMBRA_*_ROLE` variables below,
-export the same values in this shell first.
+export the same values in this shell first. If it sets `PENUMBRA_CONFIG_DIR`
+or `XDG_CONFIG_HOME`, export those too, or the check reads a different roster
+than the daemon does. Check the plist yourself; the commands here do not read
+its `EnvironmentVariables`.
 
 ```bash
 cd "$REPO" && CONFIG_DIR="${PENUMBRA_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/penumbra}" bun -e '
@@ -140,8 +143,10 @@ differently for each caller:
   **dispatch refiner** (`PENUMBRA_REFINER_ROLE`, default `refiner`): the
   refused seat is dropped with a warning that names the role, and the other
   seats serve in order. If every seat is refused, the role is disabled with a
-  warning, and each efficacy job or `/dispatch/refine` request fails (502
-  `refiner_upstream_failed`). The legacy judge endpoint is not used instead.
+  warning. Efficacy jobs do not fail: each classifier batch logs
+  `[memory-efficacy-classifier] batch failed` and the job completes with
+  `classified=0`. Each `/dispatch/refine` request fails with 502
+  `refiner_upstream_failed`. The legacy judge endpoint is not used instead.
 - **Dreaming judge pool**, **brief synthesizer** and **rewriter**: the refusal
   is logged and that feature falls back. The judge pool uses the stub pool, the
   brief synthesizer writes no brief, and the rewriter uses the legacy
@@ -163,8 +168,10 @@ Wait until no dispatch, workflow or long-lived tick is running.
 - Its idle probe runs with `requireDaemon: false`. An unreachable daemon is not
   counted as busy, so `activity: idle` alone proves nothing. Trust it only when
   the same report shows `daemon: healthy` and has no `in-flight handoffs
-  unknown:` line. When the daemon answers, idle means no dispatched or approved
-  handoffs, no job scopes and no busy worker children.
+  unknown:` line. When the daemon answers, idle means no dispatched handoffs,
+  no job scopes and no blocking worker children. Approved handoffs do not make
+  it busy; they show up only as `, <n> approved handoff(s) queued` on the
+  `activity` line. Check that `<n>` is 0 too.
 - The `runs from:` line and any `--apply would refuse` lines describe
   `--apply`. They do not matter here.
 
@@ -364,9 +371,9 @@ Both printed arrays must point into `$NEW_SNAP`.
 
 To go back before the first schema-49 boot, for example when the snapshot
 build failed, run `repoint "$DAEMON_PLIST" "$NEW_SNAP" "$OLD_SNAP"` and the same
-for `$WORKER_PLIST`. This only works while the store is still at schema 48 or
-lower. The old snapshot is the schema-47 build. Once `migrate` has stamped 49,
-that build refuses to start (step 4). After the stamp, use step 9.
+for `$WORKER_PLIST`. This works only before the first schema-49 boot. The old
+snapshot is the schema-47 build, and it refuses to start on any store stamped
+above 47 (step 4). After the first schema-49 boot, use step 9.
 
 ### 7b. Git checkout install (alternative)
 
