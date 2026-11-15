@@ -1,3 +1,4 @@
+import { GENERATION_MAX_TOKENS_CAP } from "@penumbra/config";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
@@ -101,6 +102,12 @@ const ALLOWED_PROVIDER_SET = new Set<string>(ALLOWED_LLM_PROVIDERS);
  * consumed by special-task LLM callers. Config order is stable within a tier;
  * local HTTP seats precede subscription HTTP seats, which precede process-backed
  * adapters. Provider policy is enforced at invocation time.
+ *
+ * Every caller resolves a daemon generation role (judge pools, memory-refiner,
+ * efficacy, refiner, rewriter, brief synthesizer), so an HTTP seat carrying the
+ * role must keep maxTokens within the generation transport cap. The roster
+ * schema accepts any integer because dispatch-only seats share the option, so
+ * the cap is enforced here and fails only the role being resolved.
  */
 export function resolveRoleLlmCandidates(input: ResolveRoleLlmCandidatesInput): RoleLlmCandidate[] {
   const candidates = (input.agentchatConfig.agents ?? []).flatMap((agent) => {
@@ -111,6 +118,9 @@ export function resolveRoleLlmCandidates(input: ResolveRoleLlmCandidatesInput): 
     }
     if (adapter === "openai-compat-http" && !options?.baseUrl) {
       return [];
+    }
+    if (adapter === "openai-compat-http") {
+      assertGenerationMaxTokens(agent.name, input.roleTag, options?.["maxTokens"]);
     }
     const baseUrl = options?.baseUrl ?? `adapter://${encodeURIComponent(agent.name)}`;
     return [
@@ -141,6 +151,21 @@ export function resolveRoleLlmCandidates(input: ResolveRoleLlmCandidatesInput): 
       return tierDelta === 0 ? left.index - right.index : tierDelta;
     })
     .map(({ candidate }) => candidate);
+}
+
+function assertGenerationMaxTokens(agentName: string, roleTag: string, maxTokens: unknown): void {
+  if (maxTokens === undefined) return;
+  if (
+    typeof maxTokens === "number" &&
+    Number.isSafeInteger(maxTokens) &&
+    maxTokens >= 1 &&
+    maxTokens <= GENERATION_MAX_TOKENS_CAP
+  ) {
+    return;
+  }
+  throw new Error(
+    `agent "${agentName}" cannot serve generation role "${roleTag}": options.maxTokens ${JSON.stringify(maxTokens)} is outside 1 to ${String(GENERATION_MAX_TOKENS_CAP)} (the generation transport cap)`,
+  );
 }
 
 export function resolveLlmCandidates(input: ResolveLlmCandidatesInput): ResolvedLlmCandidate[] {

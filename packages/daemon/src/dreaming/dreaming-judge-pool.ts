@@ -269,7 +269,16 @@ export function createDreamingJudgePoolFromAgentchat(
   }
 
   const roleTag = process.env["PENUMBRA_DREAMING_JUDGE_ROLE"] ?? "dreaming-judge";
-  const candidates = resolveRoleLlmCandidates({ roleTag, agentchatConfig: cfg });
+  let candidates;
+  try {
+    candidates = resolveRoleLlmCandidates({ roleTag, agentchatConfig: cfg });
+  } catch (err) {
+    services?.log?.warn(
+      { err, configDir, roleTag },
+      "dreaming: judge pool role resolution refused; using the stub judge pool",
+    );
+    return null;
+  }
 
   // Require ≥2 agents: P1 auto-promote threshold is ceil(total*2/3) with
   // autoPromoteMinJudges=2 — a single judge can never reach quorum.
