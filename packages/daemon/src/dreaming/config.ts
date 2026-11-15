@@ -64,6 +64,9 @@ export interface DreamConfig {
   linkAutoThreshold: number;
   p1BatchSize: number;
   t2PromotionMinEvents?: number;
+  // The T2 worker's settle delay (Settings.t2PromotionDelayHours), copied in by
+  // serve so P1 v2 claims only rollups T2 would already consider settled.
+  t2PromotionDelayHours?: number;
   p1InputContract?: P1InputContract;
   retireAutoThreshold?: number;
   autoPromoteMinJudges?: number;

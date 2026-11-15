@@ -18,6 +18,7 @@
     "./long-lived/self-reader": "./src/long-lived/self-reader.ts",
     "./long-lived/thread-notes-trim": "./src/long-lived/thread-notes-trim.ts",
     "./testing": "./src/testing/index.ts",
+    "./writers/t2-settle": "./src/writers/t2-settle.ts",
     "./evals/*": "./src/evals/*.ts"
   },
   "dependencies": {

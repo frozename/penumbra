@@ -1,5 +1,9 @@
 import { z } from "zod";
 
+// Hours a t1 rollup must sit settled before T2 extracts it. Dreaming P1 v2
+// gates its claim on the same value.
+export const DEFAULT_T2_PROMOTION_DELAY_HOURS = 24;
+
 export const SettingsSchema = z.object({
   t0RetentionDays: z.number().int().positive().default(30),
   // dispatch_events is high-volume operational telemetry (~95% heartbeats) with
@@ -8,7 +12,7 @@ export const SettingsSchema = z.object({
   sessionEventsRetentionDays: z.number().int().positive().default(180),
   t1RollupIntervalSec: z.number().int().positive().default(60),
   t1SessionIdleMinutes: z.number().int().positive().default(10),
-  t2PromotionDelayHours: z.number().int().nonnegative().default(24),
+  t2PromotionDelayHours: z.number().int().nonnegative().default(DEFAULT_T2_PROMOTION_DELAY_HOURS),
   backupRetentionDays: z.number().int().positive().default(7),
   // Intentionally conservative for first deployment. Operator can flip false
   // after inspecting one dry-run tick.

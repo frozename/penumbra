@@ -1,5 +1,6 @@
 import { DispatchEventKindSchema } from "@penumbra/api-contract";
 import { applySchema, loadSqliteVec, T2Promotion, type T2PromotionOpts } from "@penumbra/core";
+import { T2_SETTLED_ROLLUP_SQL } from "@penumbra/core/writers/t2-settle";
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 
@@ -121,13 +122,27 @@ type Author = "human" | "agentchat" | "chain-start" | "none";
 
 function seedRollup(
   db: Database,
-  opts: { id: string; body: string; nEvents?: number; author: Author },
+  opts: {
+    id: string;
+    body: string;
+    nEvents?: number;
+    author: Author;
+    startedAt?: string;
+    endedAt?: string | null;
+  },
 ): void {
   const sessionId = `session-${opts.id}`;
   db.prepare(
     `INSERT INTO t1_rollups(rollup_id, user_id, session_id, project_id, started_at, ended_at, n_events, first_prompt_excerpt)
-     VALUES(?, 'test-user', ?, NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:10:00Z', ?, ?)`,
-  ).run(opts.id, sessionId, opts.nEvents ?? 1, opts.body);
+     VALUES(?, 'test-user', ?, NULL, ?, ?, ?, ?)`,
+  ).run(
+    opts.id,
+    sessionId,
+    opts.startedAt ?? "2026-01-01T00:00:00Z",
+    opts.endedAt === undefined ? "2026-01-01T00:10:00Z" : opts.endedAt,
+    opts.nEvents ?? 1,
+    opts.body,
+  );
   const t0 = db.prepare(
     `INSERT INTO t0_events(event_id, ts, ingest_ts, source, source_detail, user_id, machine_id, session_id, event_type, lane, payload_json, payload_summary)
      VALUES(?, ?, ?, ?, ?, 'test-user', 'local', ?, ?, 'cli-subscription', '{}', ?)`,
@@ -237,6 +252,10 @@ function promoteActions(db: Database): { status: string; target_ids: string }[] 
         ORDER BY target_ids`,
     )
     .all() as { status: string; target_ids: string }[];
+}
+
+function hoursAgoIso(hours: number): string {
+  return new Date(Date.now() - hours * 3600_000).toISOString();
 }
 
 function t2Detector(db: Database): T2Promotion {
@@ -513,5 +532,176 @@ describe("P1 input contract v2", () => {
 
     expect(vetoInputs).toEqual([{ rollupId: "h", body: HUMAN_BODY }]);
     expect(shadowInputs).toEqual([{ body: HUMAN_BODY, kind: "promote_t1", subjectId: "h" }]);
+  });
+});
+
+describe("P1 input contract v2 settle gate", () => {
+  it("does not claim a rollup younger than the T2 delay, so T2 still extracts it once it grows", async () => {
+    const db = openTestDb();
+    seedRollup(db, {
+      id: "young",
+      body: HUMAN_BODY,
+      nEvents: 2,
+      author: "human",
+      startedAt: hoursAgoIso(2),
+      endedAt: hoursAgoIso(1),
+    });
+    seedRollup(db, {
+      id: "open",
+      body: HUMAN_BODY,
+      nEvents: 2,
+      author: "human",
+      startedAt: hoursAgoIso(2),
+      endedAt: null,
+    });
+    const sqls = recordSql(db);
+    const pool = spyPool(NO_VOTES);
+    await runDreamCycle(db, testConfig({ p1InputContract: "v2" }), {
+      judgePool: pool,
+      onReembed: testEmbed,
+    });
+
+    expect(claimSqls(sqls).every((s) => s.includes(`AND ${T2_SETTLED_ROLLUP_SQL}`))).toBe(true);
+    expect(claimSqls(sqls).length).toBeGreaterThan(0);
+    expect(pool.calls).toHaveLength(0);
+    for (const id of ["young", "open"]) {
+      expect(rollupState(db, id)).toEqual({
+        claimed_by_cycle: null,
+        promotion_filtered_at: null,
+        promotion_unusable_excerpt_at: null,
+        t2_promoted_at: null,
+      });
+    }
+    expect(promoteActions(db)).toEqual([]);
+
+    // The session resumes and T1 grows the rollup past the T2 minimum.
+    db.prepare(`UPDATE t1_rollups SET n_events=12`).run();
+    const later = new Date(Date.now() + 48 * 3600_000);
+    expect(t2Detector(db).detectEligibleRollups(24, later, 5).sort()).toEqual(["open", "young"]);
+  });
+
+  it("reads the delay T2 uses from the dream config", async () => {
+    const db = openTestDb();
+    seedRollup(db, {
+      id: "r",
+      body: HUMAN_BODY,
+      nEvents: 2,
+      author: "human",
+      startedAt: hoursAgoIso(3),
+      endedAt: hoursAgoIso(2),
+    });
+    const strict = spyPool(NO_VOTES);
+    await runDreamCycle(db, testConfig({ p1InputContract: "v2", t2PromotionDelayHours: 3 }), {
+      judgePool: strict,
+    });
+    expect(strict.calls).toHaveLength(0);
+    expect(rollupState(db, "r")?.claimed_by_cycle).toBeNull();
+
+    const loose = spyPool(NO_VOTES);
+    await runDreamCycle(db, testConfig({ p1InputContract: "v2", t2PromotionDelayHours: 1 }), {
+      judgePool: loose,
+    });
+    expect(loose.calls.map((c) => c.subjectId)).toEqual(["r"]);
+  });
+
+  it("claims a rollup older than the delay with n_events below the minimum", async () => {
+    const db = openTestDb();
+    seedRollup(db, {
+      id: "settled",
+      body: HUMAN_BODY,
+      nEvents: 2,
+      author: "human",
+      startedAt: hoursAgoIso(26),
+      endedAt: hoursAgoIso(25),
+    });
+    const pool = spyPool(YES_VOTES);
+    const cycleId = await runDreamCycle(db, testConfig({ p1InputContract: "v2" }), {
+      judgePool: pool,
+      onReembed: testEmbed,
+    });
+
+    expect(pool.calls.map((c) => c.subjectId)).toEqual(["settled"]);
+    const state = rollupState(db, "settled");
+    expect(state?.claimed_by_cycle).toBe(cycleId);
+    expect(state?.t2_promoted_at).not.toBeNull();
+    expect(promoteActions(db)).toEqual([{ status: "auto_applied", target_ids: '["settled"]' }]);
+  });
+});
+
+describe("P1 input contract v2 unappliable YES paths", () => {
+  it("stamps a YES whose embed fails and queues no promote_t1 action", async () => {
+    const db = openTestDb();
+    seedRollup(db, { id: "h", body: HUMAN_BODY, author: "human" });
+    await runDreamCycle(db, testConfig({ p1InputContract: "v2" }), {
+      judgePool: spyPool(YES_VOTES),
+      onReembed: () => Promise.reject(new Error("embed down")),
+    });
+
+    expect(promoteActions(db)).toEqual([]);
+    const state = rollupState(db, "h");
+    expect(state?.promotion_filtered_at).not.toBeNull();
+    expect(state?.t2_promoted_at).toBeNull();
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM t2_memories`).get()).toEqual({ n: 0 });
+  });
+
+  it("stamps a YES with no embed handler and queues no promote_t1 action", async () => {
+    const db = openTestDb();
+    seedRollup(db, { id: "h", body: HUMAN_BODY, author: "human" });
+    await runDreamCycle(db, testConfig({ p1InputContract: "v2" }), {
+      judgePool: spyPool(YES_VOTES),
+    });
+
+    expect(promoteActions(db)).toEqual([]);
+    expect(rollupState(db, "h")?.promotion_filtered_at).not.toBeNull();
+    expect(rollupState(db, "h")?.t2_promoted_at).toBeNull();
+  });
+
+  it("stamps a duplicate-title YES and queues no promote_t1 action", async () => {
+    const db = openTestDb();
+    seedRollup(db, { id: "first", body: HUMAN_BODY, author: "human" });
+    await runDreamCycle(db, testConfig({ p1InputContract: "v2" }), {
+      judgePool: spyPool(YES_VOTES),
+      onReembed: testEmbed,
+    });
+    expect(rollupState(db, "first")?.t2_promoted_at).not.toBeNull();
+
+    seedRollup(db, { id: "second", body: HUMAN_BODY, author: "human" });
+    await runDreamCycle(db, testConfig({ p1InputContract: "v2" }), {
+      judgePool: spyPool(YES_VOTES),
+      onReembed: testEmbed,
+    });
+
+    expect(promoteActions(db)).toEqual([{ status: "auto_applied", target_ids: '["first"]' }]);
+    const state = rollupState(db, "second");
+    expect(state?.promotion_filtered_at).not.toBeNull();
+    expect(state?.t2_promoted_at).toBeNull();
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM t2_memories WHERE kind='promoted'`).get()).toEqual(
+      { n: 1 },
+    );
+  });
+
+  it("keeps the v1 duplicate-title and embed-failure paths queueing promote_t1", async () => {
+    const db = openTestDb();
+    seedRollup(db, { id: "first", body: HUMAN_BODY, author: "human" });
+    await runDreamCycle(db, testConfig(), {
+      judgePool: spyPool(YES_VOTES),
+      onReembed: testEmbed,
+    });
+    seedRollup(db, { id: "second", body: HUMAN_BODY, author: "human" });
+    await runDreamCycle(db, testConfig(), {
+      judgePool: spyPool(YES_VOTES),
+      onReembed: testEmbed,
+    });
+    seedRollup(db, { id: "third", body: AGENT_BODY, author: "agentchat" });
+    await runDreamCycle(db, testConfig(), {
+      judgePool: spyPool(YES_VOTES),
+      onReembed: () => Promise.reject(new Error("embed down")),
+    });
+
+    expect(promoteActions(db)).toEqual([
+      { status: "auto_applied", target_ids: '["first"]' },
+      { status: "queued", target_ids: '["second"]' },
+      { status: "queued", target_ids: '["third"]' },
+    ]);
   });
 });

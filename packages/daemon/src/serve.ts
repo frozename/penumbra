@@ -2460,7 +2460,11 @@ export function serve(opts: ServeOpts): DaemonHandle {
     now: () => opts.services.clock(),
   });
   const configBundle = getConfig();
-  const dreamConfig = buildDreamingConfig(configBundle);
+  const dreamConfig: DreamConfig = {
+    ...buildDreamingConfig(configBundle),
+    // The same setting the T2 promotion worker reads in createCronWorkerSet.
+    t2PromotionDelayHours: opts.services.settings.t2PromotionDelayHours,
+  };
   const dreamRuntime = resolveDreamRuntimeConfig(opts.services.db, configBundle, dreamConfig);
   const runtimeDreamConfig = dreamRuntime.config;
   if (dreamRuntime.autoResumedFromHistory) {

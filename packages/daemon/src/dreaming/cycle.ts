@@ -13,6 +13,11 @@ import {
   tryResolveLlmProvider,
   type WebResearchAdapter,
 } from "@penumbra/core";
+import {
+  DEFAULT_T2_PROMOTION_DELAY_HOURS,
+  T2_SETTLED_ROLLUP_SQL,
+  t2PromotionCutoffIso,
+} from "@penumbra/core/writers/t2-settle";
 import { z } from "zod";
 
 import type { BriefSynthesizer } from "./brief-synthesizer.js";
@@ -650,13 +655,17 @@ async function runCycleP1(
 
   const contract: P1InputContract = config.p1InputContract ?? "v1";
   const t2MinEvents = config.t2PromotionMinEvents ?? DEFAULT_T2_PROMOTION_MIN_EVENTS;
-  const claimedRollups = claimT1Rollups(
-    db,
-    ctx,
-    config,
-    longLivedFilter,
-    contract === "v2" ? t2MinEvents : null,
-  );
+  const v2ClaimGate: P1V2ClaimGate | null =
+    contract === "v2"
+      ? {
+          t2MinEvents,
+          settledCutoff: t2PromotionCutoffIso(
+            config.t2PromotionDelayHours ?? DEFAULT_T2_PROMOTION_DELAY_HOURS,
+            ctx.nowMs,
+          ),
+        }
+      : null;
+  const claimedRollups = claimT1Rollups(db, ctx, config, longLivedFilter, v2ClaimGate);
   const readFirstPrompt = contract === "v2" ? firstPromptReader(db) : null;
   const skipped: Partial<Record<P1SkipReason, number>> = {};
   const abstainLoggedSeats = new Set<string>();
@@ -719,30 +728,27 @@ async function runCycleP1(
       ? await consultPromotionVeto(ctx, deps, rollup.rollup_id, body)
       : { jevVeto: undefined, jevVetoReason: undefined };
 
-    const promote = autoPromote && jevVeto !== "blocked";
-    if (contract === "v2" && !promote) {
-      // v2 owns only rollups T2 never extracts, so a NO is final and there is
-      // no applicable promote_t1 action to queue for review.
-      db.prepare(`UPDATE t1_rollups SET promotion_filtered_at=? WHERE rollup_id=?`).run(
-        new Date(ctx.nowMs).toISOString(),
-        rollup.rollup_id,
-      );
-      continue;
-    }
-
     const result = await maybeAutoPromoteT1(
       db,
       ctx,
       deps,
       rollup,
       body,
-      promote,
+      autoPromote && jevVeto !== "blocked",
       votes,
       avgConfidence,
+      contract === "v1",
       jevVeto,
       jevVetoReason,
     );
     if (result.skip) continue;
+    if (contract === "v2" && result.status === "queued") {
+      // v2 owns only rollups T2 never extracts, and applyDreamAction cannot
+      // apply a queued promote_t1. A NO, a vetoed YES and a YES whose embed or
+      // mint failed all end here with the same stamp v1 writes, and no action.
+      markT1PromotionFiltered(db, ctx, rollup.rollup_id);
+      continue;
+    }
 
     db.prepare(
       `INSERT INTO dream_actions(action_id, cycle_id, phase, action_type, confidence, status, target_ids, payload_json)
@@ -760,16 +766,18 @@ async function runCycleP1(
       }),
     );
 
-    if (result.status === "queued") {
-      db.prepare(`UPDATE t1_rollups SET promotion_filtered_at=? WHERE rollup_id=?`).run(
-        new Date(ctx.nowMs).toISOString(),
-        rollup.rollup_id,
-      );
-    }
+    if (result.status === "queued") markT1PromotionFiltered(db, ctx, rollup.rollup_id);
   }
 
   if (contract === "v2") reportP1InputSkips(ctx, skipped);
   phaseEnd(db, ctx, "P1", p1Start);
+}
+
+function markT1PromotionFiltered(db: Database, ctx: CycleCtx, rollupId: string): void {
+  db.prepare(`UPDATE t1_rollups SET promotion_filtered_at=? WHERE rollup_id=?`).run(
+    new Date(ctx.nowMs).toISOString(),
+    rollupId,
+  );
 }
 
 // A throw or a non-"allow" answer fails closed. The veto sees only the
@@ -932,24 +940,32 @@ function serializeJudgeVotes(votes: JudgeVote[]): SerializedJudgeVote[] {
   }));
 }
 
-// t2MinEvents is set only under input contract v2: the claim then leaves
-// every rollup T2 can extract to T2. null keeps the v1 SQL byte-identical.
+// Set only under input contract v2. The claim then leaves every rollup T2 can
+// extract to T2, and takes a rollup only once it is settled by T2's own gate:
+// T1 can still grow n_events on an unsettled rollup, and a P1 stamp would then
+// lock T2 out of it for good.
+interface P1V2ClaimGate {
+  t2MinEvents: number;
+  settledCutoff: string;
+}
+
+// A null gate keeps the v1 SQL byte-identical.
 function claimT1Rollups(
   db: Database,
   ctx: CycleCtx,
   config: DreamConfig,
   longLivedFilter: string,
-  t2MinEvents: number | null,
+  v2Gate: P1V2ClaimGate | null,
 ): ClaimedT1Rollup[] {
-  const t2OwnedFilter = t2MinEvents === null ? "" : " AND n_events < ?";
-  const v2Returning = t2MinEvents === null ? "" : ", session_id, n_events";
+  const t2OwnedFilter = v2Gate === null ? "" : ` AND n_events < ? AND ${T2_SETTLED_ROLLUP_SQL}`;
+  const v2Returning = v2Gate === null ? "" : ", session_id, n_events";
   const baseParams = [
     ctx.nowMs,
     ctx.cycleId,
     ctx.nowMs,
     ...EPHEMERA_PROMPT_LIKE_PATTERNS,
     ...KNOWN_LONG_LIVED_DISPATCHER_USER_IDS,
-    ...(t2MinEvents === null ? [] : [t2MinEvents]),
+    ...(v2Gate === null ? [] : [v2Gate.t2MinEvents, v2Gate.settledCutoff, v2Gate.settledCutoff]),
     config.p1BatchSize,
   ];
 
@@ -1091,6 +1107,8 @@ async function maybeAutoPromoteT1(
   autoPromote: boolean,
   votes: JudgeVote[],
   avgConfidence: number,
+  // false under input contract v2, which never queues an unappliable action.
+  queueDedupAction: boolean,
   jevVeto?: "allowed" | "blocked",
   jevVetoReason?: JevVetoReason,
 ): Promise<{ skip: true } | { skip: false; status: string; mintedT2Id?: string }> {
@@ -1108,6 +1126,10 @@ async function maybeAutoPromoteT1(
         .get(title);
   const existing = existingRow as { memory_id: string } | undefined;
 
+  if (existing && !queueDedupAction) {
+    markT1PromotionFiltered(db, ctx, rollup.rollup_id);
+    return { skip: true };
+  }
   if (existing) {
     const rollupTargetIds = JSON.stringify([rollup.rollup_id]);
     if (!ctx.p1QueuedPromoteExistsStmt.get(rollupTargetIds)) {
