@@ -3,6 +3,7 @@ import type { Database } from "bun:sqlite";
 import type { LagSampler } from "../lag-sampler.js";
 import type { LlmRoleFloorEvaluation } from "../services/subsystem-health.js";
 import type { T2PromotionStatus } from "../workers/t2-promotion.js";
+import type { AdmissionDrainState } from "./admission-drain.js";
 
 // Mirrors T2_EMPTY_EXTRACTION_SUBSYSTEM in packages/core/src/writers/t2.ts; the
 // core index sits at the max-lines cap, so the constant cannot be re-exported.
@@ -15,6 +16,7 @@ type HealthRouteOpts = {
   now?: () => Date;
   llmRoleFloors?: LlmRoleFloorEvaluation;
   t2Promotion?: T2PromotionStatus;
+  admissionDrain?: AdmissionDrainState;
 };
 
 export function healthRoute(opts: HealthRouteOpts = {}): Response {
@@ -54,6 +56,9 @@ export function healthRoute(opts: HealthRouteOpts = {}): Response {
       opts.t2Promotion.enabled && opts.db
         ? withT2EmptyExtractionStreak(opts.t2Promotion, opts.db)
         : opts.t2Promotion;
+  }
+  if (opts.admissionDrain) {
+    payload.admissionDrain = opts.admissionDrain;
   }
   return Response.json(payload);
 }
