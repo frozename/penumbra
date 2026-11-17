@@ -79,6 +79,12 @@ import { createOriginHostGuard, isLoopbackBindHost } from "./origin-host.js";
 import { createLongLivedReactor } from "./reactors/long-lived-reactor.js";
 import { createOrchestrateReactor } from "./reactors/orchestrate-reactor.js";
 import {
+  admissionDrainReleaseRoute,
+  admissionDrainRequestGuard,
+  admissionDrainSetRoute,
+  readAdmissionDrain,
+} from "./routes/admission-drain.js";
+import {
   agentsFleetLatencyRoute,
   agentsPerformanceDispatchRoute,
   agentsPerformanceImportMarkdownRoute,
@@ -741,6 +747,10 @@ function jsonError(code: string, status: number): Response {
 const ROUTES: Route[] = [
   // observations + task drafts
   staticRoute("POST", "/observations", (req, ctx) => observationsRoute(req, ctx.services)),
+  staticRoute("POST", "/admission/drain", (req, ctx) => admissionDrainSetRoute(req, ctx.services)),
+  staticRoute("POST", "/admission/drain/release", (req, ctx) =>
+    admissionDrainReleaseRoute(req, ctx.services),
+  ),
   staticRoute("GET", "/task-drafts/pending", (req, ctx) =>
     taskDraftsPendingRoute(req, ctx.services),
   ),
@@ -1322,6 +1332,7 @@ export function createDaemonFetchHandler(opts: {
           llmRoleFloors: daemonServices.llmRoleFloorEvaluation,
           t2Promotion: daemonServices.t2PromotionStatus,
           build: readBuildInfo(),
+          admissionDrain: readAdmissionDrain(opts.services.storageRoot, opts.services.clock()),
         });
       }
       // OTLP routes skip bearer auth only while the daemon is loopback-bound, so
@@ -1335,6 +1346,8 @@ export function createDaemonFetchHandler(opts: {
       }
       const denied = auth(req);
       if (denied) return denied;
+      const draining = admissionDrainRequestGuard(req, url.pathname, opts.services);
+      if (draining) return draining;
       const dispatched = await dispatchRoute(req, url, ctx, routes);
       return dispatched ?? new Response("not found", { status: 404 });
     })();
@@ -2366,7 +2379,7 @@ async function runStartupSequence(deps: StartupSequenceDeps): Promise<void> {
   }
 }
 
-async function chainStartForOrchestrate(
+export async function chainStartForOrchestrate(
   services: Services,
   request: ChainStartRequest,
 ): Promise<{ handoff_id: string; conversation_id: string }> {
@@ -2403,7 +2416,7 @@ async function chainStartForOrchestrate(
   return { handoff_id: data.handoff_id, conversation_id: data.conversation_id };
 }
 
-async function spawnLongLivedTick(
+export async function spawnLongLivedTick(
   services: Services,
   req: { agent_id: string; tick_id: string },
 ): Promise<{ chain_id: string }> {

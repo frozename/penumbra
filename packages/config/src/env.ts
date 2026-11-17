@@ -173,6 +173,11 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: OptStr,
     description: "Root directory for penumbra storage.",
   },
+  PENUMBRA_ALLOW_MIGRATE: {
+    schema: OptStr,
+    description:
+      "Full commit SHA of the running build that may apply a schema-bumping migration on startup (daemon `penumbra start`, `penumbra init`). Unset or mismatched, a store stamped below the build's SCHEMA_VERSION is refused. Set only inside the docs/operations/schema-49-cutover.md window.",
+  },
   PENUMBRA_ALLOW_REMOTE: {
     schema: Bool,
     default: false,

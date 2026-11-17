@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import type { LagSampler } from "../lag-sampler.js";
 import type { LlmRoleFloorEvaluation } from "../services/subsystem-health.js";
 import type { T2PromotionStatus } from "../workers/t2-promotion.js";
+import type { AdmissionDrainState } from "./admission-drain.js";
 
 const execFile = promisify(execFileCb);
 
@@ -141,6 +142,7 @@ type HealthRouteOpts = {
   llmRoleFloors?: LlmRoleFloorEvaluation;
   t2Promotion?: T2PromotionStatus;
   build?: BuildInfoSnapshot;
+  admissionDrain?: AdmissionDrainState;
 };
 
 export function healthRoute(opts: HealthRouteOpts = {}): Response {
@@ -183,6 +185,9 @@ export function healthRoute(opts: HealthRouteOpts = {}): Response {
   }
   if (opts.build) {
     payload.build = opts.build;
+  }
+  if (opts.admissionDrain) {
+    payload.admissionDrain = opts.admissionDrain;
   }
   return Response.json(payload);
 }

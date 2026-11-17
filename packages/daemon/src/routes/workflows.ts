@@ -42,6 +42,7 @@ import {
   sessionStampFromBodyPrefix,
 } from "../workflows/session-stamp.js";
 import { json } from "./_helpers.js";
+import { admissionDrainGuard } from "./admission-drain.js";
 import { chainStartFromInput } from "./chains.js";
 import { conversationsCancelRoute } from "./conversations.js";
 import { lookupSessionStart } from "./sessions.js";
@@ -1757,6 +1758,23 @@ const CODEX_DETACHED_WORKFLOWS = new Set([
   "session-memory-sweep",
 ]);
 
+// Detached hook runs are new background work, so a drain refuses the delivery
+// before it is deduplicated; the hook can redeliver once the drain lifts.
+function detachedTriggerAdmissionDrainGuard(
+  services: Services,
+  reg: Registry,
+  triggerEvent: Trigger,
+  body: WorkflowTriggerBody,
+  ingress: CodexIngress | null,
+): Response | null {
+  if (!ingress || !admitCodexLifecycle(ingress)) return null;
+  if (triggerEvent.kind === "lifecycle" && triggerEvent.event === "session-end") return null;
+  const wouldDetach = selectMatchedSpecs(reg, triggerEvent, body.hookContext).some((spec) =>
+    CODEX_DETACHED_WORKFLOWS.has(spec.name),
+  );
+  return wouldDetach ? admissionDrainGuard(services) : null;
+}
+
 function validateMatchedTriggerArgs(
   reg: Registry,
   matched: WorkflowSpec[],
@@ -1870,6 +1888,8 @@ export async function workflowsTriggerRoute(req: Request, services: Services): P
   const parsedIngress = parseTriggerIngress(rawBody);
   if (!parsedIngress.ok) return parsedIngress.response;
   const { body, ingress } = parsedIngress;
+  const draining = detachedTriggerAdmissionDrainGuard(services, reg, triggerEvent, body, ingress);
+  if (draining) return draining;
   const sessionIdFromBody = body.session_id ?? null;
   const filePathFromBody =
     typeof body.hookContext?.file_path === "string" ? body.hookContext.file_path : null;

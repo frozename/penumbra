@@ -27,6 +27,7 @@ import {
 } from "../services/provider-concurrency.js";
 import { workerHeartbeatStaleMs } from "../worker-heartbeat-stale.js";
 import { json } from "./_helpers.js";
+import { admissionDrainGuardUnlessContinuation } from "./admission-drain.js";
 import { enforceRecursionDepthGuard, getNearestAgents } from "./chains.js";
 import { claimCancelRequestedResponse, completeCancelFallback } from "./handoffs-cancel.js";
 import {
@@ -541,6 +542,9 @@ export async function handoffsCreateRoute(req: Request, services: Services): Pro
     );
   }
 
+  const draining = admissionDrainGuardUnlessContinuation(services, parsed.data.parent_handoff_id);
+  if (draining) return draining;
+
   const parentResponse = validateParentHandoff(parsed.data, services);
   if (parentResponse) return parentResponse;
 
@@ -1002,6 +1006,11 @@ export async function handoffsApproveRoute(
       }
       return json({ handoff_id, status: "rejected" });
     }
+    const draining = admissionDrainGuardUnlessContinuation(
+      services,
+      services.handoffReader.get(handoff_id)?.parent_handoff_id,
+    );
+    if (draining) return draining;
     const result = services.handoffWriter.approve(handoff_id, {
       resolved_by: parsed.data.resolved_by ?? services.machineId.get(),
       resolved_at: ts,
