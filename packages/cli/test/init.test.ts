@@ -1,5 +1,7 @@
+import { SCHEMA_VERSION } from "@penumbra/core";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import {
   existsSync,
   lstatSync,
@@ -12,10 +14,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { resolveDefaultWorkflowsSourceDir, runInit } from "../src/commands/init.js";
+import { expectAsyncThrow } from "./commands/_helpers.js";
 
 try {
   if (process.platform === "darwin") {
@@ -29,16 +32,21 @@ let dir = "";
 let claudeUserDir = "";
 let workflowsSourceDir = "";
 let oldAgentchatConfig: string | undefined;
+let oldAllowMigrate: string | undefined;
 beforeEach(() => {
   dir = realpathSync(mkdtempSync(join(tmpdir(), "penumbra-cli-init-")));
   claudeUserDir = mkdtempSync(join(tmpdir(), "penumbra-cli-claude-user-"));
   workflowsSourceDir = mkdtempSync(join(tmpdir(), "penumbra-cli-workflows-src-"));
   oldAgentchatConfig = process.env.AGENTCHAT_CONFIG;
   process.env.AGENTCHAT_CONFIG = join(dir, "agentchat.yaml");
+  oldAllowMigrate = process.env.PENUMBRA_ALLOW_MIGRATE;
+  delete process.env.PENUMBRA_ALLOW_MIGRATE;
 });
 afterEach(() => {
   if (oldAgentchatConfig === undefined) delete process.env.AGENTCHAT_CONFIG;
   else process.env.AGENTCHAT_CONFIG = oldAgentchatConfig;
+  if (oldAllowMigrate === undefined) delete process.env.PENUMBRA_ALLOW_MIGRATE;
+  else process.env.PENUMBRA_ALLOW_MIGRATE = oldAllowMigrate;
   rmSync(dir, { recursive: true, force: true });
   rmSync(claudeUserDir, { recursive: true, force: true });
   rmSync(workflowsSourceDir, { recursive: true, force: true });
@@ -308,4 +316,96 @@ test("the default workflows source dir accepts a normal main checkout (.git dire
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+function stampSchemaVersion(dbPath: string, version: number): void {
+  const db = new Database(dbPath);
+  try {
+    db.run("UPDATE db_meta SET value=? WHERE key='schema_version'", [String(version)]);
+  } finally {
+    db.close();
+  }
+}
+
+function readSchemaVersion(dbPath: string): string | undefined {
+  const db = new Database(dbPath);
+  try {
+    return db
+      .query<{ value: string }, [string]>("SELECT value FROM db_meta WHERE key=?")
+      .get("schema_version")?.value;
+  } finally {
+    db.close();
+  }
+}
+
+test("init refuses to migrate an older store when PENUMBRA_ALLOW_MIGRATE is not set", async () => {
+  const first = await runInit({
+    storageRoot: dir,
+    uuid: () => "tok-gate-unset",
+    claudeUserDir,
+    workflowsSourceDir,
+  });
+  expect(first).toBe(0);
+  const dbPath = join(dir, "db.sqlite");
+  stampSchemaVersion(dbPath, SCHEMA_VERSION - 1);
+
+  await expectAsyncThrow(
+    runInit({
+      storageRoot: dir,
+      uuid: () => "tok-gate-unset-2",
+      claudeUserDir,
+      workflowsSourceDir,
+    }),
+    /PENUMBRA_ALLOW_MIGRATE/,
+  );
+  expect(readSchemaVersion(dbPath)).toBe(String(SCHEMA_VERSION - 1));
+});
+
+test("init refuses to migrate an older store when PENUMBRA_ALLOW_MIGRATE does not match", async () => {
+  const first = await runInit({
+    storageRoot: dir,
+    uuid: () => "tok-gate-mismatch",
+    claudeUserDir,
+    workflowsSourceDir,
+  });
+  expect(first).toBe(0);
+  const dbPath = join(dir, "db.sqlite");
+  stampSchemaVersion(dbPath, SCHEMA_VERSION - 1);
+  process.env.PENUMBRA_ALLOW_MIGRATE = "b".repeat(40);
+
+  await expectAsyncThrow(
+    runInit({
+      storageRoot: dir,
+      uuid: () => "tok-gate-mismatch-2",
+      claudeUserDir,
+      workflowsSourceDir,
+    }),
+    /does not match/,
+  );
+  expect(readSchemaVersion(dbPath)).toBe(String(SCHEMA_VERSION - 1));
+});
+
+test("init migrates an older store when PENUMBRA_ALLOW_MIGRATE matches the build commit", async () => {
+  const first = await runInit({
+    storageRoot: dir,
+    uuid: () => "tok-gate-match",
+    claudeUserDir,
+    workflowsSourceDir,
+  });
+  expect(first).toBe(0);
+  const dbPath = join(dir, "db.sqlite");
+  stampSchemaVersion(dbPath, SCHEMA_VERSION - 1);
+  const repoRoot = resolve(import.meta.dir, "../../..");
+  process.env.PENUMBRA_ALLOW_MIGRATE = execFileSync("git", ["-C", repoRoot, "rev-parse", "HEAD"], {
+    encoding: "utf8",
+  }).trim();
+
+  const exit = await runInit({
+    storageRoot: dir,
+    uuid: () => "tok-gate-match-2",
+    claudeUserDir,
+    workflowsSourceDir,
+  });
+  expect(exit).toBe(0);
+  expect(readSchemaVersion(dbPath)).toBe(String(SCHEMA_VERSION));
 });

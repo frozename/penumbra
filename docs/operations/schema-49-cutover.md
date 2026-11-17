@@ -43,7 +43,7 @@ stopped.
 
 ## 0. Deploy prerequisites (before the window)
 
-Set both of these in the daemon LaunchAgent environment
+Set these in the daemon LaunchAgent environment
 (`~/Library/LaunchAgents/dev.penumbra.daemon.plist`, `EnvironmentVariables`).
 Edit the plist with `plutil`; do not hand-merge it.
 
@@ -78,6 +78,20 @@ Edit the plist with `plutil`; do not hand-merge it.
    missing, the rewriter inventory comes back empty and every rewriter
    candidate is dropped (`abstaining from memory research`). `penumbra config
    sync-local` reads the same inventory, so run it with the same variables.
+3. **Authorise the schema bump.** A boot refuses to apply a migration that
+   raises `schema_version` unless `PENUMBRA_ALLOW_MIGRATE` equals the running
+   build's commit. Set it to `$NEW_SHA` in the daemon plist, then print only
+   that one key back:
+
+   ```bash
+   plutil -replace EnvironmentVariables.PENUMBRA_ALLOW_MIGRATE -string "$NEW_SHA" "$DAEMON_PLIST"
+   plutil -extract EnvironmentVariables.PENUMBRA_ALLOW_MIGRATE raw -o - "$DAEMON_PLIST"; echo
+   ```
+
+   Without it the schema-49 build refuses the 47 to 49 bump at boot and fails
+   startup with a message that names this runbook, rather than migrating the
+   store on its own. It is removed in step 8 once the cutover is verified.
+   `penumbra init` against an existing store is gated the same way.
 
 Also check, without printing the roster, that it loads and that every daemon
 generation role resolves under the generation `maxTokens` cap (an integer from 1
@@ -340,6 +354,15 @@ test ! -e "$NEW_SNAP" && mkdir -p "$NEW_SNAP" \
   && echo "snapshot ready: $NEW_SNAP"
 ```
 
+`git archive` substitutes `$Format:%H$` into the tracked `BUILD_COMMIT` via
+`export-subst`, so the snapshot stamps its own commit. Confirm the stamp is the
+build you are about to boot before repointing the plists. If it does not match,
+the boot will refuse the schema bump (step 0, item 3):
+
+```bash
+test "$(cat "$NEW_SNAP/BUILD_COMMIT")" = "$NEW_SHA" && echo "BUILD_COMMIT ok"
+```
+
 `git archive` exports exactly the tracked tree at `$NEW_SHA`, with no `.git` and
 nothing uncommitted. The workspace packages export their TypeScript sources, so
 there is no build step. A detached git worktree
@@ -480,8 +503,16 @@ Expect all of the following:
 - `PENUMBRA_LOCAL_JUDGE_SHADOW` is unset or false. Jev authority and the
   Kapitsa and Gufo seats are unchanged.
 
-Keep the step 2 backup until the store has run cleanly through at least one full
-dreaming cycle and one T2 promotion tick.
+Once every check passes, close the cutover window by removing the migration
+authorisation, so a later boot cannot bump the schema on its own:
+
+```bash
+plutil -remove EnvironmentVariables.PENUMBRA_ALLOW_MIGRATE "$DAEMON_PLIST"
+```
+
+A new daemon generation picks the change up on its next restart; the running one
+has already migrated. Keep the step 2 backup until the store has run cleanly
+through at least one full dreaming cycle and one T2 promotion tick.
 
 ## 9. Rollback
 

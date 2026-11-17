@@ -222,7 +222,10 @@ export async function runInit(opts: RunInitOpts): Promise<number> {
   try {
     loadSqliteVec(db);
     applyRuntimePragmas(db);
-    migrate(db, { embeddingDim: opts.embeddingDim ?? 384 });
+    migrate(db, {
+      embeddingDim: opts.embeddingDim ?? 384,
+      migrationGate: { env: process.env },
+    });
   } finally {
     db.close();
   }
