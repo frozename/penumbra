@@ -241,7 +241,7 @@ export async function runStart(opts: RunStartOpts): Promise<DaemonHandle> {
       remote: embedderEnv.remote,
       fallback: new BundledEmbedder(),
     });
-    migrate(db, { embeddingDim: embedder.dim });
+    migrate(db, { embeddingDim: embedder.dim, migrationGate: { env: process.env } });
     assertEmbedderDim(db, embedder.dim, embedder.name);
 
     const loadedAgentchat = loadAgentchatBundle();
