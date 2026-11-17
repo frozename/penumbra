@@ -59,6 +59,7 @@ export type OrchestrateOneTaskResult =
       reason:
         | "task_not_found"
         | "not_orchestrate"
+        | "admission_draining"
         | "already_dispatched"
         | "subscription_pressure_capped";
       resume_at_ms?: number;
@@ -168,6 +169,15 @@ function handleChainStartFailure(
   agentName: string,
   nowMs: number,
 ): OrchestrateOneTaskResult {
+  const drainRetryAfterMs = parseAdmissionDrainingError(error);
+  if (drainRetryAfterMs !== null) {
+    return {
+      status: "short_circuited",
+      reason: "admission_draining",
+      resume_at_ms: nowMs + drainRetryAfterMs,
+      original_error: extractErrorBody(error),
+    };
+  }
   const parsed = parseSubscriptionPressureError(error);
   if (parsed && parsed.earliest_resets_at !== null) {
     let resumeAtMs = parsed.earliest_resets_at;
@@ -424,6 +434,15 @@ function parseSubscriptionPressureError(error: unknown): {
     window_label,
     body,
   };
+}
+
+function parseAdmissionDrainingError(error: unknown): number | null {
+  const body = extractErrorBody(error);
+  const errorBody = body?.error;
+  if (typeof errorBody !== "object" || errorBody === null) return null;
+  if ((errorBody as Record<string, unknown>).code !== "admission_draining") return null;
+  const retryAfterMs = body?.retry_after_ms;
+  return typeof retryAfterMs === "number" && retryAfterMs > 0 ? retryAfterMs : 1000;
 }
 
 function extractErrorBody(error: unknown): Record<string, unknown> | null {

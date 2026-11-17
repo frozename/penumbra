@@ -232,7 +232,10 @@ async function handleFiled(
     now: nowFn,
   });
   if (result.status === "short_circuited") {
-    if (result.reason === "subscription_pressure_capped") {
+    if (
+      result.reason === "subscription_pressure_capped" ||
+      result.reason === "admission_draining"
+    ) {
       insertTaskEvent(opts.db, taskId, nowFn(), "orchestrate_deferred", {
         reason: result.reason,
         resume_at_ms: result.resume_at_ms ?? null,

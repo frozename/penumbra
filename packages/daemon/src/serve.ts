@@ -2360,7 +2360,7 @@ async function runStartupSequence(deps: StartupSequenceDeps): Promise<void> {
   }
 }
 
-async function chainStartForOrchestrate(
+export async function chainStartForOrchestrate(
   services: Services,
   request: ChainStartRequest,
 ): Promise<{ handoff_id: string; conversation_id: string }> {
@@ -2397,7 +2397,7 @@ async function chainStartForOrchestrate(
   return { handoff_id: data.handoff_id, conversation_id: data.conversation_id };
 }
 
-async function spawnLongLivedTick(
+export async function spawnLongLivedTick(
   services: Services,
   req: { agent_id: string; tick_id: string },
 ): Promise<{ chain_id: string }> {

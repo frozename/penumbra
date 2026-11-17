@@ -45,6 +45,7 @@ import { supportsMidSessionInject } from "../maestro/acp-injector.js";
 import { buildProviderCaps } from "../maestro/build-provider-caps.js";
 import { enforceMaestroBudget } from "../maestro/chain-budget-gate.js";
 import { json } from "./_helpers.js";
+import { chainStartAdmissionDrainGuard } from "./admission-drain.js";
 import { availableBranchNameBestEffort } from "./chains-branch-precheck.js";
 import {
   readActiveRoutingBiases,
@@ -1857,6 +1858,8 @@ export async function chainStartInternal(
   const retirementResponse =
     rejectRetiredAgent(input.initial_agent) ?? rejectRetiredAgent(input.long_lived_agent_id);
   if (retirementResponse) return retirementResponse;
+  const drainResponse = chainStartAdmissionDrainGuard(services, input);
+  if (drainResponse) return drainResponse;
   return await startActiveChain(input, services, opts);
 }
 

@@ -23,6 +23,9 @@ export type AdmissionDrainState =
 
 type DrainServices = Pick<Services, "storageRoot" | "clock">;
 type ContinuationServices = Pick<Services, "storageRoot" | "clock" | "handoffReader">;
+type ChainStartDrainServices = ContinuationServices & Pick<Services, "workflowRuns">;
+
+type ActiveAdmissionDrain = Extract<AdmissionDrainState, { draining: true }>;
 
 const DrainFileSchema = z.strictObject({
   owner: z.string().min(1),
@@ -63,6 +66,8 @@ export function readAdmissionDrain(
 
   const nowMs = now.getTime();
   const setAtMs = new Date(validated.data.set_at).getTime();
+  // A future set_at would otherwise slide the set_at + 30m clamp forward forever.
+  if (setAtMs > nowMs) return { draining: false, invalid: true };
   const expiresAtMs = new Date(validated.data.expires_at).getTime();
   const effectiveMs = Math.min(
     expiresAtMs,
@@ -85,9 +90,7 @@ export function readAdmissionDrain(
   };
 }
 
-export function admissionDrainGuard(services: DrainServices): Response | null {
-  const state = readAdmissionDrain(services.storageRoot, services.clock());
-  if (!state.draining) return null;
+function admissionDrainingResponse(state: ActiveAdmissionDrain): Response {
   const retryAfterSeconds = Math.max(1, Math.ceil(state.remaining_ms / 1000));
   return Response.json(
     {
@@ -103,24 +106,56 @@ export function admissionDrainGuard(services: DrainServices): Response | null {
   );
 }
 
+export function admissionDrainGuard(services: DrainServices): Response | null {
+  const state = readAdmissionDrain(services.storageRoot, services.clock());
+  return state.draining ? admissionDrainingResponse(state) : null;
+}
+
+function isInFlightParent(services: ContinuationServices, parentHandoffId: unknown): boolean {
+  return (
+    typeof parentHandoffId === "string" &&
+    services.handoffReader.get(parentHandoffId)?.status === "dispatched"
+  );
+}
+
 export function admissionDrainGuardUnlessContinuation(
   services: ContinuationServices,
   parentHandoffId: string | null | undefined,
 ): Response | null {
   const guard = admissionDrainGuard(services);
-  if (guard === null) return null;
-  if (
-    parentHandoffId !== null &&
-    parentHandoffId !== undefined &&
-    services.handoffReader.get(parentHandoffId)?.status === "dispatched"
-  ) {
-    return null;
-  }
+  if (guard === null || isInFlightParent(services, parentHandoffId)) return null;
   return guard;
 }
 
+/**
+ * Drain check for every in-daemon chain start (HTTP /chains/start, orchestrate
+ * reactor, long-lived ticks, maestro sessions, in-process workflow steps).
+ * Continuations of work admitted before the drain still run:
+ * - a child whose parent_handoff_id names a handoff that is still `dispatched`;
+ * - a `workflow` dispatch whose workflow_run_id names a live run registered
+ *   before the drain flag was set.
+ * Everything else, including long-lived ticks and orchestrate spawns, is new work
+ * and gets the retryable `admission_draining` 503.
+ */
+export function chainStartAdmissionDrainGuard(
+  services: ChainStartDrainServices,
+  input: {
+    dispatch_kind?: string;
+    parent_handoff_id?: string | null;
+    workflow_run_id?: string | null;
+  },
+): Response | null {
+  const state = readAdmissionDrain(services.storageRoot, services.clock());
+  if (!state.draining) return null;
+  if (isInFlightParent(services, input.parent_handoff_id)) return null;
+  if (input.dispatch_kind === "workflow" && typeof input.workflow_run_id === "string") {
+    const run = services.workflowRuns?.verify(input.workflow_run_id);
+    if (run && run.registered_at < new Date(state.set_at).getTime()) return null;
+  }
+  return admissionDrainingResponse(state);
+}
+
 export const ADMISSION_DRAIN_GATED_POST_PATHS = new Set([
-  "/chains/start",
   "/workflows/run",
   "/maestro/sessions",
   "/maestro/sessions/adhoc",
