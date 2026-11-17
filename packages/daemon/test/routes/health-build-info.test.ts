@@ -115,6 +115,33 @@ const MALFORMED_MANIFESTS: readonly (readonly [string, string])[] = [
       builtAt: undefined,
     }),
   ],
+  [
+    "a numeric builtAt",
+    JSON.stringify({
+      commit: "a".repeat(40),
+      schemaVersion: SCHEMA_VERSION,
+      ...VALID_MANIFEST_FIELDS,
+      builtAt: 2026,
+    }),
+  ],
+  [
+    "a numeric bunVersion",
+    JSON.stringify({
+      commit: "a".repeat(40),
+      schemaVersion: SCHEMA_VERSION,
+      ...VALID_MANIFEST_FIELDS,
+      bunVersion: 1.3,
+    }),
+  ],
+  [
+    "a numeric lockfileSha",
+    JSON.stringify({
+      commit: "a".repeat(40),
+      schemaVersion: SCHEMA_VERSION,
+      ...VALID_MANIFEST_FIELDS,
+      lockfileSha: 1234,
+    }),
+  ],
 ];
 
 test("resolveBuildInfo prefers DEPLOY_MANIFEST.json and never probes git", async () => {
