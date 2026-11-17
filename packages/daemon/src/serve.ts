@@ -144,7 +144,13 @@ import {
   handoffsRecordBranchRoute,
   handoffsStatusRoute,
 } from "./routes/handoffs.js";
-import { healthRoute } from "./routes/health.js";
+import {
+  type BuildInfo,
+  healthRoute,
+  resolveBuildInfo,
+  type ResolveBuildInfoOpts,
+  startBuildInfoProbe,
+} from "./routes/health.js";
 import { lanesCloseRoute, lanesOpenRoute, lanesRecentRoute } from "./routes/lanes.js";
 import { longLivedFederationHealthRoute } from "./routes/long-lived-federation-health.js";
 import { longLivedFederationToolsRoute } from "./routes/long-lived-federation-tools.js";
@@ -1190,8 +1196,20 @@ export function createDaemonFetchHandler(opts: {
   lagSampler?: LagSampler;
   llmFetchFn?: typeof fetch;
   resolveLlmKeychain?: ResolveKeychainSecret;
+  /** Pre-resolved build info for /health; when absent the handler probes once at construction. */
+  buildInfo?: Promise<BuildInfo>;
+  /** Overrides for the construction-time build-info probe (root and git HEAD resolver). */
+  buildInfoProbe?: Partial<ResolveBuildInfoOpts>;
 }): (req: Request) => Promise<Response> {
   const daemonServices = opts.services as DaemonServices;
+  // Resolved once per handler (daemon startup), never per /health request.
+  const readBuildInfo = startBuildInfoProbe(
+    opts.buildInfo ??
+      resolveBuildInfo({
+        root: join(fileURLToPath(import.meta.url), "../../../.."),
+        ...opts.buildInfoProbe,
+      }),
+  );
   // Evaluated once at handler construction; changing PENUMBRA_REGISTRAR requires restart, and only the exact string "0" disables it.
   const routes =
     process.env.PENUMBRA_REGISTRAR === "0"
@@ -1303,6 +1321,7 @@ export function createDaemonFetchHandler(opts: {
           now: opts.services.clock,
           llmRoleFloors: daemonServices.llmRoleFloorEvaluation,
           t2Promotion: daemonServices.t2PromotionStatus,
+          build: readBuildInfo(),
         });
       }
       // OTLP routes skip bearer auth only while the daemon is loopback-bound, so
