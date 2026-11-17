@@ -440,6 +440,20 @@ test("malformed drain flag file is reported invalid", async () => {
   expect(parsed?.admissionDrain).toEqual({ draining: false, invalid: true });
 });
 
+test("schema-invalid drain flag file is reported invalid", async () => {
+  const ctx = setup();
+  writeFileSync(
+    flagPath(ctx.storageRoot),
+    JSON.stringify({ owner: "", set_at: "yesterday", expires_at: 42 }),
+  );
+  const res = await call(ctx, "GET", "/health", undefined, { auth: false });
+  expect(res.status).toBe(200);
+  const parsed = await readBody<{ admissionDrain?: unknown }>(res);
+  expect(parsed?.admissionDrain).toEqual({ draining: false, invalid: true });
+  const run = await call(ctx, "POST", "/workflows/run", { name: "x", cwd: ctx.storageRoot });
+  expect(run.status).not.toBe(503);
+});
+
 test("POST /admission/drain sets the flag and gates new work", async () => {
   const ctx = setup();
   const res = await call(ctx, "POST", "/admission/drain", {
@@ -618,14 +632,18 @@ test("POST /admission/drain requires a bearer token", async () => {
 test("auth runs before the admission check", async () => {
   const ctx = setup();
   writeFlag(ctx.storageRoot);
+  const authed = await call(ctx, "POST", "/workflows/run", { name: "x", cwd: ctx.storageRoot });
+  expect(authed.status).toBe(503);
   const res = await call(
     ctx,
     "POST",
-    "/chains/start",
-    { initial_agent: "codex", message: "x", project_id: "penumbra" },
+    "/workflows/run",
+    { name: "x", cwd: ctx.storageRoot },
     { auth: false },
   );
   expect(res.status).toBe(401);
+  const tick = await call(ctx, "POST", "/long-lived/home/tick", {}, { auth: false });
+  expect(tick.status).toBe(401);
 });
 
 test("active drain flag still allows rejecting a pending handoff", async () => {

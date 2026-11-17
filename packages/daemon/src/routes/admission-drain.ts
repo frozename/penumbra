@@ -69,11 +69,8 @@ export function readAdmissionDrain(
   // A future set_at would otherwise slide the set_at + 30m clamp forward forever.
   if (setAtMs > nowMs) return { draining: false, invalid: true };
   const expiresAtMs = new Date(validated.data.expires_at).getTime();
-  const effectiveMs = Math.min(
-    expiresAtMs,
-    setAtMs + MAX_ADMISSION_DRAIN_TTL_MS,
-    nowMs + MAX_ADMISSION_DRAIN_TTL_MS,
-  );
+  // set_at <= now holds here, so set_at + 30m already bounds the drain to now + 30m.
+  const effectiveMs = Math.min(expiresAtMs, setAtMs + MAX_ADMISSION_DRAIN_TTL_MS);
   const effectiveIso = new Date(effectiveMs).toISOString();
 
   if (nowMs >= effectiveMs) {

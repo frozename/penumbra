@@ -237,6 +237,19 @@ test("chainStartInternal refuses steps of a workflow run registered during the d
   expect(await errorCode(res)).toBe("admission_draining");
 });
 
+test("chainStartInternal refuses a non-workflow start naming a pre-drain workflow run", async () => {
+  const ctx = setup();
+  const runId = ctx.services.workflowRuns?.register("wf", "penumbra") ?? null;
+  expect(runId).not.toBeNull();
+  ctx.clock.ms += 2 * MINUTE_MS;
+  setDrain(ctx, START_MS + MINUTE_MS);
+  await expectDraining(await freshStart(ctx.services, { workflow_run_id: runId }));
+  await expectDraining(
+    await freshStart(ctx.services, { dispatch_kind: "orchestrate", workflow_run_id: runId }),
+  );
+  expect(countHandoffs(ctx.db)).toBe(0);
+});
+
 function seedLongLivedTick(ctx: Ctx, tickId: string): void {
   ctx.db.run(
     `INSERT OR IGNORE INTO long_lived_agents

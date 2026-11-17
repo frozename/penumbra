@@ -684,6 +684,91 @@ test("detached Codex sweep failure is retained in workflow run status", async ()
   }
 });
 
+function writeActiveDrainFlag(root: string): void {
+  const storageRoot = join(root, "storage");
+  mkdirSync(storageRoot, { recursive: true });
+  const nowMs = Date.now();
+  writeFileSync(
+    join(storageRoot, "admission-drain.json"),
+    JSON.stringify({
+      owner: "deploy-a",
+      reason: "deploy",
+      set_at: new Date(nowMs - 60_000).toISOString(),
+      expires_at: new Date(nowMs + 300_000).toISOString(),
+    }),
+  );
+}
+
+test("admission drain still serves inline-only Codex deliveries", async () => {
+  const fixture = await makeFixture([
+    { name: "maestro-context-prime", events: ["session-start"], reminder: true },
+  ]);
+  writeActiveDrainFlag(fixture.root);
+  try {
+    const res = await fixture.post(
+      "/workflows/trigger",
+      triggerBody(
+        fixture.root,
+        "session-start",
+        "opaque-drain-inline",
+        ingress({ delivery_id: "delivery-drain-inline" }),
+      ),
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()) as TriggerResponse).toMatchObject({
+      matched: ["maestro-context-prime"],
+      additionalContext: "prime-context",
+    });
+    expect(fixture.state.calls.map((call) => call.name)).toEqual(["maestro-context-prime"]);
+  } finally {
+    fixture.close();
+  }
+});
+
+test("admission drain does not refuse a Codex session-end delivery", async () => {
+  const fixture = await makeFixture([{ name: "session-memory-sweep", events: ["session-end"] }]);
+  writeActiveDrainFlag(fixture.root);
+  try {
+    const res = await fixture.post(
+      "/workflows/trigger",
+      triggerBody(
+        fixture.root,
+        "session-end",
+        "opaque-drain-end",
+        ingress({ delivery_id: "delivery-drain-end" }),
+      ),
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()) as TriggerResponse).toMatchObject({ matched: [] });
+    await Bun.sleep(20);
+    expect(fixture.state.calls).toEqual([]);
+  } finally {
+    fixture.close();
+  }
+});
+
+test("admission drain does not refuse a non-maestro Codex delivery", async () => {
+  const fixture = await makeFixture([{ name: "session-memory-sweep", events: ["stop"] }]);
+  writeActiveDrainFlag(fixture.root);
+  try {
+    const res = await fixture.post(
+      "/workflows/trigger",
+      triggerBody(
+        fixture.root,
+        "stop",
+        "opaque-drain-dispatch",
+        ingress({ role: "dispatch", delivery_id: "delivery-drain-dispatch" }),
+      ),
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()) as TriggerResponse).toMatchObject({ matched: [] });
+    await Bun.sleep(20);
+    expect(fixture.state.calls).toEqual([]);
+  } finally {
+    fixture.close();
+  }
+});
+
 test("admission drain refuses detached Codex runs and the same delivery runs after release", async () => {
   const fixture = await makeFixture([{ name: "session-memory-sweep", events: ["stop"] }]);
   const storageRoot = join(fixture.root, "storage");
