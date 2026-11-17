@@ -88,6 +88,33 @@ const MALFORMED_MANIFESTS: readonly (readonly [string, string])[] = [
       ...VALID_MANIFEST_FIELDS,
     }),
   ],
+  [
+    "no bunVersion",
+    JSON.stringify({
+      commit: "a".repeat(40),
+      schemaVersion: SCHEMA_VERSION,
+      ...VALID_MANIFEST_FIELDS,
+      bunVersion: undefined,
+    }),
+  ],
+  [
+    "no lockfileSha",
+    JSON.stringify({
+      commit: "a".repeat(40),
+      schemaVersion: SCHEMA_VERSION,
+      ...VALID_MANIFEST_FIELDS,
+      lockfileSha: undefined,
+    }),
+  ],
+  [
+    "no builtAt",
+    JSON.stringify({
+      commit: "a".repeat(40),
+      schemaVersion: SCHEMA_VERSION,
+      ...VALID_MANIFEST_FIELDS,
+      builtAt: undefined,
+    }),
+  ],
 ];
 
 test("resolveBuildInfo prefers DEPLOY_MANIFEST.json and never probes git", async () => {
@@ -186,6 +213,24 @@ test("resolveBuildInfo does not report an enclosing repo's HEAD for a nested non
   const nested = join(repo, "nested");
   mkdirSync(nested);
   const result = await health.resolveBuildInfo({ root: nested });
+  expect(result).toEqual({ source: "unknown", commit: null, schemaVersion: null });
+}, 30_000);
+
+test("resolveBuildInfo reports unknown for a git repo with no commits", async () => {
+  expect(typeof health.resolveBuildInfo).toBe("function");
+  const dir = realpathSync(tempDir("penumbra-build-empty-"));
+  initRepo(dir);
+  const result = await health.resolveBuildInfo({ root: dir });
+  expect(result).toEqual({ source: "unknown", commit: null, schemaVersion: null });
+}, 30_000);
+
+test("resolveBuildInfo reports unknown when git HEAD is not a 40-hex SHA", async () => {
+  expect(typeof health.resolveBuildInfo).toBe("function");
+  const dir = realpathSync(tempDir("penumbra-build-sha256-"));
+  git(dir, ["init", "-q", "--object-format=sha256"]);
+  const sha = commitFile(dir, "file.txt", "content\n");
+  expect(sha).toMatch(/^[0-9a-f]{64}$/);
+  const result = await health.resolveBuildInfo({ root: dir });
   expect(result).toEqual({ source: "unknown", commit: null, schemaVersion: null });
 }, 30_000);
 
