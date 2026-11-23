@@ -175,7 +175,7 @@ test("the project registry's package_manager overrides lockfile detection", asyn
   expect(installCalls()).toEqual(["npm ci --ignore-scripts", BUN_COMMAND, BUN_COMMAND]);
 });
 
-test("a declared package manager installs a project whose lockfile is unsupported", async () => {
+test("a declared package manager overrides a yarn lockfile", async () => {
   seedLockfiles("yarn.lock");
   putOnPath("npm", "node");
 
@@ -187,26 +187,33 @@ test("a declared package manager installs a project whose lockfile is unsupporte
   expect(installCalls()).toEqual(["npm ci --ignore-scripts"]);
 });
 
-test("pnpm and yarn lockfiles fail with an error naming the unsupported manager", async () => {
-  for (const [lockfile, manager] of [
-    ["pnpm-lock.yaml", "pnpm"],
-    ["yarn.lock", "yarn"],
-  ] as const) {
+test("a project with only a pnpm or yarn lockfile keeps the bun command", async () => {
+  for (const lockfile of ["pnpm-lock.yaml", "yarn.lock"]) {
     calls = [];
     fs.rmSync(path.join(repoDir, "pnpm-lock.yaml"), { force: true });
     seedLockfiles(lockfile);
-    const handoffId = `h-${manager}`;
+    // No npm, node or bun on PATH: the bun path must not start checking PATH.
+    process.env.PATH = binDir;
+    const handoffId = `h-${lockfile}`;
 
-    const message = await rejectionMessage(
-      makeManager().createWorktree(handoffId, { isolated_install: true }),
-    );
+    const handle = await makeManager().createWorktree(handoffId, { isolated_install: true });
 
-    expect(message).toContain(`${manager} is not a supported package manager`);
-    expect(message).toContain(lockfile);
-    expect(message).toContain("package_manager");
-    expect(installCalls()).toEqual([]);
-    expect(fs.existsSync(path.join(rootDir, handoffId))).toBe(false);
+    expect(installCalls()).toEqual([BUN_COMMAND]);
+    expect(handle.worktreeMode).toBe("isolated_install");
+    const install = resolveIsolatedInstallCommand(handle.path);
+    expect(install.manager).toBe("bun");
+    expect(install.cacheKey).toBe(ISOLATED_INSTALL_CACHE_KEY);
+    expect(install.reason).toContain(lockfile);
   }
+});
+
+test("npm wins when a package-lock.json sits beside a yarn or pnpm lockfile", async () => {
+  seedLockfiles("package-lock.json", "yarn.lock", "pnpm-lock.yaml");
+  putOnPath("npm", "node");
+
+  await makeManager().createWorktree("h-npm-and-yarn", { isolated_install: true });
+
+  expect(installCalls()).toEqual(["npm ci --ignore-scripts"]);
 });
 
 test("a symlink-mirror worktree never resolves an install command", async () => {
@@ -264,6 +271,29 @@ test("npm install failures are labelled npm and keep the stderr tail", async () 
   const message = await rejectionMessage(runIsolatedInstall(repoDir, { runner: failing }));
 
   expect(message).toBe("isolated npm install failed: npm error EUSAGE");
+});
+
+test("an npm install gets the same default timeout as a bun install", async () => {
+  putOnPath("npm", "node");
+  seedLockfiles("package-lock.json");
+  const previousTimeout = process.env.PENUMBRA_ISOLATED_INSTALL_TIMEOUT_MS;
+  delete process.env.PENUMBRA_ISOLATED_INSTALL_TIMEOUT_MS;
+  const timeouts: unknown[] = [];
+  const recording: Runner = (_cmd, _args, runnerOpts) => {
+    timeouts.push((runnerOpts as { timeout?: number } | undefined)?.timeout);
+    return Promise.resolve({ stdout: "", stderr: "" });
+  };
+
+  try {
+    await runIsolatedInstall(repoDir, { runner: recording });
+    process.env.PENUMBRA_ISOLATED_INSTALL_TIMEOUT_MS = "600000";
+    await runIsolatedInstall(repoDir, { runner: recording });
+  } finally {
+    if (previousTimeout === undefined) delete process.env.PENUMBRA_ISOLATED_INSTALL_TIMEOUT_MS;
+    else process.env.PENUMBRA_ISOLATED_INSTALL_TIMEOUT_MS = previousTimeout;
+  }
+
+  expect(timeouts).toEqual([120_000, 600_000]);
 });
 
 test("npm install timeouts are labelled npm", async () => {

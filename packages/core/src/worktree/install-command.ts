@@ -20,12 +20,14 @@ export interface IsolatedInstallCommand {
 
 // Order is the precedence: a bun lockfile always wins, so a bun project that
 // also carries another manager's lockfile installs exactly as it always has.
-const LOCKFILE_MANAGERS: readonly (readonly [string, PackageManager | "pnpm" | "yarn"])[] = [
+// pnpm and yarn lockfiles keep the bun command they always got: bun migrates
+// them, and neither manager has a command of its own here.
+const LOCKFILE_MANAGERS: readonly (readonly [string, PackageManager])[] = [
   ["bun.lock", "bun"],
   ["bun.lockb", "bun"],
   ["package-lock.json", "npm"],
-  ["pnpm-lock.yaml", "pnpm"],
-  ["yarn.lock", "yarn"],
+  ["pnpm-lock.yaml", "bun"],
+  ["yarn.lock", "bun"],
 ];
 
 function commandFor(manager: PackageManager, reason: string): IsolatedInstallCommand {
@@ -48,12 +50,6 @@ export function resolveIsolatedInstallCommand(
   }
   for (const [lockfile, manager] of LOCKFILE_MANAGERS) {
     if (!fs.existsSync(path.join(wtPath, lockfile))) continue;
-    if (manager === "pnpm" || manager === "yarn") {
-      throw new Error(
-        `isolated install cannot run in ${wtPath}: found ${lockfile}, and ${manager} is not a supported package manager (supported: ${PACKAGE_MANAGERS.join(", ")}). ` +
-          "Set package_manager for the project in projects.yaml if one of those can install it, or dispatch with isolated_install: false.",
-      );
-    }
     return commandFor(manager, `${lockfile} in the worktree root`);
   }
   return commandFor("bun", "no lockfile in the worktree root");
