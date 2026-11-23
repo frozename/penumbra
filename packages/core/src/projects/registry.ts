@@ -209,6 +209,9 @@ const ROOT_PATH_RE = /^\s*root_path:[ \t]*(\S.*)$/;
 const GH_REPO_RE = /^\s*gh_repo:[ \t]*(\S.*)$/;
 const RECONCILE_RE = /^\s*reconcile:[ \t]*(\S.*)$/;
 const AUTO_REBASE_RE = /^\s*auto_rebase:[ \t]*(\S.*)$/;
+const PACKAGE_MANAGER_RE = /^\s*package_manager:[ \t]*(\S.*)$/;
+const VERIFY_BLOCK_RE = /^\s*verify:\s*$/;
+const VERIFY_STAGE_RE = /^\s+(typecheck|tests):\s*$/;
 const REMOTE_BLOCK_RE = /^\s*remote:\s*$/;
 const DREAMING_BLOCK_RE = /^\s*dreaming:\s*$/;
 const REMOTE_KIND_RE = /^\s+kind:[ \t]*(\S.*)$/;
@@ -255,6 +258,11 @@ function dispatchLine(line: string, i: number, lines: string[], state: ParserSta
     return i + consumed;
   }
 
+  if (VERIFY_BLOCK_RE.test(line)) {
+    const consumed = parseVerifyBlock(line, lines, i + 1, state);
+    return i + consumed;
+  }
+
   throw new Error(`unrecognized registry yaml line: ${line}`);
 }
 
@@ -295,7 +303,15 @@ function tryApplyScalarLine(line: string, state: ParserState): boolean {
     return true;
   }
 
-  return tryApplyAutoRebaseLine(line, state);
+  return tryApplyAutoRebaseLine(line, state) || tryApplyPackageManagerLine(line, state);
+}
+
+function tryApplyPackageManagerLine(line: string, state: ParserState): boolean {
+  const match = PACKAGE_MANAGER_RE.exec(line);
+  if (!match) return false;
+  state.current ??= {};
+  state.current.package_manager = unquote(match[1] ?? "") as ProjectEntry["package_manager"];
+  return true;
 }
 
 // #233: only a bare true or false is accepted. Any other value, including a
@@ -356,6 +372,40 @@ function parseRemoteBlock(lines: string[], start: number, state: ParserState): n
   if (kind !== "github") throw new Error(`unsupported remote kind: ${kind}`);
   state.current ??= {};
   state.current.remote = { kind: "github", repo };
+  return consumed;
+}
+
+// A stage that is named but lists nothing is kept as an empty list so the
+// schema rejects it, instead of silently reading as "not declared".
+function parseVerifyBlock(
+  blockLine: string,
+  lines: string[],
+  start: number,
+  state: ParserState,
+): number {
+  const blockIndent = indentOf(blockLine);
+  const verify: Partial<NonNullable<ProjectEntry["verify"]>> = {};
+  let consumed = 0;
+  let j = start;
+
+  while (j < lines.length) {
+    const verifyLine = lines[j] ?? "";
+    if (!verifyLine.trim() || COMMENT_RE.test(verifyLine)) {
+      j += 1;
+      consumed += 1;
+      continue;
+    }
+    if (indentOf(verifyLine) <= blockIndent) break;
+    const stage = VERIFY_STAGE_RE.exec(verifyLine)?.[1] as "tests" | "typecheck" | undefined;
+    if (stage === undefined) break;
+    const result = parseAllowedDomains(verifyLine, lines, j + 1);
+    verify[stage] = result.domains;
+    consumed += 1 + result.consumed;
+    j += 1 + result.consumed;
+  }
+
+  state.current ??= {};
+  state.current.verify = verify as NonNullable<ProjectEntry["verify"]>;
   return consumed;
 }
 

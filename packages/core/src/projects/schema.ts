@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { PACKAGE_MANAGERS } from "../worktree/install-command.js";
+
 export const GithubRemoteSchema = z.object({
   kind: z.literal("github"),
   repo: z.string().regex(/^[^/\s]+\/[^/\s]+$/),
@@ -9,6 +11,25 @@ export const RemoteSchema = z.discriminatedUnion("kind", [GithubRemoteSchema]);
 
 export const ReconcileModeSchema = z.enum(["off", "git-only", "full"]);
 export type ReconcileMode = z.infer<typeof ReconcileModeSchema>;
+
+export const PackageManagerSchema = z.enum(PACKAGE_MANAGERS);
+
+// A verify command runs without a shell: it is split on single spaces into an
+// argv. Quotes, pipes, redirects, `&&` and VAR=value prefixes are rejected so
+// nobody writes one that only a shell would understand.
+const VERIFY_WORD = "[A-Za-z0-9_@%+:,./-]+";
+export const VerifyCommandSchema = z
+  .string()
+  .regex(
+    new RegExp(`^${VERIFY_WORD}( ${VERIFY_WORD})*$`),
+    "verify command must be plain words separated by single spaces (it runs without a shell)",
+  );
+
+export const VerifyCommandsSchema = z.strictObject({
+  typecheck: z.array(VerifyCommandSchema).min(1),
+  tests: z.array(VerifyCommandSchema).min(1),
+});
+export type VerifyCommands = z.infer<typeof VerifyCommandsSchema>;
 
 export const ProjectEntrySchema = z.object({
   project_id: z
@@ -31,6 +52,11 @@ export const ProjectEntrySchema = z.object({
   reconcile: ReconcileModeSchema.optional(),
   // #233: per-project override of the worker's reconcilerAutoRebase; unset uses the global flag.
   auto_rebase: z.boolean().optional(),
+  // Isolated-install worktrees install with this instead of detecting the lockfile.
+  package_manager: PackageManagerSchema.optional(),
+  // The project's own gate: the reconciler runs these in the worktree in place
+  // of its bun typecheck and bun test stages.
+  verify: VerifyCommandsSchema.optional(),
 });
 
 export const ProjectRegistryFileSchema = z.object({
@@ -50,4 +76,20 @@ export function getGithubRepo(entry: ProjectEntry | undefined): string | undefin
 // Unset means "full": the pre-#233 reconcile behaviour.
 export function reconcileModeOf(entry: Pick<ProjectEntry, "reconcile"> | undefined): ReconcileMode {
   return entry?.reconcile ?? "full";
+}
+
+export interface VerifyArgv {
+  typecheck: [string, ...string[]][];
+  tests: [string, ...string[]][];
+}
+
+// Unset means the reconciler's built-in bun typecheck and bun test stages.
+export function verifyArgvOf(
+  entry: Pick<ProjectEntry, "verify"> | undefined,
+): VerifyArgv | undefined {
+  const verify = entry?.verify;
+  if (!verify) return undefined;
+  const toArgv = (command: string): [string, ...string[]] =>
+    command.split(" ") as [string, ...string[]];
+  return { typecheck: verify.typecheck.map(toArgv), tests: verify.tests.map(toArgv) };
 }

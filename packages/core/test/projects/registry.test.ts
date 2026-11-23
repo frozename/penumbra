@@ -10,7 +10,7 @@ import {
   ProjectRegistryDuplicateId,
   ProjectRegistryParseError,
 } from "@src/projects/registry.js";
-import { reconcileModeOf } from "@src/projects/schema.js";
+import { reconcileModeOf, verifyArgvOf } from "@src/projects/schema.js";
 
 import { writeBootstrapRegistry } from "./registry-fixtures.js";
 
@@ -692,4 +692,137 @@ test("quoted inline # is preserved", () => {
 
   const registry = loadProjectRegistry(path);
   expect(registry.get("foo")?.root_path).toBe("foo # not-comment");
+});
+
+test("accepts a package_manager on a project entry", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
+  dirs.push(dir);
+  const path = join(dir, "projects.yaml");
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: npm-proj
+    root_path: /tmp/npm-proj
+    package_manager: npm   # inline comment
+  - project_id: bun-proj
+    root_path: /tmp/bun-proj
+    package_manager: "bun"
+  - project_id: unset-proj
+    root_path: /tmp/unset-proj
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(registry.get("npm-proj")?.package_manager).toBe("npm");
+  expect(registry.get("bun-proj")?.package_manager).toBe("bun");
+  expect(registry.get("unset-proj")?.package_manager).toBeUndefined();
+});
+
+test("rejects an unsupported package_manager", () => {
+  for (const value of ["pnpm", "yarn", "true"]) {
+    const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
+    dirs.push(dir);
+    const path = join(dir, "projects.yaml");
+    writeFileSync(
+      path,
+      `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+    package_manager: ${value}
+`,
+    );
+
+    expect(() => loadProjectRegistry(path)).toThrow(ProjectRegistryParseError);
+  }
+});
+
+test("accepts a project's own verify commands and splits them into argv", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
+  dirs.push(dir);
+  const path = join(dir, "projects.yaml");
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: hurayra
+    root_path: /tmp/hurayra
+    package_manager: npm
+    verify:
+      # the project's own gate
+      typecheck:
+        - npm run typecheck
+      tests:
+        - npm run lint
+        - "npm run test:tz"   # three time zones
+    reconcile: full
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(registry.get("hurayra")?.verify).toEqual({
+    typecheck: ["npm run typecheck"],
+    tests: ["npm run lint", "npm run test:tz"],
+  });
+  expect(registry.get("hurayra")?.reconcile).toBe("full");
+  expect(verifyArgvOf(registry.get("hurayra"))).toEqual({
+    typecheck: [["npm", "run", "typecheck"]],
+    tests: [
+      ["npm", "run", "lint"],
+      ["npm", "run", "test:tz"],
+    ],
+  });
+  expect(registry.get("penumbra")?.verify).toBeUndefined();
+  expect(verifyArgvOf(registry.get("penumbra"))).toBeUndefined();
+  expect(verifyArgvOf(undefined)).toBeUndefined();
+});
+
+test("rejects a verify block that does not declare both stages with at least one command", () => {
+  const blocks = [
+    "    verify:\n      tests:\n        - npm test\n",
+    "    verify:\n      typecheck:\n        - npm run typecheck\n",
+    "    verify:\n      typecheck:\n      tests:\n        - npm test\n",
+    "    verify:\n",
+    "    verify:\n      typecheck:\n        - npm run typecheck\n      tests:\n        - npm test\n      lint:\n        - npm run lint\n",
+  ];
+  for (const block of blocks) {
+    const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
+    dirs.push(dir);
+    const path = join(dir, "projects.yaml");
+    writeFileSync(
+      path,
+      `projects:\n  - project_id: penumbra\n    root_path: /tmp/penumbra\n${block}`,
+    );
+
+    expect(() => loadProjectRegistry(path)).toThrow(ProjectRegistryParseError);
+  }
+});
+
+test("rejects verify commands that need a shell", () => {
+  for (const command of [
+    "npm run typecheck && npm run lint",
+    "TZ=UTC jest",
+    "npm test | tee log",
+    "npm run 'test tz'",
+    "npm  run  test",
+    "$(whoami)",
+  ]) {
+    const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
+    dirs.push(dir);
+    const path = join(dir, "projects.yaml");
+    writeFileSync(
+      path,
+      `projects:
+  - project_id: penumbra
+    root_path: /tmp/penumbra
+    verify:
+      typecheck:
+        - npm run typecheck
+      tests:
+        - "${command}"
+`,
+    );
+
+    expect(() => loadProjectRegistry(path)).toThrow(ProjectRegistryParseError);
+  }
 });
