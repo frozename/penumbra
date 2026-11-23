@@ -465,6 +465,22 @@ The live fleet roster lives in `~/.config/penumbra/agents.yaml` (with `review_pe
 The worker reads `~/.config/penumbra` as one config: it shallow-merges the top-level keys of `agents.yaml`, `routing.yaml` and `quotas.yaml`. Its merge-reconciler setting `reconcilerAutoRebase` (default `true`) therefore goes in `routing.yaml`, which accepts it and leaves it to the worker. Set it to `false` to stop the reconciler rebasing dispatch branches whose base has moved; a worker restart applies the change (a config reload through `daemon_reload_config` does not), and `penumbra config split` carries a legacy `reconcilerAutoRebase: false` into `routing.yaml`.
 A `projects.yaml` entry accepts `reconcile: off | git-only | full`. `off`: the worker does not reconcile that project's dispatches — no verdict, progress, rebase or PR. `git-only`: base resolution, the fast-forward probe, diff stats and a `reconciler.verdict` with typecheck and tests `skipped`; it never runs typecheck, tests, an install, the auto-rebase or the PR stage, whatever `reconcilerAutoRebase` or a handoff's `open_pr_on_review` says. `full`: the whole pipeline, where `reconcilerAutoRebase` applies. Unset means `full`, and whether other projects should default to `git-only` is still open in #233. An unknown value fails the registry load.
 A `projects.yaml` entry also accepts `auto_rebase: true | false`, which overrides `reconcilerAutoRebase` for that project's dispatches under `reconcile: full`; unset uses `reconcilerAutoRebase`, so an entry without it behaves as before. The worker reads it from the live project registry on each reconcile, so a successful registry reload applies it without a restart. `git-only` and `off` never auto-rebase, whatever it says. Only a bare `true` or `false` is accepted; any other value, including a quoted one, fails the registry load.
+An isolated-install worktree (`isolated_install`, or `PENUMBRA_ISOLATED_INSTALL_AUTO`) picks its install command from the lockfile in the worktree root: `bun.lock` or `bun.lockb` runs `bun install --ignore-scripts --frozen-lockfile`, `package-lock.json` runs `npm ci --ignore-scripts`, and no lockfile runs the bun command. A bun lockfile wins over any other. `pnpm-lock.yaml` or `yarn.lock` alone fails the dispatch with an error naming the manager. A `projects.yaml` entry accepts `package_manager: bun | npm` to set the command without looking at lockfiles; any other value fails the registry load. The npm command needs `npm` and `node` on the worker's `PATH`; when one is missing, the dispatch fails before the install with the missing binary and the `PATH` that was searched.
+A `projects.yaml` entry also accepts `verify`, the project's own gate. Under `reconcile: full` the reconciler then runs those commands in the dispatch worktree in place of `bun tsc -b` and `bun test`, and their exit status sets the `typecheck` and `tests` fields of `reconciler.verdict`, which `dispatch_land` reads. Both lists are required and need at least one command:
+
+```yaml
+- project_id: app
+  root_path: /absolute/path/to/app
+  package_manager: npm
+  verify:
+    typecheck:
+      - npm run typecheck
+    tests:
+      - npm run lint
+      - npm run test
+```
+
+Each command is split on single spaces and run without a shell, so quotes, pipes, `&&` and `VAR=value` prefixes fail the registry load; put those in a package script. The commands of one stage run in order and share that stage's timeout (`PENUMBRA_RECONCILE_TYPECHECK_TIMEOUT_S`, `PENUMBRA_RECONCILE_TEST_TIMEOUT_S`). A non-zero exit is `fail`; a command that cannot start, prints nothing, or is SIGKILLed outside penumbra is `error`. Declared commands run for every diff, docs-only ones included, and there is no merge-base baseline: a failure that already exists on the base fails the branch too. The `tests` stage still refuses a symlinked `node_modules`, as the built-in stage does. An entry without `verify` behaves as before. The worker reads both fields from the live registry, so a successful reload applies them. Processes started before this change reject the new keys as unrecognized lines, so restart the daemon and worker onto the new code before adding them.
 
 ## Related fleet tools
 
