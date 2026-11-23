@@ -56,6 +56,30 @@ describe("createWorkerWorktreeManager", () => {
     ).toBe(`${siblingRoot}-worktrees`);
   });
 
+  it("reads a project's package_manager from the live project registry", async () => {
+    const projectsYaml = path.join(registryRoot, "projects.yaml");
+    const entry = ["projects:", "  - project_id: app", "    root_path: /tmp/app"];
+    fs.writeFileSync(projectsYaml, [...entry, ""].join("\n"));
+    const projectRegistry = new WorkerProjectRegistry(projectsYaml);
+    const manager = createWorkerWorktreeManager({
+      rootDir: tempRoot,
+      mainRepoDir: process.cwd(),
+      projectRegistry,
+    });
+    const resolve = (id: string): string | undefined =>
+      (
+        manager as unknown as { resolvePackageManager(project_id: string): string | undefined }
+      ).resolvePackageManager(id);
+
+    expect(resolve("app")).toBeUndefined();
+
+    fs.writeFileSync(projectsYaml, [...entry, "    package_manager: npm", ""].join("\n"));
+    await projectRegistry.reload();
+
+    expect(resolve("app")).toBe("npm");
+    expect(resolve("unknown")).toBeUndefined();
+  });
+
   it("falls back to the default root when the registry is empty", () => {
     const projectRegistry = new WorkerProjectRegistry(
       path.join(registryRoot, "missing.yaml"),

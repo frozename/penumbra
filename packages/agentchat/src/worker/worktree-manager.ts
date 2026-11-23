@@ -22,6 +22,7 @@ export function createWorkerWorktreeManager(options: {
     resolveProjectRoot: (project_id: string): string | undefined =>
       projectRegistry.size === 0 ? undefined : projectRegistry.get(project_id)?.root_path,
     requireKnownProjectId: () => projectRegistry.size > 0,
+    resolvePackageManager: (project_id: string) => projectRegistry.get(project_id)?.package_manager,
     resolveBranchName: options.resolveBranchName,
   });
 }
