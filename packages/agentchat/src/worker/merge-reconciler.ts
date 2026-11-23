@@ -7,8 +7,10 @@ import {
   isResourceKill,
   isResourceScopeLaunchFailure,
   type Logger,
+  type ProjectEntry,
   type ReconcileMode,
   type Settings,
+  type VerifyArgv,
   type WorktreeCommandRunner,
   type WorktreeCommandRunnerOptions,
   type WorktreeHandle,
@@ -139,6 +141,10 @@ export interface ReconcilerDeps {
   reconcileModeFor?: (projectId: string | undefined) => ReconcileMode;
   /** Per-project auto_rebase override; undefined falls back to reconcilerAutoRebase. */
   autoRebaseFor?: (projectId: string | undefined) => boolean | undefined;
+  /** Per-project gate commands; undefined keeps the built-in bun typecheck and bun test stages. */
+  verifyCommandsFor?: (projectId: string | undefined) => VerifyArgv | undefined;
+  /** Per-project package_manager for the test-baseline install; undefined detects the lockfile. */
+  packageManagerFor?: (projectId: string | undefined) => PackageManager | undefined;
   rebaseScratchRoot?: string;
   getHandoff: (handoffId: string) => Promise<HandoffRow | null>;
   createDispatchPR?: typeof createDispatchPR;
@@ -156,6 +162,8 @@ export interface ReconcilerDeps {
   heavyStageGate?: HeavyJobGate;
 }
 
+type PackageManager = NonNullable<ProjectEntry["package_manager"]>;
+
 type ReconcilerExecOptions = Pick<
   WorktreeCommandRunnerOptions,
   "cwd" | "timeout" | "maxBuffer" | "encoding" | "signal" | "env" | "stdio"
@@ -168,7 +176,12 @@ type CoreIsolatedProvisioning = typeof core & {
   materializeWorkspaceLinks: (worktreeRoot: string) => void;
   runIsolatedInstall: (
     wtPath: string,
-    opts?: { runner?: WorktreeCommandRunner; signal?: AbortSignal; timeoutMs?: number },
+    opts?: {
+      runner?: WorktreeCommandRunner;
+      signal?: AbortSignal;
+      timeoutMs?: number;
+      packageManager?: PackageManager;
+    },
   ) => Promise<void>;
 };
 
@@ -541,6 +554,7 @@ interface ReconcileCtx {
   handoff: HandoffRow | null;
   mode: ReconcileMode;
   projectId: string | undefined;
+  verify: VerifyArgv | undefined;
   wt: WorktreeHandle;
   baseRef: string;
   repoDir: string;
@@ -1550,7 +1564,154 @@ async function handleTypecheckErrorUnparsed(
   return result;
 }
 
+type DeclaredOutcome =
+  | { kind: "environment"; detail: string }
+  | { kind: "fail"; command: string; how: string; output: string }
+  | { kind: "pass" }
+  | { kind: "resource_killed" }
+  | { kind: "timeout"; command: string };
+
+const DECLARED_OUTPUT_TAIL_CHARS = 16 * 1024;
+
+// The built-in stages read empty output as an environment fault. A declared
+// command's exit status is its verdict, so a silent non-zero exit is a fail:
+// only a command that never started (no exit code and no signal, e.g. ENOENT)
+// or a job scope that failed to launch is the environment's.
+function isDeclaredCommandEnvironmentFailure(info: CommandErrorInfo): boolean {
+  return (
+    (info.exitCode < 0 && info.signal === null) ||
+    (info.exitCode === 1 && isResourceScopeLaunchFailure(info.stderr))
+  );
+}
+
+function declaredCommandErrorOutcome(command: string, err: unknown): DeclaredOutcome {
+  const info = commandErrorInfo(err);
+  if (isResourceKilledCommand(info)) return { kind: "resource_killed" };
+  if (isDeclaredCommandEnvironmentFailure(info)) {
+    return { kind: "environment", detail: `${command}: ${String(err)}` };
+  }
+  const how = info.signal === null ? `exit code ${String(info.exitCode)}` : `signal ${info.signal}`;
+  const output = `${info.stdout}${info.stderr}`.slice(-DECLARED_OUTPUT_TAIL_CHARS);
+  return { kind: "fail", command, how, output };
+}
+
+// Runs a project's declared gate commands in order, in the worktree, sharing
+// one stage deadline. The exit status is the verdict: there is no bun-test
+// report to parse and no merge-base baseline to compare against.
+async function runDeclaredCommands(
+  ctx: ReconcileCtx,
+  commands: CommandArgs[],
+  timeoutSeconds: number,
+): Promise<DeclaredOutcome> {
+  const deadline = { expiresAtMs: Date.now() + timeoutSeconds * 1000 };
+  for (const argv of commands) {
+    const command = argv.join(" ");
+    try {
+      const res = await execCmd(ctx, argv, ctx.wt.path, remainingStageSeconds(deadline));
+      if (res.timedOut) return { kind: "timeout", command };
+    } catch (err: unknown) {
+      return declaredCommandErrorOutcome(command, err);
+    }
+  }
+  return { kind: "pass" };
+}
+
+async function runDeclaredStage(
+  ctx: ReconcileCtx,
+  stage: "tests" | "typecheck",
+  commands: CommandArgs[],
+): Promise<MergeResult | null> {
+  const { settings } = ctx.deps;
+  const timeout =
+    stage === "typecheck"
+      ? (settings?.reconcileTypecheckTimeoutSec ?? 120)
+      : (settings?.reconcileTestTimeoutSec ?? 300);
+  const setStatus = (status: CheckStatus): void => {
+    if (stage === "typecheck") ctx.state.typecheckStatus = status;
+    else ctx.state.testStatus = status;
+  };
+  const outcome = await runDeclaredCommands(ctx, commands, timeout);
+  if (outcome.kind === "pass") {
+    setStatus("pass");
+    return null;
+  }
+  if (outcome.kind === "resource_killed") {
+    return await emitResourceEnvironmentError(ctx, stage, RESOURCE_KILL_DETAIL, "resource_killed");
+  }
+  const status = stage === "typecheck" ? "typecheck_failed" : "test_failed";
+  if (outcome.kind === "environment") {
+    setStatus("error");
+    ctx.deps.log.warn(
+      { handoffId: ctx.handoffId, stage, err: outcome.detail },
+      "verification environment failed; not attributable to dispatched code",
+    );
+    const result: MergeResult = {
+      status,
+      regression_summary: `verification environment error (${stage}): ${outcome.detail}`,
+      verification_environment_error: true,
+    };
+    await emitResult(ctx, result);
+    return result;
+  }
+  setStatus("fail");
+  const result: MergeResult =
+    outcome.kind === "timeout"
+      ? { status, timed_out: true, regression_summary: `${outcome.command} timed out` }
+      : { status, regression_summary: declaredFailureSummary(outcome) };
+  await emitResult(ctx, result);
+  return result;
+}
+
+function declaredFailureSummary(outcome: { command: string; how: string; output: string }): string {
+  const head = `${outcome.command} failed with ${outcome.how}`;
+  return outcome.output.trim() === ""
+    ? `${head} and printed nothing`
+    : `${head}:\n${outcome.output}`;
+}
+
+// A project that declares verify gets its tests verdict only from a worktree
+// that owns its node_modules. Say which case this is and what fixes it.
+async function declaredTestsEnvironmentDetail(wtPath: string, err: unknown): Promise<string> {
+  const nodeModulesPath = join(wtPath, "node_modules");
+  const need =
+    "the project declares verify in projects.yaml, and verify commands need the worktree's own node_modules";
+  const stat = await lstat(nodeModulesPath).catch(() => null);
+  if (stat === null) {
+    return (
+      `${need}, and ${nodeModulesPath} does not exist. ` +
+      "The worktree was created without an isolated install, or the project installs no node_modules. " +
+      "Dispatch again with isolated_install: true (or run the worker with PENUMBRA_ISOLATED_INSTALL_AUTO=1); " +
+      "for a project that has no node_modules, remove verify from its projects.yaml entry."
+    );
+  }
+  if (stat.isSymbolicLink()) {
+    return (
+      `${need}, but ${nodeModulesPath}: node_modules is a symlink into the main checkout ` +
+      "(the dispatch used isolated_install: false, or isolated install is not on by default). " +
+      "Dispatch again with isolated_install: true and without isolated_install: false."
+    );
+  }
+  return String(err);
+}
+
+async function runDeclaredTestsStage(
+  ctx: ReconcileCtx,
+  commands: CommandArgs[],
+): Promise<MergeResult | null> {
+  ctx.state.testCommandUsed = commands.map((argv) => argv.join(" ")).join(" && ");
+  try {
+    await assertOwnedTestNodeModules(ctx.wt.path, "branch");
+  } catch (err) {
+    return await emitTestEnvironmentError(
+      ctx,
+      await declaredTestsEnvironmentDetail(ctx.wt.path, err),
+    );
+  }
+  return await runDeclaredStage(ctx, "tests", commands);
+}
+
 async function runTypecheckStage(ctx: ReconcileCtx): Promise<MergeResult | null> {
+  if (ctx.verify) return await runDeclaredStage(ctx, "typecheck", ctx.verify.typecheck);
   const timeout = ctx.deps.settings?.reconcileTypecheckTimeoutSec ?? 120;
   const affectedPackages = ctx.state.affectedPackages;
   try {
@@ -1696,8 +1857,7 @@ async function mergeBaseLockfileHash(ctx: ReconcileCtx): Promise<string> {
 
 async function testBaselineCacheKey(ctx: ReconcileCtx, testArgs: string[]): Promise<string> {
   const snapshot = requireSnapshot(ctx);
-  const installKey =
-    isolatedProvisioning().ISOLATED_INSTALL_CACHE_KEY ?? ISOLATED_INSTALL_CACHE_KEY;
+  const installKey = baselineInstallCacheKey(ctx);
   return [
     ctx.repoDir,
     snapshot.mergeBaseSha,
@@ -1705,6 +1865,15 @@ async function testBaselineCacheKey(ctx: ReconcileCtx, testArgs: string[]): Prom
     installKey,
     ...testArgs,
   ].join("\0");
+}
+
+// The baseline scratch installs with whatever its lockfile selects, which the
+// merge-base sha in the key already pins. Only a declared package_manager can
+// change the command for the same sha, so it joins the key.
+function baselineInstallCacheKey(ctx: ReconcileCtx): string {
+  const bunKey = isolatedProvisioning().ISOLATED_INSTALL_CACHE_KEY ?? ISOLATED_INSTALL_CACHE_KEY;
+  const declared = ctx.deps.packageManagerFor?.(ctx.projectId);
+  return declared === undefined || declared === "bun" ? bunKey : `package_manager:${declared}`;
 }
 
 function isolatedProvisioning(): CoreIsolatedProvisioning {
@@ -1836,6 +2005,7 @@ async function runBunTestBaseline(
     await provisioning.runIsolatedInstall(scratchPath, {
       runner: coreInstallRunner(ctx),
       timeoutMs: remainingStageMs(deadline),
+      packageManager: ctx.deps.packageManagerFor?.(ctx.projectId),
     });
     provisioning.materializeWorkspaceLinks(scratchPath);
     await assertOwnedTestNodeModules(scratchPath, "baseline");
@@ -1990,7 +2160,9 @@ async function runHeavyStage(
   run: () => Promise<MergeResult | null>,
 ): Promise<MergeResult | null> {
   const gate = ctx.deps.heavyStageGate;
-  if (!gate || !stageRunsCommands(ctx.state, stage)) return await run();
+  // Declared verify commands run for every diff, docs-only included.
+  const runsCommands = ctx.verify !== undefined || stageRunsCommands(ctx.state, stage);
+  if (!gate || !runsCommands) return await run();
   const entry = await gate.enter(`reconcile-${stage}`);
   if (!entry.ok) {
     return await emitResourceEnvironmentError(
@@ -2078,6 +2250,7 @@ async function evaluateBunTestOutcome(
 }
 
 async function runTestsStage(ctx: ReconcileCtx): Promise<MergeResult | null> {
+  if (ctx.verify) return await runDeclaredTestsStage(ctx, ctx.verify.tests);
   const { deps, wt, handoffId, state } = ctx;
   try {
     deps.log.debug({ handoffId }, "scoping tests from git diff");
@@ -2315,6 +2488,7 @@ export function createMergeReconciler(
       handoff,
       mode,
       projectId,
+      verify: deps.verifyCommandsFor?.(projectId),
       wt,
       baseRef,
       repoDir,

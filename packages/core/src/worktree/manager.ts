@@ -9,6 +9,11 @@ import { classifyBranchLandStatus } from "./branch-land-probe.js";
 import { resolveHandoffBranchName } from "./branch-name.js";
 import { classifyGitHooks, detectHookInstallerArgv, type WorktreeGitHooks } from "./git-hooks.js";
 import {
+  assertInstallBinariesOnPath,
+  type PackageManager,
+  resolveIsolatedInstallCommand,
+} from "./install-command.js";
+import {
   resolveWorktreeGitDir as resolveScratchGitDir,
   SCRATCH_OWNER_FILE,
   type ScratchDaemonIdentity,
@@ -29,8 +34,7 @@ const ISOLATED_INSTALL_STDERR_TAIL_CHARS = 16 * 1024;
 const SPAWN_STDERR_CAP = 16 * 1024;
 
 export type WorktreeMode = "symlink_mirror" | "isolated_install";
-export const ISOLATED_INSTALL_ARGS = ["install", "--ignore-scripts", "--frozen-lockfile"] as const;
-export const ISOLATED_INSTALL_CACHE_KEY = `bun ${ISOLATED_INSTALL_ARGS.join(" ")}`;
+export { ISOLATED_INSTALL_ARGS, ISOLATED_INSTALL_CACHE_KEY } from "./install-command.js";
 
 export interface WorktreeCommandRunnerOptions {
   cwd?: string;
@@ -85,6 +89,7 @@ export interface CreateOpts {
 }
 
 export type ResolveProjectRoot = (project_id: string) => string | undefined;
+export type ResolvePackageManager = (project_id: string) => PackageManager | undefined;
 export type ResolveHandoffBranchNameById = (handoff_id: string) => string | null | undefined;
 export type BranchNameDriftHandler = (
   handoffId: string,
@@ -102,6 +107,9 @@ interface WorktreeManagerOpts {
   // unknown_project_id. Lets a live-reloaded registry treat "zero entries" as
   // "no project mapping configured" without uninstalling the resolver.
   requireKnownProjectId?: () => boolean;
+  // The project's declared package_manager; undefined detects it from the
+  // worktree's lockfile.
+  resolvePackageManager?: ResolvePackageManager;
   resolveBranchName?: ResolveHandoffBranchNameById;
   onBranchNameDrift?: BranchNameDriftHandler;
   runner?: WorktreeCommandRunner;
@@ -200,16 +208,25 @@ function spawnSilent(
 // eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve isolated-install orchestration while grandfathering its pre-existing complexity.
 export async function runIsolatedInstall(
   wtPath: string,
-  opts: { runner?: WorktreeCommandRunner; signal?: AbortSignal; timeoutMs?: number } = {},
+  opts: {
+    runner?: WorktreeCommandRunner;
+    signal?: AbortSignal;
+    timeoutMs?: number;
+    packageManager?: PackageManager;
+    env?: NodeJS.ProcessEnv;
+  } = {},
 ): Promise<void> {
   const timeout =
     opts.timeoutMs ??
     readPositiveIntEnv("PENUMBRA_ISOLATED_INSTALL_TIMEOUT_MS", DEFAULT_ISOLATED_INSTALL_TIMEOUT_MS);
   const runner = opts.runner ?? defaultRunner;
-  const [installCmd = "bun", ...installArgs] = wrapResourceScopeArgv(
-    ["bun", ...ISOLATED_INSTALL_ARGS],
-    { label: "install" },
-  );
+  const env = opts.env ?? process.env;
+  const install = resolveIsolatedInstallCommand(wtPath, opts.packageManager);
+  assertInstallBinariesOnPath(install, env);
+  const { manager } = install;
+  const [installCmd = "bun", ...installArgs] = wrapResourceScopeArgv(install.argv, {
+    label: "install",
+  });
   try {
     await runner(installCmd, installArgs, {
       cwd: wtPath,
@@ -217,21 +234,21 @@ export async function runIsolatedInstall(
       maxBuffer: ISOLATED_INSTALL_MAX_BUFFER,
       encoding: "utf8",
       signal: opts.signal,
-      env: process.env,
+      env,
     });
   } catch (err) {
     // A deliberate cancellation is not a timeout — re-throw it unwrapped so
     // callers can distinguish the two.
     if (isAbortError(err)) throw err;
     if (isTimeoutError(err, timeout)) {
-      throw new Error(`isolated bun install timed out after ${String(timeout)}ms`, {
+      throw new Error(`isolated ${manager} install timed out after ${String(timeout)}ms`, {
         cause: err instanceof Error ? err : new Error(String(err)),
       });
     }
     if (isResourceKill(exitInfoFromError(err))) {
       throw Object.assign(
         new Error(
-          "isolated bun install was SIGKILLed outside penumbra (job scope MemoryMax or host OOM)",
+          `isolated ${manager} install was SIGKILLed outside penumbra (job scope MemoryMax or host OOM)`,
           { cause: err instanceof Error ? err : new Error(String(err)) },
         ),
         { resourceKilled: true as const, signal: "SIGKILL" },
@@ -239,7 +256,7 @@ export async function runIsolatedInstall(
     }
     const stderrTail = stderrTailFromError(err);
     if (stderrTail.length > 0) {
-      throw new Error(`isolated bun install failed: ${stderrTail}`, {
+      throw new Error(`isolated ${manager} install failed: ${stderrTail}`, {
         cause: err instanceof Error ? err : new Error(String(err)),
       });
     }
@@ -292,6 +309,7 @@ export class WorktreeManager {
   private log: Logger;
   private resolveProjectRoot?: ResolveProjectRoot;
   private requireKnownProjectId?: () => boolean;
+  private resolvePackageManager?: ResolvePackageManager;
   private resolveBranchName?: ResolveHandoffBranchNameById;
   private onBranchNameDrift?: BranchNameDriftHandler;
   private runner: WorktreeCommandRunner;
@@ -303,6 +321,7 @@ export class WorktreeManager {
     this.log = opts?.log ?? NOOP_LOG;
     this.resolveProjectRoot = opts?.resolveProjectRoot;
     this.requireKnownProjectId = opts?.requireKnownProjectId;
+    this.resolvePackageManager = opts?.resolvePackageManager;
     this.resolveBranchName = opts?.resolveBranchName;
     this.onBranchNameDrift = opts?.onBranchNameDrift;
     this.runner = opts?.runner ?? defaultRunner;
@@ -527,12 +546,12 @@ export class WorktreeManager {
     repoRoot: string,
     handoffId: string,
     worktreeMode: WorktreeMode,
-    signal: AbortSignal | undefined,
+    install: { signal: AbortSignal | undefined; packageManager: PackageManager | undefined },
   ): Promise<void> {
     if (worktreeMode === "isolated_install") {
       prepareEscapingFileDependencyLinks(repoRoot, wtPath);
       provisionLocalCache(repoRoot, wtPath);
-      await runIsolatedInstall(wtPath, { runner: this.runner, signal });
+      await runIsolatedInstall(wtPath, { runner: this.runner, ...install });
       materializeWorkspaceLinks(wtPath);
     } else {
       mirrorNodeModuleSymlinks(repoRoot, wtPath, this.log);
@@ -623,7 +642,10 @@ export class WorktreeManager {
       fs.mkdirSync(storageRoot, { recursive: true });
       writeWorktreeMode(wtPath, worktreeMode);
 
-      await this.finalizeWorktreeMode(wtPath, repoRoot, handoffId, worktreeMode, opts?.signal);
+      await this.finalizeWorktreeMode(wtPath, repoRoot, handoffId, worktreeMode, {
+        signal: opts?.signal,
+        packageManager: project_id ? this.resolvePackageManager?.(project_id) : undefined,
+      });
 
       if (worktreeMode === "isolated_install") {
         await this.installIsolatedGitHooks(wtPath, handoffId, opts?.signal);

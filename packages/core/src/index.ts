@@ -173,6 +173,8 @@ export {
   type ReconcileMode,
   reconcileModeOf,
   ReconcileModeSchema,
+  type VerifyArgv,
+  verifyArgvOf,
 } from "./projects/schema.js";
 export {
   type AgentResponseEvent,

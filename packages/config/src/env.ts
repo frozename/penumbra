@@ -1270,7 +1270,7 @@ export const ENV_REGISTRY: Readonly<Record<string, EnvEntry<unknown>>> = {
     schema: PosInt,
     default: 120_000,
     description:
-      "Timeout in milliseconds for the isolated `bun install` run on a new worktree (core/worktree/manager.ts).",
+      "Timeout in milliseconds for the isolated install on a new worktree: `bun install`, or `npm ci` for an npm project (core/worktree/manager.ts).",
   },
 
   // ── job resource limits (core/process/resource-scope.ts) ────────────

@@ -13,6 +13,7 @@ import {
   resolveSandboxDenyRoots,
   SettingsDefaults,
   systemUuid,
+  verifyArgvOf,
   waitForDaemonStorageRoot,
 } from "@penumbra/core";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -1102,6 +1103,10 @@ const reconcileWorktree = createMergeReconciler({
     reconcileModeOf(projectId === undefined ? undefined : projectRegistry.get(projectId)),
   autoRebaseFor: (projectId) =>
     projectId === undefined ? undefined : projectRegistry.get(projectId)?.auto_rebase,
+  verifyCommandsFor: (projectId) =>
+    verifyArgvOf(projectId === undefined ? undefined : projectRegistry.get(projectId)),
+  packageManagerFor: (projectId) =>
+    projectId === undefined ? undefined : projectRegistry.get(projectId)?.package_manager,
   settings,
   heavyStageGate: jobResources.heavyStageGate,
   emitVerdict: (verdict) =>
