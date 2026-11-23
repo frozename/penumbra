@@ -101,7 +101,7 @@ describe("merge reconciler with a project's declared verify commands", () => {
     verify?: VerifyArgv;
     runCommand?: CommandStub;
     change?: "docs" | "source";
-    nodeModules?: "owned" | "symlink";
+    nodeModules?: "missing" | "owned" | "symlink";
   }): Promise<ReturnType<typeof createMergeReconciler>> {
     const manager = new WorktreeManager({
       rootDir: join(tmp, "default-worktrees"),
@@ -118,7 +118,7 @@ describe("merge reconciler with a project's declared verify commands", () => {
     if (opts.nodeModules === "symlink") {
       mkdirSync(join(tmp, "shared-node-modules"));
       symlinkSync(join(tmp, "shared-node-modules"), join(worktree.path, "node_modules"));
-    } else {
+    } else if (opts.nodeModules !== "missing") {
       mkdirSync(join(worktree.path, "node_modules"));
     }
 
@@ -260,7 +260,59 @@ describe("merge reconciler with a project's declared verify commands", () => {
     expect(verdicts[0]?.tests).toBe("fail");
   });
 
-  test("a declared command that cannot start is an environment error, not a fail", async () => {
+  test("a declared command that exits non-zero and prints nothing is a fail, not an error", async () => {
+    const reconciler = await setup({
+      verify: HURAYRA_VERIFY,
+      runCommand: (command) =>
+        command === "npm run lint"
+          ? Promise.reject(commandFailure("", 1))
+          : Promise.resolve({ stdout: "", stderr: "" }),
+    });
+
+    const result = await reconciler(handoffId);
+
+    expect(result.status).toBe("test_failed");
+    expect(result.verification_environment_error).toBeUndefined();
+    expect(result.regression_summary).toContain("npm run lint failed with exit code 1");
+    expect(result.regression_summary).toContain("printed nothing");
+    expect(verdicts[0]?.typecheck).toBe("pass");
+    expect(verdicts[0]?.tests).toBe("fail");
+  });
+
+  test("a silent failing declared typecheck command is a typecheck fail", async () => {
+    const reconciler = await setup({
+      verify: HURAYRA_VERIFY,
+      runCommand: () => Promise.reject(commandFailure("", 2)),
+    });
+
+    const result = await reconciler(handoffId);
+
+    expect(result.status).toBe("typecheck_failed");
+    expect(result.verification_environment_error).toBeUndefined();
+    expect(verdicts[0]?.typecheck).toBe("fail");
+  });
+
+  test("a declared command killed by a signal other than SIGKILL is a fail", async () => {
+    const reconciler = await setup({
+      verify: HURAYRA_VERIFY,
+      runCommand: () =>
+        Promise.reject(
+          Object.assign(new Error("command died"), {
+            code: null,
+            signal: "SIGSEGV",
+            stdout: "",
+            stderr: "",
+          }),
+        ),
+    });
+
+    const result = await reconciler(handoffId);
+
+    expect(result.verification_environment_error).toBeUndefined();
+    expect(verdicts[0]?.typecheck).toBe("fail");
+  });
+
+  test("a declared command that cannot start (ENOENT) is an environment error, not a fail", async () => {
     const reconciler = await setup({
       verify: HURAYRA_VERIFY,
       runCommand: () =>
@@ -272,6 +324,49 @@ describe("merge reconciler with a project's declared verify commands", () => {
     expect(result.status).toBe("typecheck_failed");
     expect(result.verification_environment_error).toBe(true);
     expect(result.regression_summary).toContain("spawn npm ENOENT");
+    expect(commands.map((c) => c.command)).toEqual(["npm run typecheck"]);
+    expect(verdicts[0]?.typecheck).toBe("error");
+  });
+
+  test("a start failure is an environment error even when the error carries output", async () => {
+    const reconciler = await setup({
+      verify: HURAYRA_VERIFY,
+      runCommand: (command) =>
+        command === "npm run lint"
+          ? Promise.reject(
+              Object.assign(new Error("spawn npm EACCES"), {
+                code: "EACCES",
+                stdout: "",
+                stderr: "permission denied\n",
+              }),
+            )
+          : Promise.resolve({ stdout: "", stderr: "" }),
+    });
+
+    const result = await reconciler(handoffId);
+
+    expect(result.status).toBe("test_failed");
+    expect(result.verification_environment_error).toBe(true);
+    expect(result.regression_summary).toContain("spawn npm EACCES");
+    expect(verdicts[0]?.tests).toBe("error");
+  });
+
+  test("a job scope that fails to launch is an environment error", async () => {
+    const reconciler = await setup({
+      verify: HURAYRA_VERIFY,
+      runCommand: () =>
+        Promise.reject(
+          Object.assign(new Error("command exited with 1"), {
+            code: 1,
+            stdout: "",
+            stderr: "Failed to start transient scope unit: Connection refused\n",
+          }),
+        ),
+    });
+
+    const result = await reconciler(handoffId);
+
+    expect(result.verification_environment_error).toBe(true);
     expect(verdicts[0]?.typecheck).toBe("error");
   });
 
@@ -313,8 +408,25 @@ describe("merge reconciler with a project's declared verify commands", () => {
     expect(result.status).toBe("test_failed");
     expect(result.verification_environment_error).toBe(true);
     expect(result.regression_summary).toContain("node_modules is a symlink");
+    expect(result.regression_summary).toContain("isolated_install: false");
+    expect(result.regression_summary).toContain("Dispatch again with isolated_install: true");
     expect(commands.map((c) => c.command)).toEqual(["npm run typecheck"]);
     expect(verdicts[0]?.typecheck).toBe("pass");
+    expect(verdicts[0]?.tests).toBe("error");
+  });
+  test("declared tests in a worktree with no node_modules say verify needs an isolated install", async () => {
+    const reconciler = await setup({ verify: HURAYRA_VERIFY, nodeModules: "missing" });
+
+    const result = await reconciler(handoffId);
+
+    expect(result.status).toBe("test_failed");
+    expect(result.verification_environment_error).toBe(true);
+    expect(result.regression_summary).toContain(
+      `verify commands need the worktree's own node_modules, and ${join(worktree.path, "node_modules")} does not exist`,
+    );
+    expect(result.regression_summary).toContain("isolated_install: true");
+    expect(result.regression_summary).toContain("remove verify from its projects.yaml entry");
+    expect(commands.map((c) => c.command)).toEqual(["npm run typecheck"]);
     expect(verdicts[0]?.tests).toBe("error");
   });
 });

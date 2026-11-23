@@ -1566,12 +1566,34 @@ async function handleTypecheckErrorUnparsed(
 
 type DeclaredOutcome =
   | { kind: "environment"; detail: string }
-  | { kind: "fail"; command: string; output: string }
+  | { kind: "fail"; command: string; how: string; output: string }
   | { kind: "pass" }
   | { kind: "resource_killed" }
   | { kind: "timeout"; command: string };
 
 const DECLARED_OUTPUT_TAIL_CHARS = 16 * 1024;
+
+// The built-in stages read empty output as an environment fault. A declared
+// command's exit status is its verdict, so a silent non-zero exit is a fail:
+// only a command that never started (no exit code and no signal, e.g. ENOENT)
+// or a job scope that failed to launch is the environment's.
+function isDeclaredCommandEnvironmentFailure(info: CommandErrorInfo): boolean {
+  return (
+    (info.exitCode < 0 && info.signal === null) ||
+    (info.exitCode === 1 && isResourceScopeLaunchFailure(info.stderr))
+  );
+}
+
+function declaredCommandErrorOutcome(command: string, err: unknown): DeclaredOutcome {
+  const info = commandErrorInfo(err);
+  if (isResourceKilledCommand(info)) return { kind: "resource_killed" };
+  if (isDeclaredCommandEnvironmentFailure(info)) {
+    return { kind: "environment", detail: `${command}: ${String(err)}` };
+  }
+  const how = info.signal === null ? `exit code ${String(info.exitCode)}` : `signal ${info.signal}`;
+  const output = `${info.stdout}${info.stderr}`.slice(-DECLARED_OUTPUT_TAIL_CHARS);
+  return { kind: "fail", command, how, output };
+}
 
 // Runs a project's declared gate commands in order, in the worktree, sharing
 // one stage deadline. The exit status is the verdict: there is no bun-test
@@ -1588,13 +1610,7 @@ async function runDeclaredCommands(
       const res = await execCmd(ctx, argv, ctx.wt.path, remainingStageSeconds(deadline));
       if (res.timedOut) return { kind: "timeout", command };
     } catch (err: unknown) {
-      const info = commandErrorInfo(err);
-      if (isResourceKilledCommand(info)) return { kind: "resource_killed" };
-      if (isVerificationEnvironmentFailure(info)) {
-        return { kind: "environment", detail: `${command}: ${String(err)}` };
-      }
-      const output = `${info.stdout}${info.stderr}`.slice(-DECLARED_OUTPUT_TAIL_CHARS);
-      return { kind: "fail", command, output };
+      return declaredCommandErrorOutcome(command, err);
     }
   }
   return { kind: "pass" };
@@ -1641,9 +1657,41 @@ async function runDeclaredStage(
   const result: MergeResult =
     outcome.kind === "timeout"
       ? { status, timed_out: true, regression_summary: `${outcome.command} timed out` }
-      : { status, regression_summary: `${outcome.command} failed:\n${outcome.output}` };
+      : { status, regression_summary: declaredFailureSummary(outcome) };
   await emitResult(ctx, result);
   return result;
+}
+
+function declaredFailureSummary(outcome: { command: string; how: string; output: string }): string {
+  const head = `${outcome.command} failed with ${outcome.how}`;
+  return outcome.output.trim() === ""
+    ? `${head} and printed nothing`
+    : `${head}:\n${outcome.output}`;
+}
+
+// A project that declares verify gets its tests verdict only from a worktree
+// that owns its node_modules. Say which case this is and what fixes it.
+async function declaredTestsEnvironmentDetail(wtPath: string, err: unknown): Promise<string> {
+  const nodeModulesPath = join(wtPath, "node_modules");
+  const need =
+    "the project declares verify in projects.yaml, and verify commands need the worktree's own node_modules";
+  const stat = await lstat(nodeModulesPath).catch(() => null);
+  if (stat === null) {
+    return (
+      `${need}, and ${nodeModulesPath} does not exist. ` +
+      "The worktree was created without an isolated install, or the project installs no node_modules. " +
+      "Dispatch again with isolated_install: true (or run the worker with PENUMBRA_ISOLATED_INSTALL_AUTO=1); " +
+      "for a project that has no node_modules, remove verify from its projects.yaml entry."
+    );
+  }
+  if (stat.isSymbolicLink()) {
+    return (
+      `${need}, but ${nodeModulesPath}: node_modules is a symlink into the main checkout ` +
+      "(the dispatch used isolated_install: false, or isolated install is not on by default). " +
+      "Dispatch again with isolated_install: true and without isolated_install: false."
+    );
+  }
+  return String(err);
 }
 
 async function runDeclaredTestsStage(
@@ -1654,7 +1702,10 @@ async function runDeclaredTestsStage(
   try {
     await assertOwnedTestNodeModules(ctx.wt.path, "branch");
   } catch (err) {
-    return await emitTestEnvironmentError(ctx, String(err));
+    return await emitTestEnvironmentError(
+      ctx,
+      await declaredTestsEnvironmentDetail(ctx.wt.path, err),
+    );
   }
   return await runDeclaredStage(ctx, "tests", commands);
 }
