@@ -802,6 +802,8 @@ test("rejects verify commands that need a shell", () => {
   for (const command of [
     "npm run typecheck && npm run lint",
     "TZ=UTC jest",
+    "NODE_ENV=test npm run test --ci=true",
+    "=value npm test",
     "npm test | tee log",
     "npm run 'test tz'",
     "npm  run  test",
@@ -825,4 +827,28 @@ test("rejects verify commands that need a shell", () => {
 
     expect(() => loadProjectRegistry(path)).toThrow(ProjectRegistryParseError);
   }
+});
+
+test("accepts --flag=value arguments after the first word of a verify command", () => {
+  const dir = mkdtempSync(join(tmpdir(), "penumbra-project-registry-"));
+  dirs.push(dir);
+  const path = join(dir, "projects.yaml");
+  writeFileSync(
+    path,
+    `projects:
+  - project_id: app
+    root_path: /tmp/app
+    verify:
+      typecheck:
+        - npx tsc --project=tsconfig.json
+      tests:
+        - npm run test -- --maxWorkers=2 --testTimeout=10000
+`,
+  );
+
+  const registry = loadProjectRegistry(path);
+  expect(verifyArgvOf(registry.get("app"))).toEqual({
+    typecheck: [["npx", "tsc", "--project=tsconfig.json"]],
+    tests: [["npm", "run", "test", "--", "--maxWorkers=2", "--testTimeout=10000"]],
+  });
 });

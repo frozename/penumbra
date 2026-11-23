@@ -16,12 +16,14 @@ export const PackageManagerSchema = z.enum(PACKAGE_MANAGERS);
 
 // A verify command runs without a shell: it is split on single spaces into an
 // argv. Quotes, pipes, redirects, `&&` and VAR=value prefixes are rejected so
-// nobody writes one that only a shell would understand.
-const VERIFY_WORD = "[A-Za-z0-9_@%+:,./-]+";
+// nobody writes one that only a shell would understand. `=` is allowed after
+// the first word, for --flag=value arguments.
+const VERIFY_FIRST_WORD = "[A-Za-z0-9_@%+:,./-]+";
+const VERIFY_WORD = "[A-Za-z0-9_@%+:,./=-]+";
 export const VerifyCommandSchema = z
   .string()
   .regex(
-    new RegExp(`^${VERIFY_WORD}( ${VERIFY_WORD})*$`),
+    new RegExp(`^${VERIFY_FIRST_WORD}( ${VERIFY_WORD})*$`),
     "verify command must be plain words separated by single spaces (it runs without a shell)",
   );
 
