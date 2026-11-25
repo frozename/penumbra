@@ -1124,12 +1124,14 @@ const terminalIdFromParams = (method: string, params: AcpTerminalIdParams): stri
   return terminalId;
 };
 
-const commandStringFromParams = (params: AcpTerminalCreateParams): string =>
-  params.command ?? params.args?.join(" ") ?? "";
+const terminalCreateArgvFromParams = (command: string, args?: string[]): string[] => {
+  if (args !== undefined) return [command, ...args];
+  return ["bash", "-c", command];
+};
 
-const commandProgramFromParams = (params: AcpTerminalCreateParams): string => {
-  const command = commandStringFromParams(params).trimStart();
-  return command.split(/\s+/, 1)[0] ?? "";
+const terminalCommandProgram = (command: string): string => {
+  const trimmed = command.trimStart();
+  return trimmed.split(/\s+/, 1)[0] ?? "";
 };
 
 const withTerminalAliases = (result: unknown): unknown => {
@@ -1155,9 +1157,15 @@ function registerTerminalCreateHandler(ctx: DispatchTurnContext): void {
       arm();
       try {
         if (!input.executor) throw new Error("terminal/create: no executor");
-        // A non-string argv is malformed JSON-RPC input (-32602), not a
-        // profile deny: validate before the gate and the executor so an
+        // Malformed command/argv vectors are JSON-RPC input errors (-32602),
+        // not profile denies: validate before the gate and the executor so an
         // uninspectable vector can never reach either.
+        const command: unknown = params.command;
+        if (typeof command !== "string") {
+          const invalid = new Error("terminal/create: command must be a string") as MappedError;
+          invalid.code = -32602;
+          throw invalid;
+        }
         const args: unknown = params.args;
         if (
           args !== undefined &&
@@ -1169,31 +1177,27 @@ function registerTerminalCreateHandler(ctx: DispatchTurnContext): void {
           invalid.code = -32602;
           throw invalid;
         }
-        assertProfileAllowsWriteTool(input, "terminal.create", {
-          argv: params.args ?? null,
-          cmd: params.command ?? null,
-        });
+        const argv = terminalCreateArgvFromParams(command, params.args);
+        const profileRawInput = { argv, cmd: null };
+        assertProfileAllowsWriteTool(input, "terminal.create", profileRawInput);
         const resolvedCwd = await validateTerminalCwd(params.cwd, ctx.cwd);
         if (input.trust_mode === "all") {
-          const command = commandStringFromParams(params);
           // eslint-disable-next-line no-console -- Preserve the established operator-facing auto-approval log.
           console.info(
             // eslint-disable-next-line @typescript-eslint/restrict-template-expressions -- Preserve the established numeric command-length log field.
-            `stdio-acp: terminal/create auto-approved cwd=${resolvedCwd} program=${commandProgramFromParams(params)} commandLength=${command.length}`,
+            `stdio-acp: terminal/create auto-approved cwd=${resolvedCwd} program=${terminalCommandProgram(command)} commandLength=${command.length}`,
           );
         }
         const result = await input.executor.terminalCreate(
           {
-            command: params.command,
-            argv: params.args,
+            argv,
             cwd: resolvedCwd,
             output_byte_limit: params.output_byte_limit ?? params.outputByteLimit,
           },
           {
             toolName: "terminal.create",
             rawInput: {
-              argv: params.args ?? null,
-              cmd: params.command ?? null,
+              ...profileRawInput,
               cwd: resolvedCwd,
             },
             dispatchId: input.handoff_id ?? "unknown",

@@ -756,6 +756,13 @@ function classifyNonGitProgram(
   return DENY_PROGRAMS.has(program) ? `'${program}' is a mutating or side-effect command` : null;
 }
 
+const PARSEABLE_DASH_C_SHELLS = new Set(["ash", "bash", "dash", "sh"]);
+
+function parseableDashCScript(argv: string[], program: string): string | null {
+  if (!PARSEABLE_DASH_C_SHELLS.has(program) || argv[1] !== "-c") return null;
+  return argv[2] ?? null;
+}
+
 function classifyArgv(argv: string[], bindings: BindingMap): string | null {
   const dangerousEnv = dangerousEnvAssignment(argv);
   if (dangerousEnv !== null) return `env assignment '${dangerousEnv}=' enables code injection`;
@@ -774,6 +781,11 @@ function classifyArgv(argv: string[], bindings: BindingMap): string | null {
   }
   const program = basenameOf(programWord);
   if (program === "") return null;
+  const nestedScript = parseableDashCScript(stripped, program);
+  if (nestedScript !== null) {
+    const nested = classifyCommandWithBindings(nestedScript, new Map());
+    return nested.decision === "deny" ? nested.reason : null;
+  }
   if (program === "builtin") {
     const hit = stripped.slice(1).find((arg) => BUILTIN_MUTATE_FLAGS.has(arg));
     return hit === undefined ? null : `builtin ${hit} loads or removes shell builtins`;
@@ -783,10 +795,10 @@ function classifyArgv(argv: string[], bindings: BindingMap): string | null {
 }
 
 /**
- * Classify a pre-tokenized argv (e.g. ACP terminal/create `args`). Unlike
- * classifyShellCommand no shell re-parse happens: operators in argv members
- * are data, not syntax. Leading env assignments and wrapper prefixes still
- * apply because argv can carry them directly.
+ * Classify a pre-tokenized argv (e.g. ACP terminal/create `args`). Operators
+ * in ordinary argv members are data, not syntax; a shell's `-c` operand is the
+ * exception because the spawned shell parses it as a command. Leading env
+ * assignments and wrapper prefixes still apply because argv can carry them directly.
  */
 export function classifyShellArgv(argv: readonly string[]): ShellClassifyResult {
   const deny = classifyArgv([...argv], new Map());

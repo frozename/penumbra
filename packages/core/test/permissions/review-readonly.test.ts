@@ -1,6 +1,7 @@
 import { PermissionProfileSchema } from "@penumbra/api-contract";
 import {
   agentEnforcesPermissionProfile,
+  classifyShellArgv,
   classifyShellCommand,
   evaluateProfileToolCall,
   PERMISSION_PROFILE_REVIEW_READONLY,
@@ -933,6 +934,18 @@ describe("evaluateProfileToolCall", () => {
         argv: ["env", "GIT_PAGER=sh", "git", "log"],
       }).decision,
     ).toBe("deny");
+  });
+
+  test("terminal.create shell -c argv inspects the nested shell script", () => {
+    expect(classifyShellArgv(["bash", "-c", "git status"])).toEqual({ decision: "allow" });
+
+    const denied = evaluateProfileToolCall(profile, "terminal.create", {
+      argv: ["/bin/sh", "-c", "rm -f x"],
+    });
+    expect(denied.decision).toBe("deny");
+    if (denied.decision === "deny") {
+      expect(denied.reason).toContain("rm");
+    }
   });
 
   test("every command-string field is classified, not just the first", () => {

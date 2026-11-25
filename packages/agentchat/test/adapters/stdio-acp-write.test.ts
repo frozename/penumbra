@@ -320,8 +320,8 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
     await harness.runDispatch();
     const handler = harness.getHandler("terminal/create");
     const result = await handler?.({
-      command: "echo hello",
-      args: ["echo", "hello"],
+      command: "/bin/sh",
+      args: ["-c", "printf hi"],
       cwd: "/tmp",
       output_byte_limit: 1234,
     });
@@ -331,14 +331,13 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
     expect(calls).toEqual([
       {
         args: {
-          command: "echo hello",
-          argv: ["echo", "hello"],
+          argv: ["/bin/sh", "-c", "printf hi"],
           cwd: tmpReal,
           output_byte_limit: 1234,
         },
         ctx: {
           toolName: "terminal.create",
-          rawInput: { argv: ["echo", "hello"], cmd: "echo hello", cwd: tmpReal },
+          rawInput: { argv: ["/bin/sh", "-c", "printf hi"], cmd: null, cwd: tmpReal },
           dispatchId: "handoff-1",
         },
       },
@@ -399,8 +398,7 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
 
     expect(calls).toEqual([
       {
-        command: "echo hello",
-        argv: undefined,
+        argv: ["bash", "-c", "echo hello"],
         cwd: await realpath("/tmp"),
         output_byte_limit: 4321,
       },
@@ -425,8 +423,7 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
 
     expect(calls).toEqual([
       {
-        command: "echo hello",
-        argv: undefined,
+        argv: ["bash", "-c", "echo hello"],
         cwd: await realpath("/tmp"),
         output_byte_limit: 1234,
       },
@@ -1505,14 +1502,17 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
       expect(calls).toEqual([
         {
           args: {
-            command: "echo hello",
-            argv: undefined,
+            argv: ["bash", "-c", "echo hello"],
             cwd: await realpath(subdir),
             output_byte_limit: undefined,
           },
           ctx: {
             toolName: "terminal.create",
-            rawInput: { argv: null, cmd: "echo hello", cwd: await realpath(subdir) },
+            rawInput: {
+              argv: ["bash", "-c", "echo hello"],
+              cmd: null,
+              cwd: await realpath(subdir),
+            },
             dispatchId: "handoff-1",
           },
         },
@@ -1594,7 +1594,7 @@ describe("StdioAcpAdapter permission_profile handler gates", () => {
     expect(terminalCreate).toHaveBeenCalledTimes(1);
   });
 
-  test("terminal/create under review_readonly fails closed on uninspectable input", async () => {
+  test("terminal/create rejects a missing command with -32602 before gate and executor", async () => {
     const terminalCreate = vi.fn(() => Promise.resolve({ terminal_id: "t-1" }));
     const harness = createHarness(
       { terminal: true },
@@ -1605,13 +1605,13 @@ describe("StdioAcpAdapter permission_profile handler gates", () => {
     const handler = harness.getHandler("terminal/create");
 
     const outcome = await captureError(handler?.({ cwd: "." }));
-    expect(errorCode(outcome.error)).toBe(-32004);
+    expect(errorCode(outcome.error)).toBe(-32602);
     expect(terminalCreate).not.toHaveBeenCalled();
   });
 
   test.each([
     { command: "ls", args: ["rm", "-rf", ".", 1] },
-    { args: [["rm"]] },
+    { command: "ls", args: [["rm"]] },
     { command: "ls", args: "rm -rf ." },
   ])(
     "terminal/create rejects non-string args with -32602 before gate and executor: %j",

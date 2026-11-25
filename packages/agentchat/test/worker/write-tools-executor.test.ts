@@ -489,29 +489,10 @@ describe("WriteToolsExecutor.terminal* (one-shot)", () => {
     }
   });
 
-  test("argv preferred over cmd when both set", async () => {
+  test("shell argv form runs via bash -c", async () => {
     await withSandboxedExecutor(async ({ executor }) => {
       const { terminal_id } = await executor.terminalCreate(
-        {
-          argv: ["echo", "A"],
-          command: "echo B",
-        },
-        {
-          toolName: "terminal.create",
-          rawInput: {},
-          dispatchId: "d-test",
-        },
-      );
-      await executor.terminalWaitForExit({ terminal_id });
-      const { output } = await executor.terminalOutput({ terminal_id });
-      expect(output.trim()).toBe("A");
-    });
-  });
-
-  test("cmd form runs via bash -c", async () => {
-    await withSandboxedExecutor(async ({ executor }) => {
-      const { terminal_id } = await executor.terminalCreate(
-        { command: "echo hi-cmd" },
+        { argv: ["bash", "-c", "echo hi-cmd"] },
         {
           toolName: "terminal.create",
           rawInput: {},
@@ -527,7 +508,7 @@ describe("WriteToolsExecutor.terminal* (one-shot)", () => {
   test("output truncation flag with output_byte_limit", async () => {
     await withSandboxedExecutor(async ({ executor }) => {
       const { terminal_id } = await executor.terminalCreate(
-        { command: "yes", output_byte_limit: 4096 },
+        { argv: ["bash", "-c", "yes"], output_byte_limit: 4096 },
         {
           toolName: "terminal.create",
           rawInput: {},
@@ -1064,7 +1045,7 @@ describe("WriteToolsExecutor permissionProfile sandbox wrap", () => {
       await withSandboxedExecutor(
         async ({ executor, worktreeRoot }) => {
           const { terminal_id } = await executor.terminalCreate(
-            { command: "touch denied-marker" },
+            { argv: ["bash", "-c", "touch denied-marker"] },
             { toolName: "terminal.create", rawInput: {}, dispatchId: "d-test" },
           );
           const { exit_status } = await executor.terminalWaitForExit({ terminal_id });
@@ -1086,7 +1067,7 @@ describe("WriteToolsExecutor permissionProfile sandbox wrap", () => {
       await withSandboxedExecutor(
         async ({ executor }) => {
           const { terminal_id } = await executor.terminalCreate(
-            { command: "echo readonly-ok" },
+            { argv: ["bash", "-c", "echo readonly-ok"] },
             { toolName: "terminal.create", rawInput: {}, dispatchId: "d-test" },
           );
           const { exit_status } = await executor.terminalWaitForExit({ terminal_id });
@@ -1104,7 +1085,7 @@ describe("WriteToolsExecutor permissionProfile sandbox wrap", () => {
         async ({ executor }) => {
           await expectRejection(
             executor.terminalCreate(
-              { command: "echo hi" },
+              { argv: ["bash", "-c", "echo hi"] },
               { toolName: "terminal.create", rawInput: {}, dispatchId: "d-test" },
             ),
             SandboxUnavailableError,
@@ -1123,7 +1104,7 @@ describe("WriteToolsExecutor permissionProfile sandbox wrap", () => {
         await withSandboxedExecutor(
           async ({ executor }) => {
             const { terminal_id } = await executor.terminalCreate(
-              { command: `touch ${callerRoot}/denied-marker` },
+              { argv: ["bash", "-c", `touch ${callerRoot}/denied-marker`] },
               { toolName: "terminal.create", rawInput: {}, dispatchId: "d-test" },
             );
             const { exit_status } = await executor.terminalWaitForExit({ terminal_id });
@@ -1145,7 +1126,7 @@ describe("WriteToolsExecutor permissionProfile sandbox wrap", () => {
   test("unprofiled dispatch spawns without the sandbox wrapper", async () => {
     await withSandboxedExecutor(async ({ executor, worktreeRoot }) => {
       const { terminal_id } = await executor.terminalCreate(
-        { command: "echo unsandboxed > allowed-marker" },
+        { argv: ["bash", "-c", "echo unsandboxed > allowed-marker"] },
         { toolName: "terminal.create", rawInput: {}, dispatchId: "d-test" },
       );
       const { exit_status } = await executor.terminalWaitForExit({ terminal_id });
