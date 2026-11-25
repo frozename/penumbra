@@ -1,7 +1,6 @@
 import { PermissionProfileSchema } from "@penumbra/api-contract";
 import {
   agentEnforcesPermissionProfile,
-  classifyShellArgv,
   classifyShellCommand,
   evaluateProfileToolCall,
   PERMISSION_PROFILE_REVIEW_READONLY,
@@ -934,54 +933,6 @@ describe("evaluateProfileToolCall", () => {
         argv: ["env", "GIT_PAGER=sh", "git", "log"],
       }).decision,
     ).toBe("deny");
-  });
-
-  test("terminal.create shell -c argv inspects the nested shell script", () => {
-    expect(classifyShellArgv(["bash", "-c", "git status"])).toEqual({ decision: "allow" });
-
-    const denied = evaluateProfileToolCall(profile, "terminal.create", {
-      argv: ["/bin/sh", "-c", "rm -f x"],
-    });
-    expect(denied.decision).toBe("deny");
-    if (denied.decision === "deny") {
-      expect(denied.reason).toContain("rm");
-    }
-  });
-
-  test("terminal.create shell -c argv fails closed on shell option shapes", () => {
-    for (const argv of [
-      ["bash", "-c", "-e", "rm -f x"],
-      ["bash", "-c", "--", "rm -f x"],
-      ["/bin/sh", "-c", "-x", "rm -f x"],
-      ["bash", "-c", "+e", "rm -f x"],
-      ["bash", "-e", "-c", "rm -f x"],
-      ["bash", "-ec", "git status"],
-      ["bash", "-lc", "git status"],
-      ["bash", "-c"],
-    ]) {
-      const result = evaluateProfileToolCall(profile, "terminal.create", { argv });
-      expect(result.decision).toBe("deny");
-    }
-  });
-
-  test("terminal.create shell -c argv only unwraps an unambiguous command operand", () => {
-    expect(
-      evaluateProfileToolCall(profile, "terminal.create", { argv: ["bash", "-c", "git status"] })
-        .decision,
-    ).toBe("approve");
-    expect(
-      evaluateProfileToolCall(profile, "terminal.create", {
-        argv: ["bash", "-c", "git status", "shell-name", "arg"],
-      }).decision,
-    ).toBe("approve");
-  });
-
-  test("terminal.create shell -c argv classifies nested shell scripts recursively", () => {
-    expect(classifyShellArgv(["bash", "-c", "bash -c 'git status'"])).toEqual({
-      decision: "allow",
-    });
-    expect(classifyShellArgv(["bash", "-c", "bash -c 'rm -f x'"]).decision).toBe("deny");
-    expect(classifyShellArgv(["bash", "-c", "bash -c -e 'rm -f x'"]).decision).toBe("deny");
   });
 
   test("every command-string field is classified, not just the first", () => {

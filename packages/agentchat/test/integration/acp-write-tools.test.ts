@@ -25,6 +25,7 @@ interface HarnessOptions {
   terminal?: boolean;
   permissionDecision?: PermissionDecision;
   permissionProfile?: PermissionProfile;
+  trustMode?: "all" | "config";
   sandboxConfigOverrides?: Partial<SandboxConfig>;
 }
 
@@ -301,6 +302,7 @@ async function createIntegrationHarness(opts: HarnessOptions = {}): Promise<Inte
     conversation: { id: "conv-1", project_id: null },
     config: {},
     permission_profile: opts.permissionProfile ?? null,
+    trust_mode: opts.trustMode,
     handoff_id: "h-int",
     executor,
   };
@@ -577,7 +579,7 @@ describe("ACP write-tools integration", () => {
   });
 
   test("terminal/create treats args as arguments to command", async () => {
-    const harness = await createIntegrationHarness({ terminal: true });
+    const harness = await createIntegrationHarness({ terminal: true, trustMode: "all" });
     try {
       harness.setPromptHandler(async (server) => {
         const created = await server.sendRequest<TerminalCreateResult>("terminal/create", {
@@ -601,6 +603,7 @@ describe("ACP write-tools integration", () => {
         );
         expect(createContext?.rawInput).toMatchObject({
           argv: ["/bin/sh", "-c", "printf hi"],
+          cmd: null,
         });
         return { stopReason: "end_turn" };
       });
@@ -612,7 +615,7 @@ describe("ACP write-tools integration", () => {
   });
 
   test("terminal/create with a bare shell command keeps the bash -c form", async () => {
-    const harness = await createIntegrationHarness({ terminal: true });
+    const harness = await createIntegrationHarness({ terminal: true, trustMode: "all" });
     try {
       harness.setPromptHandler(async (server) => {
         const created = await server.sendRequest<TerminalCreateResult>("terminal/create", {
@@ -634,7 +637,8 @@ describe("ACP write-tools integration", () => {
           (ctx) => ctx.toolName === "terminal.create",
         );
         expect(createContext?.rawInput).toMatchObject({
-          argv: ["bash", "-c", "printf ok"],
+          argv: null,
+          cmd: "printf ok",
         });
         return { stopReason: "end_turn" };
       });
@@ -645,7 +649,7 @@ describe("ACP write-tools integration", () => {
     }
   });
 
-  test("terminal/create under review_readonly denies a mutating command in args", async () => {
+  test("terminal/create under review_readonly denies a shell program in args", async () => {
     const harness = await createIntegrationHarness({
       terminal: true,
       permissionProfile: "review_readonly",
@@ -657,7 +661,7 @@ describe("ACP write-tools integration", () => {
           args: ["-c", "rm -f x"],
         });
         expect(response.error?.code).toBe(-32004);
-        expect(response.error?.message).toContain("'rm'");
+        expect(response.error?.message).toContain("'sh'");
         return { stopReason: "end_turn" };
       });
 

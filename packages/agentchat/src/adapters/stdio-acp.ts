@@ -1124,9 +1124,15 @@ const terminalIdFromParams = (method: string, params: AcpTerminalIdParams): stri
   return terminalId;
 };
 
-const terminalCreateArgvFromParams = (command: string, args?: string[]): string[] => {
-  if (args !== undefined) return [command, ...args];
-  return ["bash", "-c", command];
+const terminalCreateVectorFromParams = (
+  command: string,
+  args?: string[],
+): { argv: string[]; rawInput: { argv: string[] | null; cmd: string | null } } => {
+  if (args !== undefined) {
+    const argv = [command, ...args];
+    return { argv, rawInput: { argv, cmd: null } };
+  }
+  return { argv: ["bash", "-c", command], rawInput: { argv: null, cmd: command } };
 };
 
 const terminalCommandProgram = (command: string): string => {
@@ -1177,9 +1183,8 @@ function registerTerminalCreateHandler(ctx: DispatchTurnContext): void {
           invalid.code = -32602;
           throw invalid;
         }
-        const argv = terminalCreateArgvFromParams(command, params.args);
-        const profileRawInput = { argv, cmd: null };
-        assertProfileAllowsWriteTool(input, "terminal.create", profileRawInput);
+        const vector = terminalCreateVectorFromParams(command, params.args);
+        assertProfileAllowsWriteTool(input, "terminal.create", vector.rawInput);
         const resolvedCwd = await validateTerminalCwd(params.cwd, ctx.cwd);
         if (input.trust_mode === "all") {
           // eslint-disable-next-line no-console -- Preserve the established operator-facing auto-approval log.
@@ -1190,14 +1195,14 @@ function registerTerminalCreateHandler(ctx: DispatchTurnContext): void {
         }
         const result = await input.executor.terminalCreate(
           {
-            argv,
+            argv: vector.argv,
             cwd: resolvedCwd,
             output_byte_limit: params.output_byte_limit ?? params.outputByteLimit,
           },
           {
             toolName: "terminal.create",
             rawInput: {
-              ...profileRawInput,
+              ...vector.rawInput,
               cwd: resolvedCwd,
             },
             dispatchId: input.handoff_id ?? "unknown",
