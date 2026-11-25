@@ -301,49 +301,63 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
     expect(harness.getInitializeParams().clientCapabilities?.terminal).toBe(true);
   });
 
-  test("terminal/create returns terminal_id from executor", async () => {
-    interface RecordedCall {
-      args: unknown;
-      ctx: unknown;
-    }
-    const calls: RecordedCall[] = [];
-    const harness = createHarness(
-      { terminal: true },
-      {
-        terminalCreate: (args, ctx): Promise<unknown> => {
-          calls.push({ args, ctx });
-          return Promise.resolve({ terminal_id: "term-123" });
+  test.each([
+    {
+      label: "bare command",
+      params: { command: "printf ok" },
+      argv: ["bash", "-c", "printf ok"],
+      rawInput: { argv: null, cmd: "printf ok" },
+    },
+    {
+      label: "command plus args",
+      params: { command: "/bin/sh", args: ["-c", "printf hi"] },
+      argv: ["/bin/sh", "-c", "printf hi"],
+      rawInput: { argv: ["/bin/sh", "-c", "printf hi"], cmd: null },
+    },
+  ])(
+    "terminal/create normalizes $label before the executor",
+    async ({ params, argv, rawInput }) => {
+      interface RecordedCall {
+        args: unknown;
+        ctx: unknown;
+      }
+      const calls: RecordedCall[] = [];
+      const harness = createHarness(
+        { terminal: true },
+        {
+          terminalCreate: (args, ctx): Promise<unknown> => {
+            calls.push({ args, ctx });
+            return Promise.resolve({ terminal_id: "term-123" });
+          },
         },
-      },
-    );
+      );
 
-    await harness.runDispatch();
-    const handler = harness.getHandler("terminal/create");
-    const result = await handler?.({
-      command: "echo hello",
-      args: ["echo", "hello"],
-      cwd: "/tmp",
-      output_byte_limit: 1234,
-    });
-    const tmpReal = await realpath("/tmp");
+      await harness.runDispatch();
+      const handler = harness.getHandler("terminal/create");
+      const result = await handler?.({
+        ...params,
+        cwd: "/tmp",
+        output_byte_limit: 1234,
+      });
+      const tmpReal = await realpath("/tmp");
 
-    expect(result).toMatchObject({ terminal_id: "term-123" });
-    expect(calls).toEqual([
-      {
-        args: {
-          command: "echo hello",
-          argv: ["echo", "hello"],
-          cwd: tmpReal,
-          output_byte_limit: 1234,
+      expect(result).toMatchObject({ terminal_id: "term-123" });
+      expect(calls).toEqual([
+        {
+          args: {
+            argv,
+            cwd: tmpReal,
+            output_byte_limit: 1234,
+          },
+          ctx: {
+            toolName: "terminal.create",
+            rawInput: { ...rawInput, cwd: tmpReal },
+            dispatchId: "handoff-1",
+          },
         },
-        ctx: {
-          toolName: "terminal.create",
-          rawInput: { argv: ["echo", "hello"], cmd: "echo hello", cwd: tmpReal },
-          dispatchId: "handoff-1",
-        },
-      },
-    ]);
-  });
+      ]);
+    },
+  );
 
   test("terminal/create's response carries both terminal_id and terminalId", async () => {
     const harness = createHarness(
@@ -399,8 +413,7 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
 
     expect(calls).toEqual([
       {
-        command: "echo hello",
-        argv: undefined,
+        argv: ["bash", "-c", "echo hello"],
         cwd: await realpath("/tmp"),
         output_byte_limit: 4321,
       },
@@ -425,8 +438,7 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
 
     expect(calls).toEqual([
       {
-        command: "echo hello",
-        argv: undefined,
+        argv: ["bash", "-c", "echo hello"],
         cwd: await realpath("/tmp"),
         output_byte_limit: 1234,
       },
@@ -1505,14 +1517,17 @@ describe("StdioAcpAdapter write-tool ACP handlers", () => {
       expect(calls).toEqual([
         {
           args: {
-            command: "echo hello",
-            argv: undefined,
+            argv: ["bash", "-c", "echo hello"],
             cwd: await realpath(subdir),
             output_byte_limit: undefined,
           },
           ctx: {
             toolName: "terminal.create",
-            rawInput: { argv: null, cmd: "echo hello", cwd: await realpath(subdir) },
+            rawInput: {
+              argv: null,
+              cmd: "echo hello",
+              cwd: await realpath(subdir),
+            },
             dispatchId: "handoff-1",
           },
         },
@@ -1564,55 +1579,67 @@ describe("StdioAcpAdapter permission_profile handler gates", () => {
     expect(writeTextFile).not.toHaveBeenCalled();
   });
 
-  test("terminal/create under review_readonly rejects a mutating command", async () => {
-    const terminalCreate = vi.fn(() => Promise.resolve({ terminal_id: "t-1" }));
-    const harness = createHarness(
-      { terminal: true },
-      { terminalCreate },
-      { permission_profile: "review_readonly" },
-    );
-    await harness.runDispatch();
-    const handler = harness.getHandler("terminal/create");
+  test.each([
+    { params: { command: "git status" }, approved: true },
+    { params: { command: "rm -f x" }, approved: false },
+    { params: { command: "/bin/bash", args: ["-c", "git status"] }, approved: false },
+    {
+      params: { command: "/bin/bash", args: ["-c", "bash -c {-e,} 'rm -f x'"] },
+      approved: false,
+    },
+    { params: { command: "rm", args: ["-f", "x"] }, approved: false },
+    { params: { command: "git", args: ["status"] }, approved: true },
+  ])(
+    "terminal/create under review_readonly gates each command shape: %j",
+    async ({ params, approved }) => {
+      const terminalCreate = vi.fn(() => Promise.resolve({ terminal_id: "t-1" }));
+      const harness = createHarness(
+        { terminal: true },
+        { terminalCreate },
+        { permission_profile: "review_readonly" },
+      );
+      await harness.runDispatch();
+      const handler = harness.getHandler("terminal/create");
 
-    const outcome = await captureError(handler?.({ command: "rm -rf /tmp/victim", cwd: "." }));
-    expect(errorCode(outcome.error)).toBe(-32004);
-    expect(terminalCreate).not.toHaveBeenCalled();
-  });
+      const outcome = await captureError(handler?.(params));
+      if (approved) {
+        expect(outcome.error).toBeNull();
+        expect(terminalCreate).toHaveBeenCalledTimes(1);
+      } else {
+        expect(errorCode(outcome.error)).toBe(-32004);
+        expect(terminalCreate).not.toHaveBeenCalled();
+      }
+    },
+  );
 
-  test("terminal/create under review_readonly allows a read-only command", async () => {
-    const terminalCreate = vi.fn(() => Promise.resolve({ terminal_id: "t-1" }));
-    const harness = createHarness(
-      { terminal: true },
-      { terminalCreate },
-      { permission_profile: "review_readonly" },
-    );
-    await harness.runDispatch();
-    const handler = harness.getHandler("terminal/create");
+  test.each([
+    { params: { cwd: "." } },
+    { params: { command: 42 } },
+    { params: { command: null } },
+    { params: { command: ["git", "status"] } },
+  ])(
+    "terminal/create rejects a non-string command with -32602 before gate and executor: %j",
+    async ({ params }) => {
+      const terminalCreate = vi.fn(() => Promise.resolve({ terminal_id: "t-1" }));
+      const harness = createHarness(
+        { terminal: true },
+        { terminalCreate },
+        { permission_profile: "review_readonly" },
+      );
+      await harness.runDispatch();
+      const handler = harness.getHandler("terminal/create");
 
-    const outcome = await captureError(handler?.({ command: "git status", cwd: "." }));
-    expect(outcome.error).toBeNull();
-    expect(terminalCreate).toHaveBeenCalledTimes(1);
-  });
-
-  test("terminal/create under review_readonly fails closed on uninspectable input", async () => {
-    const terminalCreate = vi.fn(() => Promise.resolve({ terminal_id: "t-1" }));
-    const harness = createHarness(
-      { terminal: true },
-      { terminalCreate },
-      { permission_profile: "review_readonly" },
-    );
-    await harness.runDispatch();
-    const handler = harness.getHandler("terminal/create");
-
-    const outcome = await captureError(handler?.({ cwd: "." }));
-    expect(errorCode(outcome.error)).toBe(-32004);
-    expect(terminalCreate).not.toHaveBeenCalled();
-  });
+      const outcome = await captureError(handler?.(params));
+      expect(errorCode(outcome.error)).toBe(-32602);
+      expect(terminalCreate).not.toHaveBeenCalled();
+    },
+  );
 
   test.each([
     { command: "ls", args: ["rm", "-rf", ".", 1] },
-    { args: [["rm"]] },
+    { command: "ls", args: [["rm"]] },
     { command: "ls", args: "rm -rf ." },
+    { command: "ls", args: null },
   ])(
     "terminal/create rejects non-string args with -32602 before gate and executor: %j",
     async (params) => {

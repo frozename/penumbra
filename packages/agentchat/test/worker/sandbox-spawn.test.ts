@@ -6,7 +6,6 @@ import { join } from "node:path";
 import {
   SandboxUnavailableError,
   spawnSandboxed,
-  type SpawnSandboxedOpts,
   wrapSandboxExecArgv,
 } from "@src/worker/sandbox-spawn.js";
 
@@ -75,23 +74,6 @@ describe("spawnSandboxed", () => {
     expect(r.killReason).toBeUndefined();
   });
 
-  test("cmd form runs via bash -c", async () => {
-    const r = await spawnSandboxed({ cmd: "echo hi", cwd, timeoutMs: 5000, outputMaxBytes: 1024 });
-    expect(r.exitCode).toBe(0);
-    expect(r.output.trim()).toBe("hi");
-  });
-
-  test("argv is preferred when both are set", async () => {
-    const r = await spawnSandboxed({
-      argv: ["echo", "A"],
-      cmd: "echo B",
-      cwd,
-      timeoutMs: 5000,
-      outputMaxBytes: 1024,
-    });
-    expect(r.output.trim()).toBe("A");
-  });
-
   test("bad command yields exit code 127", async () => {
     const r = await spawnSandboxed({
       argv: ["nonexistent-cmd-xyzzy"],
@@ -109,7 +91,7 @@ describe("spawnSandboxed", () => {
 
   test("PATH stripping keeps bun unavailable", async () => {
     const r = await spawnSandboxed({
-      cmd: "bun --version",
+      argv: ["bash", "-c", "bun --version"],
       cwd,
       timeoutMs: 5000,
       outputMaxBytes: 1024,
@@ -119,7 +101,7 @@ describe("spawnSandboxed", () => {
 
   test("PATH override is visible inside the sandbox", async () => {
     const r = await spawnSandboxed({
-      cmd: "echo $PATH",
+      argv: ["bash", "-c", "echo $PATH"],
       cwd,
       timeoutMs: 5000,
       outputMaxBytes: 1024,
@@ -130,7 +112,7 @@ describe("spawnSandboxed", () => {
 
   test("HOME equals cwd", async () => {
     const r = await spawnSandboxed({
-      cmd: "echo $HOME",
+      argv: ["bash", "-c", "echo $HOME"],
       cwd,
       timeoutMs: 5000,
       outputMaxBytes: 1024,
@@ -139,14 +121,19 @@ describe("spawnSandboxed", () => {
   });
 
   test("CI is set to true", async () => {
-    const r = await spawnSandboxed({ cmd: "echo $CI", cwd, timeoutMs: 5000, outputMaxBytes: 1024 });
+    const r = await spawnSandboxed({
+      argv: ["bash", "-c", "echo $CI"],
+      cwd,
+      timeoutMs: 5000,
+      outputMaxBytes: 1024,
+    });
     expect(r.output.trim()).toBe("true");
   });
 
   test("LANG passes through when set", async () => {
     await withEnv("LANG", "en_US.UTF-8", async () => {
       const r = await spawnSandboxed({
-        cmd: "echo $LANG",
+        argv: ["bash", "-c", "echo $LANG"],
         cwd,
         timeoutMs: 5000,
         outputMaxBytes: 1024,
@@ -158,7 +145,7 @@ describe("spawnSandboxed", () => {
   test("unrelated env does not leak", async () => {
     await withEnv("SECRET_PHASE1D_TEST", "leak", async () => {
       const r = await spawnSandboxed({
-        cmd: 'echo "[$SECRET_PHASE1D_TEST]"',
+        argv: ["bash", "-c", 'echo "[$SECRET_PHASE1D_TEST]"'],
         cwd,
         timeoutMs: 5000,
         outputMaxBytes: 1024,
@@ -168,7 +155,12 @@ describe("spawnSandboxed", () => {
   });
 
   test("stdin is ignored so cat exits immediately", async () => {
-    const r = await spawnSandboxed({ cmd: "cat", cwd, timeoutMs: 5000, outputMaxBytes: 1024 });
+    const r = await spawnSandboxed({
+      argv: ["bash", "-c", "cat"],
+      cwd,
+      timeoutMs: 5000,
+      outputMaxBytes: 1024,
+    });
     expect(r.exitCode).toBe(0);
     expect(r.output).toBe("");
   });
@@ -188,7 +180,7 @@ describe("spawnSandboxed", () => {
   test.skipIf(process.platform === "win32")("timeout kills background descendants", async () => {
     const pidFile = join(cwd, "sandbox-grandchild.pid");
     const r = await spawnSandboxed({
-      cmd: `sleep 30 >/dev/null 2>&1 & echo $! > ${pidFile}; wait`,
+      argv: ["bash", "-c", `sleep 30 >/dev/null 2>&1 & echo $! > ${pidFile}; wait`],
       cwd,
       timeoutMs: 200,
       outputMaxBytes: 1024,
@@ -230,7 +222,12 @@ describe("spawnSandboxed", () => {
   });
 
   test("output cap truncates and terminates a noisy process", async () => {
-    const r = await spawnSandboxed({ cmd: "yes", cwd, timeoutMs: 5000, outputMaxBytes: 4096 });
+    const r = await spawnSandboxed({
+      argv: ["bash", "-c", "yes"],
+      cwd,
+      timeoutMs: 5000,
+      outputMaxBytes: 4096,
+    });
     expect(r.truncated).toBe(true);
     expect(r.killReason).toBe("output_overflow");
     expect(r.output.length).toBeLessThanOrEqual(4096);
@@ -255,7 +252,7 @@ describe("spawnSandboxed", () => {
 
   test("envOverride wins over defaults", async () => {
     const r = await spawnSandboxed({
-      cmd: "echo $CI",
+      argv: ["bash", "-c", "echo $CI"],
       cwd,
       timeoutMs: 5000,
       outputMaxBytes: 1024,
@@ -283,26 +280,6 @@ describe("spawnSandboxed", () => {
     });
     expect(r.durationMs).toBeGreaterThan(150);
     expect(r.durationMs).toBeLessThan(1500);
-  });
-
-  test("throws when neither argv nor cmd are provided", async () => {
-    // Test fabricates the missing-argv/cmd case to exercise the runtime guard;
-    // SpawnSandboxedOpts requires one of argv|cmd at the type level.
-    const optsMissingArgvAndCmd = {
-      cwd,
-      timeoutMs: 1000,
-      outputMaxBytes: 1024,
-    } as unknown as SpawnSandboxedOpts;
-    let caught: unknown;
-    try {
-      await spawnSandboxed(optsMissingArgvAndCmd);
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(Error);
-    expect(caught instanceof Error ? caught.message : String(caught)).toBe(
-      "spawnSandboxed: argv or cmd required",
-    );
   });
 });
 
@@ -349,7 +326,7 @@ describe.skipIf(process.platform !== "darwin")("spawnSandboxed sandboxProfile", 
     // on macOS, so the protected root must be realpath'd or the deny misses.
     const realRoot = await realpath(cwd);
     const r = await spawnSandboxed({
-      cmd: `touch "${target}"`,
+      argv: ["bash", "-c", `touch "${target}"`],
       cwd,
       timeoutMs: 5000,
       outputMaxBytes: 4096,
@@ -364,7 +341,7 @@ describe.skipIf(process.platform !== "darwin")("spawnSandboxed sandboxProfile", 
     expect(exists).toBe(false);
 
     const read = await spawnSandboxed({
-      cmd: "echo still-works",
+      argv: ["bash", "-c", "echo still-works"],
       cwd,
       timeoutMs: 5000,
       outputMaxBytes: 4096,

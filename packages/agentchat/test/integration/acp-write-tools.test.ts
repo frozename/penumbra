@@ -1,4 +1,4 @@
-import type { Logger } from "@penumbra/core";
+import type { Logger, PermissionProfile } from "@penumbra/core";
 
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
@@ -11,7 +11,7 @@ import { PassThrough } from "node:stream";
 import { StdioAcpClient } from "@src/adapters/stdio-acp-client.js";
 import type { StdioAcpHandle } from "@src/adapters/stdio-acp-server.js";
 import { StdioAcpAdapter } from "@src/adapters/stdio-acp.js";
-import type { DispatchInput, PermissionDecision } from "@src/sdk/adapter.js";
+import type { DispatchInput, PermissionDecision, ToolCallContext } from "@src/sdk/adapter.js";
 import { DEFAULT_SANDBOX_CONFIG, type SandboxConfig } from "@src/worker/sandbox-config.js";
 import { WriteToolsExecutor } from "@src/worker/write-tools-executor.js";
 
@@ -24,6 +24,8 @@ interface HarnessOptions {
   fsWriteTextFile?: boolean;
   terminal?: boolean;
   permissionDecision?: PermissionDecision;
+  permissionProfile?: PermissionProfile;
+  trustMode?: "all" | "config";
   sandboxConfigOverrides?: Partial<SandboxConfig>;
 }
 
@@ -84,6 +86,7 @@ interface IntegrationHarness {
   executor: WriteToolsExecutor;
   worktreeRoot: string;
   events: CapturedEvent[];
+  permissionContexts: ToolCallContext[];
   server: MockAcpServer;
   setPromptHandler: (handler: PromptHandler) => void;
   runDispatch: () => Promise<void>;
@@ -179,10 +182,13 @@ async function createIntegrationHarness(opts: HarnessOptions = {}): Promise<Inte
   const serverToAdapter = new PassThrough();
   const adapterToServer = new PassThrough();
   const pendingRequests = new Map<number, (response: JsonRpcResponseEnvelope) => void>();
+  const permissionContexts: ToolCallContext[] = [];
   const executor = new WriteToolsExecutor({
     worktreeRoot,
-    permissionCallback: (): Promise<PermissionDecision> =>
-      Promise.resolve(opts.permissionDecision ?? "approve"),
+    permissionCallback: (ctx): Promise<PermissionDecision> => {
+      permissionContexts.push(ctx);
+      return Promise.resolve(opts.permissionDecision ?? "approve");
+    },
     auditEmitter: {
       emit: (type, payload): Promise<void> => {
         events.push({ type, payload });
@@ -295,6 +301,8 @@ async function createIntegrationHarness(opts: HarnessOptions = {}): Promise<Inte
     signal: new AbortController().signal,
     conversation: { id: "conv-1", project_id: null },
     config: {},
+    permission_profile: opts.permissionProfile ?? null,
+    trust_mode: opts.trustMode,
     handoff_id: "h-int",
     executor,
   };
@@ -304,6 +312,7 @@ async function createIntegrationHarness(opts: HarnessOptions = {}): Promise<Inte
     executor,
     worktreeRoot,
     events,
+    permissionContexts,
     server,
     setPromptHandler: (handler: PromptHandler): void => {
       promptHandler = handler;
@@ -569,6 +578,119 @@ describe("ACP write-tools integration", () => {
     }
   });
 
+  test("terminal/create treats args as arguments to command", async () => {
+    const harness = await createIntegrationHarness({ terminal: true, trustMode: "all" });
+    try {
+      harness.setPromptHandler(async (server) => {
+        const created = await server.sendRequest<TerminalCreateResult>("terminal/create", {
+          command: "/bin/sh",
+          args: ["-c", "printf hi"],
+        });
+        expect(created.error).toBeUndefined();
+        const { terminal_id: terminalId } = requireResult(created);
+
+        const waited = await server.sendRequest<TerminalWaitResult>("terminal/wait_for_exit", {
+          terminal_id: terminalId,
+        });
+        expect(requireResult(waited).exit_status.exitCode).toBe(0);
+
+        const output = await server.sendRequest<TerminalOutputResult>("terminal/output", {
+          terminal_id: terminalId,
+        });
+        expect(requireResult(output).output).toBe("hi");
+        const createContext = harness.permissionContexts.find(
+          (ctx) => ctx.toolName === "terminal.create",
+        );
+        expect(createContext?.rawInput).toMatchObject({
+          argv: ["/bin/sh", "-c", "printf hi"],
+          cmd: null,
+        });
+        return { stopReason: "end_turn" };
+      });
+
+      await harness.runDispatch();
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test("terminal/create with a bare shell command keeps the bash -c form", async () => {
+    const harness = await createIntegrationHarness({ terminal: true, trustMode: "all" });
+    try {
+      harness.setPromptHandler(async (server) => {
+        const created = await server.sendRequest<TerminalCreateResult>("terminal/create", {
+          command: "printf ok",
+        });
+        expect(created.error).toBeUndefined();
+        const { terminal_id: terminalId } = requireResult(created);
+
+        const waited = await server.sendRequest<TerminalWaitResult>("terminal/wait_for_exit", {
+          terminal_id: terminalId,
+        });
+        expect(requireResult(waited).exit_status.exitCode).toBe(0);
+
+        const output = await server.sendRequest<TerminalOutputResult>("terminal/output", {
+          terminal_id: terminalId,
+        });
+        expect(requireResult(output).output).toBe("ok");
+        const createContext = harness.permissionContexts.find(
+          (ctx) => ctx.toolName === "terminal.create",
+        );
+        expect(createContext?.rawInput).toMatchObject({
+          argv: null,
+          cmd: "printf ok",
+        });
+        return { stopReason: "end_turn" };
+      });
+
+      await harness.runDispatch();
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test("terminal/create under review_readonly denies a shell program in args", async () => {
+    const harness = await createIntegrationHarness({
+      terminal: true,
+      permissionProfile: "review_readonly",
+    });
+    try {
+      harness.setPromptHandler(async (server) => {
+        const response = await server.sendRequest("terminal/create", {
+          command: "/bin/sh",
+          args: ["-c", "rm -f x"],
+        });
+        expect(response.error?.code).toBe(-32004);
+        expect(response.error?.message).toContain("'sh'");
+        return { stopReason: "end_turn" };
+      });
+
+      await harness.runDispatch();
+      expect(harness.permissionContexts).toEqual([]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  test("terminal/create rejects non-string args with JSON-RPC code -32602", async () => {
+    const harness = await createIntegrationHarness({ terminal: true });
+    try {
+      harness.setPromptHandler(async (server) => {
+        const response = await server.sendRequest("terminal/create", {
+          command: "/bin/sh",
+          args: [1],
+        });
+        expect(response.error?.code).toBe(-32602);
+        return { stopReason: "end_turn" };
+      });
+
+      await harness.runDispatch();
+      expect(harness.permissionContexts).toEqual([]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
   test("terminal/output round-trip returns the captured output snapshot", async () => {
     const harness = await createIntegrationHarness({ terminal: true });
     try {
@@ -620,12 +742,13 @@ describe("ACP write-tools integration", () => {
     }
   });
 
-  test("terminal/create with args ['echo', 'X'] uses argv form and prints X", async () => {
+  test("terminal/create runs command with args as its arguments", async () => {
     const harness = await createIntegrationHarness({ terminal: true });
     try {
       harness.setPromptHandler(async (server) => {
         const created = await server.sendRequest<TerminalCreateResult>("terminal/create", {
-          args: ["echo", "X"],
+          command: "echo",
+          args: ["X"],
         });
         const { terminal_id: terminalId } = requireResult(created);
         await server.sendRequest("terminal/wait_for_exit", {
@@ -668,13 +791,13 @@ describe("ACP write-tools integration", () => {
     }
   });
 
-  test("terminal/create prefers argv over command when both are provided", async () => {
+  test("terminal/create does not duplicate the command when args are provided", async () => {
     const harness = await createIntegrationHarness({ terminal: true });
     try {
       harness.setPromptHandler(async (server) => {
         const created = await server.sendRequest<TerminalCreateResult>("terminal/create", {
-          args: ["echo", "preferred"],
-          command: "echo ignored",
+          command: "echo",
+          args: ["preferred"],
         });
         const { terminal_id: terminalId } = requireResult(created);
         await server.sendRequest("terminal/wait_for_exit", {
@@ -699,13 +822,15 @@ describe("ACP write-tools integration", () => {
       harness.setPromptHandler(async (server) => {
         for (let i = 0; i < 3; i += 1) {
           const created = await server.sendRequest("terminal/create", {
-            args: ["sleep", "5"],
+            command: "sleep",
+            args: ["5"],
           });
           expect(created.error).toBeUndefined();
         }
 
         const capped = await server.sendRequest("terminal/create", {
-          args: ["echo", "blocked"],
+          command: "echo",
+          args: ["blocked"],
         });
         expect(capped.error?.code).toBe(-32006);
         return { stopReason: "end_turn" };
@@ -722,7 +847,8 @@ describe("ACP write-tools integration", () => {
     try {
       harness.setPromptHandler(async (server) => {
         const created = await server.sendRequest<TerminalCreateResult>("terminal/create", {
-          args: ["sleep", "10"],
+          command: "sleep",
+          args: ["10"],
         });
         const { terminal_id: terminalId } = requireResult(created);
 
@@ -751,7 +877,8 @@ describe("ACP write-tools integration", () => {
     try {
       harness.setPromptHandler(async (server) => {
         const created = await server.sendRequest<TerminalCreateResult>("terminal/create", {
-          args: ["sleep", "10"],
+          command: "sleep",
+          args: ["10"],
         });
         const { terminal_id: terminalId } = requireResult(created);
 
@@ -917,7 +1044,8 @@ describe("ACP write-tools integration", () => {
     try {
       harness.setPromptHandler(async (server) => {
         const created = await server.sendRequest<TerminalCreateResult>("terminal/create", {
-          args: ["sleep", "5"],
+          command: "sleep",
+          args: ["5"],
         });
         const { terminal_id: terminalId } = requireResult(created);
         await server.sendRequest("terminal/wait_for_exit", {
@@ -944,7 +1072,8 @@ describe("ACP write-tools integration", () => {
     try {
       harness.setPromptHandler(async (server) => {
         await server.sendRequest("terminal/create", {
-          args: ["sleep", "10"],
+          command: "sleep",
+          args: ["10"],
         });
 
         await harness.executor.dispose();
@@ -968,7 +1097,8 @@ describe("ACP write-tools integration", () => {
     try {
       harness.setPromptHandler(async (server) => {
         const response = await server.sendRequest("terminal/create", {
-          args: ["echo", "x"],
+          command: "echo",
+          args: ["x"],
           cwd: "/etc",
         });
         expect(response.error?.code).toBe(-32001);

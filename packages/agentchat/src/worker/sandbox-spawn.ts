@@ -124,8 +124,7 @@ export function classifyHeavyCommand(argv: readonly string[]): HeavyCommandClass
 }
 
 export interface SpawnSandboxedOpts {
-  argv?: string[];
-  cmd?: string;
+  argv: string[];
   cwd: string;
   envOverride?: Record<string, string>;
   timeoutMs: number;
@@ -308,9 +307,7 @@ async function readStream(
 }
 
 export async function spawnSandboxed(opts: SpawnSandboxedOpts): Promise<SpawnSandboxedResult> {
-  if (!opts.argv && !opts.cmd) throw new Error("spawnSandboxed: argv or cmd required");
-
-  const innerArgv = opts.argv ?? ["bash", "-c", opts.cmd ?? ""];
+  const innerArgv = opts.argv;
   const env = buildSandboxEnv(opts);
   // sandbox-exec (macOS) runs inside the memory scope (Linux); the two never
   // coexist on one host today, but the order keeps the cap outermost.

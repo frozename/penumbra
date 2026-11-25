@@ -95,7 +95,7 @@ describe("WriteToolsExecutor heavy-job admission", () => {
     };
     await withExecutor(gate, async ({ executor }) => {
       const { terminal_id } = await executor.terminalCreate(
-        { command: "tsc --noEmit >/dev/null 2>&1; exit 0" },
+        { argv: ["bash", "-c", "tsc --noEmit >/dev/null 2>&1; exit 0"] },
         CTX,
       );
       const { exit_status } = await executor.terminalWaitForExit({ terminal_id });
@@ -120,7 +120,7 @@ describe("WriteToolsExecutor heavy-job admission", () => {
     };
     await withExecutor(gate, async ({ executor, events, worktreeRoot }) => {
       const { terminal_id } = await executor.terminalCreate(
-        { command: "touch ran; eslint ." },
+        { argv: ["bash", "-c", "touch ran; eslint ."] },
         CTX,
       );
       const { exit_status } = await executor.terminalWaitForExit({ terminal_id });
@@ -142,7 +142,7 @@ describe("WriteToolsExecutor heavy-job admission", () => {
   test("without a gate the same command runs to completion", async () => {
     await withExecutor(undefined, async ({ executor, worktreeRoot }) => {
       const { terminal_id } = await executor.terminalCreate(
-        { command: "touch ran; eslint ." },
+        { argv: ["bash", "-c", "touch ran; eslint ."] },
         CTX,
       );
       await executor.terminalWaitForExit({ terminal_id });

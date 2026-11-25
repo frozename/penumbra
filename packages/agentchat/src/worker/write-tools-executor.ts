@@ -360,7 +360,7 @@ export class WriteToolsExecutor {
   }
 
   async terminalCreate(
-    args: { command?: string; argv?: string[]; cwd?: string; output_byte_limit?: number },
+    args: { argv: string[]; cwd?: string; output_byte_limit?: number },
     ctx: ToolCallContext,
   ): Promise<{ terminal_id: string }> {
     if (this.oneShots.size + this.pendingReservations >= this.opts.sandboxConfig.maxConcurrent) {
@@ -378,11 +378,10 @@ export class WriteToolsExecutor {
       const terminal_id = randomUUID();
       const controller = new AbortController();
       const outputMaxBytes = args.output_byte_limit ?? this.opts.sandboxConfig.outputMaxBytes;
-      const argv = args.argv ?? ["bash", "-c", args.command ?? ""];
+      const argv = args.argv;
 
       const done = spawnSandboxed({
-        argv: args.argv,
-        cmd: args.command,
+        argv,
         cwd,
         timeoutMs: this.opts.sandboxConfig.timeoutMs,
         outputMaxBytes,
