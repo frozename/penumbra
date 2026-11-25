@@ -262,7 +262,7 @@ describe("StdioAcpAdapter permission context", () => {
       sessionUpdate: "tool_call",
       toolCallId: "tool-1",
       title: "terminal/create",
-      input: { command: "bun test", args: ["bun", "test"], cwd: "." },
+      input: { command: "bun", args: ["test"], cwd: "." },
     });
     sendPermissionRequest(child, { toolCallId: "tool-1" }, DEFAULT_OPTIONS);
     await child.next((message) => message.id === 77);
@@ -270,7 +270,7 @@ describe("StdioAcpAdapter permission context", () => {
       jsonrpc: "2.0",
       id: 78,
       method: "terminal/create",
-      params: { command: "bun test", args: ["bun", "test"], cwd: "." },
+      params: { command: "bun", args: ["test"], cwd: "." },
     });
 
     const terminalResponse = await child.next((message) => message.id === 78);
@@ -279,14 +279,13 @@ describe("StdioAcpAdapter permission context", () => {
 
     expect(terminalCreate).toHaveBeenCalledWith(
       {
-        command: "bun test",
         argv: ["bun", "test"],
         cwd: process.cwd(),
         output_byte_limit: undefined,
       },
       {
         toolName: "terminal.create",
-        rawInput: { argv: ["bun", "test"], cmd: "bun test", cwd: process.cwd() },
+        rawInput: { argv: ["bun", "test"], cmd: null, cwd: process.cwd() },
         dispatchId: "unknown",
       },
     );

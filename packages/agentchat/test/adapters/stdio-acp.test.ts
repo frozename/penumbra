@@ -1152,8 +1152,8 @@ describe("StdioAcpAdapter", () => {
       onSessionPrompt: async (): Promise<unknown> => {
         if (!terminalCreateHandler) throw new Error("missing terminal/create handler");
         await terminalCreateHandler({
-          command: "deploy.sh --token=SUPERSECRET123",
-          args: ["deploy.sh", "--token=SUPERSECRET123"],
+          command: "deploy.sh",
+          args: ["--token=SUPERSECRET123"],
           cwd: "/tmp/project",
         });
         return { stopReason: "end_turn" };
@@ -1200,7 +1200,7 @@ describe("StdioAcpAdapter", () => {
     );
     expect(matchingLog).toContain("program=deploy.sh");
     expect(matchingLog).toContain("cwd=/tmp/project");
-    expect(matchingLog).toContain("commandLength=32");
+    expect(matchingLog).toContain("commandLength=9");
     expect(matchingLog).not.toContain("SUPERSECRET123");
   });
 

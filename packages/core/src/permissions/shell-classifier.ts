@@ -760,7 +760,9 @@ const PARSEABLE_DASH_C_SHELLS = new Set(["ash", "bash", "dash", "sh"]);
 
 function parseableDashCScript(argv: string[], program: string): string | null {
   if (!PARSEABLE_DASH_C_SHELLS.has(program) || argv[1] !== "-c") return null;
-  return argv[2] ?? null;
+  const script = argv[2];
+  if (script === undefined || script.startsWith("-") || script.startsWith("+")) return null;
+  return script;
 }
 
 function classifyArgv(argv: string[], bindings: BindingMap): string | null {
