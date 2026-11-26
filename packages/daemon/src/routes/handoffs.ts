@@ -1,9 +1,16 @@
-import { HandoffFailRequestSchema } from "@penumbra/api-contract";
+import {
+  COMPLETION_EVIDENCE_EVENT,
+  type HandoffCompletionEvidence,
+  HandoffCompletionEvidenceSchema,
+  HandoffFailRequestSchema,
+  POST_IMPLEMENTATION_REVIEW_RESOLVER,
+} from "@penumbra/api-contract";
 import {
   agentEnforcesPermissionProfile,
   ApproveHandoffRequestSchema,
   buildDispatchAuditReportForHandoff,
   CreateHandoffRequestSchema,
+  type HandoffRow,
   type HandoffStatus,
   HandoffStatusSchema,
   type PermissionProfile,
@@ -1200,6 +1207,39 @@ function claimCapabilityGateResponse(
   return null;
 }
 
+function supportsCompletionEvidence(services: Services, handoff: HandoffRow): boolean {
+  if (handoff.resolved_by === POST_IMPLEMENTATION_REVIEW_RESOLVER) return true;
+  return (
+    handoff.project_id !== null &&
+    handoff.use_worktree === true &&
+    handoff.chain_task_type === "implement_small" &&
+    services.projectRegistry?.get(handoff.project_id)?.post_implementation_reviewer !== undefined
+  );
+}
+
+function claimResponse(services: Services, handoff: HandoffRow, acceptsAttempt: boolean): Response {
+  return json({
+    handoff_id: handoff.handoff_id,
+    status: "dispatched",
+    ...(acceptsAttempt && supportsCompletionEvidence(services, handoff)
+      ? { dispatch_attempt: handoff.dispatch_attempts + 1 }
+      : {}),
+  });
+}
+
+function claimCompatibilityResponse(
+  services: DaemonServices,
+  row: HandoffRow,
+  workerId: string,
+  tokenHash: string,
+  acceptsAttempt: boolean,
+): Response | null {
+  if (row.resolved_by === POST_IMPLEMENTATION_REVIEW_RESOLVER && !acceptsAttempt) {
+    return json({ error: { code: "worker_requires_completion_evidence" } }, 403);
+  }
+  return claimCapabilityGateResponse(services, row, workerId, tokenHash);
+}
+
 export async function handoffsClaimRoute(
   req: Request,
   handoff_id: string,
@@ -1212,7 +1252,9 @@ export async function handoffsClaimRoute(
       400,
     );
 
-  const body = z.object({ worker_id: z.string().min(1) }).safeParse(raw);
+  const body = z
+    .object({ worker_id: z.string().min(1), completion_evidence: z.literal(true).optional() })
+    .safeParse(raw);
   if (!body.success) {
     return json(
       {
@@ -1267,11 +1309,12 @@ export async function handoffsClaimRoute(
   // A profiled or scratch-routed handoff may only be claimed by a worker
   // that declared the matching capability at registration; otherwise it must
   // stay unclaimed rather than run unconstrained.
-  const capabilityGate = claimCapabilityGateResponse(
+  const capabilityGate = claimCompatibilityResponse(
     services,
     cur,
     body.data.worker_id,
     principal.token_hash,
+    body.data.completion_evidence === true,
   );
   if (capabilityGate) return capabilityGate;
 
@@ -1305,7 +1348,7 @@ export async function handoffsClaimRoute(
   }
 
   recordClaimDispatchEvent(services, handoff_id, body.data.worker_id);
-  return json({ handoff_id, status: "dispatched" });
+  return claimResponse(services, cur, body.data.completion_evidence === true);
 }
 
 export async function handoffsRecordBranchRoute(
@@ -1380,16 +1423,73 @@ function resolveExpectedWorkerForCompletion(
   };
 }
 
-export async function handoffsCompleteRoute(
-  _req: Request,
-  handoff_id: string,
-  services: Services,
-): Promise<Response> {
-  // Atomic: try the dispatched→completed transition first, then explain the failure if it didn't happen.
-  const raw = await safeJson(_req);
-  const body = z.object({ worker_id: z.string().optional() }).safeParse(raw);
+const CompleteBodySchema = z.object({
+  worker_id: z.string().optional(),
+  evidence: HandoffCompletionEvidenceSchema.optional(),
+});
 
-  const resolved = resolveExpectedWorkerForCompletion(_req, body);
+function completionEvidenceMatches(
+  handoff: HandoffRow,
+  evidence: HandoffCompletionEvidence,
+): boolean {
+  if (evidence.result === null) return true;
+  if (evidence.result.kind === "review") {
+    return (
+      handoff.resolved_by === POST_IMPLEMENTATION_REVIEW_RESOLVER &&
+      handoff.chain_task_type === "review_adversarial" &&
+      handoff.permission_profile === "review_readonly"
+    );
+  }
+  return handoff.chain_task_type === "implement_small" && handoff.use_worktree === true;
+}
+
+function completeWithEvidence(
+  services: Services,
+  handoffId: string,
+  workerId: string,
+  ts: string,
+  evidence: HandoffCompletionEvidence,
+): boolean {
+  return services.db
+    .transaction(() => {
+      const cur = services.handoffReader.get(handoffId);
+      if (cur?.dispatch_attempts !== evidence.attempt) return false;
+      if (
+        !completionEvidenceMatches(cur, evidence) ||
+        !services.handoffWriter.markCompleted(handoffId, { ts, expected_worker_id: workerId })
+      ) {
+        return false;
+      }
+      if (evidence.result === null) return true;
+      services.dispatchEventLog.record({
+        handoff_id: handoffId,
+        worker_id: workerId,
+        source: "daemon",
+        kind: COMPLETION_EVIDENCE_EVENT,
+        ts,
+        meta: evidence,
+      });
+      return true;
+    })
+    .immediate();
+}
+
+type CompletionOptions =
+  | { expectedWorkerId: string; evidence: HandoffCompletionEvidence }
+  | { expectedWorkerId?: string; evidence?: undefined };
+
+function parseCompletionOptions(req: Request, raw: unknown): CompletionOptions | Response {
+  const body = CompleteBodySchema.safeParse(raw);
+  if (!body.success && raw && typeof raw === "object" && "evidence" in raw) {
+    return json({ error: { code: "invalid_completion_evidence" } }, 400);
+  }
+  const evidence = body.success ? body.data.evidence : undefined;
+  const principal = getPrincipal(req);
+  if (evidence && principal?.kind !== "worker") {
+    return json({ error: { code: "worker_token_required" } }, 403);
+  }
+
+  const resolved = resolveExpectedWorkerForCompletion(req, body);
   if (resolved.kind === "mismatch") {
     return json(
       {
@@ -1401,12 +1501,57 @@ export async function handoffsCompleteRoute(
       403,
     );
   }
+  if (evidence && principal?.kind === "worker") {
+    return { expectedWorkerId: principal.worker_id, evidence };
+  }
+  return { expectedWorkerId: resolved.expected_worker_id };
+}
 
+function completeCancelRequested(handoff: HandoffRow, options: CompletionOptions): boolean {
+  return (
+    handoff.status === "dispatched" &&
+    handoff.cancel_requested_at !== null &&
+    (!options.evidence ||
+      (handoff.dispatch_attempts === options.evidence.attempt &&
+        handoff.worker_id === options.expectedWorkerId))
+  );
+}
+
+function requireReviewCompletionAttempt(
+  services: Services,
+  handoffId: string,
+  options: CompletionOptions,
+): Response | null {
+  if (options.evidence) return null;
+  const row = services.handoffReader.get(handoffId);
+  if (row?.status !== "dispatched" || row.resolved_by !== POST_IMPLEMENTATION_REVIEW_RESOLVER)
+    return null;
+  return json({ error: { code: "completion_attempt_required" } }, 400);
+}
+
+export async function handoffsCompleteRoute(
+  req: Request,
+  handoff_id: string,
+  services: Services,
+): Promise<Response> {
+  // Atomic: try the dispatched→completed transition first, then explain the failure if it didn't happen.
+  const input = parseCompletionOptions(req, await safeJson(req));
+  if (input instanceof Response) return input;
+  const missingAttempt = requireReviewCompletionAttempt(services, handoff_id, input);
+  if (missingAttempt) return missingAttempt;
   const completedAtIso = services.clock().toISOString();
-  const won = services.handoffWriter.markCompleted(handoff_id, {
-    ts: completedAtIso,
-    expected_worker_id: resolved.expected_worker_id,
-  });
+  const won = input.evidence
+    ? completeWithEvidence(
+        services,
+        handoff_id,
+        input.expectedWorkerId,
+        completedAtIso,
+        input.evidence,
+      )
+    : services.handoffWriter.markCompleted(handoff_id, {
+        ts: completedAtIso,
+        expected_worker_id: input.expectedWorkerId,
+      });
   if (won) {
     const completed = services.handoffReader.get(handoff_id);
     if (completed) {
@@ -1427,7 +1572,7 @@ export async function handoffsCompleteRoute(
       { error: { code: "not_found", message: `handoff ${handoff_id} does not exist` } },
       404,
     );
-  if (cur.status === "dispatched" && cur.cancel_requested_at !== null) {
+  if (completeCancelRequested(cur, input)) {
     return completeCancelFallback(services, handoff_id);
   }
   return json(

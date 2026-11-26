@@ -246,6 +246,7 @@ const workerMetadata = {
   // Scratch-worktree dispatches (P6 review lane): the claim gate refuses
   // cwd_override rows to workers that never declared this.
   supports_scratch_worktrees: true,
+  supports_completion_evidence: true,
 };
 const workerBoot = await runWorkerBoot({
   client,

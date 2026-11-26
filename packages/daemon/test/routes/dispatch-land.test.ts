@@ -1,4 +1,8 @@
-import { DispatchLandAcceptedSchema, DispatchLandTaskSchema } from "@penumbra/api-contract";
+import {
+  DispatchLandAcceptedSchema,
+  DispatchLandTaskSchema,
+  POST_IMPLEMENTATION_REVIEW_RESOLVER,
+} from "@penumbra/api-contract";
 import {
   buildServices,
   captureAgentPerformanceFromReconciler,
@@ -1053,16 +1057,39 @@ describe("dispatchLandRoute", () => {
     expect(perf).toEqual({ outcome: "no_changes", gate_outcome: null });
   });
 
-  test("post-merge auto-authorizes memory verify with dispatch_land basis", async () => {
+  const gates = ["passed", "automated_pass", "failed", "review_debt", "unlinked", "open"] as const;
+  test.each([...gates])("land memory verification for latest gate %s", async (gate) => {
     const svc = services();
     seedHandoff(svc, "h-land-authz", "c-land-authz");
+    seedHandoff(svc, "h-reviewer-prior", "c-reviewer-prior");
     seedHandoff(svc, "h-reviewer-authz", "c-reviewer-authz");
+    if (gate === "automated_pass") {
+      svc.db.run(
+        `UPDATE handoffs SET resolved_by = ?, chain_task_type = 'review_adversarial',
+          permission_profile = 'review_readonly', status = 'completed' WHERE handoff_id = ?`,
+        [POST_IMPLEMENTATION_REVIEW_RESOLVER, "h-reviewer-authz"],
+      );
+    }
     seedClosedLaneWithReviewer(svc, {
-      laneId: "lane-land-authz",
+      laneId: "lane-land-prior",
       implementerHandoff: "h-land-authz",
-      reviewerHandoff: "h-reviewer-authz",
+      reviewerHandoff: "h-reviewer-prior",
       recalledMemoryIds: ["m-land-authz"],
     });
+    insertLane(svc.db, {
+      lane_id: "lane-land-authz",
+      ts_opened: "2026-05-08T00:02:30.000Z",
+      task_class: "STANDARD",
+      implementer_handoff: "h-land-authz",
+      recalled_memory_ids: ["m-land-authz"],
+    });
+    if (gate !== "open") {
+      closeLane(svc.db, "lane-land-authz", {
+        ts_closed: "2026-05-08T00:03:00.000Z",
+        gate_status: gate === "unlinked" || gate === "automated_pass" ? "passed" : gate,
+        reviewer_handoff: gate === "unlinked" ? null : "h-reviewer-authz",
+      });
+    }
     writeVerdictEvent(svc, {
       eventId: "v-land-authz",
       ts: "2026-05-08T00:01:00.000Z",
@@ -1130,10 +1157,14 @@ describe("dispatchLandRoute", () => {
         [string]
       >(
         `SELECT session_id, basis_type, basis_detail, basis, authorized_by_handoff
-         FROM t2_memory_verification_events
-         WHERE memory_id = ?`,
+       FROM t2_memory_verification_events
+       WHERE memory_id = ?`,
       )
       .get("m-land-authz");
+    if (gate !== "passed") {
+      expect(row).toBeNull();
+      return;
+    }
     expect(row).toBeDefined();
     expect(row?.session_id).toBe("h-land-authz");
     expect(row?.basis_type).toBe("dispatch_land");

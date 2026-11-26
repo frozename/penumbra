@@ -52,6 +52,16 @@ export function workerTokenMetadataDeclaresScratch(metadata_json: string | null)
   }
 }
 
+function workerDeclaresCompletionEvidence(metadataJson: string | null): boolean {
+  if (!metadataJson) return false;
+  try {
+    const metadata = JSON.parse(metadataJson) as Record<string, unknown>;
+    return metadata.supports_completion_evidence === true;
+  } catch {
+    return false;
+  }
+}
+
 // A profiled dispatch must never be admitted when zero live workers could
 // claim it under the claim gate — the handoff would sit in `approved`
 // forever (fail-open starvation) instead of failing at creation.
@@ -59,6 +69,7 @@ export function countFreshProfileEnforcingWorkers(
   services: WorkerGateServices,
   profile: PermissionProfile,
   project_id: string | null,
+  requireCompletionEvidence = false,
 ): number {
   const cutoff = Date.now() - workerHeartbeatStaleMs();
   const rows = services.db
@@ -77,6 +88,7 @@ export function countFreshProfileEnforcingWorkers(
     seen.add(row.worker_id);
     if (!workerCanClaimProject(services.workerAuthz?.get(row.worker_id), project_id)) continue;
     if (!workerTokenMetadataDeclaresProfile(row.metadata_json, profile)) continue;
+    if (requireCompletionEvidence && !workerDeclaresCompletionEvidence(row.metadata_json)) continue;
     n++;
   }
   return n;
@@ -90,8 +102,12 @@ export function profiledLiveWorkerGateResponse(
   services: WorkerGateServices,
   profile: PermissionProfile,
   project_id: string | null,
+  requireCompletionEvidence = false,
 ): Response | null {
-  if (countFreshProfileEnforcingWorkers(services, profile, project_id) > 0) return null;
+  if (
+    countFreshProfileEnforcingWorkers(services, profile, project_id, requireCompletionEvidence) > 0
+  )
+    return null;
   services.log.warn(
     {
       event: "dispatch.permission_profile_no_enforcing_worker",

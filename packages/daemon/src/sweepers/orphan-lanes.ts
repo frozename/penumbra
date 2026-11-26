@@ -2,6 +2,11 @@ import type { Services } from "@penumbra/core";
 
 import { closeLane, ORPHAN_SWEEPER_REASON_PREFIX } from "@penumbra/core";
 
+import {
+  type ReviewSweepCursor,
+  runPostImplementationReviewSweep,
+} from "./post-implementation-review.js";
+
 const closeLaneWithLog = closeLane;
 
 const DEFAULT_INTERVAL_MS = 5 * 60_000;
@@ -202,15 +207,30 @@ export function startOrphanLanesSweeper(
 ): () => void {
   const trivialGraceMs = services.settings.laneOrphanSweeperGraceMinutes * 60_000;
   const nonTrivialGraceMs = services.settings.laneOrphanSweeperNonTrivialGraceMinutes * 60_000;
+  const controller = new AbortController();
+  const cursor: ReviewSweepCursor = { completed: "", pending: new Map() };
+  let running = false;
   const timer = setInterval(() => {
     try {
       runOrphanLanesSweep(services, { trivialGraceMs, nonTrivialGraceMs });
     } catch (err) {
       services.log.warn({ err: String(err) }, "orphan-lane sweep failed");
     }
+    if (running) return;
+    running = true;
+    void runPostImplementationReviewSweep(services, controller.signal, cursor)
+      .catch((err: unknown) => {
+        if (!controller.signal.aborted) {
+          services.log.warn({ err: String(err) }, "post-implementation review sweep failed");
+        }
+      })
+      .finally(() => {
+        running = false;
+      });
   }, intervalMs);
   maybeUnref(timer);
   return () => {
     clearInterval(timer);
+    controller.abort();
   };
 }

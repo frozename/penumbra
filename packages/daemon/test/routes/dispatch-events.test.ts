@@ -1,4 +1,8 @@
-import { DispatchEventKindSchema } from "@penumbra/api-contract";
+import {
+  COMPLETION_EVIDENCE_EVENT,
+  DispatchEventKindSchema,
+  REVIEW_TARGET_EVENT,
+} from "@penumbra/api-contract";
 import { applySchema, buildServices, loadSqliteVec, type Services } from "@penumbra/core";
 import { TestEmbedder } from "@penumbra/core/testing";
 import { Database } from "bun:sqlite";
@@ -145,11 +149,13 @@ describe("dispatch events routes", () => {
     ]);
   });
 
-  test("POST accepts every DispatchEventKind (accepted-kind list can't drift)", async () => {
+  test("POST accepts every externally writable DispatchEventKind", async () => {
     // The route derives its accepted kinds from DispatchEventKindSchema, so a
     // kind added to the api-contract enum can never again be silently dropped at
     // ingestion. Posts one event per enum value (batched under the 50 cap).
-    const kinds = DispatchEventKindSchema.options;
+    const kinds = DispatchEventKindSchema.options.filter(
+      (kind) => kind !== COMPLETION_EVIDENCE_EVENT && kind !== REVIEW_TARGET_EVENT,
+    );
     const events = kinds.map((kind, i) => ({
       handoff_id: "h-all",
       worker_id: "w",
@@ -169,6 +175,31 @@ describe("dispatch events routes", () => {
     }
     expect(services.dispatchEventLog.listByHandoff("h-all")).toHaveLength(kinds.length);
   });
+
+  test.each([COMPLETION_EVIDENCE_EVENT, REVIEW_TARGET_EVENT])(
+    "POST refuses reserved daemon event %s",
+    async (kind) => {
+      const res = await dispatchEventsPostRoute(
+        new Request("http://x/dispatch/events", {
+          method: "POST",
+          body: JSON.stringify({
+            events: [
+              {
+                handoff_id: "claimed",
+                worker_id: "w",
+                source: "daemon",
+                kind,
+                ts: "2026-01-01T00:00:00.000Z",
+              },
+            ],
+          }),
+        }),
+        services,
+      );
+      expect(res.status).toBe(400);
+      expect(services.dispatchEventLog.listByHandoff("claimed")).toEqual([]);
+    },
+  );
 
   test("POST accepts agent thought event kinds and GET returns them", async () => {
     const { fetch, services, token, url } = startTestDaemon();

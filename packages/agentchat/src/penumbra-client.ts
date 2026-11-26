@@ -1,3 +1,4 @@
+import type { HandoffCompletionEvidence } from "@penumbra/api-contract";
 import type {
   ApprovePermissionRequest,
   CreatePermissionRequest,
@@ -352,8 +353,8 @@ export class PenumbraClient {
   async claimHandoff(
     id: string,
     worker_id: string,
-  ): Promise<{ handoff_id: string; status: string }> {
-    return await this.postWorker(`/handoffs/${id}/claim`, { worker_id });
+  ): Promise<{ handoff_id: string; status: string; dispatch_attempt?: number }> {
+    return await this.postWorker(`/handoffs/${id}/claim`, { worker_id, completion_evidence: true });
   }
   async recordHandoffBranchName(
     id: string,
@@ -365,9 +366,13 @@ export class PenumbraClient {
   async completeHandoff(
     id: string,
     worker_id?: string,
-    init?: { signal?: AbortSignal },
+    init?: { signal?: AbortSignal; evidence?: HandoffCompletionEvidence },
   ): Promise<{ handoff_id: string; status: string }> {
-    return await this.postWorker(`/handoffs/${id}/complete`, { worker_id }, init);
+    return await this.postWorker(
+      `/handoffs/${id}/complete`,
+      { worker_id, evidence: init?.evidence },
+      init,
+    );
   }
   async markFailed(
     id: string,

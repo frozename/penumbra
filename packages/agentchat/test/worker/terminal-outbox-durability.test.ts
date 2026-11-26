@@ -121,3 +121,48 @@ test("drain delivers records in created_at order regardless of filenames", async
   expect(await outbox.drain()).toEqual({ remaining: 0 });
   expect(calls).toEqual(["b-oldest", "c-middle", "a-newest"]);
 });
+
+test("completion evidence survives restart and is forwarded only to the authenticated terminal call", async () => {
+  const dir = directory();
+  const terminal = report("H");
+  terminal.evidence = {
+    attempt: 2,
+    result: {
+      kind: "review",
+      review: { head: "a".repeat(40), verdict: "failed", notes: "Regression." },
+    },
+  };
+  const deps = {
+    dir,
+    workerId: "W",
+    log,
+    observe: (): Promise<unknown> => Promise.resolve({ event_id: "E" }),
+    postDispatchEvents: (): Promise<void> => Promise.resolve(),
+    markFailed: (): Promise<unknown> => Promise.resolve({ status: "failed" }),
+    schedule: (): { cancel(): void } => ({ cancel: noop }),
+  };
+  const first = new TerminalOutbox({
+    ...deps,
+    complete: (): Promise<unknown> => Promise.reject(new Error("temporary connection failure")),
+  });
+  cleanups.push(() => {
+    first.stop();
+  });
+  expect(await first.reportTerminal(terminal)).toBe("pending");
+  first.stop();
+
+  const forwarded: unknown[] = [];
+  const second = new TerminalOutbox({
+    ...deps,
+    now: (): number => Date.now() + 60_000,
+    complete: (_id, init): Promise<unknown> => {
+      forwarded.push(init?.evidence);
+      return Promise.resolve({ status: "completed" });
+    },
+  });
+  cleanups.push(() => {
+    second.stop();
+  });
+  expect(await second.drain()).toEqual({ remaining: 0 });
+  expect(forwarded).toEqual([terminal.evidence]);
+});

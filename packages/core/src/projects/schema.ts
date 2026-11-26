@@ -52,6 +52,7 @@ export const ProjectEntrySchema = z.object({
     })
     .optional(),
   reconcile: ReconcileModeSchema.optional(),
+  post_implementation_reviewer: z.string().trim().min(1).max(200).optional(),
   // #233: per-project override of the worker's reconcilerAutoRebase; unset uses the global flag.
   auto_rebase: z.boolean().optional(),
   // Isolated-install worktrees install with this instead of detecting the lockfile.
