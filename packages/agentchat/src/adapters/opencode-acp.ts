@@ -26,6 +26,7 @@ import {
 } from "./opencode-mcp-config.js";
 import {
   capAskPatterns,
+  countToolParts,
   type PermissionAskOutcome,
   readAskPatterns,
   readPermissionAsk,
@@ -804,6 +805,7 @@ export class OpencodeAcpAdapter implements Adapter {
               adapter: this.kind,
               session_id: sessionId,
               stop_reason: "idle",
+              tool_calls: countToolParts(partTypeById),
             });
             break streamLoop;
           default:
@@ -823,7 +825,7 @@ export class OpencodeAcpAdapter implements Adapter {
 
     throwOnRejectedAskIdleEmpty(rejectedAsks, text);
 
-    yield { type: "done", result: { text } };
+    yield { type: "done", result: { text, meta: { tool_calls: countToolParts(partTypeById) } } };
   }
 }
 
