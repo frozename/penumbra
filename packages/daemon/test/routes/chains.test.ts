@@ -4526,6 +4526,58 @@ test("chain_start legacy refill still admits the first soft-pressured holder", a
   expect(body.routed_agent).toBe("cooled-first");
 });
 
+function seedLapsedQuotaCooldown(
+  services: Services,
+  provider: string,
+  resetsAt: number | null,
+): void {
+  // Observed two hours ago: past the 30-minute stale threshold.
+  const observedAt = new Date(services.clock().getTime() - 2 * 60 * 60 * 1000).toISOString();
+  services.db
+    .prepare(
+      `INSERT INTO t0_events (
+        event_id, ts, ingest_ts, source, user_id, machine_id,
+        event_type, lane, provider, payload_json
+      ) VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'rate-limit-snapshot', 'cli-subscription', ?, ?)`,
+    )
+    .run(
+      `lapsed-cooldown-${provider}`,
+      observedAt,
+      observedAt,
+      provider,
+      JSON.stringify({
+        window_label: "quota",
+        model: null,
+        used_pct: 100,
+        resets_at: resetsAt,
+        source_kind: "cooldown",
+      }),
+    );
+}
+
+for (const { label, resetsAt } of [
+  { label: "stale (resets_at null)", resetsAt: (): number | null => null },
+  {
+    label: "expired (resets_at in the past)",
+    resetsAt: (services: Services): number | null => services.clock().getTime() / 1000 - 60,
+  },
+]) {
+  test(`chain_start legacy refill fails open on a ${label} cooldown and takes roleAgents[0] (#298)`, async () => {
+    const services = quotaCooldownServices();
+    seedLapsedQuotaCooldown(services, "google", resetsAt(services));
+    // Soft pressure on both holders empties chooseSingle, forcing the refill.
+    seedSubscriptionPressure(services, "google", 95);
+    seedSubscriptionPressure(services, "anthropic", 95);
+
+    const res = await startExecutorChain(services);
+
+    expect(res.status).toBe(200);
+    const body = await readJsonBody<ChainResponseBody>(res);
+    expect(body.routed_agent).toBe("cooled-first");
+    expect(selectHandoff(services, body.handoff_id!).to_agent).toBe("cooled-first");
+  });
+}
+
 test("chain_start auto routing explores a known role with zero live strict holders", async () => {
   const services = tempServices({
     agentRegistry: ["planner-seat"],
