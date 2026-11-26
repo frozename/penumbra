@@ -1802,6 +1802,9 @@ function warnIfWorkerCodeStale(): void {
 const heartbeatLoop = startHeartbeatLoop({
   emitHeartbeat: (signal) => {
     warnIfWorkerCodeStale();
+    // Fire-and-forget: the re-check reads /proc/meminfo, and the 15 s cadence
+    // must not wait on it. It is throttled and swallows read errors itself.
+    void jobResources.recheckAdmissionFloor();
     return emitHeartbeat({ client, workerId, signal, onEvent });
   },
   reregisterWorker: () => client.reregisterWorker(),

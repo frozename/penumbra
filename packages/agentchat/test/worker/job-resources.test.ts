@@ -5,11 +5,13 @@ import { join } from "node:path";
 
 import {
   ADMISSION_FLOOR_ABOVE_AVAILABLE_MSG,
+  ADMISSION_FLOOR_RECHECK_INTERVAL_MS,
   CLAIM_ADMISSION_TIMEOUT_MSG,
   HEAVY_LOCK_IN_PROCESS_ONLY_MSG,
   setupWorkerJobResources,
 } from "@src/worker/job-resources.js";
 
+const INTERVAL = 15 * 60_000;
 const log = createLogger({ component: "job-resources-test", level: "silent" });
 const prime = (): Promise<{ available: false; reason: string }> =>
   Promise.resolve({ available: false, reason: "PENUMBRA_JOB_SCOPE=off" });
@@ -204,4 +206,97 @@ test("no in-process-only warning when a flock(1) binary is configured (#313)", a
   });
   const calls = warn.mock.calls.filter((c) => c[1] === HEAVY_LOCK_IN_PROCESS_ONLY_MSG);
   expect(calls.length).toBe(0);
+});
+
+test("a derived floor still above MemAvailable re-warns once per recheck interval", async () => {
+  let t = 0;
+  const now = (): number => t;
+  const l = createLogger({ component: "job-resources-test", level: "silent" });
+  const warn = spyOn(l, "warn");
+  const res = await setupWorkerJobResources(l, {
+    env: { PENUMBRA_JOB_ADMIT_WAIT_S: "0" },
+    prime,
+    lock: lock("job-resources-l"),
+    memory: { platform: "linux", readMeminfo: hostMeminfo(124, 15) },
+    now,
+  });
+  expect(typeof res.recheckAdmissionFloor).toBe("function");
+  expect(ADMISSION_FLOOR_RECHECK_INTERVAL_MS).toBe(INTERVAL);
+  const calls = (): unknown[][] =>
+    warn.mock.calls.filter((c) => c[1] === ADMISSION_FLOOR_ABOVE_AVAILABLE_MSG);
+  expect(calls().length).toBe(1);
+
+  t = INTERVAL - 1;
+  await res.recheckAdmissionFloor();
+  expect(calls().length).toBe(1);
+
+  t = INTERVAL;
+  await res.recheckAdmissionFloor();
+  expect(calls().length).toBe(2);
+  expect(calls()[1]?.[0]).toMatchObject({
+    admit_min_gib: 20,
+    available_gib: 15,
+    explicit: false,
+    env_var: "PENUMBRA_JOB_ADMIT_MIN_GIB",
+  });
+
+  t = INTERVAL + 1;
+  await res.recheckAdmissionFloor();
+  expect(calls().length).toBe(2);
+
+  t = 2 * INTERVAL;
+  await res.recheckAdmissionFloor();
+  expect(calls().length).toBe(3);
+});
+
+test("recheck warns when MemAvailable drops below the derived floor after a healthy boot", async () => {
+  let t = 0;
+  const now = (): number => t;
+  let avail = 30;
+  const readMeminfo = (): Promise<string> =>
+    Promise.resolve(
+      `MemTotal: ${String(124 * 1024 * 1024)} kB\nMemAvailable: ${String(avail * 1024 * 1024)} kB\n`,
+    );
+  const l = createLogger({ component: "job-resources-test", level: "silent" });
+  const warn = spyOn(l, "warn");
+  const res = await setupWorkerJobResources(l, {
+    env: { PENUMBRA_JOB_ADMIT_WAIT_S: "0" },
+    prime,
+    lock: lock("job-resources-m"),
+    memory: { platform: "linux", readMeminfo },
+    now,
+  });
+  expect(typeof res.recheckAdmissionFloor).toBe("function");
+  const calls = (): unknown[][] =>
+    warn.mock.calls.filter((c) => c[1] === ADMISSION_FLOOR_ABOVE_AVAILABLE_MSG);
+  expect(calls().length).toBe(0);
+
+  avail = 15;
+  t = INTERVAL;
+  await res.recheckAdmissionFloor();
+  expect(calls().length).toBe(1);
+  expect(calls()[0]?.[0]).toMatchObject({ available_gib: 15 });
+});
+
+test("recheck never warns for an explicit floor", async () => {
+  let t = 0;
+  const now = (): number => t;
+  const l = createLogger({ component: "job-resources-test", level: "silent" });
+  const warn = spyOn(l, "warn");
+  const res = await setupWorkerJobResources(l, {
+    env: { PENUMBRA_JOB_ADMIT_MIN_GIB: "20" },
+    prime,
+    lock: lock("job-resources-n"),
+    memory: { platform: "linux", readMeminfo: meminfo(5) },
+    now,
+  });
+  expect(typeof res.recheckAdmissionFloor).toBe("function");
+  const calls = (): unknown[][] =>
+    warn.mock.calls.filter((c) => c[1] === ADMISSION_FLOOR_ABOVE_AVAILABLE_MSG);
+
+  t = INTERVAL;
+  await res.recheckAdmissionFloor();
+  t = 2 * INTERVAL;
+  await res.recheckAdmissionFloor();
+  expect(calls().length).toBe(0);
 });
