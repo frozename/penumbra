@@ -1,15 +1,21 @@
 // packages/agentchat/test/config/load.test.ts
 import { profilesEnforcedBySeats } from "@penumbra/core";
-import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { afterEach, describe, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { loadConfig, loadConfigFromDir, loadConfigPathOrDir } from "@src/config/load.js";
 import { assertProfileDispatchSeat } from "@src/worker/dispatch-profile-gate.js";
 
+import { createTempDirTracker } from "../helpers/temp-dirs.js";
+
+const tmp = createTempDirTracker();
+afterEach(() => {
+  tmp.cleanup();
+});
+
 test("loadConfig parses a valid YAML config", () => {
-  const dir = mkdtempSync(join(tmpdir(), "agentchat-cfg-"));
+  const dir = tmp.make("agentchat-cfg-");
   const path = join(dir, "agentchat.yaml");
   writeFileSync(
     path,
@@ -30,7 +36,7 @@ default_roles:
 });
 
 test("loadConfig defaults pricing_mode to api for agents without an explicit value", () => {
-  const dir = mkdtempSync(join(tmpdir(), "agentchat-cfg-"));
+  const dir = tmp.make("agentchat-cfg-");
   const path = join(dir, "agentchat.yaml");
   writeFileSync(
     path,
@@ -46,7 +52,7 @@ agents:
 });
 
 test("loadConfig rejects subscription agents without a subscription_provider", () => {
-  const dir = mkdtempSync(join(tmpdir(), "agentchat-cfg-"));
+  const dir = tmp.make("agentchat-cfg-");
   const path = join(dir, "agentchat.yaml");
   writeFileSync(
     path,
@@ -61,7 +67,7 @@ agents:
 });
 
 test("loadConfig accepts subscription agents with a subscription_provider", () => {
-  const dir = mkdtempSync(join(tmpdir(), "agentchat-cfg-"));
+  const dir = tmp.make("agentchat-cfg-");
   const path = join(dir, "agentchat.yaml");
   writeFileSync(
     path,
@@ -79,7 +85,7 @@ agents:
 });
 
 test("loadConfig parses auto_approve_to as a list of agent or role names", () => {
-  const dir = mkdtempSync(join(tmpdir(), "agentchat-cfg-"));
+  const dir = tmp.make("agentchat-cfg-");
   const path = join(dir, "agentchat.yaml");
   writeFileSync(
     path,
@@ -105,7 +111,7 @@ default_roles:
 });
 
 test("loadConfig defaults reconcilerAutoRebase=true when omitted", () => {
-  const dir = mkdtempSync(join(tmpdir(), "agentchat-cfg-"));
+  const dir = tmp.make("agentchat-cfg-");
   const path = join(dir, "agentchat.yaml");
   writeFileSync(
     path,
@@ -120,7 +126,7 @@ agents:
 });
 
 test("loadConfig accepts reconcilerAutoRebase=false", () => {
-  const dir = mkdtempSync(join(tmpdir(), "agentchat-cfg-"));
+  const dir = tmp.make("agentchat-cfg-");
   const path = join(dir, "agentchat.yaml");
   writeFileSync(
     path,
@@ -136,7 +142,7 @@ reconcilerAutoRebase: false
 });
 
 test("loadConfig parses role_routing exploration policy", () => {
-  const dir = mkdtempSync(join(tmpdir(), "agentchat-cfg-"));
+  const dir = tmp.make("agentchat-cfg-");
   const path = join(dir, "agentchat.yaml");
   writeFileSync(
     path,
@@ -153,7 +159,7 @@ role_routing:
 });
 
 test("loadConfig rejects invalid role_routing exploration policy", () => {
-  const dir = mkdtempSync(join(tmpdir(), "agentchat-cfg-"));
+  const dir = tmp.make("agentchat-cfg-");
   const path = join(dir, "agentchat.yaml");
   writeFileSync(
     path,
@@ -169,14 +175,14 @@ role_routing:
 });
 
 test("loadConfig throws on invalid shape", () => {
-  const dir = mkdtempSync(join(tmpdir(), "agentchat-cfg-"));
+  const dir = tmp.make("agentchat-cfg-");
   const path = join(dir, "agentchat.yaml");
   writeFileSync(path, `agents: []`);
   expect(() => loadConfig(path)).toThrow(/agents/);
 });
 
 test("loadConfigPathOrDir keeps enforces_permission_profiles on opted-in seats", () => {
-  const dir = mkdtempSync(join(tmpdir(), "agentchat-cfg-"));
+  const dir = tmp.make("agentchat-cfg-");
   const path = join(dir, "agentchat.yaml");
   writeFileSync(
     path,
@@ -214,7 +220,7 @@ agents:
 });
 
 test("loadConfigFromDir keeps enforces_permission_profiles on opted-in seats", () => {
-  const dir = mkdtempSync(join(tmpdir(), "agentchat-split-"));
+  const dir = tmp.make("agentchat-split-");
   writeFileSync(
     join(dir, "agents.yaml"),
     `
@@ -232,7 +238,7 @@ agents:
 });
 
 test("loadConfig rejects enforces_permission_profiles entries outside the profile enum", () => {
-  const dir = mkdtempSync(join(tmpdir(), "agentchat-cfg-"));
+  const dir = tmp.make("agentchat-cfg-");
   const path = join(dir, "agentchat.yaml");
   writeFileSync(
     path,
@@ -247,7 +253,7 @@ agents:
 });
 
 test("parses allowed_tools and permission_ttl_s from agent options", () => {
-  const dir = mkdtempSync(join(tmpdir(), "agentchat-cfg-"));
+  const dir = tmp.make("agentchat-cfg-");
   const path = join(dir, "agentchat.yaml");
   writeFileSync(
     path,
@@ -271,7 +277,7 @@ agents:
 });
 
 test("omitted allowed_tools defaults to undefined (worker treats as [])", () => {
-  const dir = mkdtempSync(join(tmpdir(), "agentchat-cfg-"));
+  const dir = tmp.make("agentchat-cfg-");
   const path = join(dir, "agentchat.yaml");
   writeFileSync(
     path,
@@ -290,7 +296,7 @@ agents:
 
 describe("ProviderQuotaConfig per-model", () => {
   test("loads a model-scoped quota entry", () => {
-    const dir = mkdtempSync(join(tmpdir(), "penumbra-cfg-"));
+    const dir = tmp.make("penumbra-cfg-");
     const yamlPath = join(dir, "agentchat.yaml");
     writeFileSync(
       yamlPath,
@@ -318,7 +324,7 @@ describe("ProviderQuotaConfig per-model", () => {
   });
 
   test("preserves provider max_in_flight caps in the worker config schema", () => {
-    const dir = mkdtempSync(join(tmpdir(), "penumbra-cfg-"));
+    const dir = tmp.make("penumbra-cfg-");
     const yamlPath = join(dir, "agentchat.yaml");
     writeFileSync(
       yamlPath,
@@ -337,7 +343,7 @@ describe("ProviderQuotaConfig per-model", () => {
   });
 
   test("still accepts provider-level (no-model) entries for backwards compatibility", () => {
-    const dir = mkdtempSync(join(tmpdir(), "penumbra-cfg-"));
+    const dir = tmp.make("penumbra-cfg-");
     const yamlPath = join(dir, "agentchat.yaml");
     writeFileSync(
       yamlPath,
@@ -356,7 +362,7 @@ describe("ProviderQuotaConfig per-model", () => {
   });
 
   test("defaults pressure_caps to undefined when omitted", () => {
-    const dir = mkdtempSync(join(tmpdir(), "penumbra-cfg-"));
+    const dir = tmp.make("penumbra-cfg-");
     const yamlPath = join(dir, "agentchat.yaml");
     writeFileSync(
       yamlPath,
@@ -374,7 +380,7 @@ describe("ProviderQuotaConfig per-model", () => {
   });
 
   test("parses scalar pressure_caps map values as refuse-only caps", () => {
-    const dir = mkdtempSync(join(tmpdir(), "penumbra-cfg-"));
+    const dir = tmp.make("penumbra-cfg-");
     const yamlPath = join(dir, "agentchat.yaml");
     writeFileSync(
       yamlPath,
@@ -397,7 +403,7 @@ describe("ProviderQuotaConfig per-model", () => {
   });
 
   test("parses object pressure_caps values with warn and refuse", () => {
-    const dir = mkdtempSync(join(tmpdir(), "penumbra-cfg-"));
+    const dir = tmp.make("penumbra-cfg-");
     const yamlPath = join(dir, "agentchat.yaml");
     writeFileSync(
       yamlPath,
@@ -420,7 +426,7 @@ describe("ProviderQuotaConfig per-model", () => {
   });
 
   test("parses object pressure_caps values with refuse only", () => {
-    const dir = mkdtempSync(join(tmpdir(), "penumbra-cfg-"));
+    const dir = tmp.make("penumbra-cfg-");
     const yamlPath = join(dir, "agentchat.yaml");
     writeFileSync(
       yamlPath,
@@ -442,7 +448,7 @@ describe("ProviderQuotaConfig per-model", () => {
   });
 
   test("rejects pressure_caps warn >= refuse with an error path on the window label", () => {
-    const dir = mkdtempSync(join(tmpdir(), "penumbra-cfg-"));
+    const dir = tmp.make("penumbra-cfg-");
     const yamlPath = join(dir, "agentchat.yaml");
     writeFileSync(
       yamlPath,
@@ -464,7 +470,7 @@ describe("ProviderQuotaConfig per-model", () => {
 
 describe("loadConfigFromDir (split config dir = single source of truth)", () => {
   function writeSplitDir(): string {
-    const dir = mkdtempSync(join(tmpdir(), "penumbra-split-"));
+    const dir = tmp.make("penumbra-split-");
     writeFileSync(
       join(dir, "agents.yaml"),
       `
@@ -525,7 +531,7 @@ providers:
   });
 
   test("throws a dir-scoped error on invalid merged shape", () => {
-    const dir = mkdtempSync(join(tmpdir(), "penumbra-split-bad-"));
+    const dir = tmp.make("penumbra-split-bad-");
     writeFileSync(join(dir, "agents.yaml"), `agents: []`);
     writeFileSync(join(dir, "routing.yaml"), `default_roles: {}`);
     writeFileSync(join(dir, "quotas.yaml"), `providers: []`);
@@ -537,7 +543,7 @@ providers:
     const fromDir = loadConfigPathOrDir(splitDir);
     expect(fromDir.agents.length).toBe(2);
 
-    const fileDir = mkdtempSync(join(tmpdir(), "penumbra-file-"));
+    const fileDir = tmp.make("penumbra-file-");
     const filePath = join(fileDir, "agentchat.yaml");
     writeFileSync(filePath, `agents:\n  - name: only\n    adapter: claude-cli\n`);
     const fromFile = loadConfigPathOrDir(filePath);
@@ -546,7 +552,7 @@ providers:
 
   describe("loadConfigFromDir (split worker dir)", () => {
     function writeSplitDir(): string {
-      const dir = mkdtempSync(join(tmpdir(), "agentchat-split-"));
+      const dir = tmp.make("agentchat-split-");
       writeFileSync(
         join(dir, "agents.yaml"),
         `
@@ -576,7 +582,7 @@ providers:
     }
 
     test("rejects an unwhitelisted billed hand seat", () => {
-      const dir = mkdtempSync(join(tmpdir(), "agentchat-split-bad-"));
+      const dir = tmp.make("agentchat-split-bad-");
       writeFileSync(
         join(dir, "agents.yaml"),
         `

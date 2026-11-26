@@ -199,132 +199,130 @@ export function startInProcessDaemon(
   opts: {
     shellEnabled?: boolean;
     autoApprovePermissions?: boolean;
-    /** Wire a real OrphanHandoffRecoveryService into the route table so
-     *  /worker/reconcile-orphans serves instead of returning 503. */
     orphanRecovery?: boolean;
-    /** Emulate a pre-claimed_before daemon: strip the field from reconcile
-     *  requests and the capability flag from register responses. */
     emulateDaemonWithoutClaimedBefore?: boolean;
   } = {},
 ): Promise<InProcessDaemonHarness> {
   const dir = mkdtempSync(join(tmpdir(), "penumbra-agentchat-int-"));
-  const db = new Database(":memory:");
-  loadSqliteVec(db);
-  migrate(db, { embeddingDim: 384 });
+  let db: Database | undefined;
+  try {
+    const database = new Database(":memory:");
+    db = database;
+    loadSqliteVec(database);
+    migrate(database, { embeddingDim: 384 });
 
-  let n = 0;
-  const services = buildServices({
-    env: {},
-    input: {},
-    storageRoot: dir,
-    db,
-    embedder: new TestEmbedder({ dim: 384 }),
-    clock: () => new Date("2026-05-02T00:00:00Z"),
-    uuid: () => `id-${String(++n)}`,
-  });
-  services.agentRegistry = ["claude-acp-sonnet", "local-gemma26"];
-  // Swap the stub watchdog from buildServices for a real WatchdogService so
-  // markWorkerStale (used by orphan-recovery integration tests) can poke its
-  // internal heartbeat map directly.
-  services.watchdog = new WatchdogService(services);
-  services.watchdog.hasActiveWorker = (): boolean => true;
-  services.agentchatConfig = buildAgentChatConfig();
+    let n = 0;
+    const services = buildServices({
+      env: {},
+      input: {},
+      storageRoot: dir,
+      db: database,
+      embedder: new TestEmbedder({ dim: 384 }),
+      clock: () => new Date("2026-05-02T00:00:00Z"),
+      uuid: () => `id-${String(++n)}`,
+    });
+    services.agentRegistry = ["claude-acp-sonnet", "local-gemma26"];
+    services.watchdog = Object.assign(new WatchdogService(services), {
+      hasActiveWorker: (): boolean => true,
+    });
+    services.agentchatConfig = buildAgentChatConfig();
 
-  const shellSessionPool = opts.shellEnabled ? buildShellSessionPool(services) : undefined;
-  if (shellSessionPool) {
-    services.shellSessionPool = shellSessionPool;
-    services.shellConfig = {
-      enabled: true,
-      dangerousCommandsForAgent: (): string[] => ["sudo\\b"],
-    };
-  }
-  if (opts.autoApprovePermissions) {
-    (services as ServicesWithPermission).permissionService = {
-      requestPermission: (): Promise<{ approved: boolean }> => Promise.resolve({ approved: true }),
-    };
-  }
+    const shellPool = opts.shellEnabled ? buildShellSessionPool(services) : undefined;
+    if (shellPool) {
+      services.shellSessionPool = shellPool;
+      services.shellConfig = {
+        enabled: true,
+        dangerousCommandsForAgent: (): string[] => ["sudo\\b"],
+      };
+    }
+    if (opts.autoApprovePermissions) {
+      (services as ServicesWithPermission).permissionService = {
+        requestPermission: (): Promise<{ approved: boolean }> =>
+          Promise.resolve({ approved: true }),
+      };
+    }
 
-  const token = "tok";
-  const orphanRecovery = opts.orphanRecovery
-    ? new OrphanHandoffRecoveryService(services)
-    : undefined;
-  const handler = createDaemonFetchHandler({
-    services,
-    token,
-    orphanHandoffRecovery: orphanRecovery,
-  });
-  const requests: CapturedRequest[] = [];
-  const fetchImpl = buildCapturingFetch({
-    handler,
-    requests,
-    emulateOld: opts.emulateDaemonWithoutClaimedBefore === true,
-  });
+    const token = "tok";
+    const orphanRecovery = opts.orphanRecovery
+      ? new OrphanHandoffRecoveryService(services)
+      : undefined;
+    const handler = createDaemonFetchHandler({
+      services,
+      token,
+      orphanHandoffRecovery: orphanRecovery,
+    });
+    const requests: CapturedRequest[] = [];
+    const fetchImpl = buildCapturingFetch({
+      handler,
+      requests,
+      emulateOld: opts.emulateDaemonWithoutClaimedBefore === true,
+    });
 
-  writeFileSync(join(dir, "port"), "1");
-  writeFileSync(join(dir, "token"), token);
+    writeFileSync(join(dir, "port"), "1");
+    writeFileSync(join(dir, "token"), token);
 
-  const client = new PenumbraClient({ storageRoot: dir, fetch: fetchImpl });
+    const client = new PenumbraClient({ storageRoot: dir, fetch: fetchImpl });
 
-  const shellRun = (input: ShellRunInput): Promise<ShellRunResult> =>
-    jsonFetch<ShellRunResult>(fetchImpl, "http://x/shell/run", token, input);
+    const shellRun = (input: ShellRunInput): Promise<ShellRunResult> =>
+      jsonFetch<ShellRunResult>(fetchImpl, "http://x/shell/run", token, input);
 
-  return Promise.resolve({
-    client,
-    services,
-    requests,
-    postDispatchEvent: (event): Promise<void> => client.postDispatchEvents([event]),
-    getDispatchEvents: async (
-      handoffId,
-    ): Promise<{ kind: string; meta?: Record<string, unknown> | null }[]> => {
-      const { events } = await client.getDispatchEvents({ handoff_id: handoffId });
-      return events;
-    },
-    dispatchTimeline: (
-      handoffId,
-    ): Promise<{ events: { kind: string; meta?: Record<string, unknown> | null }[] }> =>
-      client.getDispatchTimeline(handoffId) as Promise<{
-        events: { kind: string; meta?: Record<string, unknown> | null }[];
-      }>,
-    shellRun,
-    shellClose: (input): Promise<{ closed: boolean }> =>
-      jsonFetch<{ closed: boolean }>(fetchImpl, "http://x/shell/close", token, input),
-    shellRunRaw: (input): Promise<Response> =>
-      fetchImpl("http://x/shell/run", {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify(input),
-      }),
-    markHandoffCompleted: (handoffId): Promise<{ handoff_id: string; status: string }> =>
-      client.completeHandoff(handoffId),
-    markWorkerStale: (workerId): void => {
-      // Force-age the worker's heartbeat so OrphanHandoffRecoveryService treats it as stale.
-      (services.watchdog as unknown as { lastHeartbeats: Map<string, number> }).lastHeartbeats.set(
-        workerId,
-        0,
-      );
-    },
-    triggerOrphanRecovery: (): { requeued: number; exhausted: number } => {
-      // staleMs=1 with the past-epoch heartbeat from markWorkerStale guarantees the worker shows stale.
-      const recovery = new OrphanHandoffRecoveryService(services, {
-        intervalMs: 0,
-        staleMs: 1,
-        batchSize: 100,
-      });
-      return recovery.runOnce();
-    },
-    stop: async (): Promise<void> => {
-      try {
-        if (shellSessionPool) {
-          await shellSessionPool.shutdown();
+    return Promise.resolve({
+      client,
+      services,
+      requests,
+      postDispatchEvent: (event): Promise<void> => client.postDispatchEvents([event]),
+      getDispatchEvents: async (
+        handoffId,
+      ): Promise<{ kind: string; meta?: Record<string, unknown> | null }[]> => {
+        const { events } = await client.getDispatchEvents({ handoff_id: handoffId });
+        return events;
+      },
+      dispatchTimeline: (
+        handoffId,
+      ): Promise<{ events: { kind: string; meta?: Record<string, unknown> | null }[] }> =>
+        client.getDispatchTimeline(handoffId) as Promise<{
+          events: { kind: string; meta?: Record<string, unknown> | null }[];
+        }>,
+      shellRun,
+      shellClose: (input): Promise<{ closed: boolean }> =>
+        jsonFetch<{ closed: boolean }>(fetchImpl, "http://x/shell/close", token, input),
+      shellRunRaw: (input): Promise<Response> =>
+        fetchImpl("http://x/shell/run", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(input),
+        }),
+      markHandoffCompleted: (handoffId): Promise<{ handoff_id: string; status: string }> =>
+        client.completeHandoff(handoffId),
+      markWorkerStale: (workerId): void => {
+        (
+          services.watchdog as unknown as { lastHeartbeats: Map<string, number> }
+        ).lastHeartbeats.set(workerId, 0);
+      },
+      triggerOrphanRecovery: (): { requeued: number; exhausted: number } =>
+        new OrphanHandoffRecoveryService(services, {
+          intervalMs: 0,
+          staleMs: 1,
+          batchSize: 100,
+        }).runOnce(),
+      stop: async (): Promise<void> => {
+        try {
+          if (shellPool) {
+            await shellPool.shutdown();
+          }
+          services.supervisor.stopAll();
+        } finally {
+          db?.close();
+          rmSync(dir, { recursive: true, force: true });
         }
-        services.supervisor.stopAll();
-      } finally {
-        db.close();
-        rmSync(dir, { recursive: true, force: true });
-      }
-    },
-  });
+      },
+    });
+  } catch (err) {
+    db?.close();
+    rmSync(dir, { recursive: true, force: true });
+    throw err;
+  }
 }
