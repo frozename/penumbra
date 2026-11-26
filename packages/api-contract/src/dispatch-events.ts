@@ -5,6 +5,8 @@ export const DispatchEventKindSchema = z.enum([
   "dispatch.worktree_setup",
   "dispatch.worktree_ready",
   "dispatch.end",
+  "dispatch.completion_evidence",
+  "dispatch.review_target",
   "acp.server.start",
   "acp.warm_pool.deposit_rejected",
   "acp.warm_pool.prewarm_evicted",

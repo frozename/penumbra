@@ -1,5 +1,9 @@
 import type { DispatchEventInput, Logger } from "@penumbra/core";
 
+import {
+  type HandoffCompletionEvidence,
+  HandoffCompletionEvidenceSchema,
+} from "@penumbra/api-contract";
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -17,6 +21,7 @@ export interface TerminalReport {
   worker_id?: string;
   outcome: "complete" | "fail";
   reason?: string;
+  evidence?: HandoffCompletionEvidence;
   observations: Record<string, unknown>[];
   dispatch_end: DispatchEventInput;
 }
@@ -53,7 +58,10 @@ export interface TerminalOutboxDeps {
   workerId: string;
   observe: (event: Record<string, unknown>, init?: { signal?: AbortSignal }) => Promise<unknown>;
   postDispatchEvents: (events: DispatchEventInput[], signal?: AbortSignal) => Promise<void>;
-  complete: (handoff_id: string, init?: { signal?: AbortSignal }) => Promise<unknown>;
+  complete: (
+    handoff_id: string,
+    init?: { signal?: AbortSignal; evidence?: HandoffCompletionEvidence },
+  ) => Promise<unknown>;
   markFailed: (
     handoff_id: string,
     reason: string,
@@ -83,6 +91,7 @@ interface OutboxRecord {
   worker_id: string;
   outcome: "complete" | "fail";
   reason?: string;
+  evidence?: HandoffCompletionEvidence;
   /** Remaining post-adapter envelopes, in order. Shrinks as sends succeed or
    *  are terminally dropped. */
   observations: Record<string, unknown>[];
@@ -149,6 +158,7 @@ function isValidRecord(rec: unknown): rec is OutboxRecord {
     typeof r.handoff_id === "string" &&
     typeof r.worker_id === "string" &&
     (r.outcome === "complete" || r.outcome === "fail") &&
+    (r.evidence === undefined || HandoffCompletionEvidenceSchema.safeParse(r.evidence).success) &&
     Array.isArray(r.observations) &&
     typeof r.dispatch_end === "object" &&
     r.dispatch_end !== null &&
@@ -167,7 +177,7 @@ export class TerminalOutbox {
   /** Actual on-disk file name per handoff (adopted names may differ from the
    *  canonical sanitized one). */
   private readonly fileNames = new Map<string, string>();
-  private readonly inflight = new Map<string, Promise<TerminalReportStatus>>();
+  private readonly inflight = new Set<string>();
   private draining: Promise<{ remaining: number }> | null = null;
   private timer: { cancel: () => void } | null = null;
   private stopped = false;
@@ -191,6 +201,7 @@ export class TerminalOutbox {
       worker_id: report.worker_id ?? this.deps.workerId,
       outcome: report.outcome,
       ...(report.reason !== undefined ? { reason: report.reason } : {}),
+      evidence: report.evidence,
       observations: [...report.observations],
       dispatch_end: report.dispatch_end,
       steps_done: {
@@ -208,7 +219,6 @@ export class TerminalOutbox {
     const status = await this.deliverSingleFlight(
       record,
       this.deps.inlineBudgetMs ?? INLINE_BUDGET_MS,
-      true,
     );
     this.rearmTimer();
     return status;
@@ -234,8 +244,8 @@ export class TerminalOutbox {
     );
     for (const record of ordered) {
       if (this.now() >= deadline) break;
-      if (this.records.get(record.handoff_id) !== record) continue;
-      await this.deliverSingleFlight(record, Math.max(0, deadline - this.now()), false);
+      if (!this.isCurrent(record)) continue;
+      await this.deliverSingleFlight(record, Math.max(0, deadline - this.now()));
     }
     this.rearmTimer();
     return { remaining: this.records.size };
@@ -260,7 +270,12 @@ export class TerminalOutbox {
     return join(this.deps.dir, this.fileNameOf(record));
   }
 
+  private isCurrent(record: OutboxRecord): boolean {
+    return this.records.get(record.handoff_id) === record;
+  }
+
   private tryPersist(record: OutboxRecord, firstWrite = false): void {
+    if (!this.isCurrent(record)) return;
     try {
       mkdirSync(this.deps.dir, { recursive: true, mode: 0o700 });
       const path = this.filePathOf(record);
@@ -277,7 +292,8 @@ export class TerminalOutbox {
     }
   }
 
-  private deleteRecord(record: OutboxRecord): void {
+  private deleteRecord(record: OutboxRecord): boolean {
+    if (!this.isCurrent(record)) return false;
     this.records.delete(record.handoff_id);
     const name = this.fileNames.get(record.handoff_id);
     this.fileNames.delete(record.handoff_id);
@@ -291,6 +307,7 @@ export class TerminalOutbox {
         "outbox record file removal failed",
       );
     }
+    return true;
   }
 
   private loadFromDisk(): void {
@@ -378,7 +395,7 @@ export class TerminalOutbox {
   }
 
   private keepForRetry(record: OutboxRecord, cause: string): TerminalReportStatus {
-    if (this.records.get(record.handoff_id) !== record) return "superseded";
+    if (!this.isCurrent(record)) return "superseded";
     record.attempts += 1;
     const base = this.deps.backoffBaseMs ?? BACKOFF_BASE_MS;
     const cap = this.deps.backoffCapMs ?? BACKOFF_CAP_MS;
@@ -400,40 +417,19 @@ export class TerminalOutbox {
   private async deliverSingleFlight(
     record: OutboxRecord,
     budgetMs: number,
-    joinExisting: boolean,
   ): Promise<TerminalReportStatus> {
-    const existing = this.inflight.get(record.handoff_id);
-    if (existing) {
-      if (!joinExisting) return "pending";
-      const raced = await Promise.race([
-        existing,
-        new Promise<TerminalReportStatus>((resolve) => {
-          setTimeout(
-            () => {
-              resolve("pending");
-            },
-            Math.max(1, budgetMs),
-          );
-        }),
-      ]);
-      return raced;
-    }
-    const attempt = this.attemptDelivery(record, budgetMs).catch(
-      (err: unknown): TerminalReportStatus => {
-        this.deps.log.error(
-          { handoff_id: record.handoff_id, err: String(err) },
-          "outbox delivery attempt crashed; record kept",
-        );
-        return "pending";
-      },
-    );
-    this.inflight.set(record.handoff_id, attempt);
+    if (this.inflight.has(record.handoff_id)) return "pending";
+    this.inflight.add(record.handoff_id);
     try {
-      return await attempt;
+      return await this.attemptDelivery(record, budgetMs);
+    } catch (err: unknown) {
+      this.deps.log.error(
+        { handoff_id: record.handoff_id, err: String(err) },
+        "outbox delivery attempt crashed; record kept",
+      );
+      return "pending";
     } finally {
-      if (this.inflight.get(record.handoff_id) === attempt) {
-        this.inflight.delete(record.handoff_id);
-      }
+      this.inflight.delete(record.handoff_id);
     }
   }
 
@@ -472,6 +468,7 @@ export class TerminalOutbox {
     record: OutboxRecord,
     verdict: { verdict: "delivered" | "superseded"; current_status: string | null },
   ): TerminalReportStatus {
+    if (!this.deleteRecord(record)) return "superseded";
     if (verdict.verdict === "superseded") {
       this.deps.log.warn(
         {
@@ -481,11 +478,8 @@ export class TerminalOutbox {
         },
         "terminal report superseded",
       );
-      this.deleteRecord(record);
-      return "superseded";
     }
-    this.deleteRecord(record);
-    return "delivered";
+    return verdict.verdict;
   }
 
   private async attemptDelivery(
@@ -523,6 +517,7 @@ export class TerminalOutbox {
       const verdict = await this.tryStep(deadline, (signal) =>
         this.deps.observe(envelope, { signal }),
       );
+      if (!this.isCurrent(record)) return "superseded";
       if (verdict === "retry" || verdict === "budget") {
         return this.keepForRetry(record, `observations_${verdict}`);
       }
@@ -545,6 +540,7 @@ export class TerminalOutbox {
     record: OutboxRecord,
     deadline: number,
   ): Promise<TerminalReportStatus | null> {
+    if (!this.isCurrent(record)) return "superseded";
     if (record.steps_done.dispatch_end) return null;
     const verdict = await this.tryStep(deadline, (signal) =>
       this.deps.postDispatchEvents([record.dispatch_end], signal),
@@ -568,11 +564,15 @@ export class TerminalOutbox {
     record: OutboxRecord,
     deadline: number,
   ): Promise<TerminalReportStatus> {
+    if (!this.isCurrent(record)) return "superseded";
     if (this.now() >= deadline) return this.keepForRetry(record, "budget");
     try {
       const res =
         record.outcome === "complete"
-          ? await this.deps.complete(record.handoff_id, { signal: this.stepSignal(deadline) })
+          ? await this.deps.complete(record.handoff_id, {
+              signal: this.stepSignal(deadline),
+              ...(record.evidence ? { evidence: record.evidence } : {}),
+            })
           : await this.deps.markFailed(record.handoff_id, record.reason ?? "dispatch error", {
               signal: this.stepSignal(deadline),
             });
@@ -592,8 +592,11 @@ export class TerminalOutbox {
     this.timer = null;
     if (this.stopped || this.records.size === 0) return;
     const earliest = Math.min(
-      ...[...this.records.values()].map((r) => Date.parse(r.next_attempt_at)),
+      ...[...this.records.values()]
+        .filter((r) => !this.inflight.has(r.handoff_id))
+        .map((r) => Date.parse(r.next_attempt_at)),
     );
+    if (earliest === Infinity) return;
     const delayMs = Math.max(0, earliest - this.now());
     const schedule = this.deps.schedule ?? defaultSchedule;
     this.timer = schedule(() => {

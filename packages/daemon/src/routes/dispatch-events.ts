@@ -5,7 +5,11 @@ import type {
   Services,
 } from "@penumbra/core";
 
-import { DispatchEventKindSchema } from "@penumbra/api-contract";
+import {
+  COMPLETION_EVIDENCE_EVENT,
+  DispatchEventKindSchema,
+  REVIEW_TARGET_EVENT,
+} from "@penumbra/api-contract";
 import { z } from "zod";
 
 import { json } from "./_helpers.js";
@@ -23,11 +27,18 @@ const KIND_VALUES = [
   "agent.heartbeat",
 ] as const satisfies readonly DispatchEventKind[];
 
+const IngestEventKindSchema = z
+  .enum(KIND_VALUES)
+  .refine(
+    (kind) => kind !== COMPLETION_EVIDENCE_EVENT && kind !== REVIEW_TARGET_EVENT,
+    "event kind is owned by the daemon",
+  );
+
 const EventSchema = z.object({
   handoff_id: z.string(),
   worker_id: z.string().nullish(),
   source: z.enum(["worker", "daemon"]),
-  kind: z.enum(KIND_VALUES),
+  kind: IngestEventKindSchema,
   ts: z.string().min(1),
   meta: z.record(z.string(), z.unknown()).optional(),
 });

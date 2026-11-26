@@ -2,6 +2,7 @@ export const API_CONTRACT_VERSION = "0.1.0" as const;
 
 export * from "./agent-performance.js";
 export * from "./chains.js";
+export * from "./completion-evidence.js";
 export * from "./dispatch-audit.js";
 export * from "./dispatch-events.js";
 export * from "./dispatch-land.js";

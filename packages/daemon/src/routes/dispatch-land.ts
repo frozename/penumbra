@@ -1,4 +1,7 @@
-import { DispatchLandRequestSchema as DispatchLandInputSchema } from "@penumbra/api-contract";
+import {
+  DispatchLandRequestSchema as DispatchLandInputSchema,
+  POST_IMPLEMENTATION_REVIEW_RESOLVER,
+} from "@penumbra/api-contract";
 import { captureAgentPerformanceFromReconciler, type Services } from "@penumbra/core";
 import {
   resolveHandoffBranchName,
@@ -411,17 +414,19 @@ function resolveReviewerHandoffForDispatchLand(
   services: Services,
   handoffId: string,
 ): string | null {
+  // Automatic review covers the pinned implementation head, which landing can change.
   const row = services.db
-    .query<{ reviewer_handoff: string | null }, [string]>(
-      `SELECT reviewer_handoff
-     FROM lane_ledger
-     WHERE implementer_handoff = ?
-       AND ts_closed IS NOT NULL
-       AND reviewer_handoff IS NOT NULL
-     ORDER BY ts_closed DESC
+    .query<{ reviewer_handoff: string | null }, [string, string]>(
+      `SELECT CASE WHEN lane.gate_status = 'passed' AND lane.ts_closed IS NOT NULL
+                     AND reviewer.resolved_by IS NOT ?
+                   THEN lane.reviewer_handoff END AS reviewer_handoff
+     FROM lane_ledger lane
+     LEFT JOIN handoffs reviewer ON reviewer.handoff_id = lane.reviewer_handoff
+     WHERE lane.implementer_handoff = ?
+     ORDER BY COALESCE(lane.ts_closed, lane.ts_opened) DESC, lane.ts_closed ASC
      LIMIT 1`,
     )
-    .get(handoffId);
+    .get(POST_IMPLEMENTATION_REVIEW_RESOLVER, handoffId);
   return row?.reviewer_handoff ?? null;
 }
 

@@ -1706,3 +1706,79 @@ test("reportTerminal throwing is logged but does not wedge the dispatcher", asyn
   expect(warns.length).toBeGreaterThanOrEqual(1);
   expect(d.complete).not.toHaveBeenCalled();
 });
+
+test("terminal outbox receives a review verdict only from the completed turn, bound to its claim", async () => {
+  const head = "a".repeat(40);
+  const answer = {
+    head,
+    verdict: "failed" as const,
+    notes: "The new path drops the required record.",
+  };
+  const { d, reports } = reportTerminalDeps({
+    claim: mock().mockResolvedValue({ status: "dispatched", dispatch_attempt: 3 }),
+    dispatch: mock().mockImplementation((_handoff: unknown, onChunk: (delta: string) => void) => {
+      onChunk(JSON.stringify({ ...answer, verdict: "passed" }));
+      return Promise.resolve({ next: null, text: JSON.stringify(answer), agent: "reviewer" });
+    }),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+  await dispatcher.handle({
+    ...baseHandoff("review-handoff"),
+    resolved_by: "post-implementation-review",
+  });
+  await dispatcher.idle();
+
+  expect(reports).toHaveLength(1);
+  expect(reports[0]?.evidence).toEqual({ attempt: 3, result: { kind: "review", review: answer } });
+});
+
+test("streamed verdict or inconclusive final reply does not create completion evidence", async () => {
+  const { d, reports } = reportTerminalDeps({
+    claim: mock().mockResolvedValue({ status: "dispatched", dispatch_attempt: 1 }),
+    dispatch: mock().mockImplementation((_handoff: unknown, onChunk: (delta: string) => void) => {
+      onChunk(
+        JSON.stringify({ head: "a".repeat(40), verdict: "passed", notes: "Not the final answer." }),
+      );
+      return Promise.resolve({ next: null, text: "inconclusive", agent: "reviewer" });
+    }),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+  await dispatcher.handle({
+    ...baseHandoff("review-no-verdict"),
+    resolved_by: "post-implementation-review",
+  });
+  await dispatcher.idle();
+
+  expect(reports).toHaveLength(1);
+  expect(reports[0]?.outcome).toBe("complete");
+  expect(reports[0]?.evidence).toEqual({ attempt: 1, result: null });
+});
+
+test("implementation completion evidence uses only the verified committed snapshot", async () => {
+  const base = "a".repeat(40);
+  const head = "b".repeat(40);
+  const { d, reports } = reportTerminalDeps({
+    claim: mock().mockResolvedValue({ status: "dispatched", dispatch_attempt: 2 }),
+    getWorktreeSnapshot: mock().mockResolvedValue({
+      worktreeChanged: true,
+      dirty: false,
+      committed: true,
+      commitIntegrity: {
+        base_sha: base,
+        head_sha: head,
+        base_is_ancestor: true,
+        identity: { name: "Fixture", email: "fixture@example.test" },
+        mismatched_commits: [],
+        mismatched_total: 0,
+      },
+    }),
+  });
+  const dispatcher = createWorkerDispatcher(d);
+  await dispatcher.handle({ ...baseHandoff("impl-evidence"), chain_task_type: "implement_small" });
+  await dispatcher.idle();
+  expect(reports).toHaveLength(1);
+  expect(reports[0]?.evidence).toEqual({
+    attempt: 2,
+    result: { kind: "implementation", target: { base, head } },
+  });
+});

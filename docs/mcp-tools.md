@@ -203,7 +203,11 @@ Recover a swept lane by superseding its original `lane_id`, rather than opening 
 
 The response replaces sweep metadata with supplied metadata and a supersede note, and preserves the prior verdict/time on-row plus the complete prior close in the response and `lane.override` audit event. A console close submitted after an intervening sweep can now return 200 with `superseded`; passed/skipped still requires review evidence. Console recovery for already-listed closed lanes remains a follow-up.
 
-Deferred: `lane_touch` plus `gate_hold_until` could expose reviewer liveness to the sweeper. It requires a separate schema/tool design and is not part of supersede. Historic debt and replacement-lane repairs remain a separate operator-approved action after activation.
+Projects can opt in to post-implementation review by setting `post_implementation_reviewer: <agent-name>` on a registered entry in `projects.yaml`. Update the daemon and its workers before enabling it. The named agent must hold the `reviewer` role, be different from the implementer, and be able to enforce `review_readonly` on a capable live worker. Choose a seat authorized to see the project's source diff. Omitting the field preserves the manual path.
+
+On the lane sweep's next tick, Penumbra can dispatch one reviewer per project for a recently completed `STANDARD` `implement_small` worktree handoff. The worker must attest to a clean committed snapshot, the branch must still point at it, and the full text diff must fit within 24 KiB. Existing review children are not duplicated. Penumbra links the reviewer to the original lane while it is open. Only a conclusive verdict from that reviewer's authenticated completion of the claimed attempt can close the lane automatically, and only if the branch still points to the exact reviewed commit. An unavailable seat, changed branch, or absent conclusive verdict leaves review owed. Automation does not open a PR, land a branch, or initiate reviews for already-closed lanes.
+
+Manual review linkage while a lane is still open is deferred. Historic debt and replacement-lane repairs remain separate operator decisions.
 
 ## Worktree
 

@@ -2,6 +2,7 @@ import {
   type ChainRoutingAdvisory,
   type ChainRoutingWarning,
   ChainStartResponseSchema,
+  POST_IMPLEMENTATION_REVIEW_RESOLVER,
 } from "@penumbra/api-contract";
 import { WORKLOADS } from "@penumbra/config";
 import {
@@ -47,6 +48,10 @@ import { enforceMaestroBudget } from "../maestro/chain-budget-gate.js";
 import { json } from "./_helpers.js";
 import { chainStartAdmissionDrainGuard } from "./admission-drain.js";
 import { availableBranchNameBestEffort } from "./chains-branch-precheck.js";
+import {
+  linkPostImplementationReviewer,
+  type PostImplementationReviewLink,
+} from "./post-implementation-review-link.js";
 import {
   readActiveRoutingBiases,
   resolveSingleRoute,
@@ -1399,9 +1404,10 @@ interface PersistChainStartArgs {
   recalled_memory_ids: string[];
   recalled_query: string | null;
   branchName: string | null;
+  postImplementationReview?: PostImplementationReviewLink;
 }
 
-function persistChainStart(args: PersistChainStartArgs): void {
+function persistChainStart(args: PersistChainStartArgs): boolean {
   const {
     services,
     input,
@@ -1422,8 +1428,21 @@ function persistChainStart(args: PersistChainStartArgs): void {
     recalled_memory_ids,
     recalled_query,
     branchName,
+    postImplementationReview,
   } = args;
-  services.db.transaction(() => {
+  return services.db.transaction(() => {
+    if (
+      postImplementationReview &&
+      !linkPostImplementationReviewer(
+        services,
+        postImplementationReview,
+        routedAgent,
+        handoff_id,
+        ts,
+      )
+    ) {
+      return false;
+    }
     services.t0Writer.write({
       event_id: user_prompt_event_id,
       ts,
@@ -1459,7 +1478,7 @@ function persistChainStart(args: PersistChainStartArgs): void {
       routing_resolution_reason: routingResolutionReason,
       message: handoffMessage,
       triggered_by_event_id: user_prompt_event_id,
-      resolved_by: "chain-start",
+      resolved_by: postImplementationReview ? POST_IMPLEMENTATION_REVIEW_RESOLVER : "chain-start",
       resolved_at: null,
       chain_max_hops: input.max_hops ?? null,
       chain_trust_mode: input.trust_mode ?? null,
@@ -1514,6 +1533,7 @@ function persistChainStart(args: PersistChainStartArgs): void {
         recalled_query,
       });
     }
+    return true;
   })();
 }
 
@@ -1850,10 +1870,19 @@ function rejectRetiredAgent(agentId?: string | null): Response | null {
   );
 }
 
+function postImplementationReviewUnavailable(): Response {
+  return json({ error: { code: "post_implementation_review_no_longer_eligible" } }, 409);
+}
+
+interface ChainStartInternalOptions {
+  applyMaestroBudgetGate?: boolean;
+  postImplementationReview?: PostImplementationReviewLink;
+}
+
 export async function chainStartInternal(
   input: ChainStartRequestWithLongLived,
   services: Services,
-  opts?: { applyMaestroBudgetGate?: boolean },
+  opts?: ChainStartInternalOptions,
 ): Promise<Response> {
   const retirementResponse =
     rejectRetiredAgent(input.initial_agent) ?? rejectRetiredAgent(input.long_lived_agent_id);
@@ -1863,11 +1892,27 @@ export async function chainStartInternal(
   return await startActiveChain(input, services, opts);
 }
 
+function profiledWorkerResponseForStart(
+  services: Services,
+  input: ChainStartRequestWithLongLived,
+  opts?: ChainStartInternalOptions,
+): Response | null {
+  // Admission and claim must agree or the approved handoff will starve.
+  return input.permission_profile === undefined
+    ? null
+    : profiledLiveWorkerGateResponse(
+        services,
+        input.permission_profile,
+        input.project_id ?? null,
+        opts?.postImplementationReview !== undefined,
+      );
+}
+
 // eslint-disable-next-line sonarjs/cognitive-complexity -- Preserve chain-start orchestration while grandfathering its pre-existing complexity.
 async function startActiveChain(
   input: ChainStartRequestWithLongLived,
   services: Services,
-  opts?: { applyMaestroBudgetGate?: boolean },
+  opts?: ChainStartInternalOptions,
 ): Promise<Response> {
   const applyMaestroBudgetGate = opts?.applyMaestroBudgetGate ?? false;
   applyPermissionProfileDefault(input);
@@ -1949,17 +1994,8 @@ async function startActiveChain(
     enforcePermissionProfileSeatGate(services, routedAgent, input.permission_profile);
   if (seatResponse) return seatResponse;
 
-  // A profiled dispatch also requires at least one live worker that declared
-  // enforcement at registration — otherwise the approved handoff is
-  // unclaimable-by-design and starves in the queue instead of failing here.
-  if (input.permission_profile !== undefined) {
-    const profileWorkerResponse = profiledLiveWorkerGateResponse(
-      services,
-      input.permission_profile,
-      input.project_id ?? null,
-    );
-    if (profileWorkerResponse) return profileWorkerResponse;
-  }
+  const profileWorkerResponse = profiledWorkerResponseForStart(services, input, opts);
+  if (profileWorkerResponse) return profileWorkerResponse;
 
   const depthResponse = enforceRecursionDepthGuard(input, services);
   if (depthResponse) return depthResponse;
@@ -2092,7 +2128,7 @@ async function startActiveChain(
   const handoffMessage = autoRecall.handoffMessage;
   const { recalled_memory_ids, recalled_memories, recalled_query } = autoRecall;
 
-  persistChainStart({
+  const persisted = persistChainStart({
     services,
     input,
     user_prompt_event_id,
@@ -2112,7 +2148,9 @@ async function startActiveChain(
     recalled_memory_ids,
     recalled_query,
     branchName,
+    postImplementationReview: opts?.postImplementationReview,
   });
+  if (!persisted) return postImplementationReviewUnavailable();
 
   maybeScheduleCapsuleShadow(services, input, projectRegistryEntries, handoff_id, autoRecall);
 

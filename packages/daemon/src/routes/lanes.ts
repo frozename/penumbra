@@ -436,7 +436,11 @@ export async function lanesCloseRoute(req: Request, services: Services): Promise
   const parsed = CloseLaneBodySchema.safeParse(raw);
   if (!parsed.success) return validationError(parsed.error);
 
-  const beforeClose = getLane(services.db, parsed.data.lane_id);
+  return closeLaneFromBody(services, parsed.data);
+}
+
+export function closeLaneFromBody(services: Services, body: CloseLaneBody): Response {
+  const beforeClose = getLane(services.db, body.lane_id);
   if (!beforeClose) {
     return routeError("unknown_lane", "lane_id does not exist", 404);
   }
@@ -444,7 +448,7 @@ export async function lanesCloseRoute(req: Request, services: Services): Promise
   if (beforeClose.ts_closed !== null && !superseding) {
     return routeError("lane_already_closed", "lane is already closed", 409);
   }
-  const checks = applyLaneCloseChecks(services, beforeClose, parsed.data, superseding);
+  const checks = applyLaneCloseChecks(services, beforeClose, body, superseding);
   if ("error" in checks) return checks.error;
   const overriddenControls = [
     ...checks.overrides,
@@ -452,21 +456,20 @@ export async function lanesCloseRoute(req: Request, services: Services): Promise
   ];
 
   const ts_closed = services.clock().toISOString();
-  const commitErr = commitLaneClose(services, parsed.data, ts_closed, superseding);
+  const commitErr = commitLaneClose(services, body, ts_closed, superseding);
   if (commitErr) return commitErr;
 
   emitOverrideAuditEvents(
     services,
     beforeClose.implementer_handoff,
-    parsed.data,
+    body,
     ts_closed,
     overriddenControls,
     superseding ? beforeClose : undefined,
   );
 
   const closedLane =
-    getLane(services.db, parsed.data.lane_id) ??
-    fallbackClosedLane(beforeClose, parsed.data, ts_closed);
+    getLane(services.db, body.lane_id) ?? fallbackClosedLane(beforeClose, body, ts_closed);
   if (!superseding) return json(closedLane);
   return json({
     ...closedLane,

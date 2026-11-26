@@ -1,5 +1,11 @@
 import type { CommitIntegrityEvidence, DispatchEventInput, Logger } from "@penumbra/core";
 
+import {
+  type HandoffCompletionEvidence,
+  HandoffCompletionEvidenceSchema,
+  POST_IMPLEMENTATION_REVIEW_RESOLVER,
+} from "@penumbra/api-contract";
+
 import type { DispatchHandoffResult } from "../cli/dispatch-handoff.js";
 import type { AutocommitResult } from "./autocommit-on-chain-end.js";
 import type { DiscordNotificationEvent } from "./discord-events.js";
@@ -25,10 +31,12 @@ export interface DispatcherHandoff {
   hop_idx?: number;
   use_worktree?: boolean | null;
   isolated_install?: boolean | null;
+  chain_task_type?: string | null;
+  resolved_by?: string | null;
 }
 
 export interface WorkerDispatcherDeps<H extends DispatcherHandoff = DispatcherHandoff> {
-  claim: (handoff_id: string) => Promise<{ status: string }>;
+  claim: (handoff_id: string) => Promise<{ status: string; dispatch_attempt?: number }>;
   dispatch: (
     handoff: H,
     onChunk: (delta: string) => void,
@@ -190,6 +198,7 @@ interface DispatchOutcomeState {
 interface DispatchLifecycleContext {
   abort: AbortController;
   dispatchStart: number;
+  dispatchAttempt?: number;
   snapshot: DispatchSnapshotState;
   outcome: DispatchOutcomeState;
   progress: ProgressState;
@@ -442,11 +451,11 @@ async function attemptClaim(
   deps: WorkerDispatcherDeps,
   handoff: DispatcherHandoff,
   claimRetryState: Map<string, ClaimRetryEntry>,
-): Promise<{ ok: true } | { ok: false }> {
+): Promise<{ ok: true; attempt?: number } | { ok: false }> {
   try {
-    await deps.claim(handoff.handoff_id);
+    const { dispatch_attempt } = await deps.claim(handoff.handoff_id);
     claimRetryState.delete(handoff.handoff_id);
-    return { ok: true };
+    return { ok: true, attempt: dispatch_attempt };
   } catch (err: unknown) {
     const status = err instanceof PenumbraHttpError ? err.status : null;
     const isTerminal = status !== null && isTerminalHttpStatus(status);
@@ -1107,6 +1116,49 @@ async function finalizeDispatch(
 // dispatch.end, and the complete/fail call travel as one persisted report so
 // a transient daemon outage cannot lose them. dispatch.end goes in the
 // report only, not the lossy in-memory queue.
+function parseReviewVerdict(text: string | undefined): unknown {
+  if (!text || text.length > 4096) return null;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+function completionResult(handoff: DispatcherHandoff, ctx: DispatchLifecycleContext): unknown {
+  if (handoff.resolved_by === POST_IMPLEMENTATION_REVIEW_RESOLVER) {
+    return { kind: "review", review: parseReviewVerdict(ctx.outcome.result?.text) };
+  }
+  const snapshot = snapshotOrNull(ctx.snapshot);
+  const integrity = snapshot.commitIntegrity;
+  if (
+    handoff.chain_task_type !== "implement_small" ||
+    !snapshot.committed ||
+    snapshot.dirty !== false ||
+    !integrity?.base_is_ancestor ||
+    integrity.mismatched_total !== 0 ||
+    integrity.mismatched_commits.length !== 0
+  )
+    return null;
+  return { kind: "implementation", target: { base: integrity.base_sha, head: integrity.head_sha } };
+}
+
+function completionEvidenceFields(
+  handoff: DispatcherHandoff,
+  ctx: DispatchLifecycleContext,
+): Pick<TerminalReport, "evidence"> {
+  if (ctx.outcome.status !== "ok" || ctx.dispatchAttempt === undefined) return {};
+  const attempt = ctx.dispatchAttempt;
+  const parsed = HandoffCompletionEvidenceSchema.safeParse({
+    attempt,
+    result: completionResult(handoff, ctx),
+  });
+  const evidence: HandoffCompletionEvidence = parsed.success
+    ? parsed.data
+    : { attempt, result: null };
+  return { evidence };
+}
+
 async function reportTerminal(
   deps: WorkerDispatcherDeps,
   handoff: DispatcherHandoff,
@@ -1120,6 +1172,7 @@ async function reportTerminal(
     // a cancel must never be upgraded to a completion by the outbox.
     outcome: ctx.outcome.status === "ok" ? "complete" : "fail",
     ...(ctx.outcome.status !== "ok" ? { reason: failureReasonOf(ctx) } : {}),
+    ...completionEvidenceFields(handoff, ctx),
     observations: [...ctx.pendingObservations, ...(ctx.outcome.result?.pendingObservations ?? [])],
     dispatch_end: dispatchEnd,
   };
@@ -1269,6 +1322,7 @@ async function handleOne(state: DispatcherState, handoff: DispatcherHandoff): Pr
     const ctx: DispatchLifecycleContext = {
       abort,
       dispatchStart: Date.now(),
+      dispatchAttempt: claim.attempt,
       snapshot: { captured: null },
       outcome: { status: "ok", result: null, errorText: null },
       autocommit: { committed: false, sha: null },

@@ -185,3 +185,89 @@ test("retrying an untracked record never overwrites its replacement on disk", as
   expect(persisted.attempts).toBe(0);
   expect(outbox.pendingHandoffIds()).toEqual(["R1"]);
 });
+
+test.each(["observation", "completion"] as const)(
+  "a superseded replay blocked on %s preserves the newer completion evidence",
+  async (blockedStep) => {
+    const dir = directory();
+    const oldReport = report("R1");
+    oldReport.evidence = {
+      attempt: 1,
+      result: {
+        kind: "review",
+        review: { head: "a".repeat(40), verdict: "failed", notes: "Stale attempt." },
+      },
+    };
+    const replacement = report("R1");
+    replacement.evidence = {
+      attempt: 2,
+      result: {
+        kind: "review",
+        review: { head: "b".repeat(40), verdict: "passed", notes: "Latest attempt." },
+      },
+    };
+    if (blockedStep === "observation") oldReport.observations = [{ event_type: "agent-response" }];
+    const file = join(dir, "R1.json");
+    writeFileSync(
+      file,
+      JSON.stringify({
+        v: 1,
+        ...oldReport,
+        steps_done: { observations: blockedStep === "completion", dispatch_end: true },
+        created_at: new Date(Date.now() - 1000).toISOString(),
+        attempts: 0,
+        next_attempt_at: new Date().toISOString(),
+      }),
+    );
+
+    const started = gate();
+    const unblock = gate();
+    const completions: (number | undefined)[] = [];
+    const scheduled: number[] = [];
+    const outbox = new TerminalOutbox({
+      dir,
+      workerId: "W",
+      log,
+      observe: async (): Promise<void> => {
+        started.release();
+        await unblock.promise;
+      },
+      postDispatchEvents: (): Promise<void> => Promise.resolve(),
+      complete: async (_id, init): Promise<unknown> => {
+        const attempt = init?.evidence?.attempt;
+        completions.push(attempt);
+        if (attempt === 1) {
+          if (blockedStep === "completion") {
+            started.release();
+            await unblock.promise;
+          }
+          throw new PenumbraHttpError("stale claim", 409, { current_status: "dispatched" });
+        }
+        return { status: "completed" };
+      },
+      markFailed: (): Promise<void> => Promise.resolve(),
+      schedule: (_run, delay): { cancel(): void } => {
+        scheduled.push(delay);
+        return { cancel: noop };
+      },
+    });
+    cleanups.push(() => {
+      outbox.stop();
+    });
+    const draining = outbox.drain();
+    await started.promise;
+    expect(await outbox.reportTerminal(replacement)).toBe("pending");
+    expect(scheduled).toEqual([]);
+    unblock.release();
+    await draining;
+
+    expect(readdirSync(dir)).toEqual(["R1.json"]);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({
+      evidence: replacement.evidence,
+    });
+    expect(scheduled).toEqual([0]);
+    expect(await outbox.drain()).toEqual({ remaining: 0 });
+    expect(completions).toEqual(blockedStep === "completion" ? [1, 2] : [2]);
+    expect(readdirSync(dir)).toEqual([]);
+  },
+);
