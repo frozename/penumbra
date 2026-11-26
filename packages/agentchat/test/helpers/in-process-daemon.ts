@@ -195,13 +195,15 @@ function buildCapturingFetch(args: {
   }) as typeof fetch;
 }
 
+interface InProcessDaemonOptions {
+  shellEnabled?: boolean;
+  autoApprovePermissions?: boolean;
+  orphanRecovery?: boolean;
+  emulateDaemonWithoutClaimedBefore?: boolean;
+}
+
 export function startInProcessDaemon(
-  opts: {
-    shellEnabled?: boolean;
-    autoApprovePermissions?: boolean;
-    orphanRecovery?: boolean;
-    emulateDaemonWithoutClaimedBefore?: boolean;
-  } = {},
+  opts: InProcessDaemonOptions = {},
 ): Promise<InProcessDaemonHarness> {
   const dir = mkdtempSync(join(tmpdir(), "penumbra-agentchat-int-"));
   let db: Database | undefined;
@@ -210,119 +212,126 @@ export function startInProcessDaemon(
     db = database;
     loadSqliteVec(database);
     migrate(database, { embeddingDim: 384 });
-
-    let n = 0;
-    const services = buildServices({
-      env: {},
-      input: {},
-      storageRoot: dir,
-      db: database,
-      embedder: new TestEmbedder({ dim: 384 }),
-      clock: () => new Date("2026-05-02T00:00:00Z"),
-      uuid: () => `id-${String(++n)}`,
-    });
-    services.agentRegistry = ["claude-acp-sonnet", "local-gemma26"];
-    services.watchdog = Object.assign(new WatchdogService(services), {
-      hasActiveWorker: (): boolean => true,
-    });
-    services.agentchatConfig = buildAgentChatConfig();
-
-    const shellPool = opts.shellEnabled ? buildShellSessionPool(services) : undefined;
-    if (shellPool) {
-      services.shellSessionPool = shellPool;
-      services.shellConfig = {
-        enabled: true,
-        dangerousCommandsForAgent: (): string[] => ["sudo\\b"],
-      };
-    }
-    if (opts.autoApprovePermissions) {
-      (services as ServicesWithPermission).permissionService = {
-        requestPermission: (): Promise<{ approved: boolean }> =>
-          Promise.resolve({ approved: true }),
-      };
-    }
-
-    const token = "tok";
-    const orphanRecovery = opts.orphanRecovery
-      ? new OrphanHandoffRecoveryService(services)
-      : undefined;
-    const handler = createDaemonFetchHandler({
-      services,
-      token,
-      orphanHandoffRecovery: orphanRecovery,
-    });
-    const requests: CapturedRequest[] = [];
-    const fetchImpl = buildCapturingFetch({
-      handler,
-      requests,
-      emulateOld: opts.emulateDaemonWithoutClaimedBefore === true,
-    });
-
-    writeFileSync(join(dir, "port"), "1");
-    writeFileSync(join(dir, "token"), token);
-
-    const client = new PenumbraClient({ storageRoot: dir, fetch: fetchImpl });
-
-    const shellRun = (input: ShellRunInput): Promise<ShellRunResult> =>
-      jsonFetch<ShellRunResult>(fetchImpl, "http://x/shell/run", token, input);
-
-    return Promise.resolve({
-      client,
-      services,
-      requests,
-      postDispatchEvent: (event): Promise<void> => client.postDispatchEvents([event]),
-      getDispatchEvents: async (
-        handoffId,
-      ): Promise<{ kind: string; meta?: Record<string, unknown> | null }[]> => {
-        const { events } = await client.getDispatchEvents({ handoff_id: handoffId });
-        return events;
-      },
-      dispatchTimeline: (
-        handoffId,
-      ): Promise<{ events: { kind: string; meta?: Record<string, unknown> | null }[] }> =>
-        client.getDispatchTimeline(handoffId) as Promise<{
-          events: { kind: string; meta?: Record<string, unknown> | null }[];
-        }>,
-      shellRun,
-      shellClose: (input): Promise<{ closed: boolean }> =>
-        jsonFetch<{ closed: boolean }>(fetchImpl, "http://x/shell/close", token, input),
-      shellRunRaw: (input): Promise<Response> =>
-        fetchImpl("http://x/shell/run", {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${token}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify(input),
-        }),
-      markHandoffCompleted: (handoffId): Promise<{ handoff_id: string; status: string }> =>
-        client.completeHandoff(handoffId),
-      markWorkerStale: (workerId): void => {
-        (
-          services.watchdog as unknown as { lastHeartbeats: Map<string, number> }
-        ).lastHeartbeats.set(workerId, 0);
-      },
-      triggerOrphanRecovery: (): { requeued: number; exhausted: number } =>
-        new OrphanHandoffRecoveryService(services, {
-          intervalMs: 0,
-          staleMs: 1,
-          batchSize: 100,
-        }).runOnce(),
-      stop: async (): Promise<void> => {
-        try {
-          if (shellPool) {
-            await shellPool.shutdown();
-          }
-          services.supervisor.stopAll();
-        } finally {
-          db?.close();
-          rmSync(dir, { recursive: true, force: true });
-        }
-      },
-    });
+    return buildInProcessDaemon(dir, database, opts);
   } catch (err) {
     db?.close();
     rmSync(dir, { recursive: true, force: true });
     throw err;
   }
+}
+
+function buildInProcessDaemon(
+  dir: string,
+  database: Database,
+  opts: InProcessDaemonOptions,
+): Promise<InProcessDaemonHarness> {
+  let n = 0;
+  const services = buildServices({
+    env: {},
+    input: {},
+    storageRoot: dir,
+    db: database,
+    embedder: new TestEmbedder({ dim: 384 }),
+    clock: () => new Date("2026-05-02T00:00:00Z"),
+    uuid: () => `id-${String(++n)}`,
+  });
+  services.agentRegistry = ["claude-acp-sonnet", "local-gemma26"];
+  services.watchdog = Object.assign(new WatchdogService(services), {
+    hasActiveWorker: (): boolean => true,
+  });
+  services.agentchatConfig = buildAgentChatConfig();
+
+  const shellPool = opts.shellEnabled ? buildShellSessionPool(services) : undefined;
+  if (shellPool) {
+    services.shellSessionPool = shellPool;
+    services.shellConfig = {
+      enabled: true,
+      dangerousCommandsForAgent: (): string[] => ["sudo\\b"],
+    };
+  }
+  if (opts.autoApprovePermissions) {
+    (services as ServicesWithPermission).permissionService = {
+      requestPermission: (): Promise<{ approved: boolean }> => Promise.resolve({ approved: true }),
+    };
+  }
+
+  const token = "tok";
+  const orphanRecovery = opts.orphanRecovery
+    ? new OrphanHandoffRecoveryService(services)
+    : undefined;
+  const handler = createDaemonFetchHandler({
+    services,
+    token,
+    orphanHandoffRecovery: orphanRecovery,
+  });
+  const requests: CapturedRequest[] = [];
+  const fetchImpl = buildCapturingFetch({
+    handler,
+    requests,
+    emulateOld: opts.emulateDaemonWithoutClaimedBefore === true,
+  });
+
+  writeFileSync(join(dir, "port"), "1");
+  writeFileSync(join(dir, "token"), token);
+
+  const client = new PenumbraClient({ storageRoot: dir, fetch: fetchImpl });
+
+  const shellRun = (input: ShellRunInput): Promise<ShellRunResult> =>
+    jsonFetch<ShellRunResult>(fetchImpl, "http://x/shell/run", token, input);
+
+  return Promise.resolve({
+    client,
+    services,
+    requests,
+    postDispatchEvent: (event): Promise<void> => client.postDispatchEvents([event]),
+    getDispatchEvents: async (
+      handoffId,
+    ): Promise<{ kind: string; meta?: Record<string, unknown> | null }[]> => {
+      const { events } = await client.getDispatchEvents({ handoff_id: handoffId });
+      return events;
+    },
+    dispatchTimeline: (
+      handoffId,
+    ): Promise<{ events: { kind: string; meta?: Record<string, unknown> | null }[] }> =>
+      client.getDispatchTimeline(handoffId) as Promise<{
+        events: { kind: string; meta?: Record<string, unknown> | null }[];
+      }>,
+    shellRun,
+    shellClose: (input): Promise<{ closed: boolean }> =>
+      jsonFetch<{ closed: boolean }>(fetchImpl, "http://x/shell/close", token, input),
+    shellRunRaw: (input): Promise<Response> =>
+      fetchImpl("http://x/shell/run", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(input),
+      }),
+    markHandoffCompleted: (handoffId): Promise<{ handoff_id: string; status: string }> =>
+      client.completeHandoff(handoffId),
+    markWorkerStale: (workerId): void => {
+      (services.watchdog as unknown as { lastHeartbeats: Map<string, number> }).lastHeartbeats.set(
+        workerId,
+        0,
+      );
+    },
+    triggerOrphanRecovery: (): { requeued: number; exhausted: number } =>
+      new OrphanHandoffRecoveryService(services, {
+        intervalMs: 0,
+        staleMs: 1,
+        batchSize: 100,
+      }).runOnce(),
+    stop: async (): Promise<void> => {
+      try {
+        if (shellPool) {
+          await shellPool.shutdown();
+        }
+        services.supervisor.stopAll();
+      } finally {
+        database.close();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  });
 }
