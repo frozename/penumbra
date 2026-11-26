@@ -1967,7 +1967,12 @@ test("every retried attempt gets one note with its own attempt number and error 
   expect(joined).not.toContain("adapter blew up");
 });
 
-async function runRetryDispatch(runChatTurn: ChatTurnMockFn) {
+async function runRetryDispatch(runChatTurn: ChatTurnMockFn): Promise<{
+  res: Awaited<ReturnType<typeof dispatchHandoff>>;
+  markFailed: ReturnType<typeof mock>;
+  delay: ReturnType<typeof mock<DelayMockFn>>;
+  onEvent: ReturnType<typeof mock<OnEventMockFn>>;
+}> {
   const markFailed = mock().mockResolvedValue({ handoff_id: "h0", status: "failed" });
   const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
   const onEvent = mock<OnEventMockFn>();
