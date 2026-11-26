@@ -4424,6 +4424,108 @@ test("chain_start auto fallback does not re-admit a bias-excluded strict role ho
   expect(decisions).toHaveLength(0);
 });
 
+function seedQuotaCooldown(services: Services, provider: string): void {
+  const now = services.clock();
+  services.db
+    .prepare(
+      `INSERT INTO t0_events (
+        event_id, ts, ingest_ts, source, user_id, machine_id,
+        event_type, lane, provider, payload_json
+      ) VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'rate-limit-snapshot', 'cli-subscription', ?, ?)`,
+    )
+    .run(
+      `cooldown-${provider}`,
+      now.toISOString(),
+      now.toISOString(),
+      provider,
+      JSON.stringify({
+        window_label: "quota",
+        model: null,
+        used_pct: 100,
+        resets_at: now.getTime() / 1000 + 5 * 60 * 60,
+        source_kind: "cooldown",
+      }),
+    );
+}
+
+function quotaCooldownServices(): Services {
+  return tempServices({
+    agentRegistry: ["cooled-first", "pressured-second"],
+    agentRouting: {
+      agents: [
+        {
+          name: "cooled-first",
+          roles: ["executor"],
+          pricing_mode: "subscription",
+          subscription_provider: "google",
+        },
+        {
+          name: "pressured-second",
+          roles: ["executor"],
+          pricing_mode: "subscription",
+          subscription_provider: "anthropic",
+        },
+      ],
+      default_roles: { executor: "cooled-first" },
+      role_exploration_policy: "ranked-first",
+    },
+  });
+}
+
+async function startExecutorChain(services: Services): Promise<Response> {
+  return await chainsStartRoute(
+    new Request("http://x/chains/start", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_agent: "executor",
+        task_type: "implement_small",
+        message: "implement the change",
+      }),
+    }),
+    services,
+  );
+}
+
+test("chain_start legacy refill skips a quota-cooled first role holder (#298)", async () => {
+  const services = quotaCooldownServices();
+  seedQuotaCooldown(services, "google");
+  seedSubscriptionPressure(services, "anthropic", 95);
+
+  const res = await startExecutorChain(services);
+
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.routed_agent).toBe("pressured-second");
+  expect(selectHandoff(services, body.handoff_id!).to_agent).toBe("pressured-second");
+});
+
+test("chain_start legacy refill fails closed when every role holder is quota-cooled (#298)", async () => {
+  const services = quotaCooldownServices();
+  seedQuotaCooldown(services, "google");
+  seedQuotaCooldown(services, "anthropic");
+
+  const res = await startExecutorChain(services);
+
+  expect(res.status).toBe(422);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.error?.code).toBe("role_route_unavailable");
+  expect(
+    services.db.query<{ c: number }, []>("SELECT COUNT(*) as c FROM handoffs").get()?.c ?? 0,
+  ).toBe(0);
+});
+
+test("chain_start legacy refill still admits the first soft-pressured holder", async () => {
+  const services = quotaCooldownServices();
+  seedSubscriptionPressure(services, "google", 95);
+  seedSubscriptionPressure(services, "anthropic", 95);
+
+  const res = await startExecutorChain(services);
+
+  expect(res.status).toBe(200);
+  const body = await readJsonBody<ChainResponseBody>(res);
+  expect(body.routed_agent).toBe("cooled-first");
+});
+
 test("chain_start auto routing explores a known role with zero live strict holders", async () => {
   const services = tempServices({
     agentRegistry: ["planner-seat"],

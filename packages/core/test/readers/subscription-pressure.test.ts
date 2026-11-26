@@ -8,7 +8,7 @@ import {
   readSubscriptionPressure as readPressure,
   type ReadSubscriptionPressureOpts,
 } from "@src/readers/subscription-pressure.js";
-import { buildPressureExcludedKeys } from "@src/services/agent-routing.js";
+import { buildPressureExcludedKeys, pressureSnapshotKey } from "@src/services/agent-routing.js";
 
 try {
   if (process.platform === "darwin") {
@@ -651,6 +651,109 @@ describe("readSubscriptionPressure", () => {
     const out = readSubscriptionPressure(db);
     expect(out.snapshots).toHaveLength(1);
     expect(out.snapshots[0]?.model).toBeNull();
+  });
+});
+
+describe("cooldown snapshots (#298)", () => {
+  it("keeps a future-reset cooldown live beyond the stale observation threshold", () => {
+    const db = makeDb();
+    insertSnapshotRow(db, {
+      event_id: "quota-cooldown",
+      ts: "2026-05-07T23:00:00Z",
+      provider: "google",
+      window_label: "quota",
+      model: "gemini-3-flash",
+      used_pct: 100,
+      resets_at: Date.parse("2026-05-08T06:00:00Z") / 1000,
+      source_kind: "cooldown",
+    });
+
+    const result = readSubscriptionPressure(db);
+    const snapshot = result.snapshots.find(
+      (row) => row.provider === "google" && row.window_label === "quota",
+    );
+    expect(snapshot).toBeDefined();
+    const key = pressureSnapshotKey(snapshot!);
+    expect(
+      result.warnings.some(
+        (warning) => warning.code === "stale_snapshot" && pressureSnapshotKey(warning) === key,
+      ),
+    ).toBe(false);
+    expect(buildPressureExcludedKeys(result).has(key)).toBe(false);
+  });
+
+  it("omits the cooldown and emits expired_window once now is after resets_at", () => {
+    const db = makeDb();
+    insertSnapshotRow(db, {
+      event_id: "quota-cooldown-expired",
+      ts: "2026-05-07T23:00:00Z",
+      provider: "google",
+      window_label: "quota",
+      model: "gemini-3-flash",
+      used_pct: 100,
+      resets_at: Date.parse("2026-05-08T00:30:00Z") / 1000,
+      source_kind: "cooldown",
+    });
+
+    const result = readSubscriptionPressure(db);
+    expect(result.snapshots).toEqual([]);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toMatchObject({
+      code: "expired_window",
+      provider: "google",
+      window_label: "quota",
+      model: "gemini-3-flash",
+    });
+  });
+
+  it("still marks a cooldown row with null resets_at stale", () => {
+    const db = makeDb();
+    insertSnapshotRow(db, {
+      event_id: "quota-cooldown-null-reset",
+      ts: "2026-05-07T23:00:00Z",
+      provider: "google",
+      window_label: "quota",
+      model: "gemini-3-flash",
+      used_pct: 100,
+      resets_at: null,
+      source_kind: "cooldown",
+    });
+
+    const result = readSubscriptionPressure(db);
+    expect(result.warnings).toEqual([
+      {
+        code: "stale_snapshot",
+        provider: "google",
+        window_label: "quota",
+        model: "gemini-3-flash",
+        age_seconds: 7200,
+      },
+    ]);
+  });
+
+  it("still marks a non-cooldown row with a future resets_at stale", () => {
+    const db = makeDb();
+    insertSnapshotRow(db, {
+      event_id: "codex-future-reset-stale",
+      ts: "2026-05-07T23:00:00Z",
+      provider: "openai",
+      window_label: "secondary",
+      model: null,
+      used_pct: 90,
+      resets_at: Date.parse("2026-05-08T06:00:00Z") / 1000,
+      source_kind: "local-state-codex",
+    });
+
+    const result = readSubscriptionPressure(db);
+    expect(result.warnings).toEqual([
+      {
+        code: "stale_snapshot",
+        provider: "openai",
+        window_label: "secondary",
+        model: null,
+        age_seconds: 7200,
+      },
+    ]);
   });
 });
 

@@ -32,6 +32,9 @@ interface ObservedEvent {
     tokens_cache_write?: number;
     tokens_input?: number;
     used?: number;
+    window_label?: string;
+    used_pct?: number;
+    resets_at?: number | null;
   };
 }
 
@@ -732,6 +735,63 @@ test("runChatTurn observes provider-capacity-error emitted by cli-spawn adapters
     model: "gemini-3.1-pro-preview",
     source_kind: "cli-spawn-stderr",
   });
+});
+
+test("runChatTurn observes a cooldown rate-limit snapshot for an agy RESOURCE_EXHAUSTED exit", async () => {
+  const script = [
+    "cat >&2 <<'EOF'",
+    "error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h0m0s.",
+    'AGY_ERROR: {"status":"RESOURCE_EXHAUSTED","error_code":429,"retryable":true}',
+    "EOF",
+    "exit 3",
+  ].join("\n");
+  const quotaCfg: AgentChatConfig = {
+    agents: [
+      {
+        name: "agy-quota",
+        adapter: "agy-cli",
+        options: {
+          command: "sh",
+          args: ["-c", script],
+          pass_via: "argv",
+          provider: "google",
+          model: "gemini-3-flash",
+        },
+        roles: ["planner"],
+      },
+    ],
+    default_roles: { planner: "agy-quota" },
+  };
+
+  const observed: ObservedEvent[] = [];
+  const before = Math.floor(Date.now() / 1000);
+  await runChatTurn({
+    config: quotaCfg,
+    initialAgent: "agy-quota",
+    userMessage: "go",
+    conversation: { id: "conv-quota", project_id: "project-1" },
+    observe: (event: unknown): Promise<{ event_id: string }> => {
+      observed.push(event as ObservedEvent);
+      return Promise.resolve({ event_id: `event-${String(observed.length)}` });
+    },
+    handoff_id: "h-quota",
+  }).catch(() => undefined);
+  const after = Math.floor(Date.now() / 1000);
+
+  const quotaEvent = observed.find((event) => event.event_type === "rate-limit-snapshot");
+  expect(quotaEvent).toBeDefined();
+  expect(quotaEvent!.provider).toBe("google");
+  expect(quotaEvent!.payload_json).toMatchObject({
+    used_pct: 100,
+    source_kind: "cooldown",
+    window_label: "quota",
+    handoff_id: "h-quota",
+  });
+  const resetsAt = quotaEvent!.payload_json?.resets_at;
+  expect(typeof resetsAt).toBe("number");
+  const resetsAtSeconds = Number(resetsAt);
+  expect(resetsAtSeconds).toBeGreaterThanOrEqual(before + 7200 - 1);
+  expect(resetsAtSeconds).toBeLessThanOrEqual(after + 7200 + 1);
 });
 
 test("resolveCaptureAttribution prefers subscription_provider and subscription_model", () => {

@@ -1,7 +1,13 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 
-import { loadSqliteVec, migrate, resolveBiasEffect, routeAgent } from "@src/index.js";
+import {
+  loadSqliteVec,
+  migrate,
+  readSubscriptionPressure,
+  resolveBiasEffect,
+  routeAgent,
+} from "@src/index.js";
 import type { RoutingBias } from "@src/readers/routing-bias.js";
 import type { AgentRankOutput } from "@src/schemas/agent-performance.js";
 import type { RouteAgentInput, RouteAgentOutput } from "@src/services/agent-routing.js";
@@ -1117,6 +1123,79 @@ describe("routeAgent", () => {
       agent: "reviewer",
       role: "reviewer",
       taskType: "implement_substantial",
+    });
+  });
+
+  describe("quota cooldown routing (#298)", () => {
+    test("a two-hour-old future-reset cooldown excludes google until the reset passes", () => {
+      const observedAt = new Date(NOW.getTime() - 2 * 60 * 60 * 1000).toISOString();
+      db.prepare(
+        `
+        INSERT INTO t0_events (
+          event_id, ts, ingest_ts, source, user_id, machine_id,
+          event_type, lane, provider, payload_json
+        ) VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'rate-limit-snapshot', 'cli-subscription', ?, ?)
+      `,
+      ).run(
+        "google-quota-cooldown",
+        observedAt,
+        observedAt,
+        "google",
+        JSON.stringify({
+          window_label: "quota",
+          model: null,
+          used_pct: 100,
+          resets_at: NOW.getTime() / 1000 + 5 * 60 * 60,
+          source_kind: "cooldown",
+        }),
+      );
+
+      const agentchatConfig = {
+        agents: [
+          {
+            name: "gemini-flash",
+            roles: ["reviewer"],
+            pricing_mode: "subscription",
+            subscription_provider: "google",
+          },
+          { name: "codex", roles: ["reviewer"], api_provider: "openai" },
+        ],
+      };
+      const routeFor = (now: Date): RouteAgentOutput =>
+        routeAgent({
+          db,
+          detail: "single",
+          role: "reviewer",
+          message: "Implementation Plan",
+          agentchatConfig,
+          roleExplorationPolicy: "ranked-first",
+          applyPressure: readSubscriptionPressure(db, { now: () => now }),
+          now,
+        });
+
+      const control = routeAgent({
+        db,
+        detail: "single",
+        role: "reviewer",
+        message: "Implementation Plan",
+        agentchatConfig,
+        roleExplorationPolicy: "ranked-first",
+        now: NOW,
+      });
+      expect(control.detail).toBe("single");
+      if (control.detail !== "single") return;
+      expect(control.route?.agent).toBe("gemini-flash");
+
+      const beforeReset = routeFor(NOW);
+      expect(beforeReset.detail).toBe("single");
+      if (beforeReset.detail !== "single") return;
+      expect(beforeReset.route?.agent).toBe("codex");
+
+      const afterResetAt = new Date(NOW.getTime() + 6 * 60 * 60 * 1000);
+      const afterReset = routeFor(afterResetAt);
+      expect(afterReset.detail).toBe("single");
+      if (afterReset.detail !== "single") return;
+      expect(afterReset.route?.agent).toBe("gemini-flash");
     });
   });
 

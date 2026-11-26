@@ -4,10 +4,12 @@ import {
   decide,
   type HarnessContext,
   inferAgentTaskTypeForRole,
+  isUnderCooldown,
   type PermissionProfile,
   profileTaskDeterministic,
   readRoutingBiases,
   readSubscriptionPressure,
+  resolveProvider,
   type RoleRoute,
   routeAgent,
   type RouterAaSnapshot,
@@ -29,6 +31,31 @@ export function readActiveRoutingBiases(services: Services): RoutingBias[] | und
   } catch {
     return undefined;
   }
+}
+
+/**
+ * #298: the legacy null-route refill takes the first strict role holder. A
+ * holder whose provider is under an active quota cooldown would only fail
+ * again, so the refill skips it; when every holder is cooled the refill
+ * returns null and the caller fails closed. A pressure read error, or no
+ * cooldown at all, keeps the legacy roleAgents[0] pick byte-identical.
+ */
+export function pickRoleRefillAgent(services: Services, roleAgents: string[]): string | null {
+  const first = roleAgents[0] ?? null;
+  let pressure: ReturnType<typeof readSubscriptionPressure>;
+  try {
+    pressure = readSubscriptionPressure(services.db, { now: services.clock });
+  } catch {
+    return first;
+  }
+  const agents = services.agentRouting?.agents ?? [];
+  return (
+    roleAgents.find((name) => {
+      const agent = agents.find((candidate) => candidate.name === name);
+      const provider = agent ? resolveProvider(agent) : null;
+      return provider === null || !isUnderCooldown(provider, pressure);
+    }) ?? null
+  );
 }
 
 type AgentRoutingWithRoleRouting = AgentRoutingConfig & {

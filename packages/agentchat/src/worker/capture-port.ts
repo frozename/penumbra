@@ -58,6 +58,14 @@ export type NotificationEvent =
       provider: string;
       model: string | null;
       raw: string;
+    }
+  | {
+      kind: "quota_exhausted";
+      provider: string;
+      model: string | null;
+      /** Unix seconds; null when the CLI gave no reset time. */
+      resets_at: number | null;
+      raw: string;
     };
 
 interface ChunkBuffer {
@@ -127,6 +135,13 @@ function usageTokenPayload(ev: RegularNotificationEvent): UsageTokenPayload {
   assignFiniteUsageToken(payload, "tokens_cache_read", ev.tokens_cache_read);
   assignFiniteUsageToken(payload, "tokens_cache_write", ev.tokens_cache_write);
   return payload;
+}
+
+function quotaCooldownSummary(provider: string | null, resetsAt: number | null): string {
+  return `${provider ?? "unknown"}/quota: cooldown until ${String(resetsAt ?? "unknown")}`.slice(
+    0,
+    240,
+  );
 }
 
 function nonEmptyToolName(name: string | null | undefined): string | null {
@@ -208,6 +223,9 @@ export class CapturePort {
           break;
         case "capacity_error":
           this.handleCapacityError(ev);
+          break;
+        case "quota_exhausted":
+          this.handleQuotaExhausted(ev);
           break;
       }
     } catch {
@@ -335,6 +353,27 @@ export class CapturePort {
       source_kind: "cli-spawn-stderr",
     };
     event.payload_summary = `${ev.provider}/${ev.model ?? "unknown"} capacity error`.slice(0, 240);
+    this.dispatch(event);
+  }
+
+  private handleQuotaExhausted(ev: Extract<NotificationEvent, { kind: "quota_exhausted" }>): void {
+    const event = this.buildBaseEvent("rate-limit-snapshot", Date.now());
+    const provider = ev.provider || this.opts.provider;
+    const model = ev.model ?? this.opts.model;
+    event.provider = provider;
+    event.model = model;
+    event.payload_json = {
+      handoff_id: this.opts.handoffId,
+      window_label: "quota",
+      // The reader keys snapshot identity on payload_json.model, so it has to be the
+      // same value as the model column or the cooldown lands in its own group.
+      model,
+      used_pct: 100,
+      resets_at: ev.resets_at,
+      raw: ev.raw,
+      source_kind: "cooldown",
+    };
+    event.payload_summary = quotaCooldownSummary(provider, ev.resets_at);
     this.dispatch(event);
   }
 

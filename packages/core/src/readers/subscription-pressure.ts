@@ -200,6 +200,8 @@ function windowStatus(
     });
     return "expired";
   }
+  // A cooldown is an explicit exclusion until its reset, so age does not make it stale.
+  if (snapshot.source_kind === "cooldown" && snapshot.resets_at !== null) return "fresh";
   if (ageSeconds > staleAfterSeconds) {
     warnings.push({ code: "stale_snapshot", ...identity });
     return "stale";

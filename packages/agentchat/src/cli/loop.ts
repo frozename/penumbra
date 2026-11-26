@@ -5,6 +5,7 @@ import type { Adapter, DispatchInput, DispatchOutput } from "../sdk/adapter.js";
 import type { WriteToolsExecutor } from "../worker/write-tools-executor.js";
 
 import { shutdownAllAcpWarmPools } from "../adapters/acp-warm-pool-registry.js";
+import { QuotaExhaustedError } from "../adapters/cli-spawn.js";
 import { buildAdapter } from "../adapters/registry.js";
 import { classifierDeclineMetaFromUnknown } from "../classifier-decline.js";
 import { parseMentions } from "../mention/parser.js";
@@ -146,6 +147,25 @@ function buildDispatchInput(
   };
 }
 
+function quotaResetsAtSeconds(resetsAt: string | null): number | null {
+  if (resetsAt === null) return null;
+  const seconds = Math.floor(Date.parse(resetsAt) / 1000);
+  return Number.isFinite(seconds) ? seconds : null;
+}
+
+// #298: a quota exit means the provider refuses this model until its reset, not just
+// right now, so it lands as a cooldown snapshot rather than only an error response.
+function emitQuotaCooldown(capturePort: CapturePort, err: unknown): void {
+  if (!(err instanceof QuotaExhaustedError)) return;
+  capturePort.emit({
+    kind: "quota_exhausted",
+    provider: err.quota.provider,
+    model: err.quota.model,
+    resets_at: quotaResetsAtSeconds(err.quota.resetsAt),
+    raw: err.quota.raw,
+  });
+}
+
 async function runAdapterDispatch(
   adapter: Adapter,
   dispatchInput: DispatchInput,
@@ -172,6 +192,7 @@ async function runAdapterDispatch(
         // tool_call / tool_result / tool_error are reserved; v1 adapters do not emit them.
       }
     } catch (err) {
+      emitQuotaCooldown(capturePort, err);
       dispatchError = { message: err instanceof Error ? err.message : String(err) };
       const classifierDecline = classifierDeclineMetaFromUnknown(err);
       if (classifierDecline) dispatchErrorMeta = classifierDecline;
