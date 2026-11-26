@@ -145,6 +145,8 @@ Five sweepers cooperate:
 
 The `stdio-acp` adapter emits a synthetic `agent.heartbeat` lifecycle event every 60 s while the agent subprocess is alive but emits no `session/update` for ≥ 45 s. This keeps the sweepers' liveness signal accurate for agents that don't naturally emit `agent_thought_chunk` (gemini-acp default is the canonical case).
 
+A heartbeat proves only that the agent process is alive, not that its model stream is. The sweepers count it as activity, so a dead backend stream is bounded only by the seat's `requestTimeoutMs` no-wire-activity timer (default 1,200,000 ms; per-seat cap 900,000 ms). A stalled turn is retried in-worker at most once, with an `agent.turn_retry` event (error_class `stall`); a second stall fails the handoff ([penumbra#322](https://github.com/frozename/penumbra/issues/322)). For remote OpenCode `stdio-acp` seats: #322 found no default chunk or total timeout in OpenCode 1.18.26, so set `chunkTimeout` (and optionally `timeout`) explicitly in the seat's `opencode.json` provider `options`, so the agent aborts a dead SSE stream itself and reports the error over ACP instead of waiting out `requestTimeoutMs`.
+
 ## Job resource limits
 
 Dispatched jobs run in memory-capped transient systemd user scopes, so a runaway gate is OOM-killed inside its own cgroup instead of taking down a long-lived service. On the Z13 a resident LLM seat holds ~92 GiB; two parallel typed lint/test runs from dispatched agents twice drove a global OOM that killed the seat ([penumbra#250](https://github.com/frozename/penumbra/issues/250); seat side: [llamactl#196](https://github.com/frozename/llamactl/issues/196)).

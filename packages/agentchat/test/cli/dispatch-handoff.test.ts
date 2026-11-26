@@ -1966,3 +1966,104 @@ test("every retried attempt gets one note with its own attempt number and error 
   expect(joined).not.toContain("transport closed");
   expect(joined).not.toContain("adapter blew up");
 });
+
+async function runRetryDispatch(runChatTurn: ChatTurnMockFn) {
+  const markFailed = mock().mockResolvedValue({ handoff_id: "h0", status: "failed" });
+  const delay = mock<DelayMockFn>().mockResolvedValue(undefined);
+  const onEvent = mock<OnEventMockFn>();
+
+  const res = await dispatchHandoff({
+    handoff: baseHandoff,
+    config: cfg,
+    conversation: mockConv,
+    transcript: [],
+    transcriptBudget: 1000,
+    hopsSoFar: 0,
+    maxHops: 5,
+    trustMode: "all",
+    observe: observeStub,
+    createHandoff: mock(),
+    approve: mock(),
+    runChatTurn,
+    markFailed,
+    delay,
+    eventContext: { handoffId: "h0", workerId: "w-1" },
+    onEvent,
+  });
+
+  return { res, markFailed, delay, onEvent };
+}
+
+test("a turn that stalls again after its one stall retry fails without a third attempt (#322)", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue(failedTurn(STALL_MESSAGE));
+
+  const { res, markFailed, delay, onEvent } = await runRetryDispatch(runChatTurn);
+
+  expect(res.terminatedReason).toBe("error");
+  expect(runChatTurn).toHaveBeenCalledTimes(2);
+  expect(markFailed).toHaveBeenCalledTimes(1);
+  expect(markFailed).toHaveBeenCalledWith("h0", STALL_MESSAGE);
+  expect(delay.mock.calls).toEqual([[200]]);
+  expect(turnRetries(onEvent).map((e) => e.meta)).toEqual([
+    { attempt: 1, next_attempt: 2, backoff_ms: 200, error_class: "stall" },
+  ]);
+});
+
+test("a thrown stall is also retried only once (#322)", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>().mockRejectedValue(new Error(STALL_MESSAGE));
+
+  const { res, markFailed, delay, onEvent } = await runRetryDispatch(runChatTurn);
+
+  expect(res.terminatedReason).toBe("error");
+  expect(runChatTurn).toHaveBeenCalledTimes(2);
+  expect(markFailed).toHaveBeenCalledTimes(1);
+  expect(markFailed).toHaveBeenCalledWith("h0", STALL_MESSAGE);
+  expect(delay.mock.calls).toEqual([[200]]);
+  expect(turnRetries(onEvent).map((e) => e.meta)).toEqual([
+    { attempt: 1, next_attempt: 2, backoff_ms: 200, error_class: "stall" },
+  ]);
+});
+
+test("a stall carrying a child stderr tail counts against the stall retry (#322)", async () => {
+  const stallWithChildStderr = `${STALL_MESSAGE}\n[child stderr tail]\nsome stderr`;
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue(failedTurn(stallWithChildStderr));
+
+  const { res, markFailed, delay, onEvent } = await runRetryDispatch(runChatTurn);
+
+  expect(res.terminatedReason).toBe("error");
+  expect(runChatTurn).toHaveBeenCalledTimes(2);
+  expect(markFailed).toHaveBeenCalledTimes(1);
+  expect(markFailed).toHaveBeenCalledWith("h0", stallWithChildStderr);
+  expect(delay.mock.calls).toEqual([[200]]);
+  expect(turnRetries(onEvent).map((e) => e.meta)).toEqual([
+    { attempt: 1, next_attempt: 2, backoff_ms: 200, error_class: "stall" },
+  ]);
+});
+
+test("a stall after a non-stall failure still gets its one retry, and a second stall ends the turn (#322)", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>()
+    .mockResolvedValueOnce(failedTurn("stdio-acp-client: transport closed"))
+    .mockResolvedValue(failedTurn(STALL_MESSAGE));
+
+  const { res, markFailed, delay, onEvent } = await runRetryDispatch(runChatTurn);
+
+  expect(res.terminatedReason).toBe("error");
+  expect(runChatTurn).toHaveBeenCalledTimes(3);
+  expect(markFailed).toHaveBeenCalledTimes(1);
+  expect(markFailed).toHaveBeenCalledWith("h0", STALL_MESSAGE);
+  expect(delay.mock.calls).toEqual([[200], [400]]);
+  expect(turnRetries(onEvent).map((e) => e.meta)).toEqual([
+    { attempt: 1, next_attempt: 2, backoff_ms: 200, error_class: "transport_closed" },
+    { attempt: 2, next_attempt: 3, backoff_ms: 400, error_class: "stall" },
+  ]);
+});
+
+test("a turn that fails with 'adapter blew up' every time still makes 4 calls", async () => {
+  const runChatTurn = mock<ChatTurnMockFn>().mockResolvedValue(failedTurn("adapter blew up"));
+
+  const { res, markFailed } = await runRetryDispatch(runChatTurn);
+
+  expect(res.terminatedReason).toBe("error");
+  expect(runChatTurn).toHaveBeenCalledTimes(4);
+  expect(markFailed).toHaveBeenCalledWith("h0", "adapter blew up");
+});
