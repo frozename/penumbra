@@ -66,6 +66,8 @@ export interface DispatchOutput {
     classifier_declined?: true;
     decline_reason?: "provider_safety_refusal";
     reasoning_content?: string;
+    /** Tool calls the adapter observed this turn, absent when the adapter does not track them. */
+    tool_calls?: number;
   };
 }
 

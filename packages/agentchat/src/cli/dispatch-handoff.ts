@@ -155,6 +155,8 @@ export function attachPendingObservations(
 }
 
 const RETRY_BACKOFF_MS = [200, 400, 800] as const;
+// #322: each stall costs a full requestTimeoutMs, so a stall is retried at most once per turn.
+const MAX_STALL_RETRIES = 1;
 
 async function defaultDelay(ms: number): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -276,6 +278,7 @@ interface RetryState {
   lastErrMsg: string;
   lastAdapterErrMsg: string | null;
   lastErrMeta: ChatTurnResult["meta"] | undefined;
+  stallFailures: number;
 }
 
 /** Fold one attempt into retry state. Returns the ok-shape when the turn
@@ -291,6 +294,9 @@ function foldAttempt(
   if (!result.turn || result.errMsg !== null) {
     if (result.turn !== null) state.lastAdapterErrMsg = result.errMsg;
     state.lastErrMsg = result.errMsg ?? state.lastErrMsg;
+    if (result.errMsg !== null && classifyTurnRetryError(result.errMsg) === "stall") {
+      state.stallFailures++;
+    }
     return null;
   }
   // `pending` already includes this turn's own pendingObservations (pushed
@@ -301,8 +307,15 @@ function foldAttempt(
   return { ok: true, turn: result.turn };
 }
 
-/** #298: no further attempt once an attempt failed on a provider quota; the seat stays exhausted until its reset. */
-function nextBackoffMs(attempt: number, result: TurnAttempt): number | undefined {
+/** #298: no further attempt once an attempt failed on a provider quota; the seat stays exhausted until its reset.
+ *  #322: likewise once a turn has stalled more than MAX_STALL_RETRIES times — each stall costs a full
+ *  requestTimeoutMs, so a repeating stall must not run out the whole 4-attempt budget. */
+function nextBackoffMs(
+  attempt: number,
+  result: TurnAttempt,
+  stallFailures: number,
+): number | undefined {
+  if (stallFailures > MAX_STALL_RETRIES) return undefined;
   if (result.errMsg !== null && detectQuotaExhaustion(result.errMsg) !== null) return undefined;
   return RETRY_BACKOFF_MS[attempt];
 }
@@ -384,6 +397,7 @@ async function runTurnWithRetry(
     lastErrMsg: "adapter dispatch failed",
     lastAdapterErrMsg: null,
     lastErrMeta: undefined,
+    stallFailures: 0,
   };
   const pending: Record<string, unknown>[] = [];
   // #322: attempt 0 sends promptText unchanged; each later attempt gets the worktree note.
@@ -397,7 +411,7 @@ async function runTurnWithRetry(
     if (done) return done;
     if (opts.signal?.aborted)
       return { ok: false, result: cancelledRetryResult(targetAgent, state.lastErrMeta) };
-    const backoff = nextBackoffMs(attempt, result);
+    const backoff = nextBackoffMs(attempt, result, state.stallFailures);
     if (backoff === undefined) break;
     emitTurnRetry(opts, attempt, backoff, result.errMsg ?? "");
     await delay(backoff);
