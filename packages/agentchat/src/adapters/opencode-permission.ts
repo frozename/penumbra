@@ -160,3 +160,9 @@ export function throwOnRejectedAskIdleEmpty(
     `opencode-acp: turn ended idle with empty text after ${String(rejectedAsks.length)} rejected permission ask(s) [${kinds}] (${String(replyFailed)} reply_failed); opencode halts the turn on a plain permission reject`,
   );
 }
+
+// OpenCode 1.18.26's ToolPart is { type: "tool", callID, tool, state },
+// re-sent on each state change under one part id; #261.
+export function countToolParts(partTypeById: ReadonlyMap<string, string>): number {
+  return [...partTypeById.values()].filter((type) => type === "tool").length;
+}

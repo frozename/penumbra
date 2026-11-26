@@ -25,6 +25,7 @@ export interface DispatcherHandoff {
   hop_idx?: number;
   use_worktree?: boolean | null;
   isolated_install?: boolean | null;
+  chain_task_type?: string | null;
 }
 
 export interface WorkerDispatcherDeps<H extends DispatcherHandoff = DispatcherHandoff> {
@@ -220,6 +221,14 @@ const POST_TURN_PROGRESS_TIMEOUT_MS = 5_000;
 const PROGRESS_BUFFER_MAX_BYTES = 16_384;
 const PROGRESS_BUFFER_MAX_CHUNKS = 64;
 const PROGRESS_BUFFER_TRUNCATION_MARKER = "[... truncated progress ...]\n";
+
+// #261: fail root worktree turns that end with no tool calls and no worktree change.
+const NO_PROGRESS_ERROR = "no_progress: turn ended with no tool calls and no worktree change";
+const TEXT_ONLY_TASK_TYPES: ReadonlySet<string> = new Set([
+  "smoke_test",
+  "health_check",
+  "plan_refine",
+]);
 
 function defaultDelay(ms: number): Promise<void> {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -805,6 +814,30 @@ function finalTextOf(result: DispatchHandoffResult | null): string | null {
   return typeof result?.text === "string" ? result.text : null;
 }
 
+// #261: fail root worktree turns that end with no tool calls and no worktree change.
+// Scope: root hop (hop_idx === 0), worktree dispatch (use_worktree === true),
+// an adapter that reports tool_calls in meta. Text-only exemptions:
+// smoke_test, health_check, plan_refine. Note: review_adversarial and
+// debug_diagnose are NOT exempt — #261 was a review that ran no commands.
+// Known limitation: an untyped text-only worktree answer with zero tools on
+// opencode-acp is failed; later hops are never relabelled.
+function isNoProgressTurn(handoff: DispatcherHandoff, ctx: DispatchLifecycleContext): boolean {
+  const snap = snapshotOrNull(ctx.snapshot);
+  // Exempt task types skip the no-progress check entirely.
+  if (TEXT_ONLY_TASK_TYPES.has(handoff.chain_task_type ?? "")) {
+    return false;
+  }
+  if (
+    ctx.outcome.status !== "ok" ||
+    handoff.use_worktree !== true ||
+    (handoff.hop_idx ?? 0) !== 0 ||
+    ctx.outcome.result?.meta?.tool_calls !== 0
+  ) {
+    return false;
+  }
+  return snap.worktreeChanged === false && snap.dirty !== true && snap.committed !== true;
+}
+
 async function handleHopCompletion(
   deps: WorkerDispatcherDeps,
   handoff: DispatcherHandoff,
@@ -814,17 +847,26 @@ async function handleHopCompletion(
   if (!result.terminatedReason) {
     return;
   }
-  const reason = reasonForTerminated(result.terminatedReason);
-  await postTurnProgress(deps, handoff.handoff_id, {
-    type: "chain-end",
-    chain_id: handoff.conversation_id,
-    reason,
-    ...(result.terminalError ? { error: result.terminalError } : {}),
-  });
   // Capture the worktree snapshot here so it's available to onChainEnd hooks.
   // Memoised — the finally block reuses the same value when emitting
   // dispatch.end so the probe runs at most once per dispatch.
   await captureSnapshotOnce(deps, handoff, ctx.snapshot);
+  let reason = reasonForTerminated(result.terminatedReason);
+  if (reason === "completed" && isNoProgressTurn(handoff, ctx)) {
+    ctx.outcome.status = "error";
+    ctx.outcome.errorText = NO_PROGRESS_ERROR;
+    reason = "error";
+  }
+  await postTurnProgress(deps, handoff.handoff_id, {
+    type: "chain-end",
+    chain_id: handoff.conversation_id,
+    reason,
+    ...(reason === "error" && ctx.outcome.errorText
+      ? { error: ctx.outcome.errorText }
+      : result.terminalError
+        ? { error: result.terminalError }
+        : {}),
+  });
   // onChainEnd sees the pre-autocommit state (the trigger that caused the
   // recovery). dispatch.end meta later reflects the post-autocommit state
   // because the finally block re-reads ctx.snapshot, which maybeAutocommit

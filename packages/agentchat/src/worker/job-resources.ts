@@ -17,6 +17,8 @@ export const ADMISSION_FLOOR_ABOVE_AVAILABLE_MSG =
 export const CLAIM_ADMISSION_TIMEOUT_MSG = "host memory admission timeout: claim not admitted";
 export const HEAVY_LOCK_IN_PROCESS_ONLY_MSG =
   'heavy-job lock is in-process only (no flock(1) on PATH, /usr/bin or /bin, and crossProcessFallback is "none"): heavy stages are serialized only inside this worker process, not across workers or other penumbra processes';
+/** Matches the 900 s default admission wait: a stuck host is re-checked, not polled. */
+export const ADMISSION_FLOOR_RECHECK_INTERVAL_MS = 15 * 60_000;
 
 export interface WorkerJobResources {
   scope: ResourceScopeDetection;
@@ -24,6 +26,13 @@ export interface WorkerJobResources {
   heavyStageGate: HeavyJobGate;
   /** Dispatcher admission: false leaves the handoff unclaimed. */
   admitClaim: (handoff: { handoff_id: string }, signal: AbortSignal) => Promise<boolean>;
+  /**
+   * Re-warns while a *derived* admission floor sits above host MemAvailable, so
+   * an operator sees a permanently unreachable floor long after boot. Throttled
+   * to ADMISSION_FLOOR_RECHECK_INTERVAL_MS and a no-op for an explicit floor;
+   * cheap enough to call from every heartbeat.
+   */
+  recheckAdmissionFloor: () => Promise<void>;
 }
 
 export interface WorkerJobResourcesDeps {
@@ -31,6 +40,47 @@ export interface WorkerJobResourcesDeps {
   prime?: () => Promise<ResourceScopeDetection>;
   lock?: HeavyJobLock;
   memory?: Omit<WaitForMemoryOptions, "onWait" | "signal" | "timeoutMs">;
+  now?: () => number;
+}
+
+async function warnIfFloorAboveAvailable(
+  log: Logger,
+  admitMinGiB: number,
+  memory: WorkerJobResourcesDeps["memory"],
+): Promise<void> {
+  const available = await readMemAvailableGiB(memory);
+  if (available === null || available >= admitMinGiB) return;
+  log.warn(
+    {
+      admit_min_gib: Number(admitMinGiB.toFixed(1)),
+      available_gib: Number(available.toFixed(1)),
+      explicit: false,
+      env_var: "PENUMBRA_JOB_ADMIT_MIN_GIB",
+    },
+    ADMISSION_FLOOR_ABOVE_AVAILABLE_MSG,
+  );
+}
+
+interface ClaimAdmissionTimeoutArgs {
+  handoffId: string;
+  availableGiB: number | null;
+  admitMinGiB: number;
+  waitedMs: number;
+  explicit: boolean;
+}
+
+function warnClaimAdmissionTimeout(log: Logger, args: ClaimAdmissionTimeoutArgs): void {
+  log.warn(
+    {
+      handoff_id: args.handoffId,
+      available_gib: args.availableGiB === null ? null : Number(args.availableGiB.toFixed(1)),
+      min_gib: Number(args.admitMinGiB.toFixed(1)),
+      waited_s: Math.round(args.waitedMs / 1000),
+      explicit: args.explicit,
+      env_var: "PENUMBRA_JOB_ADMIT_MIN_GIB",
+    },
+    CLAIM_ADMISSION_TIMEOUT_MSG,
+  );
 }
 
 export async function setupWorkerJobResources(
@@ -51,18 +101,7 @@ export async function setupWorkerJobResources(
     "job memory admission floor",
   );
   if (jobEnv.admitMinGiB === undefined && admitMinGiB > 0) {
-    const availableAtBoot = await readMemAvailableGiB(deps.memory);
-    if (availableAtBoot !== null && availableAtBoot < admitMinGiB) {
-      log.warn(
-        {
-          admit_min_gib: Number(admitMinGiB.toFixed(1)),
-          available_gib: Number(availableAtBoot.toFixed(1)),
-          explicit: false,
-          env_var: "PENUMBRA_JOB_ADMIT_MIN_GIB",
-        },
-        ADMISSION_FLOOR_ABOVE_AVAILABLE_MSG,
-      );
-    }
+    await warnIfFloorAboveAvailable(log, admitMinGiB, deps.memory);
   }
   const waitMs = jobEnv.admitWaitS * 1000;
   const lock = deps.lock ?? new HeavyJobLock({ path: jobEnv.heavyLockPath, log });
@@ -103,20 +142,25 @@ export async function setupWorkerJobResources(
       },
     });
     if (!admission.admitted && admission.reason === "timeout") {
-      log.warn(
-        {
-          handoff_id: handoff.handoff_id,
-          available_gib:
-            admission.availableGiB === null ? null : Number(admission.availableGiB.toFixed(1)),
-          min_gib: Number(admitMinGiB.toFixed(1)),
-          waited_s: Math.round(admission.waitedMs / 1000),
-          explicit: jobEnv.admitMinGiB !== undefined,
-          env_var: "PENUMBRA_JOB_ADMIT_MIN_GIB",
-        },
-        CLAIM_ADMISSION_TIMEOUT_MSG,
-      );
+      warnClaimAdmissionTimeout(log, {
+        handoffId: handoff.handoff_id,
+        availableGiB: admission.availableGiB,
+        admitMinGiB,
+        waitedMs: admission.waitedMs,
+        explicit: jobEnv.admitMinGiB !== undefined,
+      });
     }
     return admission.admitted;
   };
-  return { scope, heavyStageGate, admitClaim };
+  const now = deps.now ?? ((): number => Date.now());
+  let lastFloorCheckedAtMs = now();
+  const recheckAdmissionFloor = async (): Promise<void> => {
+    if (jobEnv.admitMinGiB !== undefined || admitMinGiB <= 0) return;
+    const nowMs = now();
+    if (nowMs - lastFloorCheckedAtMs < ADMISSION_FLOOR_RECHECK_INTERVAL_MS) return;
+    // Stamped before the await so overlapping heartbeat calls cannot warn twice.
+    lastFloorCheckedAtMs = nowMs;
+    await warnIfFloorAboveAvailable(log, admitMinGiB, deps.memory);
+  };
+  return { scope, heavyStageGate, admitClaim, recheckAdmissionFloor };
 }

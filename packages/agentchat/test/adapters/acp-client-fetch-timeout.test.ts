@@ -432,6 +432,6 @@ describe("opencode-acp rolling inactivity", () => {
       ),
     );
     const out = await adapter.dispatch(createInput());
-    expect(out).toEqual({ text: "abc" });
+    expect(out).toEqual({ text: "abc", meta: { tool_calls: 0 } });
   });
 });

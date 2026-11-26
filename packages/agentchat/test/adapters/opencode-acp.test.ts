@@ -248,7 +248,7 @@ test("opencode-acp concatenates SSE text deltas into a single response", async (
 
   const out = await adapter.dispatch(createInput());
 
-  expect(out).toEqual({ text: "pong" });
+  expect(out).toEqual({ text: "pong", meta: { tool_calls: 0 } });
   expect(startServer).toHaveBeenCalledTimes(1);
   const startOptions = startServer.mock.calls[0]?.[0];
   expect(startOptions).toEqual({
@@ -426,7 +426,7 @@ test("opencode-acp preserves accumulated text when a non-idle stream ends", asyn
 
   const out = await adapter.dispatch(createInput());
 
-  expect(out).toEqual({ text: "partial" });
+  expect(out).toEqual({ text: "partial", meta: { tool_calls: 0 } });
 });
 
 test("opencode-acp still surfaces session.error events", async () => {
@@ -767,7 +767,10 @@ test("opencode-acp rejects a permission ask by default and answers exactly once"
 
   const out = await adapter.dispatch(input);
 
-  expect(out).toEqual({ text: "answered-once" });
+  expect(out).toEqual({
+    text: "answered-once",
+    meta: { tool_calls: 0 },
+  });
   expect(client.replyPermission).toHaveBeenCalledTimes(1);
   expect(client.replyPermission).toHaveBeenCalledWith(
     "per_abc123",
@@ -901,7 +904,10 @@ test("opencode-acp rejects a permission kind that is not in autoApprovePermissio
 
   const out = await adapter.dispatch(input);
 
-  expect(out).toEqual({ text: "bash-rejected" });
+  expect(out).toEqual({
+    text: "bash-rejected",
+    meta: { tool_calls: 0 },
+  });
   expect(client.replyPermission).toHaveBeenCalledTimes(1);
   expect(client.replyPermission).toHaveBeenCalledWith(
     "per_bash001",
@@ -950,7 +956,7 @@ test("opencode-acp continues the stream after answering a permission and termina
 
   const out = await adapter.dispatch(createInput());
 
-  expect(out).toEqual({ text: "recovered" });
+  expect(out).toEqual({ text: "recovered", meta: { tool_calls: 0 } });
   expect(client.replyPermission).toHaveBeenCalledTimes(1);
   expect(handle.kill).toHaveBeenCalledTimes(1);
 });
@@ -1040,7 +1046,7 @@ test("opencode-acp rejects a v2 permission kind that is not in autoApprovePermis
 
   const out = await adapter.dispatch(input);
 
-  expect(out).toEqual({ text: "v2-rejected" });
+  expect(out).toEqual({ text: "v2-rejected", meta: { tool_calls: 0 } });
   expect(client.replySessionPermission).toHaveBeenCalledTimes(1);
   expect(client.replySessionPermission).toHaveBeenCalledWith(
     "sess-123",
@@ -1097,7 +1103,7 @@ test("opencode-acp auto-approves a v2 permission kind that is in autoApprovePerm
 
   const out = await adapter.dispatch(input);
 
-  expect(out).toEqual({ text: "" });
+  expect(out).toEqual({ text: "", meta: { tool_calls: 0 } });
   expect(client.replySessionPermission).toHaveBeenCalledTimes(1);
   expect(client.replySessionPermission).toHaveBeenCalledWith(
     "sess-123",
@@ -1138,7 +1144,7 @@ test("opencode-acp does not throw or wedge on a malformed permission event", asy
 
   const out = await adapter.dispatch(input);
 
-  expect(out).toEqual({ text: "" });
+  expect(out).toEqual({ text: "", meta: { tool_calls: 0 } });
   expect(client.replyPermission).not.toHaveBeenCalled();
   expect(client.respondPermission).not.toHaveBeenCalled();
   expect(client.replySessionPermission).not.toHaveBeenCalled();
@@ -1469,7 +1475,7 @@ test("opencode-acp keeps a rejected-ask turn alive when real text arrives before
   try {
     const { input, events } = createObservedInput([]);
     const out = await createHttpBackedAdapter().dispatch(input);
-    expect(out).toEqual({ text: "verdict" });
+    expect(out).toEqual({ text: "verdict", meta: { tool_calls: 0 } });
     const permissionEvents = events.filter((e) => e.kind === "http.session.permission");
     expect(permissionEvents.map((e) => e.meta?.outcome)).toEqual(["answered", "reply_failed"]);
   } finally {
@@ -1477,14 +1483,92 @@ test("opencode-acp keeps a rejected-ask turn alive when real text arrives before
   }
 });
 
-test("opencode-acp still resolves an empty idle turn that saw no rejected permission asks", async () => {
+test("opencode-acp resolves an empty idle turn with tool_calls 0 at the adapter layer", async () => {
   const fake = installOpencode11826FetchFake({
     askIds: [],
     events: [{ type: "session.idle" }],
   });
   try {
     const out = await createHttpBackedAdapter().dispatch(createInput());
-    expect(out).toEqual({ text: "" });
+    expect(out).toEqual({ text: "", meta: { tool_calls: 0 } });
+  } finally {
+    fake.restore();
+  }
+});
+
+const textPartEvents: unknown[] = [
+  {
+    type: "message.part.updated",
+    properties: { part: { id: "p-1", type: "text" } },
+  },
+  {
+    type: "message.part.delta",
+    properties: {
+      partID: "p-1",
+      field: "text",
+      delta: "Running the three review commands now.",
+    },
+  },
+];
+
+function toolPartUpdate(status: "pending" | "running" | "completed"): unknown {
+  return {
+    type: "message.part.updated",
+    properties: {
+      part: {
+        id: "p-2",
+        type: "tool",
+        callID: "call_1",
+        tool: "bash",
+        state: { status, input: {}, raw: "" },
+      },
+    },
+  };
+}
+
+const textThenToolEvents: unknown[] = [
+  ...textPartEvents,
+  toolPartUpdate("pending"),
+  toolPartUpdate("running"),
+  toolPartUpdate("completed"),
+  { type: "session.idle" },
+];
+
+test("#261: a text-only idle turn reports zero tool calls", async () => {
+  const fake = installOpencode11826FetchFake({
+    askIds: [],
+    events: [...textPartEvents, { type: "session.idle" }],
+  });
+  try {
+    const out = await createHttpBackedAdapter().dispatch(createInput());
+    expect(out).toEqual({
+      text: "Running the three review commands now.",
+      meta: { tool_calls: 0 },
+    });
+  } finally {
+    fake.restore();
+  }
+});
+
+test("a text part followed by a tool call reports one tool call", async () => {
+  const fake = installOpencode11826FetchFake({ askIds: [], events: textThenToolEvents });
+  try {
+    const out = await createHttpBackedAdapter().dispatch(createInput());
+    const meta = out.meta as { tool_calls?: number } | undefined;
+    expect(meta?.tool_calls).toBe(1);
+  } finally {
+    fake.restore();
+  }
+});
+
+test("http.session.end carries the tool-call count", async () => {
+  const fake = installOpencode11826FetchFake({ askIds: [], events: textThenToolEvents });
+  try {
+    const { input, events } = createObservedInput([]);
+    await createHttpBackedAdapter().dispatch(input);
+    const end = events.find((event) => event.kind === "http.session.end");
+    expect(end?.meta?.tool_calls).toBe(1);
+    expect(end?.meta?.stop_reason).toBe("idle");
   } finally {
     fake.restore();
   }
@@ -1752,7 +1836,7 @@ test("a permission ask under a profile is rejected even when the seat opts into 
 
   const out = await adapter.dispatch(input);
 
-  expect(out).toEqual({ text: "continued" });
+  expect(out).toEqual({ text: "continued", meta: { tool_calls: 0 } });
   expect(client.replyPermission).toHaveBeenCalledWith(
     "per_abc123",
     expect.objectContaining({ reply: "reject" }),
