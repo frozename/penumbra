@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -39,9 +39,13 @@ agents:
 
 function loadYaml(yaml: string): ReturnType<typeof loadConfig> {
   const dir = mkdtempSync(join(tmpdir(), "agentchat-long-lived-"));
-  const file = join(dir, "agentchat.yaml");
-  writeFileSync(file, yaml);
-  return loadConfig(file);
+  try {
+    const file = join(dir, "agentchat.yaml");
+    writeFileSync(file, yaml);
+    return loadConfig(file);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 describe("agentchat.yaml long-lived extension", () => {
