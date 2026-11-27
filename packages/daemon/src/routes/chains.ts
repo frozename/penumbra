@@ -48,6 +48,7 @@ import { json } from "./_helpers.js";
 import { chainStartAdmissionDrainGuard } from "./admission-drain.js";
 import { availableBranchNameBestEffort } from "./chains-branch-precheck.js";
 import {
+  pickRoleRefillAgent,
   readActiveRoutingBiases,
   resolveSingleRoute,
   type RouterDecisionSink,
@@ -3042,9 +3043,12 @@ function resolveRoleRoute(
     // fallback below.
     return { route: null, decision: decisionSink.decision, roleRouteAttempted: true };
   }
-  const fallbackAgent = roleAgents[0] ?? opts.initialAgent;
+  if (route) return { route, decision: decisionSink.decision, roleRouteAttempted: true };
+  // roleAgents is non-empty here (the empty case returned above); a null pick
+  // means every holder is quota-cooled (#298) and the dispatch fails closed.
+  const fallbackAgent = pickRoleRefillAgent(opts.services, roleAgents);
   return {
-    route: route ?? { agent: fallbackAgent, role: opts.initialAgent, taskType },
+    route: fallbackAgent ? { agent: fallbackAgent, role: opts.initialAgent, taskType } : null,
     decision: decisionSink.decision,
     roleRouteAttempted: true,
   };

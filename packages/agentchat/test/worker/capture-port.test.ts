@@ -36,6 +36,9 @@ interface ObservedPayload {
   model?: string | null;
   raw?: string;
   failure_kind?: string;
+  window_label?: string;
+  used_pct?: number;
+  resets_at?: number | null;
 }
 
 interface ObservedEvent {
@@ -399,6 +402,84 @@ describe("CapturePort — capacity_error", () => {
     });
     expect(event.payload_summary).toBe("google/gemini-3.1-pro-preview capacity error");
     expect(event.triggered_by_event_id).toBe("prompt-event-1");
+  });
+});
+
+describe("CapturePort — quota_exhausted (#298)", () => {
+  function makeQuotaPort(observed: ObservedEvent[]): CapturePort {
+    return new CapturePort({
+      observe: (e: ObservedEvent): Promise<{ event_id: string }> => {
+        observed.push(e);
+        return Promise.resolve({ event_id: "eid" });
+      },
+      chainId: "conv-quota",
+      handoffId: "h-quota",
+      projectId: "project-1",
+      agentName: "agy",
+      provider: "google",
+      model: "gemini-3-flash",
+      lane: "cli-subscription",
+    });
+  }
+
+  it("emits a cooldown rate-limit snapshot for an agy RESOURCE_EXHAUSTED exit", async () => {
+    const observed: ObservedEvent[] = [];
+    const port = makeQuotaPort(observed);
+    const raw = 'AGY_ERROR: {"status":"RESOURCE_EXHAUSTED","error_code":429,"retryable":true}';
+
+    port.emit({
+      kind: "quota_exhausted",
+      provider: "google",
+      model: "gemini-3-flash",
+      resets_at: 1_790_000_000,
+      raw,
+    } as unknown as NotificationEvent);
+    await port.flush();
+
+    expect(observed).toHaveLength(1);
+    const event = observed[0]!;
+    expect(event.event_type).toBe("rate-limit-snapshot");
+    expect(event.provider).toBe("google");
+    expect(event.model).toBe("gemini-3-flash");
+    expect(event.payload_json).toEqual({
+      handoff_id: "h-quota",
+      window_label: "quota",
+      model: "gemini-3-flash",
+      used_pct: 100,
+      resets_at: 1_790_000_000,
+      raw,
+      source_kind: "cooldown",
+    });
+  });
+
+  it("falls back to the port model and carries a null resets_at", async () => {
+    const observed: ObservedEvent[] = [];
+    const port = makeQuotaPort(observed);
+    const raw = 'AGY_ERROR: {"status":"RESOURCE_EXHAUSTED","error_code":429,"retryable":true}';
+
+    port.emit({
+      kind: "quota_exhausted",
+      provider: "google",
+      model: null,
+      resets_at: null,
+      raw,
+    } as unknown as NotificationEvent);
+    await port.flush();
+
+    expect(observed).toHaveLength(1);
+    const event = observed[0]!;
+    expect(event.event_type).toBe("rate-limit-snapshot");
+    expect(event.provider).toBe("google");
+    expect(event.model).toBe("gemini-3-flash");
+    expect(event.payload_json).toEqual({
+      handoff_id: "h-quota",
+      window_label: "quota",
+      model: "gemini-3-flash",
+      used_pct: 100,
+      resets_at: null,
+      raw,
+      source_kind: "cooldown",
+    });
   });
 });
 

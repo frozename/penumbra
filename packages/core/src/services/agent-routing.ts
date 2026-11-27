@@ -848,6 +848,23 @@ function isOverPressure(
   });
 }
 
+// #298: a cooldown snapshot is an explicit "this provider refuses work until
+// resets_at", unlike soft usage pressure. Same exclusion rule as isOverPressure
+// (allowlisted stale/expired groups fail open), scoped to source_kind cooldown.
+export function isUnderCooldown(
+  provider: string,
+  pressureSnapshot?: RouteAgentInput["applyPressure"],
+): boolean {
+  if (!pressureSnapshot) return false;
+  const excludedKeys = buildPressureExcludedKeys(pressureSnapshot);
+  return pressureSnapshot.snapshots.some(
+    (snapshot) =>
+      snapshot.provider === provider &&
+      snapshot.source_kind === "cooldown" &&
+      !excludedKeys.has(pressureSnapshotKey(snapshot)),
+  );
+}
+
 export function isTextOnlyAdapter(adapter: string | undefined | null): boolean {
   return adapter === "openai-compat-http";
 }
@@ -1337,20 +1354,25 @@ function chooseSingle(
           defaultAgent ?? null,
           roleAgents[0] ?? null,
         ];
-  const candidateOrder = hasBiases
-    ? [...legacyCandidateOrder, ...roleAgents]
-    : legacyCandidateOrder;
-
-  const isBiasExcluded = (agentName: string): boolean => {
-    if (!hasBiases) return false;
+  const providerOf = (agentName: string): string | null => {
     const agent = input.agentchatConfig?.agents.find((candidate) => candidate.name === agentName);
-    const provider = agent ? resolveProvider(agent) : null;
-    return resolveBiasEffect(agentName, provider, input.activeBiases).exclude;
+    return agent ? resolveProvider(agent) : null;
   };
+  // A cooled-down seat must not starve the route: when one is present the whole
+  // roster becomes a fallback tail, as it already is under biases. Soft usage
+  // pressure keeps the legacy order byte-identical.
+  const hasCooldown = roleAgents.some((agentName) => {
+    const provider = providerOf(agentName);
+    return provider !== null && isUnderCooldown(provider, input.applyPressure);
+  });
+  const candidateOrder =
+    hasBiases || hasCooldown ? [...legacyCandidateOrder, ...roleAgents] : legacyCandidateOrder;
+
+  const isBiasExcluded = (agentName: string): boolean =>
+    hasBiases && resolveBiasEffect(agentName, providerOf(agentName), input.activeBiases).exclude;
   const passesPressure = (agentName: string): boolean => {
     if (!input.applyPressure) return true;
-    const agent = input.agentchatConfig?.agents.find((candidate) => candidate.name === agentName);
-    const provider = agent ? resolveProvider(agent) : null;
+    const provider = providerOf(agentName);
     return !provider || !isOverPressure(provider, input.applyPressure);
   };
   const pick = (applyBiasExclude: boolean): string | null =>

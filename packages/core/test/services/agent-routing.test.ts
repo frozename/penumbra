@@ -1,7 +1,14 @@
 import { Database } from "bun:sqlite";
 import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 
-import { loadSqliteVec, migrate, resolveBiasEffect, routeAgent } from "@src/index.js";
+import {
+  isUnderCooldown,
+  loadSqliteVec,
+  migrate,
+  readSubscriptionPressure,
+  resolveBiasEffect,
+  routeAgent,
+} from "@src/index.js";
 import type { RoutingBias } from "@src/readers/routing-bias.js";
 import type { AgentRankOutput } from "@src/schemas/agent-performance.js";
 import type { RouteAgentInput, RouteAgentOutput } from "@src/services/agent-routing.js";
@@ -1118,6 +1125,153 @@ describe("routeAgent", () => {
       role: "reviewer",
       taskType: "implement_substantial",
     });
+  });
+
+  describe("quota cooldown routing (#298)", () => {
+    test("a two-hour-old future-reset cooldown excludes google until the reset passes", () => {
+      const observedAt = new Date(NOW.getTime() - 2 * 60 * 60 * 1000).toISOString();
+      db.prepare(
+        `
+        INSERT INTO t0_events (
+          event_id, ts, ingest_ts, source, user_id, machine_id,
+          event_type, lane, provider, payload_json
+        ) VALUES (?, ?, ?, 'agentchat', 'u', 'm', 'rate-limit-snapshot', 'cli-subscription', ?, ?)
+      `,
+      ).run(
+        "google-quota-cooldown",
+        observedAt,
+        observedAt,
+        "google",
+        JSON.stringify({
+          window_label: "quota",
+          model: null,
+          used_pct: 100,
+          resets_at: NOW.getTime() / 1000 + 5 * 60 * 60,
+          source_kind: "cooldown",
+        }),
+      );
+
+      const agentchatConfig = {
+        agents: [
+          {
+            name: "gemini-flash",
+            roles: ["reviewer"],
+            pricing_mode: "subscription",
+            subscription_provider: "google",
+          },
+          { name: "codex", roles: ["reviewer"], api_provider: "openai" },
+        ],
+      };
+      const routeFor = (now: Date): RouteAgentOutput =>
+        routeAgent({
+          db,
+          detail: "single",
+          role: "reviewer",
+          message: "Implementation Plan",
+          agentchatConfig,
+          roleExplorationPolicy: "ranked-first",
+          applyPressure: readSubscriptionPressure(db, { now: () => now }),
+          now,
+        });
+
+      const control = routeAgent({
+        db,
+        detail: "single",
+        role: "reviewer",
+        message: "Implementation Plan",
+        agentchatConfig,
+        roleExplorationPolicy: "ranked-first",
+        now: NOW,
+      });
+      expect(control.detail).toBe("single");
+      if (control.detail !== "single") return;
+      expect(control.route?.agent).toBe("gemini-flash");
+
+      const beforeReset = routeFor(NOW);
+      expect(beforeReset.detail).toBe("single");
+      if (beforeReset.detail !== "single") return;
+      expect(beforeReset.route?.agent).toBe("codex");
+
+      const afterResetAt = new Date(NOW.getTime() + 6 * 60 * 60 * 1000);
+      const afterReset = routeFor(afterResetAt);
+      expect(afterReset.detail).toBe("single");
+      if (afterReset.detail !== "single") return;
+      expect(afterReset.route?.agent).toBe("gemini-flash");
+    });
+
+    // A stale (resets_at null, aged out) or expired (resets_at in the past)
+    // cooldown is listed in warnings, so buildPressureExcludedKeys excludes it
+    // and the cooldown must fail open, exactly like soft pressure does.
+    const cooldownPressure = (
+      resetsAt: number | null,
+      code: "stale_snapshot" | "expired_window" | null,
+    ): NonNullable<RouteAgentInput["applyPressure"]> => ({
+      snapshots: [
+        {
+          provider: "google",
+          window_label: "quota",
+          model: null,
+          used_pct: 100,
+          resets_at: resetsAt,
+          observed_at: new Date(NOW.getTime() - 2 * 60 * 60 * 1000).toISOString(),
+          source_kind: "cooldown",
+        },
+      ],
+      warnings: code
+        ? [{ code, provider: "google", window_label: "quota", model: null, age_seconds: 7200 }]
+        : [],
+    });
+    const failOpenCases = [
+      { label: "stale (resets_at null)", resetsAt: null, code: "stale_snapshot" as const },
+      {
+        label: "expired (resets_at in the past)",
+        resetsAt: NOW.getTime() / 1000 - 60,
+        code: "expired_window" as const,
+      },
+    ];
+
+    test("an unflagged cooldown snapshot is under cooldown (control)", () => {
+      expect(isUnderCooldown("google", cooldownPressure(null, null))).toBe(true);
+    });
+
+    for (const { label, resetsAt, code } of failOpenCases) {
+      test(`a ${label} cooldown fails open in isUnderCooldown`, () => {
+        expect(isUnderCooldown("google", cooldownPressure(resetsAt, code))).toBe(false);
+      });
+
+      test(`a ${label} cooldown keeps the no-pressure chooseSingle order`, () => {
+        const agentchatConfig = {
+          agents: [
+            {
+              name: "gemini-flash",
+              roles: ["reviewer"],
+              pricing_mode: "subscription" as const,
+              subscription_provider: "google",
+            },
+            { name: "codex", roles: ["reviewer"], api_provider: "openai" },
+          ],
+        };
+        const routeWith = (applyPressure?: RouteAgentInput["applyPressure"]): RouteAgentOutput =>
+          routeAgent({
+            db,
+            detail: "single",
+            role: "reviewer",
+            message: "Implementation Plan",
+            agentchatConfig,
+            roleExplorationPolicy: "ranked-first",
+            ...(applyPressure ? { applyPressure } : {}),
+            now: NOW,
+          });
+
+        const control = routeWith();
+        const pressured = routeWith(cooldownPressure(resetsAt, code));
+        expect(control.detail).toBe("single");
+        expect(pressured.detail).toBe("single");
+        if (control.detail !== "single" || pressured.detail !== "single") return;
+        expect(control.route?.agent).toBe("gemini-flash");
+        expect(pressured.route).toEqual(control.route);
+      });
+    }
   });
 
   test("stale >=90% snapshot does NOT exclude the provider's candidate (fail-open in routeAgent single)", () => {
